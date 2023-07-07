@@ -4,6 +4,8 @@ import mongoose from "mongoose";
 import * as dotenv from "dotenv";
 import cors from "cors";
 import { router } from "./src/routes/userRoutes";
+import { memberrouter } from "./src/routes/memberRoutes";
+import { attendanceRouter } from "./src/routes/attendanceRoute";
 dotenv.config();
 
 // router
@@ -16,9 +18,11 @@ app.use(bodyParser.json());
 app.use(cors());
 app.use(express.json());
 app.use("/user", userRoutes);
+app.use("/member", memberrouter);
+app.use("/attendance", attendanceRouter);
 
 mongoose
-  .connect(MONGO_URI)
+  .connect(MONGO_URI, {})
   .then(() => {
     console.log("Connected to MongoDB");
     app.listen(8000, () => {
