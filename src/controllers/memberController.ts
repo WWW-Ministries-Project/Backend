@@ -31,7 +31,9 @@ export const createMember = async (req: Request, res: Response) => {
       member_since,
       photo,
     });
-    res.status(200).json("Member Created Succesfully");
+    res
+      .status(200)
+      .json({ message: "Member Created Succesfully", member_id: response._id });
   } catch (error: any) {
     if (error.code === 11000) {
       return res.status(409).send("Operation Not Successful");
@@ -40,12 +42,9 @@ export const createMember = async (req: Request, res: Response) => {
   }
 };
 
-
 export const getAllMembers = async (req: Request, res: Response) => {
-    try {
-        const response = await MemberModel.find()
-        res.json(response).status(200)
-    } catch (error) {
-        
-    }
-}
+  try {
+    const response = await MemberModel.find();
+    res.json(response).status(200);
+  } catch (error) {}
+};
