@@ -46,5 +46,10 @@ export const getAllMembers = async (req: Request, res: Response) => {
   try {
     const response = await MemberModel.find();
     res.json(response).status(200);
-  } catch (error) {}
+  } catch (error: any) {
+    if (error.code === 11000) {
+      return res.status(409).send("Operation Not Successful");
+    }
+    throw error.message;
+  }
 };

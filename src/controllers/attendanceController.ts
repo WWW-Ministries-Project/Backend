@@ -1,5 +1,6 @@
 import { AttendanceModel } from "../Models/attendance";
 import { Request, Response } from "express";
+import { MemberModel } from "../Models/members";
 
 export const markAttendance = async (req: Request, res: Response) => {
   const { member_id } = req.body;
@@ -7,13 +8,21 @@ export const markAttendance = async (req: Request, res: Response) => {
   today.setHours(0, 0, 0, 0); // Set hours, minutes, seconds, and milliseconds to 0
 
   try {
+    const existingMember = await MemberModel.findOne({
+      _id: member_id,
+    }).catch((err) => {});
+
+    if (!existingMember) {
+      return res.status(409).send("Member ID does not exist in members table");
+    }
+
     const existingAttendance = await AttendanceModel.findOne({
       member_id,
       date: {
         $gte: today,
         $lt: new Date(today.getTime() + 24 * 60 * 60 * 1000), // Add 24 hours to currentDate
       },
-    });
+    }).catch((err) => {});
 
     if (existingAttendance) {
       return res.status(409).send("Member ID already recorded for today");
@@ -23,7 +32,6 @@ export const markAttendance = async (req: Request, res: Response) => {
       member_id,
       date: new Date(),
     });
-
     res.status(200).json("Attendance marked successfully");
   } catch (error: any) {
     if (error.code === 11000) {
