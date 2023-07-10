@@ -11,7 +11,7 @@ import {
 dotenv.config();
 export const router = Router();
 
-router.post("/reset-password/:id/:token", resetPassword);
+router.post("/reset-password", resetPassword);
 
 router.post("/forgot-password", forgetPassword);
 
