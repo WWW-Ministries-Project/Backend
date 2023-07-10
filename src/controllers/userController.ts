@@ -88,8 +88,9 @@ export const forgetPassword = async (req: Request, res: Response) => {
     const existingUser = await User.findOne({
       email,
     });
+
     if (!existingUser) {
-      return res.send("User Not Exists");
+      return res.json({ error: "User Not Exists" });
     }
     const secret = JWT_SECRET + existingUser.password;
     const token = JWT.sign(
@@ -104,7 +105,7 @@ export const forgetPassword = async (req: Request, res: Response) => {
     );
     const link = `https://wwwministries.netlify.app/reset-password/?id=${existingUser._id}&token=${token}`;
     sendEmail(link, email, "Reset Password");
-    // console.log(link);
+    console.log(link);
     return res.status(200).send(`Link Send to your Mail`);
   } catch (error) {
     return res.status(500);
@@ -112,18 +113,21 @@ export const forgetPassword = async (req: Request, res: Response) => {
 };
 
 export const resetPassword = async (req: Request, res: Response) => {
-  const { id, token } = req.params;
+  const { id, token } = req.query;
+  console.log(id);
+
   const { password } = req.body;
   //check for the existence of an account using
   try {
     const existingUser = await User.findOne({
       _id: id,
-    });
+    }).lean();
+
     if (!existingUser) {
-      return res.send("User Not Exists");
+      return res.json({ error: "User Not Exists" });
     }
     const secret = JWT_SECRET + existingUser.password;
-    const verify = JWT.verify(token, secret);
+    const verify = JWT.verify(token as string, secret);
 
     if (verify) {
       await User.updateOne(
