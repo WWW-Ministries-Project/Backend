@@ -2,6 +2,9 @@ import mongoose from "mongoose";
 
 const MemberSchema = new mongoose.Schema(
   {
+    title: {
+      type: String,
+    },
     first_name: {
       type: String,
       required: true,
@@ -18,7 +21,10 @@ const MemberSchema = new mongoose.Schema(
       type: String,
       required: true,
     },
-    phone_number: {
+    phone_number_1: {
+      type: String,
+    },
+    phone_number_2: {
       type: String,
     },
     email: {
@@ -46,6 +52,9 @@ const MemberSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+    department: {
+      type: String,
+      },
     partner: {
       type: Boolean,
       default: false,
