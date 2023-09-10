@@ -100,12 +100,11 @@ export const forgetPassword = async (req: Request, res: Response) => {
       },
       secret,
       {
-        expiresIn: "5m",
+        expiresIn: "15m",
       }
     );
-    const link = `https://wwwministries.netlify.app/reset-password/?id=${existingUser._id}&token=${token}`;
+    const link = `https://wwwministries.netlify.app/user/reset-password/?id=${existingUser._id}&token=${token}`;
     sendEmail(link, email, "Reset Password");
-    console.log(link);
     return res.status(200).send(`Link Send to your Mail`);
   } catch (error) {
     return res.status(500);
@@ -114,8 +113,6 @@ export const forgetPassword = async (req: Request, res: Response) => {
 
 export const resetPassword = async (req: Request, res: Response) => {
   const { id, token } = req.query;
-  console.log(id);
-
   const { password } = req.body;
   //check for the existence of an account using
   try {
