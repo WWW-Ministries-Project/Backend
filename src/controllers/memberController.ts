@@ -31,6 +31,7 @@ export const createMember = async (req: Request, res: Response) => {
     member_since,
     photo,
     visits,
+    last_visited,
     department,
   } = req.body;
   const img = await uploadImage(photo, email);
@@ -48,6 +49,7 @@ export const createMember = async (req: Request, res: Response) => {
       email,
       address,
       visits,
+      last_visited,
       country,
       occupation,
       company,

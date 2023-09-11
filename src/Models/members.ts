@@ -51,6 +51,9 @@ const MemberSchema = new mongoose.Schema(
     photo: {
       type: String,
     },
+    last_visited: {
+      type: Number,
+    },
     status: {
       type: Boolean,
       default: true,
