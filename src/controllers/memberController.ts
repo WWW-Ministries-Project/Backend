@@ -1,5 +1,18 @@
 import { MemberModel } from "../Models/members";
 import { Request, Response } from "express";
+import cloudinary from "../utils/cloudinary";
+
+const uploadImage = async (photo: any, name: string) => {
+  try {
+    const imageResponse = await cloudinary.uploader.upload(photo, {
+      folder: "www-ministries",
+      public_id: `${name}-img`,
+    });
+    return imageResponse;
+  } catch (error) {
+    // return error;
+  }
+};
 
 export const createMember = async (req: Request, res: Response) => {
   const {
@@ -17,8 +30,12 @@ export const createMember = async (req: Request, res: Response) => {
     company,
     member_since,
     photo,
+    visits,
     department,
   } = req.body;
+  const img = await uploadImage(photo, email);
+  // console.log(img?.public_id);
+
   try {
     const response = await MemberModel.create({
       title,
@@ -30,11 +47,15 @@ export const createMember = async (req: Request, res: Response) => {
       phone_number_2,
       email,
       address,
+      visits,
       country,
       occupation,
       company,
       member_since,
-      photo,
+      photo: {
+        public_id: img?.public_id,
+        url: img?.secure_url,
+      },
       department,
     });
     res

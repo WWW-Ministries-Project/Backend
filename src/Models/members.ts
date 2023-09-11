@@ -45,8 +45,16 @@ const MemberSchema = new mongoose.Schema(
     member_since: {
       type: Date,
     },
+    visits: {
+      type: Number,
+    },
     photo: {
-      type: String,
+      public_id: {
+        type: String,
+      },
+      url: {
+        type: String,
+      },
     },
     status: {
       type: Boolean,
@@ -54,7 +62,7 @@ const MemberSchema = new mongoose.Schema(
     },
     department: {
       type: String,
-      },
+    },
     partner: {
       type: Boolean,
       default: false,
