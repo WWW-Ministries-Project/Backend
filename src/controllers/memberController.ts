@@ -133,3 +133,22 @@ export const updateMemberInfo = async (req: Request, res: Response) => {
     throw error.message;
   }
 };
+
+export const dashboardCount = async (req: Request, res: Response) => {
+  try {
+    const response = await MemberModel.find();
+    const active_members = response.filter((item) => item.status === true);
+    const partners = response.filter((item) => item.partner === true);
+    const male = response.filter((item) => item.gender === "Male");
+    const female = response.filter((item) => item.gender === "Female");
+
+    res
+      .json({
+        active_members: active_members.length,
+        partners: partners.length,
+        male_count: male.length,
+        female_count: female.length,
+      })
+      .status(200);
+  } catch (error) {}
+};
