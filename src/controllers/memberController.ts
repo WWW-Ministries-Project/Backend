@@ -52,10 +52,7 @@ export const createMember = async (req: Request, res: Response) => {
       occupation,
       company,
       member_since,
-      photo: {
-        public_id: img?.public_id,
-        url: img?.secure_url,
-      },
+      photo: img?.secure_url,
       department,
     });
     res

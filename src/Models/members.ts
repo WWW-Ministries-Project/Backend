@@ -49,12 +49,7 @@ const MemberSchema = new mongoose.Schema(
       type: Number,
     },
     photo: {
-      public_id: {
-        type: String,
-      },
-      url: {
-        type: String,
-      },
+      type: String,
     },
     status: {
       type: Boolean,
