@@ -103,7 +103,7 @@ export const forgetPassword = async (req: Request, res: Response) => {
         expiresIn: "15m",
       }
     );
-    const link = `https://wwwministries.netlify.app/user/reset-password/?id=${existingUser._id}&token=${token}`;
+    const link = `https://wwwministries.netlify.app/reset-password/?id=${existingUser._id}&token=${token}`;
     sendEmail(link, email, "Reset Password");
     return res.status(200).send(`Link Send to your Mail`);
   } catch (error) {
