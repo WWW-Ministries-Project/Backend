@@ -5,21 +5,14 @@ const MemberSchema = new mongoose.Schema(
     title: {
       type: String,
     },
-    first_name: {
+    name: {
       type: String,
-      required: true,
-    },
-    last_name: {
-      type: String,
-      required: true,
     },
     date_of_birth: {
       type: Date,
-      required: true,
     },
     gender: {
       type: String,
-      required: true,
     },
     phone_number_1: {
       type: String,

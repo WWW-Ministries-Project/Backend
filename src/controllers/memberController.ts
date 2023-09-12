@@ -17,8 +17,7 @@ const uploadImage = async (photo: any, name: string) => {
 export const createMember = async (req: Request, res: Response) => {
   const {
     title,
-    first_name,
-    last_name,
+    name,
     date_of_birth,
     gender,
     phone_number_1,
@@ -40,8 +39,7 @@ export const createMember = async (req: Request, res: Response) => {
   try {
     const response = await MemberModel.create({
       title,
-      first_name,
-      last_name,
+      name,
       date_of_birth,
       gender,
       phone_number_1,
@@ -61,10 +59,10 @@ export const createMember = async (req: Request, res: Response) => {
       .status(200)
       .json({ message: "Member Created Succesfully", member_id: response._id });
   } catch (error: any) {
-    if (error.code === 11000) {
+    if (error) {
       return res.status(409).send("Operation Not Successful");
     }
-    throw error.message;
+    return error.message;
   }
 };
 
