@@ -68,7 +68,7 @@ export const createMember = async (req: Request, res: Response) => {
 
 export const getAllMembers = async (req: Request, res: Response) => {
   try {
-    const response = await MemberModel.find();
+    const response = await MemberModel.find().sort({ _id: -1 });
     res.json(response).status(200);
   } catch (error: any) {
     if (error.code === 11000) {
@@ -134,7 +134,7 @@ export const updateMemberInfo = async (req: Request, res: Response) => {
 
 export const dashboardCount = async (req: Request, res: Response) => {
   try {
-    const response = await MemberModel.find();
+    const response = await MemberModel.find().sort({ _id: -1 });
     const active_members = response.filter((item) => item.status === true);
     const partners = response.filter((item) => item.partner === true);
     const male = response.filter((item) => item.gender === "Male");
