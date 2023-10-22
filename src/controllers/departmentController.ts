@@ -15,10 +15,10 @@ export const createDepartment = async (req: Request, res: Response) => {
     res
       .status(200)
       .json({ message: "Department Created Succesfully", data: response });
-  } catch (error) {
+  } catch (error: any) {
     return res
       .status(503)
-      .json({ message: "error", data: "Department failed to create" });
+      .json({ message: error, data: "Department failed to create" });
   }
 };
 
@@ -44,7 +44,7 @@ export const updateDepartment = async (req: Request, res: Response) => {
   } catch (error) {
     return res
       .status(503)
-      .json({ message: "error", data: "Department failed to update" });
+      .json({ message: "Error", data: "Department failed to update" });
   }
 };
 

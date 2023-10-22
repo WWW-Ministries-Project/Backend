@@ -7,9 +7,12 @@ import {
   login,
   registerUser,
   resetPassword,
+  seedUser,
 } from "../controllers/userController";
 dotenv.config();
 export const router = Router();
+
+router.post("/seed-user", seedUser);
 
 router.post("/reset-password", resetPassword);
 

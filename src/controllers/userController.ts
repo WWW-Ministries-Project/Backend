@@ -57,9 +57,6 @@ export const registerUser = async (req: Request, res: Response) => {
             department_id,
           },
         },
-        position: {
-          connect: { id: position_id },
-        },
         user_info: {
           create: {
             title,
@@ -84,7 +81,6 @@ export const registerUser = async (req: Request, res: Response) => {
       .status(200)
       .json({ status: "User Created Succesfully", data: response });
   } catch (error) {
-    console.log(error);
     return res.json({ error });
   }
 };
@@ -148,8 +144,6 @@ export const changePassword = async (req: Request, res: Response) => {
     });
     res.status(200).json({ status: "Password Changed Successfully" });
   } catch (error) {
-    console.log(error);
-
     return res.status(409).json({ status: "error" });
   }
 };
@@ -233,5 +227,28 @@ export const resetPassword = async (req: Request, res: Response) => {
     }
   } catch (error) {
     return res.status(500).json({ error: "Link Expired" });
+  }
+};
+
+export const seedUser = async (req: Request, res: Response) => {
+  try {
+    const response = await prisma.user.create({
+      data: {
+        name: "Admin",
+        email: "admin@admin.com",
+        password:
+          "$2b$10$2EYtobxw11Tk1.JXCjplJOQ5mgu1dmNENtbDnpcQiqjnkSgyRrZqu",
+        is_user: true,
+      },
+      select: {
+        email: true,
+        name: true,
+      },
+    });
+    res
+      .status(200)
+      .json({ status: "User Created Succesfully", data: response });
+  } catch (error) {
+    return res.status(500).json({ error });
   }
 };
