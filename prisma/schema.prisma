@@ -1,0 +1,81 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model user {
+  id              Int                @id @default(autoincrement())
+  name            String
+  email           String             @unique
+  is_active       Boolean?           @default(true)
+  partner         Boolean?           @default(false)
+  is_user         Boolean?
+  is_visitor      Boolean?
+  password        String
+  department      user_departments[]
+  position_id     Int?
+  position        position?          @relation(fields: [position_id], references: [id])
+  user_info       user_info[]
+  department_head department[]
+}
+
+model user_info {
+  id             Int       @id @default(autoincrement())
+  user_id        Int
+  user           user      @relation(fields: [user_id], references: [id])
+  title          String?
+  name           String
+  date_of_birth  DateTime?
+  gender         String
+  primary_number String?
+  other_number   String?
+  email          String?
+  address        String?
+  country        String?
+  occupation     String?
+  company        String?
+  member_since   DateTime?
+  photo          String?
+}
+
+model department {
+  id               Int                @id @default(autoincrement())
+  name             String
+  department_head  Int?
+  user             user?              @relation(fields: [department_head], references: [id])
+  description      String?
+  user_departments user_departments[]
+  position         position[]
+  created_by       Int
+  created_at       DateTime           @default(now())
+  updated_by       Int?
+  updated_at       DateTime?
+}
+
+model user_departments {
+  id            Int         @id @default(autoincrement())
+  user_id       Int
+  user          user        @relation(fields: [user_id], references: [id])
+  department_id Int?
+  department    department? @relation(fields: [department_id], references: [id])
+}
+
+model position {
+  id            Int         @id @default(autoincrement())
+  name          String
+  department_id Int?
+  department    department? @relation(fields: [department_id], references: [id])
+  description   String?
+  user          user[]
+  created_by    Int
+  created_at    DateTime    @default(now())
+  updated_by    Int?
+  updated_at    DateTime?
+}
