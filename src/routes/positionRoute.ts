@@ -16,6 +16,6 @@ positionRouter.post("/update-position", updatePosition);
 
 positionRouter.post("/delete-position", deletePosition);
 
-positionRouter.post("/list-positions", listPositions);
+positionRouter.get("/list-positions", listPositions);
 
-positionRouter.post("/get-positions", getPosition);
+positionRouter.get("/get-position", getPosition);

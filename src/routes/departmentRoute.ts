@@ -16,6 +16,6 @@ departmentRouter.post("/update-department", updateDepartment);
 
 departmentRouter.post("/delete-department", deleteDepartment);
 
-departmentRouter.post("/list-departments", listDepartments);
+departmentRouter.get("/list-departments", listDepartments);
 
-departmentRouter.post("/get-departments", getDepartment);
+departmentRouter.get("/get-department", getDepartment);
