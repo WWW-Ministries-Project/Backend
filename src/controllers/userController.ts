@@ -252,3 +252,41 @@ export const seedUser = async (req: Request, res: Response) => {
     return res.status(500).json({ error });
   }
 };
+
+export const ListUsers = async (req: Request, res: Response) => {
+  const { is_active, is_visitor } = req.body;
+
+  try {
+    const response = await prisma.user.findMany({
+      where: {
+        is_active,
+        is_visitor
+      }
+    });
+    res
+      .status(200)
+      .json({ status: "Operation Succesful", data: response });
+  } catch (error) {
+    return res.status(500).json({ error });
+  }
+
+};
+export const getUser = async (req: Request, res: Response) => {
+  const { user_id } = req.body;
+
+  try {
+    const response = await prisma.user.findMany({
+      where: {
+        id: user_id
+      }
+    });
+    res
+      .status(200)
+      .json({ status: "Operation Succesful", data: response });
+  } catch (error) {
+    return res.status(500).json({
+      msg: "Operation failed",
+      error: error
+    });
+  }
+};

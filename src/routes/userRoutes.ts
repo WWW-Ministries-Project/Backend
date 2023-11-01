@@ -1,8 +1,10 @@
 import Router from "express";
 import * as dotenv from "dotenv";
 import {
+  ListUsers,
   changePassword,
   forgetPassword,
+  getUser,
   landingPage,
   login,
   registerUser,
@@ -11,6 +13,10 @@ import {
 } from "../controllers/userController";
 dotenv.config();
 export const router = Router();
+
+router.get("/getUser", getUser);
+
+router.get("/listUsers", ListUsers);
 
 router.post("/seed-user", seedUser);
 
