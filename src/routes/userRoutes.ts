@@ -14,9 +14,9 @@ import {
 dotenv.config();
 export const router = Router();
 
-router.get("/getUser", getUser);
+router.get("/get-user", getUser);
 
-router.get("/listUsers", ListUsers);
+router.get("/list-users", ListUsers);
 
 router.post("/seed-user", seedUser);
 
