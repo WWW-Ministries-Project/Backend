@@ -17,8 +17,8 @@ export const createDepartment = async (req: Request, res: Response) => {
       .json({ message: "Department Created Succesfully", data: response });
   } catch (error: any) {
     return res
-      .status(503)
-      .json({ message: error, data: "Department failed to create" });
+      .status(500)
+      .json({ message: "Department failed to create", data: error });
   }
 };
 
@@ -44,7 +44,7 @@ export const updateDepartment = async (req: Request, res: Response) => {
   } catch (error) {
     return res
       .status(503)
-      .json({ message: "Error", data: "Department failed to update" });
+      .json({ message: "Department failed to update", data: error });
   }
 };
 
@@ -63,7 +63,7 @@ export const deleteDepartment = async (req: Request, res: Response) => {
   } catch (error) {
     return res
       .status(503)
-      .json({ message: "error", data: "Department failed to delete" });
+      .json({ message: "Department failed to delete", data: error });
   }
 };
 
@@ -74,7 +74,7 @@ export const listDepartments = async (req: Request, res: Response) => {
   } catch (error) {
     return res
       .status(503)
-      .json({ message: "error", data: "Department failed to fetch" });
+      .json({ message: "Department failed to fetch", data: error });
   }
 };
 
@@ -91,6 +91,6 @@ export const getDepartment = async (req: Request, res: Response) => {
   } catch (error) {
     return res
       .status(503)
-      .json({ message: "error", data: "Department failed to fetch" });
+      .json({ message: "Department failed to fetch", data: error });
   }
 };

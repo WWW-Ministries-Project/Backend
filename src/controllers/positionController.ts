@@ -18,7 +18,7 @@ export const createPosition = async (req: Request, res: Response) => {
   } catch (error) {
     return res
       .status(503)
-      .json({ status: "error", data: "Position failed to create" });
+      .json({ message: "Position failed to create", data: error });
   }
 };
 
@@ -44,7 +44,7 @@ export const updatePosition = async (req: Request, res: Response) => {
   } catch (error) {
     return res
       .status(503)
-      .json({ status: "error", data: "Position failed to update" });
+      .json({ message: "Position failed to update", data: error });
   }
 };
 
@@ -63,7 +63,7 @@ export const deletePosition = async (req: Request, res: Response) => {
   } catch (error) {
     return res
       .status(503)
-      .json({ status: "error", data: "Position failed to delete" });
+      .json({ message: "Position failed to delete", data: error });
   }
 };
 
@@ -74,7 +74,7 @@ export const listPositions = async (req: Request, res: Response) => {
   } catch (error) {
     return res
       .status(503)
-      .json({ message: "error", data: "Positions failed to fetch" });
+      .json({ message: "Positions failed to fetch", data: error });
   }
 };
 
@@ -91,6 +91,6 @@ export const getPosition = async (req: Request, res: Response) => {
   } catch (error) {
     return res
       .status(503)
-      .json({ message: "error", data: "Position failed to fetch" });
+      .json({ message: "Position failed to fetch", data: error });
   }
 };

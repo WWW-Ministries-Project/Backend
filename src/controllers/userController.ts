@@ -37,13 +37,17 @@ export const registerUser = async (req: Request, res: Response) => {
   } = req.body;
   // console.log(req.body);
   try {
-    // const response = await User.create({
-    //   name,
-    //   email,
-    //   password: await hashPassword(password),
-    // });
-
-    const response = await prisma.user.create({
+    const existingUser = await prisma.user.findMany({
+      where: {
+        email
+      }
+    })
+    if(existingUser){
+      res
+      .status(500)
+      .json({ message: "Email already exists", data: null })
+    } else {
+       const response = await prisma.user.create({
       data: {
         name,
         email,
@@ -74,22 +78,25 @@ export const registerUser = async (req: Request, res: Response) => {
             photo,
           },
         },
-      },
+      },select: {
+        id: true,
+        name: true,
+        email: true
+      }
     });
-
     res
       .status(200)
-      .json({ status: "User Created Succesfully", data: response });
+      .json({ message: "User Created Succesfully", data: response });
+    }   
   } catch (error) {
-    return res.json({ error });
+    return res
+    .status(500)
+    .json({ message: "Error Occured" , data: error });
   }
 };
 
 export const login = async (req: Request, res: Response) => {
   const { email, password } = req.body;
-  // const existance = await User.findOne({
-  //   email,
-  // }).lean();
 
   const existance = await prisma.user.findUnique({
     where: {
@@ -99,8 +106,8 @@ export const login = async (req: Request, res: Response) => {
 
   if (!existance) {
     return res
-      .status(503)
-      .json({ status: "error", data: "No user with that Email" });
+      .status(404)
+      .json({ message: "No user with that Email", data: null });
   }
 
   if (await comparePassword(password, existance?.password)) {
@@ -118,8 +125,8 @@ export const login = async (req: Request, res: Response) => {
     return res.json({ status: "Login Successfully", token: token });
   } else {
     return res
-      .status(503)
-      .json({ status: "error", data: "Invalid Credentials" });
+      .status(500)
+      .json({ message: "Invalid Credentials", data: null });
   }
 };
 
@@ -128,12 +135,7 @@ export const changePassword = async (req: Request, res: Response) => {
   try {
     const user: any = JWT.verify(token, JWT_SECRET);
     const id = user.id;
-    // await User.updateOne(
-    //   { _id },
-    //   {
-    //     $set: { password: await hashPassword(newpassword) },
-    //   }
-    // );
+
     await prisma.user.update({
       where: {
         id,
@@ -142,9 +144,9 @@ export const changePassword = async (req: Request, res: Response) => {
         password: await hashPassword(newpassword),
       },
     });
-    res.status(200).json({ status: "Password Changed Successfully" });
+    res.status(200).json({ message: "Password Changed Successfully", data: null });
   } catch (error) {
-    return res.status(409).json({ status: "error" });
+    return res.status(500).json({ message: "Error Occured", data: error });
   }
 };
 
@@ -178,9 +180,10 @@ export const forgetPassword = async (req: Request, res: Response) => {
     );
     const link = `https://wwwministries.netlify.app/reset-password/?id=${existingUser.id}&token=${token}`;
     sendEmail(link, email, "Reset Password");
-    return res.status(200).send(`Link Send to your Mail`);
+    return res.status(200).json({message: `Link Send to your Mail`, data: null});
   } catch (error) {
-    return res.status(500);
+    return res.status(500).json({message: "Error Occured", data: null});
+
   }
 };
 
@@ -189,10 +192,6 @@ export const resetPassword = async (req: Request, res: Response) => {
   const { password } = req.body;
   //check for the existence of an account using
   try {
-    // const existingUser = await User.findOne({
-    //   _id: id,
-    // }).lean();
-
     const existingUser = await prisma.user.findUnique({
       where: {
         id: Number(id),
@@ -200,21 +199,12 @@ export const resetPassword = async (req: Request, res: Response) => {
     });
 
     if (!existingUser) {
-      return res.json({ error: "User Not Exists" });
+      return res.status(404).json({ message: "User Not Exists", data: null });
     }
     const secret = JWT_SECRET + existingUser.password;
     const verify = JWT.verify(token as string, secret);
 
     if (verify) {
-      // await User.updateOne(
-      //   { _id: id },
-      //   {
-      //     $set: {
-      //       password: await hashPassword(password),
-      //     },
-      //   }
-      // );
-
       await prisma.user.update({
         where: {
           id: Number(id),
@@ -223,10 +213,10 @@ export const resetPassword = async (req: Request, res: Response) => {
           password: await hashPassword(password),
         },
       });
-      return res.send("Password Successfully changed");
+      return res.status(200).json({message: "Password Successfully changed", data: null});
     }
   } catch (error) {
-    return res.status(500).json({ error: "Link Expired" });
+    return res.status(500).json({ message: "Link Expired", data: null });
   }
 };
 
@@ -247,9 +237,9 @@ export const seedUser = async (req: Request, res: Response) => {
     });
     res
       .status(200)
-      .json({ status: "User Created Succesfully", data: response });
+      .json({ message: "User Created Succesfully", data: response });
   } catch (error) {
-    return res.status(500).json({ error });
+    return res.status(500).json({ message: "Something went wrong", data: error });
   }
 };
 
@@ -265,9 +255,9 @@ export const ListUsers = async (req: Request, res: Response) => {
     });
     res
       .status(200)
-      .json({ status: "Operation Succesful", data: response });
+      .json({ message: "Operation Succesful", data: response });
   } catch (error) {
-    return res.status(500).json({ error });
+    return res.status(500).json({ message: "Something Went Wrong", data: error });
   }
 
 };
@@ -282,11 +272,11 @@ export const getUser = async (req: Request, res: Response) => {
     });
     res
       .status(200)
-      .json({ status: "Operation Succesful", data: response });
+      .json({ message: "Operation Succesful", data: response });
   } catch (error) {
     return res.status(500).json({
-      msg: "Operation failed",
-      error: error
+      message: "Operation failed",
+      data: error
     });
   }
 };
