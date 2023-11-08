@@ -22,13 +22,15 @@ model user {
   department      user_departments[]
   position_id     Int?
   position        position?          @relation(fields: [position_id], references: [id])
-  user_info       user_info[]
+  user_info       user_info?
   department_head department[]
+  created_at      DateTime           @default(now())
+  updated_at      DateTime?
 }
 
 model user_info {
   id             Int       @id @default(autoincrement())
-  user_id        Int
+  user_id        Int       @unique
   user           user      @relation(fields: [user_id], references: [id])
   title          String?
   name           String
@@ -46,25 +48,25 @@ model user_info {
 }
 
 model department {
-  id               Int                @id @default(autoincrement())
-  name             String
-  department_head  Int?
-  user             user?              @relation(fields: [department_head], references: [id])
-  description      String?
-  user_departments user_departments[]
-  position         position[]
-  created_by       Int
-  created_at       DateTime           @default(now())
-  updated_by       Int?
-  updated_at       DateTime?
+  id                   Int                @id @default(autoincrement())
+  name                 String
+  department_head      Int?
+  department_head_info user?              @relation(fields: [department_head], references: [id])
+  description          String?
+  user_departments     user_departments[]
+  position             position[]
+  created_by           Int
+  created_at           DateTime           @default(now())
+  updated_by           Int?
+  updated_at           DateTime?
 }
 
 model user_departments {
-  id            Int         @id @default(autoincrement())
-  user_id       Int
-  user          user        @relation(fields: [user_id], references: [id])
-  department_id Int?
-  department    department? @relation(fields: [department_id], references: [id])
+  id              Int         @id @default(autoincrement())
+  user_id         Int
+  user            user        @relation(fields: [user_id], references: [id])
+  department_id   Int?
+  department_info department? @relation(fields: [department_id], references: [id])
 }
 
 model position {
@@ -81,6 +83,5 @@ model position {
 }
 
 model permissions {
-  id            Int         @id @default(autoincrement())
-  
+  id Int @id @default(autoincrement())
 }

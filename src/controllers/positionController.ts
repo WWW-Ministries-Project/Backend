@@ -28,15 +28,14 @@ export const createPosition = async (req: Request, res: Response) => {
       orderBy: {
         id: "desc"
       },
-      include: {
+      select: {
+        id: true,
+        name: true,
+        description: true,
         department: {
           select: {
+            id: true,
             name: true
-          }
-        },
-        user: {
-          select: {
-            name: true,
           }
         }
       }
@@ -66,15 +65,14 @@ export const updatePosition = async (req: Request, res: Response) => {
         updated_by,
         updated_at: new Date(),
       },
-      include: {
+      select: {
+        id: true,
+        name: true,
+        description: true,
         department: {
           select: {
+            id: true,
             name: true
-          }
-        },
-        user: {
-          select: {
-            name: true,
           }
         }
       }
@@ -102,15 +100,14 @@ export const deletePosition = async (req: Request, res: Response) => {
       orderBy: {
         id: "desc"
       },
-      include: {
+      select: {
+        id: true,
+        name: true,
+        description: true,
         department: {
           select: {
+            id: true,
             name: true
-          }
-        },
-        user: {
-          select: {
-            name: true,
           }
         }
       }
@@ -132,14 +129,13 @@ export const listPositions = async (req: Request, res: Response) => {
         orderBy: {
           id: "desc"
         },
-        include: {
+        select: {
+          id: true,
+          name: true,
+          description: true,
           department: {
             select: {
-              name: true
-            }
-          },
-          user: {
-            select: {
+              id: true,
               name: true
             }
           }
@@ -162,15 +158,14 @@ export const getPosition = async (req: Request, res: Response) => {
       where: {
         id,
       },
-      include: {
+      select: {
+        id: true,
+        name: true,
+        description: true,
         department: {
           select: {
+            id: true,
             name: true
-          }
-        },
-        user: {
-          select: {
-            name: true,
           }
         }
       }

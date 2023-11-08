@@ -11,37 +11,23 @@ export const createDepartment = async (req: Request, res: Response) => {
         description,
         created_by,
       },
-      include: {
-        user: {
-          select: {
-            name: true,
-          }
-        },
-        position: {
-          select: {
-            name: true,
-          }
-        },
-        // user_departments: true
-      }
     });
 
     const data = await prisma.department.findMany({
       orderBy: {
         id: "desc"
       },
-      include: {
-        user: {
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        department_head_info: {
           select: {
-            name: true,
+            id: true,
+            name: true
           }
-        },
-        position: {
-          select: {
-            name: true,
-          }
-        },
-        // user_departments: true
+        }
+
       }
     });
     res
@@ -69,18 +55,18 @@ export const updateDepartment = async (req: Request, res: Response) => {
         updated_by,
         updated_at: new Date(),
       },
-      include: {
-        user: {
-          select: {
-            name: true
-          }
-        },
-        position: {
-          select: {
-            name: true,
-          }
-        },
-      }
+      // include: {
+      //   user: {
+      //     select: {
+      //       name: true
+      //     }
+      //   },
+      //   position: {
+      //     select: {
+      //       name: true,
+      //     }
+      //   },
+      // }
     });
     res
       .status(200)
@@ -105,22 +91,22 @@ export const deleteDepartment = async (req: Request, res: Response) => {
       orderBy: {
         id: "desc"
       },
-      include: {
-        user: {
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        department_head_info: {
           select: {
-            name: true,
+            id: true,
+            name: true
           }
-        },
-        position: {
-          select: {
-            name: true,
-          }
-        },
+        }
+
       }
     });
     res
       .status(200)
-      .json({ message: "Department Deleted Succesfully", data: response });
+      .json({ message: "Department Deleted Succesfully", data: data });
   } catch (error) {
     return res
       .status(503)
@@ -134,18 +120,17 @@ export const listDepartments = async (req: Request, res: Response) => {
       orderBy: {
         id: "desc"
       },
-      include: {
-        position: {
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        department_head_info: {
           select: {
-            name: true,
-          }
-        },
-        user: {
-          select: {
+            id: true,
             name: true
           }
-        },
-        // user_departments: true
+        }
+
       }
     });
     res.status(200).json({ message: "Success", data: response });
@@ -164,18 +149,17 @@ export const getDepartment = async (req: Request, res: Response) => {
       where: {
         id,
       },
-      include: {
-        position: {
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        department_head_info: {
           select: {
-            name: true,
-          }
-        },
-        user: {
-          select: {
+            id: true,
             name: true
           }
-        },
-        // user_departments: true
+        }
+
       }
     });
     res.status(200).json({ message: "Success", data: response });

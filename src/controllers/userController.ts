@@ -35,20 +35,13 @@ export const registerUser = async (req: Request, res: Response) => {
     position_id,
     password,
   } = req.body;
-  // console.log(req.body);
   try {
     const existingUser = await prisma.user.findMany({
       where: {
         email
-      },
-      include: {
-        department: true,
-        position: true,
-        department_head: true,
-        user_info: true
       }
     })
-    if(existingUser){
+    if(existingUser.length >= 1){
       res
       .status(500)
       .json({ message: "Email already exists", data: null })
@@ -57,16 +50,18 @@ export const registerUser = async (req: Request, res: Response) => {
       data: {
         name,
         email,
+        position_id,
         password: is_user
           ? await hashPassword(password)
           : await hashPassword("123456"),
         is_user,
         is_visitor,
-        department: {
+        department: department_id ? 
+        {
           create: {
             department_id,
           },
-        },
+        } : undefined,
         user_info: {
           create: {
             title,
@@ -84,12 +79,40 @@ export const registerUser = async (req: Request, res: Response) => {
             photo,
           },
         },
-      },select: {
+      },
+      select: {
         id: true,
         name: true,
-        email: true
+        email: true,
+        created_at: true,
+        is_active: true,
+        user_info: {
+          select: {
+            primary_number: true,
+            title: true,
+            photo: true,
+            
+          }
+        },
+        department: {
+          select: {
+            department_info: {
+              select: {
+                id: true,
+                name: true,
+              }
+            }
+          }
+        },
+        position: {
+          select: {
+            id: true,
+            name: true,
+          }
+        }
       }
-    });
+    }
+    );
     res
       .status(200)
       .json({ message: "User Created Succesfully", data: response });
@@ -107,12 +130,6 @@ export const login = async (req: Request, res: Response) => {
   const existance = await prisma.user.findUnique({
     where: {
       email,
-    },
-    include: {
-      department: true,
-      position: true,
-      department_head: true,
-      user_info: true
     }
   });
 
@@ -155,12 +172,6 @@ export const changePassword = async (req: Request, res: Response) => {
       data: {
         password: await hashPassword(newpassword),
       },
-      include: {
-        department: true,
-        position: true,
-        department_head: true,
-        user_info: true
-      }
     });
     res.status(200).json({ message: "Password Changed Successfully", data: null });
   } catch (error) {
@@ -170,12 +181,8 @@ export const changePassword = async (req: Request, res: Response) => {
 
 export const forgetPassword = async (req: Request, res: Response) => {
   const { email } = req.body;
-  //check for the existence of an account using
   try {
-    // const existingUser = await User.findOne({
-    //   email,
-    // });
-
+    //check for the existence of an account using
     const existingUser = await prisma.user.findUnique({
       where: {
         email,
@@ -262,22 +269,53 @@ export const seedUser = async (req: Request, res: Response) => {
 };
 
 export const ListUsers = async (req: Request, res: Response) => {
-  const { is_active, is_visitor } = req.body;
+  const { is_active, is_visitor, name } = req.body;
 
   try {
     const response = await prisma.user.findMany({
       orderBy: {
         id: "desc"
       },
-      where: {
-        is_active,
-        is_visitor
+      where: 
+      {
+        AND: {
+          is_active,
+          is_visitor,
+          name:  {
+            contains: name ? name.trim() : undefined,
+            mode: "insensitive"
+        }
+        }
       },
-      include: {
-        department: true,
-        position: true,
-        department_head: true,
-        user_info: true
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        created_at: true,
+        is_active: true,
+        user_info: {
+          select: {
+            primary_number: true,
+            title: true,
+            photo: true,
+          }
+        },
+        department: {
+          select: {
+            department_info: {
+              select: {
+                id: true,
+                name: true,
+              }
+            }
+          }
+        },
+        position: {
+          select: {
+            id: true,
+            name: true,
+          }
+        }
       }
     });
     res
@@ -296,11 +334,24 @@ export const getUser = async (req: Request, res: Response) => {
       where: {
         id: user_id
       },
-      include: {
-        department: true,
-        position: true,
-        department_head: true,
-        user_info: true
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        is_active: true,
+        user_info: true,
+        department: {
+          select: {
+            department_info: {
+              select: {
+                id: true,
+                name: true,
+                description: true
+              }
+            }
+          }
+        },
+        position: true
       }
     });
     res
