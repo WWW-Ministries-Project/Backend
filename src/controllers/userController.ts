@@ -40,6 +40,12 @@ export const registerUser = async (req: Request, res: Response) => {
     const existingUser = await prisma.user.findMany({
       where: {
         email
+      },
+      include: {
+        department: true,
+        position: true,
+        department_head: true,
+        user_info: true
       }
     })
     if(existingUser){
@@ -102,6 +108,12 @@ export const login = async (req: Request, res: Response) => {
     where: {
       email,
     },
+    include: {
+      department: true,
+      position: true,
+      department_head: true,
+      user_info: true
+    }
   });
 
   if (!existance) {
@@ -143,6 +155,12 @@ export const changePassword = async (req: Request, res: Response) => {
       data: {
         password: await hashPassword(newpassword),
       },
+      include: {
+        department: true,
+        position: true,
+        department_head: true,
+        user_info: true
+      }
     });
     res.status(200).json({ message: "Password Changed Successfully", data: null });
   } catch (error) {
@@ -251,6 +269,12 @@ export const ListUsers = async (req: Request, res: Response) => {
       where: {
         is_active,
         is_visitor
+      },
+      include: {
+        department: true,
+        position: true,
+        department_head: true,
+        user_info: true
       }
     });
     res
@@ -268,6 +292,12 @@ export const getUser = async (req: Request, res: Response) => {
     const response = await prisma.user.findMany({
       where: {
         id: user_id
+      },
+      include: {
+        department: true,
+        position: true,
+        department_head: true,
+        user_info: true
       }
     });
     res

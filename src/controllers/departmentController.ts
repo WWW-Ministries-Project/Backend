@@ -12,14 +12,33 @@ export const createDepartment = async (req: Request, res: Response) => {
         created_by,
       },
       include: {
-        user: true,
+        user: {
+          select: {
+            name: true,
+          }
+        },
+        position: true,
+        user_departments: true
+      }
+    });
+
+    const data = await prisma.department.findMany({
+      orderBy: {
+        id: "desc"
+      },
+      include: {
+        user: {
+          select: {
+            name: true,
+          }
+        },
         position: true,
         user_departments: true
       }
     });
     res
       .status(200)
-      .json({ message: "Department Created Succesfully", data: response });
+      .json({ message: "Department Created Succesfully", data: data });
   } catch (error: any) {
     return res
       .status(500)
@@ -43,9 +62,12 @@ export const updateDepartment = async (req: Request, res: Response) => {
         updated_at: new Date(),
       },
       include: {
-        user: true,
+        user: {
+          select: {
+            name: true
+          }
+        },
         position: true,
-        user_departments: true
       }
     });
     res
@@ -67,6 +89,19 @@ export const deleteDepartment = async (req: Request, res: Response) => {
         id,
       },
     });
+    const data = await prisma.department.findMany({
+      orderBy: {
+        id: "desc"
+      },
+      include: {
+        user: {
+          select: {
+            name: true,
+          }
+        },
+        position: true,
+      }
+    });
     res
       .status(200)
       .json({ message: "Department Deleted Succesfully", data: response });
@@ -80,9 +115,16 @@ export const deleteDepartment = async (req: Request, res: Response) => {
 export const listDepartments = async (req: Request, res: Response) => {
   try {
     const response = await prisma.department.findMany({
+      orderBy: {
+        id: "desc"
+      },
       include: {
         position: true,
-        user: true,
+        user: {
+          select: {
+            name: true
+          }
+        },
         user_departments: true
       }
     });
@@ -104,7 +146,11 @@ export const getDepartment = async (req: Request, res: Response) => {
       },
       include: {
         position: true,
-        user: true,
+        user: {
+          select: {
+            name: true
+          }
+        },
         user_departments: true
       }
     });

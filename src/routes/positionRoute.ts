@@ -12,7 +12,7 @@ export const positionRouter = Router();
 
 positionRouter.post("/create-position", createPosition);
 
-positionRouter.post("/update-position", updatePosition);
+positionRouter.put("/update-position", updatePosition);
 
 positionRouter.post("/delete-position", deletePosition);
 

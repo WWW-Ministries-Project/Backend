@@ -16,9 +16,26 @@ export const createPosition = async (req: Request, res: Response) => {
         user: true
       }
     });
+    const data = await prisma.position.findMany({
+      orderBy: {
+        id: "desc"
+      },
+      include: {
+        department: {
+          select: {
+            name: true
+          }
+        },
+        user: {
+          select: {
+            name: true,
+          }
+        }
+      }
+    });
     res
       .status(200)
-      .json({ message: "Position Created Succesfully", data: response });
+      .json({ message: "Position Created Succesfully", data: data });
   } catch (error) {
     return res
       .status(503)
@@ -69,9 +86,26 @@ export const deletePosition = async (req: Request, res: Response) => {
         user: true
       }
     });
+    const data = await prisma.position.findMany({
+      orderBy: {
+        id: "desc"
+      },
+      include: {
+        department: {
+          select: {
+            name: true
+          }
+        },
+        user: {
+          select: {
+            name: true,
+          }
+        }
+      }
+    });
     res
       .status(200)
-      .json({ message: "Position Deleted Succesfully", data: response });
+      .json({ message: "Position Deleted Succesfully", data: data });
   } catch (error) {
     return res
       .status(503)
@@ -83,9 +117,20 @@ export const listPositions = async (req: Request, res: Response) => {
   try {
     const response = await prisma.position.findMany(
       {
+        orderBy: {
+          id: "desc"
+        },
         include: {
-          department: true,
-          user: true
+          department: {
+            select: {
+              name: true
+            }
+          },
+          user: {
+            select: {
+              name: true
+            }
+          }
         }
       }
     );

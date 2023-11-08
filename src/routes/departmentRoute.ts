@@ -12,7 +12,7 @@ export const departmentRouter = Router();
 
 departmentRouter.post("/create-department", createDepartment);
 
-departmentRouter.post("/update-department", updateDepartment);
+departmentRouter.put("/update-department", updateDepartment);
 
 departmentRouter.post("/delete-department", deleteDepartment);
 
