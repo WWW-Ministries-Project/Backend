@@ -266,6 +266,9 @@ export const ListUsers = async (req: Request, res: Response) => {
 
   try {
     const response = await prisma.user.findMany({
+      orderBy: {
+        id: "desc"
+      },
       where: {
         is_active,
         is_visitor
