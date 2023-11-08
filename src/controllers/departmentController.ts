@@ -11,6 +11,11 @@ export const createDepartment = async (req: Request, res: Response) => {
         description,
         created_by,
       },
+      include: {
+        user: true,
+        position: true,
+        user_departments: true
+      }
     });
     res
       .status(200)
@@ -37,6 +42,11 @@ export const updateDepartment = async (req: Request, res: Response) => {
         updated_by,
         updated_at: new Date(),
       },
+      include: {
+        user: true,
+        position: true,
+        user_departments: true
+      }
     });
     res
       .status(200)
@@ -69,7 +79,13 @@ export const deleteDepartment = async (req: Request, res: Response) => {
 
 export const listDepartments = async (req: Request, res: Response) => {
   try {
-    const response = await prisma.department.findMany();
+    const response = await prisma.department.findMany({
+      include: {
+        position: true,
+        user: true,
+        user_departments: true
+      }
+    });
     res.status(200).json({ message: "Success", data: response });
   } catch (error) {
     return res
@@ -86,6 +102,11 @@ export const getDepartment = async (req: Request, res: Response) => {
       where: {
         id,
       },
+      include: {
+        position: true,
+        user: true,
+        user_departments: true
+      }
     });
     res.status(200).json({ message: "Success", data: response });
   } catch (error) {

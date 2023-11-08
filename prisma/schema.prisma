@@ -79,3 +79,8 @@ model position {
   updated_by    Int?
   updated_at    DateTime?
 }
+
+model permissions {
+  id            Int         @id @default(autoincrement())
+  
+}
