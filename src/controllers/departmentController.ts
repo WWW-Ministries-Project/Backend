@@ -17,8 +17,12 @@ export const createDepartment = async (req: Request, res: Response) => {
             name: true,
           }
         },
-        position: true,
-        user_departments: true
+        position: {
+          select: {
+            name: true,
+          }
+        },
+        // user_departments: true
       }
     });
 
@@ -32,8 +36,12 @@ export const createDepartment = async (req: Request, res: Response) => {
             name: true,
           }
         },
-        position: true,
-        user_departments: true
+        position: {
+          select: {
+            name: true,
+          }
+        },
+        // user_departments: true
       }
     });
     res
@@ -67,7 +75,11 @@ export const updateDepartment = async (req: Request, res: Response) => {
             name: true
           }
         },
-        position: true,
+        position: {
+          select: {
+            name: true,
+          }
+        },
       }
     });
     res
@@ -99,7 +111,11 @@ export const deleteDepartment = async (req: Request, res: Response) => {
             name: true,
           }
         },
-        position: true,
+        position: {
+          select: {
+            name: true,
+          }
+        },
       }
     });
     res
@@ -119,13 +135,17 @@ export const listDepartments = async (req: Request, res: Response) => {
         id: "desc"
       },
       include: {
-        position: true,
+        position: {
+          select: {
+            name: true,
+          }
+        },
         user: {
           select: {
             name: true
           }
         },
-        user_departments: true
+        // user_departments: true
       }
     });
     res.status(200).json({ message: "Success", data: response });
@@ -145,13 +165,17 @@ export const getDepartment = async (req: Request, res: Response) => {
         id,
       },
       include: {
-        position: true,
+        position: {
+          select: {
+            name: true,
+          }
+        },
         user: {
           select: {
             name: true
           }
         },
-        user_departments: true
+        // user_departments: true
       }
     });
     res.status(200).json({ message: "Success", data: response });

@@ -12,8 +12,16 @@ export const createPosition = async (req: Request, res: Response) => {
         created_by,
       },
       include: {
-        department: true,
-        user: true
+        department: {
+          select: {
+            name: true
+          }
+        },
+        user: {
+          select: {
+            name: true
+          }
+        }
       }
     });
     const data = await prisma.position.findMany({
@@ -59,8 +67,16 @@ export const updatePosition = async (req: Request, res: Response) => {
         updated_at: new Date(),
       },
       include: {
-        department: true,
-        user: true
+        department: {
+          select: {
+            name: true
+          }
+        },
+        user: {
+          select: {
+            name: true,
+          }
+        }
       }
     });
     res
@@ -80,10 +96,6 @@ export const deletePosition = async (req: Request, res: Response) => {
     const response = await prisma.position.delete({
       where: {
         id,
-      },
-      include: {
-        department: true,
-        user: true
       }
     });
     const data = await prisma.position.findMany({
@@ -151,8 +163,16 @@ export const getPosition = async (req: Request, res: Response) => {
         id,
       },
       include: {
-        user: true,
-        department: true
+        department: {
+          select: {
+            name: true
+          }
+        },
+        user: {
+          select: {
+            name: true,
+          }
+        }
       }
     });
     res.status(200).json({ message: "Success", data: response });
