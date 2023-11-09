@@ -9,6 +9,7 @@ import { attendanceRouter } from "./src/routes/attendanceRoute";
 import { departmentRouter } from "./src/routes/departmentRoute";
 import { positionRouter } from "./src/routes/positionRoute";
 import { hashPassword } from "./src/utils/hashPasswords";
+import { accessRouter } from "./src/routes/accessLevelRoute";
 dotenv.config();
 
 // router
@@ -25,6 +26,7 @@ app.use("/member", memberrouter);
 app.use("/attendance", attendanceRouter);
 app.use("/department", departmentRouter);
 app.use("/position", positionRouter);
+app.use("/access", accessRouter)
 
 mongoose
   .connect(MONGO_URI, {})

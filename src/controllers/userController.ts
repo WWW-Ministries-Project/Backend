@@ -130,6 +130,20 @@ export const login = async (req: Request, res: Response) => {
   const existance = await prisma.user.findUnique({
     where: {
       email,
+      AND: {
+        is_user: true
+      }
+    },
+    select: {
+      id: true,
+      email: true,
+      name: true,
+      password: true,
+      access: {
+        select: {
+          permissions: true
+        }
+      }
     }
   });
 
@@ -145,6 +159,7 @@ export const login = async (req: Request, res: Response) => {
         id: existance.id,
         name: existance.name,
         email: existance.email,
+        permissions: existance.access?.permissions
       },
       JWT_SECRET,
       {
