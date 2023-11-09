@@ -143,6 +143,7 @@ export const login = async (req: Request, res: Response) => {
     const token = JWT.sign(
       {
         id: existance.id,
+        name: existance.name,
         email: existance.email,
       },
       JWT_SECRET,
