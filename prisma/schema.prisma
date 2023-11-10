@@ -85,15 +85,15 @@ model position {
 }
 
 model access_level {
-  id          Int       @id @default(autoincrement())
-  name        String    @unique
-  description String?
-  permissions Json
-  created_by  Int?
-  updated_by  Int?
-  deleted_at  DateTime?
-  deleted     Boolean   @default(false)
-  created_at  DateTime? @default(now())
-  updated_at  DateTime?
-  user        user[]
+  id             Int       @id @default(autoincrement())
+  name           String    @unique
+  description    String?
+  permissions    Json
+  created_by     Int?
+  updated_by     Int?
+  deleted_at     DateTime?
+  deleted        Boolean   @default(false)
+  created_at     DateTime? @default(now())
+  updated_at     DateTime?
+  users_assigned user[]
 }

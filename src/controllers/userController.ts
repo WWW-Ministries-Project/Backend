@@ -34,6 +34,7 @@ export const registerUser = async (req: Request, res: Response) => {
     department_id,
     position_id,
     password,
+    access_level_id
   } = req.body;
   try {
     const existingUser = await prisma.user.findMany({
@@ -56,6 +57,7 @@ export const registerUser = async (req: Request, res: Response) => {
           : await hashPassword("123456"),
         is_user,
         is_visitor,
+        access_level_id,
         department: department_id ? 
         {
           create: {

@@ -16,7 +16,7 @@ departmentRouter.post("/create-department", [protect, can_manage_department], cr
 
 departmentRouter.put("/update-department", [protect, can_manage_department], updateDepartment);
 
-departmentRouter.post("/delete-department", [protect, can_manage_department], deleteDepartment);
+departmentRouter.delete("/delete-department", [protect, can_manage_department], deleteDepartment);
 
 departmentRouter.get("/list-departments", [protect, can_view_department], listDepartments);
 

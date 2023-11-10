@@ -16,7 +16,7 @@ positionRouter.post("/create-position", [protect, can_manage_department], create
 
 positionRouter.put("/update-position", [protect ,can_manage_department], updatePosition);
 
-positionRouter.post("/delete-position", [protect, can_manage_department],  deletePosition);
+positionRouter.delete("/delete-position", [protect, can_manage_department],  deletePosition);
 
 positionRouter.get("/list-positions", [protect, can_view_positions], listPositions);
 
