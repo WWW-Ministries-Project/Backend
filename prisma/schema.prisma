@@ -16,7 +16,7 @@ model user {
   email           String             @unique
   is_active       Boolean?           @default(true)
   partner         Boolean?           @default(false)
-  is_user         Boolean?
+  is_user         Boolean?           @default(false)
   is_visitor      Boolean?
   password        String
   department      user_departments[]
@@ -26,6 +26,8 @@ model user {
   department_head department[]
   created_at      DateTime           @default(now())
   updated_at      DateTime?
+  access_level_id Int?
+  access          access_level?      @relation(fields: [access_level_id], references: [id])
 }
 
 model user_info {
@@ -82,6 +84,16 @@ model position {
   updated_at    DateTime?
 }
 
-model permissions {
-  id Int @id @default(autoincrement())
+model access_level {
+  id             Int       @id @default(autoincrement())
+  name           String    @unique
+  description    String?
+  permissions    Json
+  created_by     Int?
+  updated_by     Int?
+  deleted_at     DateTime?
+  deleted        Boolean   @default(false)
+  created_at     DateTime? @default(now())
+  updated_at     DateTime?
+  users_assigned user[]
 }

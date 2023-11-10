@@ -34,6 +34,7 @@ export const registerUser = async (req: Request, res: Response) => {
     department_id,
     position_id,
     password,
+    access_level_id
   } = req.body;
   try {
     const existingUser = await prisma.user.findMany({
@@ -56,6 +57,7 @@ export const registerUser = async (req: Request, res: Response) => {
           : await hashPassword("123456"),
         is_user,
         is_visitor,
+        access_level_id,
         department: department_id ? 
         {
           create: {
@@ -130,6 +132,20 @@ export const login = async (req: Request, res: Response) => {
   const existance = await prisma.user.findUnique({
     where: {
       email,
+      AND: {
+        is_user: true
+      }
+    },
+    select: {
+      id: true,
+      email: true,
+      name: true,
+      password: true,
+      access: {
+        select: {
+          permissions: true
+        }
+      }
     }
   });
 
@@ -145,6 +161,7 @@ export const login = async (req: Request, res: Response) => {
         id: existance.id,
         name: existance.name,
         email: existance.email,
+        permissions: existance.access?.permissions
       },
       JWT_SECRET,
       {

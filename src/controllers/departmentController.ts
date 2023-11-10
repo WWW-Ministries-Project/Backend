@@ -162,10 +162,12 @@ export const getDepartment = async (req: Request, res: Response) => {
 
       }
     });
+    if (!response) throw new Error("No Department Found");
+
     res.status(200).json({ message: "Success", data: response });
   } catch (error) {
     return res
       .status(503)
-      .json({ message: "Department failed to fetch", data: error });
+      .json({ message: "No Department Found", data: error });
   }
 };
