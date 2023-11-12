@@ -110,7 +110,7 @@ export const protect = (req: any, res: Response, next: NextFunction) => {
       const decoded = JWT.verify(token, process.env.JWT_SECRET as string) as any;
       const permission = decoded.permissions;
   
-      if (permission.settings.department.view_positions) {
+      if (permission.settings.positions.view_positions) {
         next();
       } else {
         return res.status(401).json({ message: "Not authorized to view positions", data: null });
