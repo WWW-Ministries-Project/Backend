@@ -1,0 +1,21 @@
+name: Render Deploy
+
+on:
+  pull_request:
+    branches:
+      - main # Change this to your main branch name
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Deploy to Render
+        run: |
+          curl -X POST -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${{ secrets.RENDER_TOKEN }}" \
+            -d '{"branch": "${{ github.ref }}", "commit_sha": "${{ github.sha }}"}' \
+            https://api.render.com/v1/deploys
