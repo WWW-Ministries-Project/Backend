@@ -64,7 +64,7 @@ export const protect = (req: any, res: Response, next: NextFunction) => {
         return res.status(401).json({ message: "Not authorized to view departments", data: null });
       }
     } catch (error) {
-      return res.status(401).json({ message: "Session Expired", data: null });
+      return res.status(401).json({ message: "Session Expired / Invalid Token", data: null });
     }
   };
   
@@ -82,7 +82,7 @@ export const protect = (req: any, res: Response, next: NextFunction) => {
         return res.status(401).json({ message: "Not authorized to manage departments", data: null });
       }
     } catch (error) {
-      return res.status(401).json({ message: "Session Expired", data: null });
+      return res.status(401).json({ message: "Session Expired / Invalid Token", data: null });
     }
   };
   
