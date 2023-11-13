@@ -7,7 +7,7 @@
     "build": "npx tsc",
     "dev": "npx tsc & nodemon dist/index.js",
     "migrate": "npx prisma migrate deploy && npx prisma generate",
-    "prod": "npm run migrate && npx tsc && node dist/index.js"
+    "prod": "npx tsc && node dist/index.js"
   },
   "keywords": [],
   "author": "",
