@@ -28,6 +28,8 @@ model user {
   updated_at      DateTime?
   access_level_id Int?
   access          access_level?      @relation(fields: [access_level_id], references: [id])
+  assets          assets[]
+  asset_history   asset_history[]
 }
 
 model user_info {
@@ -96,4 +98,44 @@ model access_level {
   created_at     DateTime? @default(now())
   updated_at     DateTime?
   users_assigned user[]
+}
+
+// Asset managment
+
+enum asset_status {
+  ASSIGNED
+  UNASSIGNED
+  BROKEN
+  IN_MAINTENANCE
+}
+
+model assets {
+  id               Int             @id @default(autoincrement())
+  name             String
+  category         asset_category? @relation(fields: [asset_categoryId], references: [id])
+  asset_categoryId Int?
+  assigned_to      user?           @relation(fields: [userId], references: [id])
+  userId           Int?
+  date_assigned    DateTime?
+  date_purchased   DateTime?
+  price            Float?
+  description      String?
+  status           asset_status
+}
+
+model asset_category {
+  id          Int      @id @default(autoincrement())
+  name        String
+  description String?
+  assets      assets[]
+}
+
+model asset_history {
+  id            Int          @id @default(autoincrement())
+  title         String
+  description   String?
+  status_update asset_status
+  related_user  user?        @relation(fields: [userId], references: [id])
+  update_date   DateTime
+  userId        Int?
 }
