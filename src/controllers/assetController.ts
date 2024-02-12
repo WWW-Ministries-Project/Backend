@@ -27,10 +27,10 @@ export const createAsset = async (req: Request, res: Response) => {
                 asset_code,
                 category: hasCategory,
                 userId,
-                date_purchased: new Date(date_purchased),
+                date_purchased: date_purchased ? new Date(date_purchased) : undefined,
                 description,
                 price,
-                date_assigned: new Date(date_assigned),
+                date_assigned: date_assigned ? new Date(date_assigned) : undefined,
                 status
             }
         });
@@ -41,10 +41,7 @@ export const createAsset = async (req: Request, res: Response) => {
                 asset
             })
     } catch (error: any) {
-        if (error.code === 11000) {
-            return res.status(409).send("Operation not successful");
-        }
-        throw error.message;
+        return res.status(409).send("Operation not successful");
     }
 }
 
@@ -77,10 +74,10 @@ export const updateAsset = async (req: Request, res: Response) => {
                 asset_code,
                 category: hasCategory,
                 userId,
-                date_purchased: new Date(date_purchased),
+                date_purchased: date_purchased ? new Date(date_purchased) : undefined,
                 description,
                 price,
-                date_assigned: new Date(date_assigned),
+                date_assigned: date_assigned ? new Date(date_assigned) : undefined,
                 status
             }
         });
@@ -88,11 +85,9 @@ export const updateAsset = async (req: Request, res: Response) => {
             message: "Asset updated successfully",
             updatedAsset
         })
-    } catch (error: any) {
-        if (error.code === 11000) {
-            return res.status(409).send("Operation not successful");
-        }
-        throw error.message;
+    } catch (error) {
+        console.log(error);
+        return res.status(409).send("Operation not successful");
     }
 }
 export const listAssets = async (req: Request, res: Response) => {
@@ -100,10 +95,7 @@ export const listAssets = async (req: Request, res: Response) => {
         const assetsList = await prisma.assets.findMany();
         res.status(200).json({ assetsList })
     } catch (error: any) {
-        if (error.code === 11000) {
-            return res.status(409).send("Operation not successful");
-        }
-        throw error.message;
+        return res.status(409).send("Operation not successful");
     }
 }
 export const deleteAsset = async (req: Request, res: Response) => {
@@ -117,9 +109,6 @@ export const deleteAsset = async (req: Request, res: Response) => {
         })
         res.status(200).json({ message: "Asset deleted successfully", deletedAsset });
     } catch (error: any) {
-        if (error.code === 11000) {
-            return res.status(409).send("Operation not successful");
-        }
-        throw error.message;
+        return res.status(409).send("Operation not successful");
     }
 }
