@@ -112,6 +112,7 @@ enum asset_status {
 model assets {
   id               Int             @id @default(autoincrement())
   name             String
+  asset_code       String?         @unique
   category         asset_category? @relation(fields: [asset_categoryId], references: [id])
   asset_categoryId Int?
   assigned_to      user?           @relation(fields: [userId], references: [id])
@@ -120,6 +121,7 @@ model assets {
   date_purchased   DateTime?
   price            Float?
   description      String?
+  updated_at       DateTime        @default(now())
   status           asset_status
 }
 
