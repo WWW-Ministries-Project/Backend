@@ -169,7 +169,7 @@ export const login = async (req: Request, res: Response) => {
       }
     );
 
-    return res.json({ status: "Login Successfully", token: token });
+    return res.status(200).json({ status: "Login Successfully", token: token });
   } else {
     return res
       .status(500)
