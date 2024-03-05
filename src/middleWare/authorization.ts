@@ -4,10 +4,7 @@ import JWT from "jsonwebtoken";
 
 export class Permissions {
   protect = (req: any, res: Response, next: NextFunction) => {
-    console.log(req);
     const token = req.headers["authorization"]?.split(" ")[1];
-    console.log(token, "token");
-
     if (!token)
       return res
         .status(401)
@@ -260,7 +257,6 @@ export class Permissions {
         process.env.JWT_SECRET as string
       ) as any;
       const permission = decoded.permissions;
-      console.log(decoded);
 
       if (permission.delete_Access_Rights) {
         next();
@@ -283,7 +279,6 @@ export class Permissions {
         process.env.JWT_SECRET as string
       ) as any;
       const permission = decoded.permissions;
-      console.log(decoded);
 
       if (permission.create_Access_Rights) {
         next();
@@ -306,7 +301,6 @@ export class Permissions {
         process.env.JWT_SECRET as string
       ) as any;
       const permission = decoded.permissions;
-      console.log(decoded);
 
       if (permission.edit_Access_Rights) {
         next();

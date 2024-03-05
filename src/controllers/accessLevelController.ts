@@ -170,7 +170,6 @@ export const assignAccessLevelToUser = async (req: Request, res: Response) => {
 
 export const deleteAccessLevel = async (req: Request, res: Response) => {
     const { id } = req.body;
-    console.log(id)
     try {
         const unAssign = await prisma.user.updateMany({
             where:{

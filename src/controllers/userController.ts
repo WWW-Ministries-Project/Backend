@@ -143,7 +143,6 @@ export const login = async (req: Request, res: Response) => {
       },
     },
   });
-  console.log(existance);
 
   if (!existance) {
     return res
