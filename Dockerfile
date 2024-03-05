@@ -8,6 +8,8 @@ RUN npm install
 
 COPY . .
 
+RUN npm run migrate:2
+
 EXPOSE 8000
 
 CMD [ "npm", "run", "prod" ]

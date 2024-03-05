@@ -7,17 +7,39 @@ import {
   listPositions,
   getPosition,
 } from "../controllers/positionController";
-import { can_view_positions, can_manage_positions, protect } from "../middleWare/authorization";
+import { Permissions } from "../middleWare/authorization";
+const permissions = new Permissions();
+const protect = permissions.protect;
 
 dotenv.config();
 export const positionRouter = Router();
 
-positionRouter.post("/create-position", [protect, can_manage_positions], createPosition);
+positionRouter.post(
+  "/create-position",
+  [protect, permissions.can_create_positions],
+  createPosition
+);
 
-positionRouter.put("/update-position", [protect ,can_manage_positions], updatePosition);
+positionRouter.put(
+  "/update-position",
+  [protect, permissions.can_edit_positions],
+  updatePosition
+);
 
-positionRouter.delete("/delete-position", [protect, can_manage_positions],  deletePosition);
+positionRouter.delete(
+  "/delete-position",
+  [protect, permissions.can_delete_positions],
+  deletePosition
+);
 
-positionRouter.get("/list-positions", [protect, can_view_positions], listPositions);
+positionRouter.get(
+  "/list-positions",
+  [protect, permissions.can_view_positions],
+  listPositions
+);
 
-positionRouter.get("/get-position", [protect, can_view_positions], getPosition);
+positionRouter.get(
+  "/get-position",
+  [protect, permissions.can_view_positions],
+  getPosition
+);

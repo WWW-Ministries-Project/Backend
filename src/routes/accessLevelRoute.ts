@@ -1,13 +1,39 @@
 import Router from "express";
 import * as dotenv from "dotenv";
-import { createAccessLevel, listAllAccessLevel, updateAccessLevel, assignAccessLevelToUser } from "../controllers/accessLevelController";
-import { can_manage_access, can_view_access, protect } from "../middleWare/authorization";
-
+import {
+  createAccessLevel,
+  listAllAccessLevel,
+  updateAccessLevel,
+  assignAccessLevelToUser,
+  deleteAccessLevel,
+} from "../controllers/accessLevelController";
+import { Permissions } from "../middleWare/authorization";
+const permissions = new Permissions();
 dotenv.config();
 export const accessRouter = Router();
 
-accessRouter.post("/create-access-level", [can_manage_access, protect], createAccessLevel);
-accessRouter.put("/update-access-level", [can_manage_access, protect], updateAccessLevel);
-accessRouter.put("/assign_access_to_user", [can_manage_access, protect], assignAccessLevelToUser);
-accessRouter.get("/list-access-levels", [can_view_access, protect], listAllAccessLevel);
-
+accessRouter.post(
+  "/create-access-level",
+  [permissions.can_create_access, permissions.protect],
+  createAccessLevel
+);
+accessRouter.put(
+  "/update-access-level",
+  [permissions.can_edit_access, permissions.protect],
+  updateAccessLevel
+);
+accessRouter.put(
+  "/assign_access_to_user",
+  [permissions.can_edit_access, permissions.protect],
+  assignAccessLevelToUser
+);
+accessRouter.delete(
+  "/delete-access-level",
+  [permissions.can_delete_access, permissions.protect],
+  deleteAccessLevel
+);
+accessRouter.get(
+  "/list-access-levels",
+  [permissions.can_view_access, permissions.protect],
+  listAllAccessLevel
+);

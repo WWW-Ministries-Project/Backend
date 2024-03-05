@@ -10,6 +10,7 @@ import { departmentRouter } from "./src/routes/departmentRoute";
 import { positionRouter } from "./src/routes/positionRoute";
 import { hashPassword } from "./src/utils/hashPasswords";
 import { accessRouter } from "./src/routes/accessLevelRoute";
+import { landingPage } from "./src/controllers/userController";
 dotenv.config();
 
 // router
@@ -21,18 +22,19 @@ const app = express();
 app.use(bodyParser.json());
 app.use(cors());
 app.use(express.json());
+app.get("/", landingPage);
 app.use("/user", userRoutes);
 app.use("/member", memberrouter);
 app.use("/attendance", attendanceRouter);
 app.use("/department", departmentRouter);
 app.use("/position", positionRouter);
-app.use("/access", accessRouter)
+app.use("/access", accessRouter);
 
 mongoose
   .connect(MONGO_URI, {})
   .then(() => {
     console.log("Connected to MongoDB");
-    app.listen(8000, () => {
+    app.listen(port, () => {
       console.log(`Server running on port ${port}`);
     });
   })
