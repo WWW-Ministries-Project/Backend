@@ -43,7 +43,7 @@ export const registerUser = async (req: Request, res: Response) => {
       },
     });
     if (existingUser.length >= 1) {
-      res.status(500).json({ message: "Email already exists", data: null });
+      res.status(409).json({ message: "Email already exists", data: null });
     } else {
       const response = await prisma.user.create({
         data: {
@@ -166,7 +166,7 @@ export const login = async (req: Request, res: Response) => {
 
     return res.status(200).json({ status: "Login Successfully", token: token });
   } else {
-    return res.status(500).json({ message: "Invalid Credentials", data: null });
+    return res.status(401).json({ message: "Invalid Credentials", data: null });
   }
 };
 
