@@ -66,6 +66,48 @@ export class Permissions {
       return res.status(401).json({ message: "Session Expired", data: null });
     }
   };
+  edit_Members = (req: Request, res: Response, next: NextFunction) => {
+    const token: any = req.headers["authorization"]?.split(" ")[1];
+
+    try {
+      const decoded = JWT.verify(
+        token,
+        process.env.JWT_SECRET as string
+      ) as any;
+      const permission = decoded.permissions;
+
+      if (permission.edit_Members) {
+        next();
+      } else {
+        return res
+          .status(401)
+          .json({ message: "Not authorized to update users", data: null });
+      }
+    } catch (error) {
+      return res.status(401).json({ message: "Session Expired", data: null });
+    }
+  };
+  delete_Members = (req: Request, res: Response, next: NextFunction) => {
+    const token: any = req.headers["authorization"]?.split(" ")[1];
+
+    try {
+      const decoded = JWT.verify(
+        token,
+        process.env.JWT_SECRET as string
+      ) as any;
+      const permission = decoded.permissions;
+
+      if (permission.delete_Members) {
+        next();
+      } else {
+        return res
+          .status(401)
+          .json({ message: "Not authorized to delete users", data: null });
+      }
+    } catch (error) {
+      return res.status(401).json({ message: "Session Expired", data: null });
+    }
+  };
 
   // Departments
   can_view_department = (req: Request, res: Response, next: NextFunction) => {

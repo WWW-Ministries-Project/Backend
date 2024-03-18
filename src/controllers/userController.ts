@@ -14,6 +14,37 @@ export const landingPage = async (req: Request, res: Response) => {
   res.send(`Welcome to World Wide Word Ministries Backend Server🔥🎉🙏`);
 };
 
+const selectQuery = {
+  id: true,
+  name: true,
+  email: true,
+  created_at: true,
+  is_active: true,
+  user_info: {
+    select: {
+      primary_number: true,
+      title: true,
+      photo: true,
+    },
+  },
+  department: {
+    select: {
+      department_info: {
+        select: {
+          id: true,
+          name: true,
+        },
+      },
+    },
+  },
+  position: {
+    select: {
+      id: true,
+      name: true,
+    },
+  },
+};
+
 export const registerUser = async (req: Request, res: Response) => {
   const {
     title,
@@ -81,36 +112,7 @@ export const registerUser = async (req: Request, res: Response) => {
             },
           },
         },
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          created_at: true,
-          is_active: true,
-          user_info: {
-            select: {
-              primary_number: true,
-              title: true,
-              photo: true,
-            },
-          },
-          department: {
-            select: {
-              department_info: {
-                select: {
-                  id: true,
-                  name: true,
-                },
-              },
-            },
-          },
-          position: {
-            select: {
-              id: true,
-              name: true,
-            },
-          },
-        },
+        select: selectQuery,
       });
       res
         .status(200)
@@ -120,9 +122,110 @@ export const registerUser = async (req: Request, res: Response) => {
     return res.status(500).json({ message: "Error Occured", data: error });
   }
 };
+export const updateUser = async (req: Request, res: Response) => {
+  const {
+    id,
+    title,
+    name,
+    date_of_birth,
+    gender,
+    primary_number,
+    other_number,
+    email,
+    address,
+    country,
+    occupation,
+    company,
+    member_since,
+    photo,
+    is_user,
+    is_visitor,
+    department_id,
+    position_id,
+    access_level_id,
+  } = req.body;
+  try {
+    const response = await prisma.user.update({
+      where: {
+        id,
+      },
+      data: {
+        name,
+        email,
+        position_id,
+        is_user,
+        is_visitor,
+        access_level_id,
+        department: department_id
+          ? {
+              create: {
+                department_id,
+              },
+            }
+          : undefined,
+        user_info: {
+          update: {
+            title,
+            name,
+            date_of_birth: date_of_birth ? new Date(date_of_birth) : null,
+            gender,
+            primary_number,
+            other_number,
+            email,
+            address,
+            country,
+            company,
+            member_since: member_since ? new Date(member_since) : null,
+            occupation,
+            photo,
+          },
+        },
+      },
+      select: selectQuery,
+    });
+    res
+      .status(200)
+      .json({ message: "User Updated Succesfully", data: response });
+  } catch (error) {
+    return res.status(500).json({ message: "Error Occured", data: error });
+  }
+};
+export const updateUserSatus = async (req: Request, res: Response) => {
+  const { id, is_active } = req.body;
+  try {
+    const response = await prisma.user.update({
+      where: {
+        id,
+      },
+      data: {
+        is_active,
+      },
+      select: selectQuery,
+    });
+    res
+      .status(200)
+      .json({ message: "User Status Updated Succesfully", data: response });
+  } catch (error) {
+    return res.status(500).json({ message: "Error Occured", data: error });
+  }
+};
+export const deleteUser = async (req: Request, res: Response) => {
+  const { id } = req.body;
+  try {
+    const response = await prisma.user.delete({
+      where: {
+        id,
+      },
+    });
+    res.status(200).json({ message: "User Deleted Succesfully", data: null });
+  } catch (error) {
+    return res.status(500).json({ message: "Error Occured", data: error });
+  }
+};
 
 export const login = async (req: Request, res: Response) => {
   const { email, password } = req.body;
+  console.log(email);
 
   const existance = await prisma.user.findUnique({
     where: {

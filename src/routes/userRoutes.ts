@@ -3,6 +3,7 @@ import * as dotenv from "dotenv";
 import {
   ListUsers,
   changePassword,
+  deleteUser,
   forgetPassword,
   getUser,
   landingPage,
@@ -10,6 +11,8 @@ import {
   registerUser,
   resetPassword,
   seedUser,
+  updateUser,
+  updateUserSatus,
 } from "../controllers/userController";
 import { Permissions } from "../middleWare/authorization";
 const permissions = new Permissions();
@@ -36,6 +39,18 @@ router.post(
   "/register",
   [protect, permissions.can_create_Members],
   registerUser
+);
+router.post("/update-user", [protect, permissions.edit_Members], updateUser);
+
+router.patch(
+  "/update-user-status",
+  [protect, permissions.edit_Members],
+  updateUserSatus
+);
+router.delete(
+  "/delete-user",
+  [protect, permissions.delete_Members],
+  deleteUser
 );
 
 router.get("/", landingPage);
