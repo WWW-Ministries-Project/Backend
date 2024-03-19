@@ -20,5 +20,9 @@ jobs:
           username: ${{ secrets.DOCKER_HUB_USERNAME}}
           password: ${{ secrets.DOCKER_HUB_TOKEN}}
 
-      # - name: Build the Docker image
-      # run: docker build . --file Dockerfile --tag my-image-name:$(date +%s)
+      - name: Build the Docker image
+        # run: docker build . --file Dockerfile --tag my-image-name:$(date +%s)
+        run: docker build -t wwm-backend . --tag eshun/wwm-backend:v1.0
+
+      - name: Push to Docker Hub
+        run: docker push eshun/wwm-backend:v1.0

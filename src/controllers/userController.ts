@@ -225,7 +225,6 @@ export const deleteUser = async (req: Request, res: Response) => {
 
 export const login = async (req: Request, res: Response) => {
   const { email, password } = req.body;
-  console.log(email);
 
   const existance = await prisma.user.findUnique({
     where: {
