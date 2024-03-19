@@ -34,7 +34,6 @@ export const createMember = async (req: Request, res: Response) => {
     department,
   } = req.body;
   const img = await uploadImage(photo, email);
-  // console.log(img?.public_id);
 
   try {
     const response = await MemberModel.create({
