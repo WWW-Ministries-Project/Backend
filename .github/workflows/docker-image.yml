@@ -20,6 +20,16 @@ jobs:
           username: ${{ secrets.DOCKER_HUB_USERNAME}}
           password: ${{ secrets.DOCKER_HUB_TOKEN}}
 
+      - name: Create .env file
+        run: |
+          echo "JWT_SECRET=${{ secrets.JWT_SECRET}}" > .env
+          echo "PORT=8000" >> .env
+          echo "USER_EMAIL=admin@wwwministries.com" >> .env
+          echo "DATABASE_URL=${{ secrets.DATABASE_URL}}" >> .env
+          echo "CLOUD_NAME=${{ secrets.CLOUD_NAME}}" >> .env
+          echo "API_KEY=${{ secrets.API_KEY}}" >> .env
+          echo "API_SECRET=${{ secrets.API_SECRET}}" >> .env
+
       - name: Build the Docker image
         # run: docker build . --file Dockerfile --tag my-image-name:$(date +%s)
         run: docker build -t wwm-backend . --tag eshun/wwm-backend:v1.0

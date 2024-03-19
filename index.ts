@@ -25,7 +25,6 @@ app.use(cors());
 app.use(express.json());
 app.get("/", landingPage);
 app.use("/user", userRoutes);
-app.use("/member", memberrouter);
 app.use("/attendance", attendanceRouter);
 app.use("/department", departmentRouter);
 app.use("/position", positionRouter);
