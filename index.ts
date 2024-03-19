@@ -11,6 +11,7 @@ import { positionRouter } from "./src/routes/positionRoute";
 import { hashPassword } from "./src/utils/hashPasswords";
 import { accessRouter } from "./src/routes/accessLevelRoute";
 import { landingPage } from "./src/controllers/userController";
+import { uploadRouter } from "./src/routes/uploadRoute";
 dotenv.config();
 
 // router
@@ -29,6 +30,7 @@ app.use("/attendance", attendanceRouter);
 app.use("/department", departmentRouter);
 app.use("/position", positionRouter);
 app.use("/access", accessRouter);
+app.use("/upload", uploadRouter);
 
 // mongoose
 //   .connect(MONGO_URI, {})
