@@ -11,7 +11,40 @@ const User = model;
 const JWT_SECRET: any = process.env.JWT_SECRET;
 
 export const landingPage = async (req: Request, res: Response) => {
-  res.send(`Welcome to World Wide Word Ministries`);
+  res.send(
+    `Welcome to World Wide Word Ministries Backend Server🔥🙏🚀 Access the Main Page on https://wwwministries.netlify.app`
+  );
+};
+
+const selectQuery = {
+  id: true,
+  name: true,
+  email: true,
+  created_at: true,
+  is_active: true,
+  user_info: {
+    select: {
+      primary_number: true,
+      title: true,
+      photo: true,
+    },
+  },
+  department: {
+    select: {
+      department_info: {
+        select: {
+          id: true,
+          name: true,
+        },
+      },
+    },
+  },
+  position: {
+    select: {
+      id: true,
+      name: true,
+    },
+  },
 };
 
 export const registerUser = async (req: Request, res: Response) => {
@@ -34,38 +67,106 @@ export const registerUser = async (req: Request, res: Response) => {
     department_id,
     position_id,
     password,
-    access_level_id
+    access_level_id,
   } = req.body;
   try {
     const existingUser = await prisma.user.findMany({
       where: {
-        email
-      }
-    })
-    if(existingUser.length >= 1){
-      res
-      .status(500)
-      .json({ message: "Email already exists", data: null })
+        email,
+      },
+    });
+    if (existingUser.length >= 1) {
+      res.status(409).json({ message: "Email already exists", data: null });
     } else {
-       const response = await prisma.user.create({
+      const response = await prisma.user.create({
+        data: {
+          name,
+          email,
+          position_id,
+          password: is_user
+            ? await hashPassword(password)
+            : await hashPassword("123456"),
+          is_user,
+          is_visitor,
+          access_level_id,
+          department: department_id
+            ? {
+                create: {
+                  department_id,
+                },
+              }
+            : undefined,
+          user_info: {
+            create: {
+              title,
+              name,
+              date_of_birth: date_of_birth ? new Date(date_of_birth) : null,
+              gender,
+              primary_number,
+              other_number,
+              email,
+              address,
+              country,
+              company,
+              member_since: member_since ? new Date(member_since) : null,
+              occupation,
+              photo,
+            },
+          },
+        },
+        select: selectQuery,
+      });
+      res
+        .status(200)
+        .json({ message: "User Created Succesfully", data: response });
+    }
+  } catch (error) {
+    return res.status(500).json({ message: "Error Occured", data: error });
+  }
+};
+export const updateUser = async (req: Request, res: Response) => {
+  const {
+    id,
+    title,
+    name,
+    date_of_birth,
+    gender,
+    primary_number,
+    other_number,
+    email,
+    address,
+    country,
+    occupation,
+    company,
+    member_since,
+    photo,
+    is_user,
+    is_visitor,
+    department_id,
+    position_id,
+    access_level_id,
+  } = req.body;
+  try {
+    const response = await prisma.user.update({
+      where: {
+        id,
+      },
       data: {
         name,
         email,
         position_id,
-        password: is_user
-          ? await hashPassword(password)
-          : await hashPassword("123456"),
         is_user,
         is_visitor,
         access_level_id,
-        department: department_id ? 
-        {
-          create: {
-            department_id,
-          },
-        } : undefined,
+        department: department_id
+          ? {
+              create: {
+                department_id,
+              },
+            }
+          : undefined,
         user_info: {
-          create: {
+          update: {
             title,
             name,
             date_of_birth: date_of_birth ? new Date(date_of_birth) : null,
@@ -82,47 +183,45 @@ export const registerUser = async (req: Request, res: Response) => {
           },
         },
       },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        created_at: true,
-        is_active: true,
-        user_info: {
-          select: {
-            primary_number: true,
-            title: true,
-            photo: true,
-            
-          }
-        },
-        department: {
-          select: {
-            department_info: {
-              select: {
-                id: true,
-                name: true,
-              }
-            }
-          }
-        },
-        position: {
-          select: {
-            id: true,
-            name: true,
-          }
-        }
-      }
-    }
-    );
+      select: selectQuery,
+    });
     res
       .status(200)
-      .json({ message: "User Created Succesfully", data: response });
-    }   
+      .json({ message: "User Updated Succesfully", data: response });
   } catch (error) {
-    return res
-    .status(500)
-    .json({ message: "Error Occured" , data: error });
+    return res.status(500).json({ message: "Error Occured", data: error });
+  }
+};
+export const updateUserSatus = async (req: Request, res: Response) => {
+  const { id, is_active } = req.body;
+  try {
+    const response = await prisma.user.update({
+      where: {
+        id,
+      },
+      data: {
+        is_active,
+      },
+      select: selectQuery,
+    });
+    res
+      .status(200)
+      .json({ message: "User Status Updated Succesfully", data: response });
+  } catch (error) {
+    return res.status(500).json({ message: "Error Occured", data: error });
+  }
+};
+export const deleteUser = async (req: Request, res: Response) => {
+  const { id } = req.body;
+  try {
+    const response = await prisma.user.delete({
+      where: {
+        id,
+      },
+    });
+    res.status(200).json({ message: "User Deleted Succesfully", data: null });
+  } catch (error) {
+    return res.status(500).json({ message: "Error Occured", data: error });
   }
 };
 
@@ -133,8 +232,8 @@ export const login = async (req: Request, res: Response) => {
     where: {
       email,
       AND: {
-        is_user: true
-      }
+        is_user: true,
+      },
     },
     select: {
       id: true,
@@ -143,10 +242,10 @@ export const login = async (req: Request, res: Response) => {
       password: true,
       access: {
         select: {
-          permissions: true
-        }
-      }
-    }
+          permissions: true,
+        },
+      },
+    },
   });
 
   if (!existance) {
@@ -161,19 +260,17 @@ export const login = async (req: Request, res: Response) => {
         id: existance.id,
         name: existance.name,
         email: existance.email,
-        permissions: existance.access?.permissions
+        permissions: existance.access?.permissions,
       },
       JWT_SECRET,
       {
-        expiresIn: 22222,
+        expiresIn: "1h",
       }
     );
 
-    return res.json({ status: "Login Successfully", token: token });
+    return res.status(200).json({ status: "Login Successfully", token: token });
   } else {
-    return res
-      .status(500)
-      .json({ message: "Invalid Credentials", data: null });
+    return res.status(401).json({ message: "Invalid Credentials", data: null });
   }
 };
 
@@ -191,7 +288,9 @@ export const changePassword = async (req: Request, res: Response) => {
         password: await hashPassword(newpassword),
       },
     });
-    res.status(200).json({ message: "Password Changed Successfully", data: null });
+    res
+      .status(200)
+      .json({ message: "Password Changed Successfully", data: null });
   } catch (error) {
     return res.status(500).json({ message: "Error Occured", data: error });
   }
@@ -223,10 +322,11 @@ export const forgetPassword = async (req: Request, res: Response) => {
     );
     const link = `https://wwwministries.netlify.app/reset-password/?id=${existingUser.id}&token=${token}`;
     sendEmail(link, email, "Reset Password");
-    return res.status(200).json({message: `Link Send to your Mail`, data: null});
+    return res
+      .status(200)
+      .json({ message: `Link Send to your Mail`, data: null });
   } catch (error) {
-    return res.status(500).json({message: "Error Occured", data: null});
-
+    return res.status(500).json({ message: "Error Occured", data: null });
   }
 };
 
@@ -256,7 +356,9 @@ export const resetPassword = async (req: Request, res: Response) => {
           password: await hashPassword(password),
         },
       });
-      return res.status(200).json({message: "Password Successfully changed", data: null});
+      return res
+        .status(200)
+        .json({ message: "Password Successfully changed", data: null });
     }
   } catch (error) {
     return res.status(500).json({ message: "Link Expired", data: null });
@@ -282,7 +384,9 @@ export const seedUser = async (req: Request, res: Response) => {
       .status(200)
       .json({ message: "User Created Succesfully", data: response });
   } catch (error) {
-    return res.status(500).json({ message: "Something went wrong", data: error });
+    return res
+      .status(500)
+      .json({ message: "Something went wrong", data: error });
   }
 };
 
@@ -292,18 +396,17 @@ export const ListUsers = async (req: Request, res: Response) => {
   try {
     const response = await prisma.user.findMany({
       orderBy: {
-        id: "desc"
+        id: "desc",
       },
-      where: 
-      {
+      where: {
         AND: {
           is_active,
           is_visitor,
-          name:  {
+          name: {
             contains: name ? name.trim() : undefined,
-            mode: "insensitive"
-        }
-        }
+            mode: "insensitive",
+          },
+        },
       },
       select: {
         id: true,
@@ -316,7 +419,7 @@ export const ListUsers = async (req: Request, res: Response) => {
             primary_number: true,
             title: true,
             photo: true,
-          }
+          },
         },
         department: {
           select: {
@@ -324,25 +427,24 @@ export const ListUsers = async (req: Request, res: Response) => {
               select: {
                 id: true,
                 name: true,
-              }
-            }
-          }
+              },
+            },
+          },
         },
         position: {
           select: {
             id: true,
             name: true,
-          }
-        }
-      }
+          },
+        },
+      },
     });
-    res
-      .status(200)
-      .json({ message: "Operation Succesful", data: response });
+    res.status(200).json({ message: "Operation Succesful", data: response });
   } catch (error) {
-    return res.status(500).json({ message: "Something Went Wrong", data: error });
+    return res
+      .status(500)
+      .json({ message: "Something Went Wrong", data: error });
   }
-
 };
 export const getUser = async (req: Request, res: Response) => {
   const { user_id } = req.body;
@@ -350,7 +452,7 @@ export const getUser = async (req: Request, res: Response) => {
   try {
     const response = await prisma.user.findMany({
       where: {
-        id: user_id
+        id: user_id,
       },
       select: {
         id: true,
@@ -364,21 +466,19 @@ export const getUser = async (req: Request, res: Response) => {
               select: {
                 id: true,
                 name: true,
-                description: true
-              }
-            }
-          }
+                description: true,
+              },
+            },
+          },
         },
-        position: true
-      }
+        position: true,
+      },
     });
-    res
-      .status(200)
-      .json({ message: "Operation Succesful", data: response });
+    res.status(200).json({ message: "Operation Succesful", data: response });
   } catch (error) {
     return res.status(500).json({
       message: "Operation failed",
-      data: error
+      data: error,
     });
   }
 };

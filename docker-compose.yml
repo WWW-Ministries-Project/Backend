@@ -1,12 +1,13 @@
-version: '3'
+version: "3"
 
 services:
-  backend: 
-    build: 
+  backend:
+    build:
       context: .
       dockerfile: Dockerfile
     image: www_backend
     container_name: www_backend_container
+    env_file: .env
     restart: on-failure
-    ports: 
+    ports:
       - 8000:8000

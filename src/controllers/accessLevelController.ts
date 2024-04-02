@@ -167,3 +167,28 @@ export const assignAccessLevelToUser = async (req: Request, res: Response) => {
         .json({ message: "Operation Failed", data: error.message });
     }
   };
+
+export const deleteAccessLevel = async (req: Request, res: Response) => {
+    const { id } = req.body;
+    try {
+        const unAssign = await prisma.user.updateMany({
+            where:{
+                access_level_id: id
+            },
+            data:{
+                access_level_id : null
+            }
+        })
+        const deleteAccess = await prisma.access_level.delete({where:{id}});
+        if(!deleteAccess){
+          res
+          .status(500)
+          .json({ message: "Invalid Access Level Id" });
+        }
+      listAllAccessLevel(req, res);
+    } catch (error: any) {
+      return res
+        .status(500)
+        .json({ message: "Operation Failed", data: error.message });
+    }
+  };
