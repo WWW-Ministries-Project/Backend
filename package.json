@@ -5,7 +5,10 @@
   "main": "index.js",
   "scripts": {
     "build": "npx tsc",
-    "dev": "npx tsc & nodemon dist/index.js",
+    "dev": "ts-node-dev --transpile-only --ignore-watch node_modules --respawn index.ts",
+    "transpile": "tsc",
+    "rimraf": "rm -rf dist",
+    "start": "yarn run rimraf && yarn run transpile && node dist/index.js",
     "migrate": "npx prisma migrate deploy && npx prisma generate",
     "migrate:2": "npx prisma generate",
     "prod": "npx tsc && node dist/index.js"
@@ -43,6 +46,7 @@
     "dotenv": "^16.3.1",
     "nodemon": "^3.0.3",
     "prisma": "^5.4.2",
-    "ts-node": "^10.9.1"
+    "ts-node": "^10.9.2",
+    "ts-node-dev": "^2.0.0"
   }
 }
