@@ -13,6 +13,7 @@ import {
   seedUser,
   updateUser,
   updateUserSatus,
+  statsUsers,
 } from "../controllers/userController";
 import { Permissions } from "../middleWare/authorization";
 const permissions = new Permissions();
@@ -24,6 +25,8 @@ export const router = Router();
 router.get("/get-user", getUser);
 
 router.get("/list-users", [protect, permissions.can_view_users], ListUsers);
+
+router.get("/stats-users", statsUsers);
 
 router.post("/seed-user", seedUser);
 

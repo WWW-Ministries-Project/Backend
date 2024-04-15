@@ -482,3 +482,33 @@ export const getUser = async (req: Request, res: Response) => {
     });
   }
 };
+export const statsUsers = async (req: Request, res: Response) => {
+  try {
+    const males = await prisma.user.count({
+      where: {
+        user_info: {
+          gender: "Male"
+        },
+      }   
+    });
+    const females = await prisma.user.count({
+      where: {
+        user_info: {
+          gender: "Female"
+        },
+      }   
+    });
+    const neutral = await prisma.user.count({
+      where: {
+        user_info: {
+          gender: "other"
+        },
+      }   
+    });
+    res.status(200).json({ message: "Operation Succesful", data: {males, females, neutral} });
+  } catch (error) {
+    return res
+      .status(500)
+      .json({ message: "Something Went Wrong", data: error });
+  }
+}
