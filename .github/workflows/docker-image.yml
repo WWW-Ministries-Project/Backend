@@ -65,5 +65,4 @@ jobs:
 
       - name: Compose Up
         run: |
-          - echo pwd
           - docker-compose up -d wwm-backend
