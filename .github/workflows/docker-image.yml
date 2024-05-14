@@ -58,4 +58,4 @@ jobs:
             sudo docker system prune --force && \
             sudo docker pull eshun/wwm-backend:v1.0 && \
             cd /home/projects/ && \ 
-            docker run -d -p 8080:8000 eshun/wwm-backend:v1.0 --name wwm-back
+            sudo docker run -d -p 8080:8000 eshun/wwm-backend:v1.0 --name wwm-back
