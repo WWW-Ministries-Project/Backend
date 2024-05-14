@@ -17,7 +17,8 @@ jobs:
           username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            cd /home/projects
+            cd /home/projects/
+            ls
 
       - name: Pull Docker image
         run: sudo docker pull eshun/wwm-backend:v1.0
@@ -26,4 +27,8 @@ jobs:
         run: sudo docker system prune --force
 
       - name: Compose Up
-        run: docker-compose up -d wwm-backend
+        run: |
+          - echo pwd
+          - docker-compose up -d wwm-backend
+
+        
