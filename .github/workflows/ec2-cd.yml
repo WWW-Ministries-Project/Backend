@@ -8,14 +8,22 @@ on:
 
 jobs:
   build:
-    runs-on: self-hosted
-
+    runs-on: ubuntu-latest
     steps:
+      - name: SSH In EC2 Instance
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.HOST_IP_ADDRESS }}
+          username: ${{ secrets.EC2_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            cd /home/projects
+
       - name: Pull Docker image
         run: sudo docker pull eshun/wwm-backend:v1.0
 
       - name: Delete Old docker container
-        run: sudo docker rm -f wwm-back || true
+        run: sudo docker system prune --force
 
-      - name: Run Docker container
-        run: sudo docker run -d -p 9000:8000 --name wwm-back eshun/wwm-backend:v1.0
+      - name: Compose Up
+        run: docker-compose up -d wwm-backend
