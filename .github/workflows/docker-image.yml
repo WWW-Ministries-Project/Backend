@@ -54,15 +54,12 @@ jobs:
           host: ${{ secrets.HOST_IP_ADDRESS }}
           username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          script: |
-            cd /home/projects/
-
+          
       - name: Pull Docker image
-        run: sudo docker pull eshun/wwm-backend:v1.0
-
-      - name: Delete Old docker container
-        run: sudo docker system prune --force
-
-      - name: Compose Up
         run: |
-          - docker-compose up -d wwm-backend
+          - sudo docker system prune --force
+          - sudo docker pull eshun/wwm-backend:v1.0 
+      
+      - name: Pull Docker image
+        run: |
+          - cd /home/projects/ && docker-compose up -d wwm-backend
