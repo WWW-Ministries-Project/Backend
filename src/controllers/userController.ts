@@ -404,7 +404,7 @@ export const ListUsers = async (req: Request, res: Response) => {
           is_visitor,
           name: {
             contains: name ? name.trim() : undefined,
-            mode: "insensitive",
+            // mode: "insensitive",
           },
         },
       },
@@ -487,28 +487,31 @@ export const statsUsers = async (req: Request, res: Response) => {
     const males = await prisma.user.count({
       where: {
         user_info: {
-          gender: "Male"
+          gender: "Male",
         },
-      }   
+      },
     });
     const females = await prisma.user.count({
       where: {
         user_info: {
-          gender: "Female"
+          gender: "Female",
         },
-      }   
+      },
     });
     const neutral = await prisma.user.count({
       where: {
         user_info: {
-          gender: "other"
+          gender: "other",
         },
-      }   
+      },
     });
-    res.status(200).json({ message: "Operation Succesful", data: {males, females, neutral} });
+    res.status(200).json({
+      message: "Operation Succesful",
+      data: { males, females, neutral },
+    });
   } catch (error) {
     return res
       .status(500)
       .json({ message: "Something Went Wrong", data: error });
   }
-}
+};
