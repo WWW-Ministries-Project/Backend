@@ -26,7 +26,7 @@ router.get("/get-user", getUser);
 
 router.get("/list-users", [protect, permissions.can_view_users], ListUsers);
 
-router.get("/stats-users", statsUsers);
+router.get("/stats-users", [protect], statsUsers);
 
 router.post("/seed-user", seedUser);
 

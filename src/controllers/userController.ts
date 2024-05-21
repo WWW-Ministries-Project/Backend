@@ -121,7 +121,9 @@ export const registerUser = async (req: Request, res: Response) => {
         .json({ message: "User Created Succesfully", data: response });
     }
   } catch (error) {
-    return res.status(500).json({ message: "Error Occured", data: error });
+    return res
+      .status(500)
+      .json({ message: "Internal Server Error", data: null });
   }
 };
 export const updateUser = async (req: Request, res: Response) => {
@@ -189,7 +191,9 @@ export const updateUser = async (req: Request, res: Response) => {
       .status(200)
       .json({ message: "User Updated Succesfully", data: response });
   } catch (error) {
-    return res.status(500).json({ message: "Error Occured", data: error });
+    return res
+      .status(500)
+      .json({ message: "Internal Server Error", data: null });
   }
 };
 export const updateUserSatus = async (req: Request, res: Response) => {
@@ -208,10 +212,14 @@ export const updateUserSatus = async (req: Request, res: Response) => {
       .status(200)
       .json({ message: "User Status Updated Succesfully", data: response });
   } catch (error) {
-    return res.status(500).json({ message: "Error Occured", data: error });
+    return res
+      .status(500)
+      .json({ message: "Internal Server Error", data: null });
   }
 };
 export const deleteUser = async (req: Request, res: Response) => {
+  try {
+  } catch (error) {}
   const { id } = req.body;
   try {
     const response = await prisma.user.delete({
@@ -221,56 +229,67 @@ export const deleteUser = async (req: Request, res: Response) => {
     });
     res.status(200).json({ message: "User Deleted Succesfully", data: null });
   } catch (error) {
-    return res.status(500).json({ message: "Error Occured", data: error });
+    return res
+      .status(500)
+      .json({ message: "Internal Server Error", data: null });
   }
 };
 
 export const login = async (req: Request, res: Response) => {
   const { email, password } = req.body;
-
-  const existance = await prisma.user.findUnique({
-    where: {
-      email,
-      AND: {
-        is_user: true,
-      },
-    },
-    select: {
-      id: true,
-      email: true,
-      name: true,
-      password: true,
-      access: {
-        select: {
-          permissions: true,
+  try {
+    const existance = await prisma.user.findUnique({
+      where: {
+        email,
+        AND: {
+          is_user: true,
         },
       },
-    },
-  });
-
-  if (!existance) {
-    return res
-      .status(404)
-      .json({ message: "No user with that Email", data: null });
-  }
-
-  if (await comparePassword(password, existance?.password)) {
-    const token = JWT.sign(
-      {
-        id: existance.id,
-        name: existance.name,
-        email: existance.email,
-        permissions: existance.access?.permissions,
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        password: true,
+        access: {
+          select: {
+            permissions: true,
+          },
+        },
       },
-      JWT_SECRET,
-      {
-        expiresIn: "1h",
-      }
-    );
+    });
 
-    return res.status(200).json({ status: "Login Successfully", token: token });
-  } else {
-    return res.status(401).json({ message: "Invalid Credentials", data: null });
+    if (!existance) {
+      return res
+        .status(404)
+        .json({ message: "No user with Email", data: null });
+    }
+
+    if (await comparePassword(password, existance?.password)) {
+      const token = JWT.sign(
+        {
+          id: existance.id,
+          name: existance.name,
+          email: existance.email,
+          permissions: existance.access?.permissions,
+        },
+        JWT_SECRET,
+        {
+          expiresIn: "12h",
+        }
+      );
+
+      return res
+        .status(200)
+        .json({ status: "Login Successfully", token: token });
+    } else {
+      return res
+        .status(401)
+        .json({ message: "Invalid Credentials", data: null });
+    }
+  } catch (error) {
+    return res
+      .status(500)
+      .json({ message: "Internal Server Error", data: error });
   }
 };
 
@@ -292,7 +311,9 @@ export const changePassword = async (req: Request, res: Response) => {
       .status(200)
       .json({ message: "Password Changed Successfully", data: null });
   } catch (error) {
-    return res.status(500).json({ message: "Error Occured", data: error });
+    return res
+      .status(500)
+      .json({ message: "Internal Server Error", data: null });
   }
 };
 
@@ -326,7 +347,9 @@ export const forgetPassword = async (req: Request, res: Response) => {
       .status(200)
       .json({ message: `Link Send to your Mail`, data: null });
   } catch (error) {
-    return res.status(500).json({ message: "Error Occured", data: null });
+    return res
+      .status(500)
+      .json({ message: "Internal Server Error", data: null });
   }
 };
 
@@ -484,34 +507,101 @@ export const getUser = async (req: Request, res: Response) => {
 };
 export const statsUsers = async (req: Request, res: Response) => {
   try {
-    const males = await prisma.user.count({
-      where: {
-        user_info: {
-          gender: "Male",
-        },
+    // const allUserInfos = await prisma.user_info.findMany();
+    // const children: any = [];
+    // const adults: any = [];
+    // allUserInfos.map((user) => {
+    //   if (
+    //     Number(new Date().getFullYear()) -
+    //       Number(user.date_of_birth?.getFullYear()) <=
+    //     18
+    //   ) {
+    //     children.push(user);
+    //   } else {
+    //     adults.push(user);
+    //   }
+    // });
+    // const children_stats = {
+    //   Total: 0,
+    //   Male: 0,
+    //   Female: 0,
+    //   Other: 0,
+    // };
+    // const adults_stats = {
+    //   Total: 0,
+    //   Male: 0,
+    //   Female: 0,
+    //   Other: 0,
+    // };
+    // children_stats.Total += children.length;
+    // adults_stats.Total += adults.length;
+
+    // adults.map((adult: any) => {
+    //   switch (adult.gender) {
+    //     case "Male":
+    //       adults_stats.Male++;
+    //       break;
+    //     case "Female":
+    //       adults_stats.Female++;
+    //       break;
+    //     default:
+    //       adults_stats.Other++;
+    //   }
+    // });
+    // children.map((child: any) => {
+    //   switch (child.gender) {
+    //     case "Male":
+    //       children_stats.Male++;
+    //       break;
+    //     case "Female":
+    //       children_stats.Female++;
+    //       break;
+    //     default:
+    //       children_stats.Other++;
+    //   }
+    // });
+    // console.log("children", children_stats);
+    // console.log("adult", adults_stats);
+    interface Stats {
+      Total: number;
+      Male: number;
+      Female: number;
+      Other: number;
+    }
+
+    interface CategoryStats {
+      children: Stats;
+      adults: Stats;
+    }
+
+    const allUserInfos = await prisma.user_info.findMany();
+
+    const stats: CategoryStats = allUserInfos.reduce(
+      (acc: any, user) => {
+        const age =
+          Number(new Date().getFullYear()) -
+          Number(user.date_of_birth?.getFullYear());
+        const category = age <= 18 ? "children" : "adults";
+        const gender = user.gender || "other";
+
+        acc[category].Total++;
+        acc[category][gender]++;
+
+        return acc;
       },
-    });
-    const females = await prisma.user.count({
-      where: {
-        user_info: {
-          gender: "Female",
-        },
-      },
-    });
-    const neutral = await prisma.user.count({
-      where: {
-        user_info: {
-          gender: "other",
-        },
-      },
-    });
-    res.status(200).json({
-      message: "Operation Succesful",
-      data: { males, females, neutral },
+      {
+        children: { Total: 0, Male: 0, Female: 0, other: 0 },
+        adults: { Total: 0, Male: 0, Female: 0, other: 0 },
+      }
+    );
+
+    return res.status(202).json({
+      total_members: allUserInfos.length,
+      stats: stats,
     });
   } catch (error) {
     return res
       .status(500)
-      .json({ message: "Something Went Wrong", data: error });
+      .json({ message: "Internal Server Error", data: error });
   }
 };
