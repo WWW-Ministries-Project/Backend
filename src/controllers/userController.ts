@@ -250,6 +250,11 @@ export const login = async (req: Request, res: Response) => {
         email: true,
         name: true,
         password: true,
+        user_info: {
+          select: {
+            photo: true,
+          },
+        },
         access: {
           select: {
             permissions: true,
@@ -271,6 +276,7 @@ export const login = async (req: Request, res: Response) => {
           name: existance.name,
           email: existance.email,
           permissions: existance.access?.permissions,
+          profile_img: existance.user_info?.photo,
         },
         JWT_SECRET,
         {
@@ -575,6 +581,17 @@ export const statsUsers = async (req: Request, res: Response) => {
     }
 
     const allUserInfos = await prisma.user_info.findMany();
+    const allUserInfosByCategory = allUserInfos.reduce(
+      (acc: any, cur) => {
+        const gender = cur.gender || "other";
+
+        acc.total++;
+        acc[gender]++;
+
+        return acc;
+      },
+      { total: 0, Male: 0, Female: 0, other: 0 }
+    );
 
     const stats: CategoryStats = allUserInfos.reduce(
       (acc: any, user) => {
@@ -596,7 +613,10 @@ export const statsUsers = async (req: Request, res: Response) => {
     );
 
     return res.status(202).json({
-      total_members: allUserInfos.length,
+      total_members: allUserInfosByCategory.total,
+      total_males: allUserInfosByCategory.Male,
+      total_females: allUserInfosByCategory.Female,
+      total_others: allUserInfosByCategory.other,
       stats: stats,
     });
   } catch (error) {
