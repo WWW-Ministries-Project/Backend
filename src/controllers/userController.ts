@@ -420,7 +420,7 @@ export const seedUser = async (req: Request, res: Response) => {
 };
 
 export const ListUsers = async (req: Request, res: Response) => {
-  const { is_active, is_visitor, name } = req.body;
+  const { is_active, is_visitor, is_user, name } = req.body;
 
   try {
     const response = await prisma.user.findMany({
@@ -431,6 +431,7 @@ export const ListUsers = async (req: Request, res: Response) => {
         AND: {
           is_active,
           is_visitor,
+          is_user,
           name: {
             contains: name ? name.trim() : undefined,
             // mode: "insensitive",
