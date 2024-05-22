@@ -30,6 +30,7 @@ jobs:
           echo "CLOUD_NAME=${{ secrets.CLOUD_NAME}}" >> .env
           echo "API_KEY=${{ secrets.API_KEY}}" >> .env
           echo "API_SECRET=${{ secrets.API_SECRET}}" >> .env
+          echo "Frontend_URL=${{ secrets.Frontend_URL}}" >> .env
 
       - name: Build the Docker image
         # run: docker build . --file Dockerfile --tag my-image-name:$(date +%s)
@@ -48,9 +49,10 @@ jobs:
           host: ${{ secrets.HOST_IP_ADDRESS }}
           username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          script: |
-            sudo docker system prune --force && \
-            sudo docker pull eshun/wwm-backend:v1.0 && \
-            cd /home/projects/ && \ 
-            sudo docker-compose down wwm-backend && \
-            sudo docker-compose up -d wwm-backend
+      - name: Script for docker compose
+        run: |
+          sudo docker system prune --force && \
+          sudo docker pull eshun/wwm-backend:v1.0 && \
+          cd /home/projects/ && \ 
+          sudo docker-compose down wwm-backend && \
+          sudo docker-compose up -d wwm-backend
