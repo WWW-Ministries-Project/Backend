@@ -50,8 +50,7 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             cd /home/projects/ && \
+            sudo docker-compose down wwm-backend
             sudo docker system prune --force && \
             sudo docker pull eshun/wwm-backend:v1.0 && \
-            pwd
-            sudo docker-compose down wwm-backend
             sudo docker-compose up -d wwm-backend
