@@ -50,6 +50,7 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
       - name: Script for docker compose
         run: |
+          sudo su && \
           sudo docker system prune --force && \
           sudo docker pull eshun/wwm-backend:v1.0 && \
           cd /home/projects/ && \
