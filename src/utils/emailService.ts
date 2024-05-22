@@ -6,8 +6,8 @@ export const sendEmail = (template: string, to: string, subject: string) => {
     port: 2525,
     // service: "gmail",
     auth: {
-      user: "28333fa25d7714",
-      pass: "bd4712bdf1d758",
+      user: "dd1ada6646a05a",
+      pass: "8c67c1832fdc6a",
     },
 
     tls: {

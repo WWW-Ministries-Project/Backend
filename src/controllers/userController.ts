@@ -5,6 +5,7 @@ import { model } from "../Models/user";
 import { comparePassword, hashPassword } from "../utils/hashPasswords";
 import { sendEmail } from "../utils/emailService";
 import { prisma } from "../Models/context";
+import { confirmTemplate } from "../utils/mail_templates/confirmTemplate";
 dotenv.config();
 
 const User = model;
@@ -48,28 +49,28 @@ const selectQuery = {
 };
 
 export const registerUser = async (req: Request, res: Response) => {
-  const {
-    title,
-    name,
-    date_of_birth,
-    gender,
-    primary_number,
-    other_number,
-    email,
-    address,
-    country,
-    occupation,
-    company,
-    member_since,
-    photo,
-    is_user,
-    is_visitor,
-    department_id,
-    position_id,
-    password,
-    access_level_id,
-  } = req.body;
   try {
+    const {
+      title,
+      name,
+      date_of_birth,
+      gender,
+      primary_number,
+      other_number,
+      email,
+      address,
+      country,
+      occupation,
+      company,
+      member_since,
+      photo,
+      is_user,
+      is_visitor,
+      department_id,
+      position_id,
+      password,
+      access_level_id,
+    } = req.body;
     const existingUser = await prisma.user.findMany({
       where: {
         email,
@@ -116,14 +117,25 @@ export const registerUser = async (req: Request, res: Response) => {
         },
         select: selectQuery,
       });
+      const mailDet = {
+        name,
+        email,
+        password: password || "123456",
+        frontend_url: `${process.env.Frontend_URL}/login`,
+      };
+
+      if (is_user) {
+        sendEmail(confirmTemplate(mailDet), email, "Reset Password");
+      }
       res
         .status(200)
         .json({ message: "User Created Succesfully", data: response });
     }
   } catch (error) {
+    console.log(error);
     return res
       .status(500)
-      .json({ message: "Internal Server Error", data: null });
+      .json({ message: "Internal Server Error", data: error });
   }
 };
 export const updateUser = async (req: Request, res: Response) => {
