@@ -48,9 +48,8 @@ jobs:
           host: ${{ secrets.HOST_IP_ADDRESS }}
           username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-      - name: Script for docker compose
-        run: |
-          cd /home/projects/ && \
-          echo pwd
-          # sudo docker system prune --force && \
-          # sudo docker pull eshun/wwm-backend:v1.0 && \
+          script: |
+            cd /home/projects/ && \
+            echo pwd
+            # sudo docker system prune --force && \
+            # sudo docker pull eshun/wwm-backend:v1.0 && \
