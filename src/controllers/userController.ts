@@ -12,7 +12,7 @@ const User = model;
 const JWT_SECRET: any = process.env.JWT_SECRET;
 
 export const landingPage = async (req: Request, res: Response) => {
-  res.send(
+  res.redirect(
     `<h1>Welcome to World Wide Word Ministries Backend Server🔥🙏💒...Access the Main Page on <a href="https://wwwministries.netlify.app"></a>Link</h1>`
   );
 };
