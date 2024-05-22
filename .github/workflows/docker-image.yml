@@ -33,8 +33,7 @@ jobs:
           echo "Frontend_URL=${{ secrets.Frontend_URL}}" >> .env
 
       - name: Build the Docker image
-        # run: docker build . --file Dockerfile --tag my-image-name:$(date +%s)
-        run: docker build -t wwm-backend . --tag eshun/wwm-backend:v1.0
+        run: docker build -t eshun/wwm-backend:v1.0 .
 
       - name: Push to Docker Hub
         run: docker push eshun/wwm-backend:v1.0
@@ -53,6 +52,6 @@ jobs:
         run: |
           sudo docker system prune --force && \
           sudo docker pull eshun/wwm-backend:v1.0 && \
-          cd /home/projects/ && \ 
+          cd /home/projects/ && \
           sudo docker-compose down wwm-backend && \
           sudo docker-compose up -d wwm-backend
