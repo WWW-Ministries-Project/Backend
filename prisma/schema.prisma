@@ -6,8 +6,8 @@ generator client {
 }
 
 datasource db {
-  provider = "mysql"
-  url      = env("DATABASE_URL")
+  provider          = "mysql"
+  url               = env("DATABASE_URL")
   shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
 }
 
@@ -121,6 +121,7 @@ model assets {
   date_assigned    DateTime?
   date_purchased   DateTime?
   price            Float?
+  photo            String?
   description      String?
   updated_at       DateTime        @default(now())
   status           asset_status

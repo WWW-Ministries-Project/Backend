@@ -12,6 +12,7 @@ export const createAsset = async (req: Request, res: Response) => {
       date_assigned,
       asset_code,
       price,
+      photo,
       status,
       description,
     } = req.body;
@@ -34,6 +35,7 @@ export const createAsset = async (req: Request, res: Response) => {
         price: Number(price),
         date_assigned: date_assigned ? new Date(date_assigned) : undefined,
         status,
+        photo,
       },
     });
     res.status(200).json({
@@ -60,6 +62,7 @@ export const updateAsset = async (req: Request, res: Response) => {
       status,
       description,
       id,
+      photo,
     } = req.body;
     assetSchema.validate(req.body);
     const hasCategory = category
@@ -83,6 +86,7 @@ export const updateAsset = async (req: Request, res: Response) => {
         price: Number(price),
         date_assigned: date_assigned ? new Date(date_assigned) : undefined,
         status,
+        photo,
       },
     });
     res.status(200).json({
