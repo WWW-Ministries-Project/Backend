@@ -54,5 +54,4 @@ jobs:
           sudo docker system prune --force && \
           sudo docker pull eshun/wwm-backend:v1.0 && \
           cd /home/projects/ && \
-          sudo docker-compose down wwm-backend && \
           sudo docker-compose up -d wwm-backend
