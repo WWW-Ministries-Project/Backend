@@ -50,6 +50,6 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             cd /home/projects/ && \
-            echo pwd
+            pwd
             # sudo docker system prune --force && \
             # sudo docker pull eshun/wwm-backend:v1.0 && \
