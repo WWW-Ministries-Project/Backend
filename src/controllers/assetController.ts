@@ -1,8 +1,9 @@
 import { Request, Response } from "express";
 import { assetSchema } from "../utils/validator";
 import { prisma } from "../Models/context";
+import upload from "../utils/upload";
 
-export const createAsset = async (req: Request, res: Response) => {
+export const createAsset = async (req: any, res: Response) => {
   try {
     const {
       name,
@@ -16,6 +17,7 @@ export const createAsset = async (req: Request, res: Response) => {
       status,
       description,
     } = req.body;
+    const file = req.file.path;
     assetSchema.validate(req.body);
     const hasCategory = category
       ? {
@@ -24,6 +26,8 @@ export const createAsset = async (req: Request, res: Response) => {
           },
         }
       : undefined;
+    const uploadFile = await upload(file);
+
     const asset = await prisma.assets.create({
       data: {
         name,
@@ -35,7 +39,7 @@ export const createAsset = async (req: Request, res: Response) => {
         price: Number(price),
         date_assigned: date_assigned ? new Date(date_assigned) : undefined,
         status,
-        photo,
+        photo: uploadFile.secure_url,
       },
     });
     res.status(200).json({
@@ -43,6 +47,7 @@ export const createAsset = async (req: Request, res: Response) => {
       asset,
     });
   } catch (error: any) {
+    console.log(error.message);
     return res
       .status(500)
       .json({ message: "Something Went Wrong", data: error });
