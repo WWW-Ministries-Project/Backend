@@ -16,6 +16,7 @@ export const createAsset = async (req: any, res: any) => {
       status,
       description,
       created_by,
+      photo,
     } = req.body;
     const file = req.file ? req.file.path : null;
     assetSchema.validate(req.body);
@@ -38,7 +39,8 @@ export const createAsset = async (req: any, res: any) => {
         price: Number(price),
         date_assigned: date_assigned ? new Date(date_assigned) : undefined,
         status,
-        photo: file ? await upload(file) : undefined,
+        photo,
+        // photo: file ? await upload(file) : undefined,
         created_by: Number(created_by),
       },
     });
@@ -68,6 +70,7 @@ export const updateAsset = async (req: Request, res: Response) => {
       description,
       id,
       updated_by,
+      photo,
     } = req.body;
     const file = req.file ? req.file.path : null;
     assetSchema.validate(req.body);
@@ -92,7 +95,8 @@ export const updateAsset = async (req: Request, res: Response) => {
         price: Number(price),
         date_assigned: date_assigned ? new Date(date_assigned) : undefined,
         status,
-        photo: file ? await upload(file) : undefined,
+        photo,
+        // photo: file ? await upload(file) : undefined,
         updated_by: Number(updated_by),
         updated_at: new Date(),
       },
