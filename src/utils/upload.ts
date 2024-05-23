@@ -1,24 +1,20 @@
 import cloudinary from "./cloudinary";
 
-const upload = (file: any) => {
-  const data = cloudinary.uploader.upload(
-    file,
-    { folder: "www-ministires", quality: "auto" },
-    (err: any, result: any) => {
-      if (err) {
-        return "Error uploading file";
+const upload: any = async (file: any) => {
+  try {
+    const data = await cloudinary.uploader.upload(
+      file,
+      { folder: "www-ministires", quality: "auto" },
+      (err: any, result: any) => {
+        if (err) {
+          return "Error uploading file";
+        }
       }
-
-      // File uploaded successfully to Cloudinary
-      return {
-        message: "File uploaded successfully",
-        result: {
-          link: result.secure_url,
-        },
-      };
-    }
-  );
-  return data;
+    );
+    return data.secure_url;
+  } catch (error) {
+    return "Unable to upload";
+  }
 };
 
 export default upload;

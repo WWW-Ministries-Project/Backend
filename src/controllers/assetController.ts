@@ -3,7 +3,7 @@ import { assetSchema } from "../utils/validator";
 import { prisma } from "../Models/context";
 import upload from "../utils/upload";
 
-export const createAsset = async (req: any, res: Response) => {
+export const createAsset = async (req: any, res: any) => {
   try {
     const {
       name,
@@ -13,11 +13,10 @@ export const createAsset = async (req: any, res: Response) => {
       date_assigned,
       asset_code,
       price,
-      photo,
       status,
       description,
     } = req.body;
-    const file = req.file.path;
+    const file = req.file ? req.file.path : null;
     assetSchema.validate(req.body);
     const hasCategory = category
       ? {
@@ -26,7 +25,6 @@ export const createAsset = async (req: any, res: Response) => {
           },
         }
       : undefined;
-    const uploadFile = await upload(file);
 
     const asset = await prisma.assets.create({
       data: {
@@ -39,7 +37,7 @@ export const createAsset = async (req: any, res: Response) => {
         price: Number(price),
         date_assigned: date_assigned ? new Date(date_assigned) : undefined,
         status,
-        photo: uploadFile.secure_url,
+        photo: file ? await upload(file) : undefined,
       },
     });
     res.status(200).json({
