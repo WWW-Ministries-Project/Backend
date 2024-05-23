@@ -378,4 +378,93 @@ export class Permissions {
       return res.status(401).json({ message: "Session Expired", data: null });
     }
   };
+  // Asset Levels
+  can_delete_asset = (req: Request, res: Response, next: NextFunction) => {
+    const token: any = req.headers["authorization"]?.split(" ")[1];
+
+    try {
+      const decoded = JWT.verify(
+        token,
+        process.env.JWT_SECRET as string
+      ) as any;
+      const permission = decoded.permissions;
+
+      if (permission.delete_Assets) {
+        next();
+      } else {
+        return res.status(401).json({
+          message: "Not authorized to delete assets",
+          data: null,
+        });
+      }
+    } catch (error) {
+      return res.status(401).json({ message: "Session Expired", data: null });
+    }
+  };
+  can_create_asset = (req: Request, res: Response, next: NextFunction) => {
+    const token: any = req.headers["authorization"]?.split(" ")[1];
+
+    try {
+      const decoded = JWT.verify(
+        token,
+        process.env.JWT_SECRET as string
+      ) as any;
+      const permission = decoded.permissions;
+
+      if (permission.create_Assets) {
+        next();
+      } else {
+        return res.status(401).json({
+          message: "Not authorized to create asset",
+          data: null,
+        });
+      }
+    } catch (error) {
+      return res.status(401).json({ message: "Session Expired", data: null });
+    }
+  };
+  can_edit_asset = (req: Request, res: Response, next: NextFunction) => {
+    const token: any = req.headers["authorization"]?.split(" ")[1];
+
+    try {
+      const decoded = JWT.verify(
+        token,
+        process.env.JWT_SECRET as string
+      ) as any;
+      const permission = decoded.permissions;
+
+      if (permission.edit_Assets) {
+        next();
+      } else {
+        return res.status(401).json({
+          message: "Not authorized to edit asset",
+          data: null,
+        });
+      }
+    } catch (error) {
+      return res.status(401).json({ message: "Session Expired", data: null });
+    }
+  };
+  can_view_asset = (req: Request, res: Response, next: NextFunction) => {
+    const token: any = req.headers["authorization"]?.split(" ")[1];
+
+    try {
+      const decoded = JWT.verify(
+        token,
+        process.env.JWT_SECRET as string
+      ) as any;
+      const permission = decoded.permissions;
+
+      if (permission.view_Assets) {
+        next();
+      } else {
+        return res.status(401).json({
+          message: "Not authorized to view asset",
+          data: null,
+        });
+      }
+    } catch (error) {
+      return res.status(401).json({ message: "Session Expired", data: null });
+    }
+  };
 }

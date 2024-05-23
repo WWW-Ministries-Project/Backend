@@ -15,6 +15,7 @@ export const createAsset = async (req: any, res: any) => {
       price,
       status,
       description,
+      created_by,
     } = req.body;
     const file = req.file ? req.file.path : null;
     assetSchema.validate(req.body);
@@ -38,6 +39,7 @@ export const createAsset = async (req: any, res: any) => {
         date_assigned: date_assigned ? new Date(date_assigned) : undefined,
         status,
         photo: file ? await upload(file) : undefined,
+        created_by: Number(created_by),
       },
     });
     res.status(200).json({
@@ -65,8 +67,9 @@ export const updateAsset = async (req: Request, res: Response) => {
       status,
       description,
       id,
-      photo,
+      updated_by,
     } = req.body;
+    const file = req.file ? req.file.path : null;
     assetSchema.validate(req.body);
     const hasCategory = category
       ? {
@@ -89,7 +92,9 @@ export const updateAsset = async (req: Request, res: Response) => {
         price: Number(price),
         date_assigned: date_assigned ? new Date(date_assigned) : undefined,
         status,
-        photo,
+        photo: file ? await upload(file) : undefined,
+        updated_by: Number(updated_by),
+        updated_at: new Date(),
       },
     });
     res.status(200).json({

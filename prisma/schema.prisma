@@ -123,7 +123,10 @@ model assets {
   price            Float?
   photo            String?
   description      String?
-  updated_at       DateTime        @default(now())
+  created_by       Int?
+  created_at       DateTime        @default(now())
+  updated_by       Int?
+  updated_at       DateTime?
   status           asset_status
 }
 
