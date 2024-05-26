@@ -18,5 +18,5 @@ jobs:
             cd /home/projects/Backend/ && \
             sudo git checkout production && \
             sudo git pull origin production && \
-            sudo docker-compose up -d && \
+            sudo docker-compose build --no-cache && \
             sudo docker system prune --force
