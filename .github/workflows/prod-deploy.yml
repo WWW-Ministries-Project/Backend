@@ -19,5 +19,5 @@ jobs:
             sudo git checkout production && \
             sudo git pull origin production && \
             sudo docker build -t www_backend . && \
-            sudo docker-compose up -d && \
+            sudo docker-compose up -d backend && \
             sudo docker system prune --force
