@@ -5,7 +5,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: www_backend
+    image: www_backend:latest
     container_name: www_backend_container
     env_file: .env
     restart: on-failure
