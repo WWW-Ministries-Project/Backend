@@ -16,7 +16,7 @@ jobs:
           key: ${{ secrets.PROD_SSH_KEY }}
           script: |
             cd /home/projects/Backend/ && \
-            sudo docker-compose dowm && \
+            sudo docker-compose down && \
             sudo git checkout production && \
             sudo git pull origin production && \
             sudo docker build -t www_backend . && \
