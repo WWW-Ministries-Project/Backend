@@ -16,5 +16,5 @@ jobs:
           key: ${{ secrets.PROD_SSH_KEY }}
           script: |
             cd /home/projects/Backend/ && \
-            sudo docker-compose up -d
+            sudo docker-compose up -d && \
             sudo docker system prune --force && \
