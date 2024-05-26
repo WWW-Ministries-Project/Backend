@@ -1,0 +1,20 @@
+name: Production CI/CD
+
+on:
+  push:
+    branches: ["production"]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH In EC2 Instance
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.PROD_HOST_IP_ADDRESS }}
+          username: ${{ secrets.EC2_USERNAME }}
+          key: ${{ secrets.PROD_SSH_KEY }}
+          script: |
+            cd /home/projects/Backend/ && \
+            sudo docker-compose up -d
+            sudo docker system prune --force && \
