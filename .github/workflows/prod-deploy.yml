@@ -17,6 +17,7 @@ jobs:
           script: |
             cd /home/projects/Backend/ && \
             git checkout production && \
+            git config --global --add safe.directory /home/projects/Backend && \
             git pull origin production && \
             sudo docker-compose up -d && \
             sudo docker system prune --force && \
