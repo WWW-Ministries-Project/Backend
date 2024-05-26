@@ -13,6 +13,7 @@ const JWT_SECRET: any = process.env.JWT_SECRET;
 
 export const landingPage = async (req: Request, res: Response) => {
   res.send(
+    // `<h1>Welcome to World Wide Word Ministries Backend Server🔥🎉💒</h1>`
     `<h1>Welcome to World Wide Word Ministries Backend Server🔥🎉🙏💒...Access the Main Page on https://wwwministries.netlify.app</h1>`
   );
 };
