@@ -6,6 +6,7 @@ import { comparePassword, hashPassword } from "../utils/hashPasswords";
 import { sendEmail } from "../utils/emailService";
 import { prisma } from "../Models/context";
 import { confirmTemplate } from "../utils/mail_templates/confirmTemplate";
+import { toCapitalizeEachWord } from "../utils/textFormatter";
 dotenv.config();
 
 const User = model;
@@ -82,7 +83,7 @@ export const registerUser = async (req: Request, res: Response) => {
     } else {
       const response = await prisma.user.create({
         data: {
-          name,
+          name: toCapitalizeEachWord(name),
           email,
           position_id,
           password: is_user
@@ -101,7 +102,7 @@ export const registerUser = async (req: Request, res: Response) => {
           user_info: {
             create: {
               title,
-              name,
+              name: toCapitalizeEachWord(name),
               date_of_birth: date_of_birth ? new Date(date_of_birth) : null,
               gender,
               primary_number,
@@ -109,7 +110,7 @@ export const registerUser = async (req: Request, res: Response) => {
               email,
               address,
               country,
-              company,
+              company: toCapitalizeEachWord(company),
               member_since: member_since ? new Date(member_since) : null,
               occupation,
               photo,
@@ -167,7 +168,7 @@ export const updateUser = async (req: Request, res: Response) => {
         id,
       },
       data: {
-        name,
+        name: toCapitalizeEachWord(name),
         email,
         position_id,
         is_user,
@@ -183,7 +184,7 @@ export const updateUser = async (req: Request, res: Response) => {
         user_info: {
           update: {
             title,
-            name,
+            name: toCapitalizeEachWord(name),
             date_of_birth: date_of_birth ? new Date(date_of_birth) : null,
             gender,
             primary_number,
