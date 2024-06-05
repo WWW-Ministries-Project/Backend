@@ -13,8 +13,9 @@ import { accessRouter } from "./src/routes/accessLevelRoute";
 import { landingPage } from "./src/controllers/userController";
 import { uploadRouter } from "./src/routes/uploadRoute";
 import { assetRouter } from "./src/routes/assetRouter";
+import { generateQR } from "./src/utils/qr-codeGenerator";
+import { eventRouter } from "./src/routes/eventRoute";
 dotenv.config();
-
 // router
 const userRoutes = router;
 
@@ -31,6 +32,7 @@ app.use("/position", positionRouter);
 app.use("/access", accessRouter);
 app.use("/upload", uploadRouter);
 app.use("/assets", assetRouter);
+app.use("/event", eventRouter);
 
 // mongoose
 //   .connect(MONGO_URI, {})

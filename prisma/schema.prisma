@@ -146,3 +146,19 @@ model asset_history {
   update_date   DateTime
   userId        Int?
 }
+
+model event_mgt {
+  id          Int       @id @default(autoincrement())
+  name        String
+  date        DateTime?
+  start_time  DateTime?
+  end_time    DateTime?
+  location    String?
+  description String?
+  poster       String?
+  qr_code     String?
+  created_by  Int
+  created_at  DateTime  @default(now())
+  updated_by  Int?
+  updated_at  DateTime?
+}

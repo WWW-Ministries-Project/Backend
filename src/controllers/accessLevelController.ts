@@ -130,6 +130,11 @@ export const listAllAccessLevel = async (req: Request, res: Response) => {
           select: {
             id: true,
             name: true,
+            user_info: {
+              select: {
+                photo: true,
+              },
+            },
           },
         },
       },
