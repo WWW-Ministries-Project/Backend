@@ -9,12 +9,32 @@ dotenv.config();
 
 export const eventRouter = Router();
 
-eventRouter.get("/get-event", eventContoller.getEvent);
+eventRouter.get(
+  "/get-event",
+  [protect, permissions.can_view_events],
+  eventContoller.getEvent
+);
 
-eventRouter.get("/list-events", [protect], eventContoller.listEvents);
+eventRouter.get(
+  "/list-events",
+  [protect, permissions.can_view_events],
+  eventContoller.listEvents
+);
 
-eventRouter.post("/create-event", eventContoller.createEvent);
+eventRouter.post(
+  "/create-event",
+  [protect, permissions.can_edit_events],
+  eventContoller.createEvent
+);
 
-eventRouter.put("/update-event", eventContoller.updateEvent);
+eventRouter.put(
+  "/update-event",
+  [protect, permissions.can_edit_events],
+  eventContoller.updateEvent
+);
 
-eventRouter.delete("/delete-event", eventContoller.deleteEvent);
+eventRouter.delete(
+  "/delete-event",
+  [protect, permissions.can_edit_events],
+  eventContoller.deleteEvent
+);

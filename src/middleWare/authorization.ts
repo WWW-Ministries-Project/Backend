@@ -467,4 +467,50 @@ export class Permissions {
       return res.status(401).json({ message: "Session Expired", data: null });
     }
   };
+
+  // Events
+  can_view_events = (req: Request, res: Response, next: NextFunction) => {
+    const token: any = req.headers["authorization"]?.split(" ")[1];
+
+    try {
+      const decoded = JWT.verify(
+        token,
+        process.env.JWT_SECRET as string
+      ) as any;
+      const permission = decoded.permissions;
+
+      if (permission.view_Events) {
+        next();
+      } else {
+        return res.status(401).json({
+          message: "Not authorized to view events",
+          data: null,
+        });
+      }
+    } catch (error) {
+      return res.status(401).json({ message: "Session Expired", data: null });
+    }
+  };
+  can_edit_events = (req: Request, res: Response, next: NextFunction) => {
+    const token: any = req.headers["authorization"]?.split(" ")[1];
+
+    try {
+      const decoded = JWT.verify(
+        token,
+        process.env.JWT_SECRET as string
+      ) as any;
+      const permission = decoded.permissions;
+
+      if (permission.edit_Events) {
+        next();
+      } else {
+        return res.status(401).json({
+          message: "Not authorized to edit events",
+          data: null,
+        });
+      }
+    } catch (error) {
+      return res.status(401).json({ message: "Session Expired", data: null });
+    }
+  };
 }
