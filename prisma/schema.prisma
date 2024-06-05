@@ -150,12 +150,13 @@ model asset_history {
 model event_mgt {
   id          Int       @id @default(autoincrement())
   name        String
-  date        DateTime?
-  start_time  DateTime?
-  end_time    DateTime?
+  start_date  DateTime?
+  end_date    DateTime?
+  start_time  String?
+  end_time    String?
   location    String?
   description String?
-  poster       String?
+  poster      String?
   qr_code     String?
   created_by  Int
   created_at  DateTime  @default(now())
