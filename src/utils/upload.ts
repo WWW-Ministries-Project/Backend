@@ -4,7 +4,7 @@ const upload: any = async (file: any) => {
   try {
     const data = await cloudinary.uploader.upload(
       file,
-      { folder: "www-ministires", quality: "auto" },
+      { folder: "www-ministires/events_qr", quality: "auto" },
       (err: any, result: any) => {
         if (err) {
           return "Error uploading file";
