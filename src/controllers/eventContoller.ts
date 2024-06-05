@@ -6,7 +6,8 @@ export class eventManagement {
     try {
       const {
         name,
-        date,
+        start_date,
+        end_date,
         start_time,
         end_time,
         location,
@@ -19,9 +20,10 @@ export class eventManagement {
       const response = await prisma.event_mgt.create({
         data: {
           name,
-          date: new Date(date),
-          start_time: new Date(start_time),
-          end_time: new Date(end_time),
+          start_date: new Date(start_date),
+          end_date: new Date(end_date),
+          start_time,
+          end_time,
           location,
           description,
           poster,
@@ -31,7 +33,8 @@ export class eventManagement {
         select: {
           id: true,
           name: true,
-          date: true,
+          start_date: true,
+          end_date: true,
           start_time: true,
           end_time: true,
           location: true,
@@ -58,7 +61,8 @@ export class eventManagement {
       const {
         id,
         name,
-        date,
+        start_date,
+        end_date,
         start_time,
         end_time,
         location,
@@ -73,9 +77,10 @@ export class eventManagement {
         },
         data: {
           name,
-          date: new Date(date),
-          start_time: new Date(start_time),
-          end_time: new Date(end_time),
+          start_date: new Date(start_date),
+          end_date: new Date(end_date),
+          start_time,
+          end_time,
           location,
           description,
           poster,
@@ -86,7 +91,8 @@ export class eventManagement {
         select: {
           id: true,
           name: true,
-          date: true,
+          start_date: true,
+          end_date: true,
           start_time: true,
           end_time: true,
           location: true,
@@ -135,12 +141,12 @@ export class eventManagement {
       const data = await prisma.event_mgt.findMany({
         where: {
           AND: [
-            { date: { gte: new Date(`${year}-${month}-01`) } }, // Start of the month
-            { date: { lt: new Date(`${year}-${Number(month) + 1}-01`) } }, // Start of the next month
+            { start_date: { gte: new Date(`${year}-${month}-01`) } }, // Start of the month
+            { start_date: { lt: new Date(`${year}-${Number(month) + 1}-01`) } }, // Start of the next month
           ],
         },
         orderBy: {
-          date: "asc",
+          start_date: "asc",
         },
       });
       res.status(200).json({
@@ -176,7 +182,7 @@ export class eventManagement {
     try {
       return await prisma.event_mgt.findMany({
         orderBy: {
-          date: "asc",
+          start_date: "asc",
         },
       });
     } catch (error) {
