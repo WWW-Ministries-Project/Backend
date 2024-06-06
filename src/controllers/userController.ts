@@ -252,7 +252,7 @@ export const deleteUser = async (req: Request, res: Response) => {
 export const login = async (req: Request, res: Response) => {
   const { email, password } = req.body;
   try {
-    const existance = await prisma.user.findUnique({
+    const existance: any = await prisma.user.findUnique({
       where: {
         email,
         AND: {
