@@ -12,25 +12,26 @@ datasource db {
 }
 
 model user {
-  id              Int                @id @default(autoincrement())
-  name            String
-  email           String             @unique
-  is_active       Boolean?           @default(true)
-  partner         Boolean?           @default(false)
-  is_user         Boolean?           @default(false)
-  is_visitor      Boolean?
-  password        String
-  department      user_departments[]
-  position_id     Int?
-  position        position?          @relation(fields: [position_id], references: [id])
-  user_info       user_info?
-  department_head department[]
-  created_at      DateTime           @default(now())
-  updated_at      DateTime?
-  access_level_id Int?
-  access          access_level?      @relation(fields: [access_level_id], references: [id])
-  assets          assets[]
-  asset_history   asset_history[]
+  id               Int                @id @default(autoincrement())
+  name             String
+  email            String?             @unique
+  is_active        Boolean?           @default(true)
+  partner          Boolean?           @default(false)
+  is_user          Boolean?           @default(false)
+  is_visitor       Boolean?
+  password         String?
+  department       user_departments[]
+  position_id      Int?
+  position         position?          @relation(fields: [position_id], references: [id])
+  user_info        user_info?
+  department_head  department[]
+  created_at       DateTime           @default(now())
+  updated_at       DateTime?
+  access_level_id  Int?
+  access           access_level?      @relation(fields: [access_level_id], references: [id])
+  assets           assets[]
+  asset_history    asset_history[]
+  event_attendance event_attendance[]
 }
 
 model user_info {
@@ -148,18 +149,28 @@ model asset_history {
 }
 
 model event_mgt {
-  id          Int       @id @default(autoincrement())
-  name        String
-  start_date  DateTime?
-  end_date    DateTime?
-  start_time  String?
-  end_time    String?
-  location    String?
-  description String?
-  poster      String?
-  qr_code     String?
-  created_by  Int
-  created_at  DateTime  @default(now())
-  updated_by  Int?
-  updated_at  DateTime?
+  id               Int                @id @default(autoincrement())
+  name             String
+  start_date       DateTime?
+  end_date         DateTime?
+  start_time       String?
+  end_time         String?
+  location         String?
+  description      String?
+  poster           String?
+  qr_code          String?
+  created_by       Int
+  created_at       DateTime           @default(now())
+  updated_by       Int?
+  updated_at       DateTime?
+  event_attendance event_attendance[]
+}
+
+model event_attendance {
+  id         Int       @id @default(autoincrement())
+  event_id   Int
+  event      event_mgt @relation(fields: [event_id], references: [id])
+  user_id    Int
+  user       user      @relation(fields: [user_id], references: [id])
+  created_at DateTime  @default(now())
 }
