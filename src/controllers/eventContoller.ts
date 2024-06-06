@@ -168,6 +168,34 @@ export class eventManagement {
         where: {
           id: Number(id),
         },
+        select: {
+          id: true,
+          name: true,
+          poster: true,
+          start_date: true,
+          end_date: true,
+          start_time: true,
+          end_time: true,
+          qr_code: true,
+          location: true,
+          description: true,
+          created_by: true,
+          event_attendance: {
+            select: {
+              created_at: true,
+              user: {
+                select: {
+                  user_info: {
+                    select: {
+                      name: true,
+                      primary_number: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
       });
       res.status(200).json({ message: "Operation successful", data: response });
     } catch (error: any) {
@@ -177,6 +205,141 @@ export class eventManagement {
       });
     }
   };
+
+  eventAttendance = async (req: Request, res: Response) => {
+    try {
+      const {
+        first_name,
+        last_name,
+        other_name,
+        gender,
+        marital_status,
+        membership_type,
+        title,
+        phone_number,
+        new_member,
+      } = req.body;
+      const { event_id } = req.query;
+
+      // If not a new User
+      if (!new_member) {
+        const existing_user: any = await this.searchUser(phone_number);
+        if (!existing_user) {
+          res.status(404).json({
+            message: "User not found",
+          });
+        }
+
+        // Check for already capured users
+        const checkSign = await prisma.event_attendance.findFirst({
+          where: {
+            AND: {
+              event_id: Number(event_id),
+              user_id: Number(existing_user.user_id),
+            },
+          },
+          select: {
+            id: true,
+          },
+        });
+
+        if (checkSign) {
+          res.status(200).json({
+            message: "Already Captured Enjoy the program",
+          });
+        }
+
+        // Signing Attendace
+        this.signAttendance(event_id, existing_user.user_id);
+        res.status(200).json({
+          message: "Attendance recorded successfully",
+        });
+      }
+
+      if (!first_name || !gender || !title) {
+        res.status(404).json({
+          message: "Check Parameters some are empty",
+          data: {
+            name: first_name,
+            gender,
+            title,
+          },
+        });
+      }
+
+      await prisma.user.create({
+        data: {
+          name: `${first_name} ${other_name} ${last_name}`,
+          user_info: {
+            create: {
+              gender,
+              name: `${first_name} ${other_name} ${last_name}`,
+              title,
+              primary_number: phone_number,
+            },
+          },
+        },
+      });
+
+      res.status(200).json({
+        message: "Attendance recorded successfully",
+      });
+    } catch (error) {
+      return error;
+    }
+  };
+
+  searchUser1 = async (req: Request, res: Response) => {
+    try {
+      const { phone_number } = req.body;
+      const existing_user: any = await this.searchUser(phone_number);
+      if (!existing_user) {
+        res.status(404).json({
+          message: "User not found",
+        });
+      } else {
+        res.status(200).json({
+          message: "User found",
+          data: existing_user,
+        });
+      }
+    } catch (error) {
+      res.status(500).json({
+        message: "Something went wrong",
+        data: error,
+      });
+    }
+  };
+
+  private async signAttendance(event_id: any, user_id: any) {
+    try {
+      await prisma.event_attendance.create({
+        data: {
+          event_id: Number(event_id),
+          user_id: Number(user_id),
+        },
+      });
+    } catch (error) {
+      return error;
+    }
+  }
+
+  private async searchUser(phone: string) {
+    try {
+      return await prisma.user_info.findFirst({
+        where: {
+          primary_number: phone,
+        },
+        select: {
+          name: true,
+          primary_number: true,
+          user_id: true,
+        },
+      });
+    } catch (error) {
+      return "User Not Found";
+    }
+  }
 
   private async listEventsP() {
     try {

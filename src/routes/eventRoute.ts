@@ -38,3 +38,6 @@ eventRouter.delete(
   [protect, permissions.can_edit_events],
   eventContoller.deleteEvent
 );
+
+eventRouter.post("/sign-attendance", eventContoller.eventAttendance);
+eventRouter.get("/search-user", eventContoller.searchUser1);
