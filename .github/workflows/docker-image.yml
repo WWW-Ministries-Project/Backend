@@ -28,7 +28,8 @@ jobs:
           echo "CLOUD_NAME=${{ secrets.CLOUD_NAME}}" >> .env
           echo "API_KEY=${{ secrets.API_KEY}}" >> .env
           echo "API_SECRET=${{ secrets.API_SECRET}}" >> .env
-          echo "Frontend_URL=${{ secrets.Frontend_URL}}" >> .env
+          # echo "Frontend_URL=${{ secrets.Frontend_URL}}" >> .env
+          echo "Frontend_URL=http://localhost:5173" >> .env
 
       - name: Build the Docker image
         run: docker build -t eshun/wwm-backend:v1.0 .
