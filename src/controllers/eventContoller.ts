@@ -239,7 +239,7 @@ export class eventManagement {
       if (!new_member) {
         const existing_user: any = await this.searchUser(phone_number);
         if (!existing_user) {
-          return res.status(404).json({
+          return res.status(204).json({
             message: "User not found",
           });
         }
@@ -258,20 +258,9 @@ export class eventManagement {
         });
       }
 
-      if (!first_name || !gender || !title) {
-        res.status(404).json({
-          message: "Check Parameters some are empty",
-          data: {
-            name: first_name,
-            gender,
-            title,
-          },
-        });
-      }
-
       const existing_user: any = await this.searchUser(phone_number);
       if (existing_user) {
-        return res.status(400).json({
+        return res.status(200).json({
           message: "Already a user",
         });
       }
@@ -312,7 +301,7 @@ export class eventManagement {
       const convert = `+${phone.trim()}`;
       const existing_user: any = await this.searchUser(convert);
       if (!existing_user) {
-        return res.status(404).json({
+        return res.status(204).json({
           message: "User not found",
         });
       } else {
