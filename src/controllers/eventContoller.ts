@@ -225,33 +225,21 @@ export class eventManagement {
       if (!new_member) {
         const existing_user: any = await this.searchUser(phone_number);
         if (!existing_user) {
-          res.status(404).json({
+          return res.status(404).json({
             message: "User not found",
           });
         }
-
         // Check for already capured users
-        const checkSign = await prisma.event_attendance.findFirst({
-          where: {
-            AND: {
-              event_id: Number(event_id),
-              user_id: Number(existing_user.user_id),
-            },
-          },
-          select: {
-            id: true,
-          },
-        });
-
+        const checkSign = await this.checkSign(event_id, existing_user.user_id);
         if (checkSign) {
-          res.status(200).json({
+          return res.status(200).json({
             message: "Already Captured Enjoy the program",
           });
         }
 
         // Signing Attendace
         this.signAttendance(event_id, existing_user.user_id);
-        res.status(200).json({
+        return res.status(200).json({
           message: "Attendance recorded successfully",
         });
       }
@@ -267,7 +255,14 @@ export class eventManagement {
         });
       }
 
-      await prisma.user.create({
+      const existing_user: any = await this.searchUser(phone_number);
+      if (existing_user) {
+        return res.status(404).json({
+          message: "Already a user",
+        });
+      }
+
+      const create_user = await prisma.user.create({
         data: {
           name: `${first_name} ${other_name} ${last_name}`,
           user_info: {
@@ -279,13 +274,21 @@ export class eventManagement {
             },
           },
         },
+        select: {
+          id: true,
+        },
       });
+
+      await this.signAttendance(event_id, create_user.id);
 
       res.status(200).json({
         message: "Attendance recorded successfully",
       });
     } catch (error) {
-      return error;
+      return res.status(500).json({
+        message: "Something went wrong",
+        data: error,
+      });
     }
   };
 
@@ -294,22 +297,36 @@ export class eventManagement {
       const { phone_number } = req.body;
       const existing_user: any = await this.searchUser(phone_number);
       if (!existing_user) {
-        res.status(404).json({
+        return res.status(404).json({
           message: "User not found",
         });
       } else {
-        res.status(200).json({
+        return res.status(200).json({
           message: "User found",
           data: existing_user,
         });
       }
     } catch (error) {
-      res.status(500).json({
+      return res.status(500).json({
         message: "Something went wrong",
         data: error,
       });
     }
   };
+
+  private async checkSign(event_id: any, user_id: any) {
+    return await prisma.event_attendance.findFirst({
+      where: {
+        AND: {
+          event_id: Number(event_id),
+          user_id: Number(user_id),
+        },
+      },
+      select: {
+        id: true,
+      },
+    });
+  }
 
   private async signAttendance(event_id: any, user_id: any) {
     try {
