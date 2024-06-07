@@ -46,7 +46,7 @@ export class eventManagement {
       });
 
       const qr_code = await generateQR(
-        `https://${process.env.Frontend_URL}/events/register-event?event_id=${response.id}&event_name=${response.name}`
+        `${process.env.Frontend_URL}/events/register-event?event_id=${response.id}&event_name=${response.name}`
       );
 
       await prisma.event_mgt.update({
