@@ -1,6 +1,9 @@
 import { generateQR } from "../utils/qr-codeGenerator";
 import { prisma } from "./../Models/context";
 import { Request, Response } from "express";
+import * as dotenv from "dotenv";
+dotenv.config();
+
 export class eventManagement {
   createEvent = async (req: Request, res: Response) => {
     try {
@@ -15,7 +18,6 @@ export class eventManagement {
         poster,
         created_by,
       } = req.body;
-      const qr_code = await generateQR("https://wwwministries.netlify.app/");
 
       const response = await prisma.event_mgt.create({
         data: {
@@ -27,7 +29,6 @@ export class eventManagement {
           location,
           description,
           poster,
-          qr_code,
           created_by,
         },
         select: {
@@ -41,6 +42,19 @@ export class eventManagement {
           description: true,
           poster: true,
           qr_code: true,
+        },
+      });
+
+      const qr_code = await generateQR(
+        `https://${process.env.Frontend_URL}/events/register-event?event_id=${response.id}`
+      );
+
+      await prisma.event_mgt.update({
+        where: {
+          id: response.id,
+        },
+        data: {
+          qr_code,
         },
       });
 
@@ -232,8 +246,8 @@ export class eventManagement {
         // Check for already capured users
         const checkSign = await this.checkSign(event_id, existing_user.user_id);
         if (checkSign) {
-          return res.status(200).json({
-            message: "Already Captured Enjoy the program",
+          return res.status(204).json({
+            message: "Already Captured, Enjoy the program",
           });
         }
 
@@ -257,7 +271,7 @@ export class eventManagement {
 
       const existing_user: any = await this.searchUser(phone_number);
       if (existing_user) {
-        return res.status(404).json({
+        return res.status(400).json({
           message: "Already a user",
         });
       }
@@ -294,8 +308,9 @@ export class eventManagement {
 
   searchUser1 = async (req: Request, res: Response) => {
     try {
-      const { phone_number } = req.body;
-      const existing_user: any = await this.searchUser(phone_number);
+      const { phone }: any = req.query;
+      const convert = `+${phone.trim()}`;
+      const existing_user: any = await this.searchUser(convert);
       if (!existing_user) {
         return res.status(404).json({
           message: "User not found",
