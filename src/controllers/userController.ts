@@ -23,13 +23,35 @@ const selectQuery = {
   id: true,
   name: true,
   email: true,
+  membership_type: true,
   created_at: true,
   is_active: true,
   user_info: {
     select: {
+      first_name: true,
+      last_name: true,
+      other_name: true,
       primary_number: true,
       title: true,
       photo: true,
+      marital_status: true,
+      nationality: true,
+      date_of_birth: true,
+      gender: true,
+      emergency_contact: {
+        select: {
+          name: true,
+          phone_number: true,
+          relation: true,
+        },
+      },
+      work_info: {
+        select: {
+          name_of_institution: true,
+          industry: true,
+          position: true,
+        },
+      },
     },
   },
   department: {
@@ -54,7 +76,6 @@ export const registerUser = async (req: Request, res: Response) => {
   try {
     const {
       title,
-      name,
       date_of_birth,
       gender,
       primary_number,
@@ -67,11 +88,22 @@ export const registerUser = async (req: Request, res: Response) => {
       member_since,
       photo,
       is_user,
-      is_visitor,
       department_id,
       position_id,
       password,
       access_level_id,
+      membership_type,
+      first_name,
+      last_name,
+      other_name,
+      marital_status,
+      nationality,
+      emergency_contact_name,
+      emergency_contact_relation,
+      emergency_contact_phone_number,
+      work_name,
+      work_industry,
+      work_position,
     } = req.body;
     const existingUser = await prisma.user.findMany({
       where: {
@@ -83,14 +115,14 @@ export const registerUser = async (req: Request, res: Response) => {
     } else {
       const response = await prisma.user.create({
         data: {
-          name: toCapitalizeEachWord(name),
+          name: toCapitalizeEachWord(
+            `${first_name} ${other_name} ${last_name}`
+          ),
           email,
           position_id,
-          password: is_user
-            ? await hashPassword(password)
-            : await hashPassword("123456"),
+          password: is_user ? await hashPassword("123456") : undefined,
           is_user,
-          is_visitor,
+          membership_type,
           access_level_id,
           department: department_id
             ? {
@@ -102,7 +134,9 @@ export const registerUser = async (req: Request, res: Response) => {
           user_info: {
             create: {
               title,
-              name: toCapitalizeEachWord(name),
+              first_name,
+              last_name,
+              other_name,
               date_of_birth: date_of_birth ? new Date(date_of_birth) : null,
               gender,
               primary_number,
@@ -114,13 +148,29 @@ export const registerUser = async (req: Request, res: Response) => {
               member_since: member_since ? new Date(member_since) : null,
               occupation,
               photo,
+              marital_status,
+              nationality,
+              emergency_contact: {
+                create: {
+                  name: emergency_contact_name,
+                  relation: emergency_contact_relation,
+                  phone_number: emergency_contact_phone_number,
+                },
+              },
+              work_info: {
+                create: {
+                  name_of_institution: work_name,
+                  industry: work_industry,
+                  position: work_position,
+                },
+              },
             },
           },
         },
         select: selectQuery,
       });
       const mailDet = {
-        name,
+        first_name,
         email,
         password: password || "123456",
         frontend_url: `${process.env.Frontend_URL}/login`,
@@ -144,7 +194,6 @@ export const updateUser = async (req: Request, res: Response) => {
   const {
     id,
     title,
-    name,
     date_of_birth,
     gender,
     primary_number,
@@ -157,10 +206,22 @@ export const updateUser = async (req: Request, res: Response) => {
     member_since,
     photo,
     is_user,
-    is_visitor,
     department_id,
     position_id,
+    password,
     access_level_id,
+    membership_type,
+    first_name,
+    last_name,
+    other_name,
+    marital_status,
+    nationality,
+    emergency_contact_name,
+    emergency_contact_relation,
+    emergency_contact_phone_number,
+    work_name,
+    work_industry,
+    work_position,
   } = req.body;
   try {
     const response = await prisma.user.update({
@@ -168,23 +229,31 @@ export const updateUser = async (req: Request, res: Response) => {
         id,
       },
       data: {
-        name: toCapitalizeEachWord(name),
+        name: toCapitalizeEachWord(`${first_name} ${other_name} ${last_name}`),
         email,
         position_id,
+        password: is_user ? await hashPassword("123456") : undefined,
         is_user,
-        is_visitor,
+        membership_type,
         access_level_id,
         department: department_id
           ? {
-              create: {
-                department_id,
+              update: {
+                where: {
+                  user_id: id,
+                },
+                data: {
+                  department_id,
+                },
               },
             }
           : undefined,
         user_info: {
           update: {
             title,
-            name: toCapitalizeEachWord(name),
+            first_name,
+            last_name,
+            other_name,
             date_of_birth: date_of_birth ? new Date(date_of_birth) : null,
             gender,
             primary_number,
@@ -192,10 +261,26 @@ export const updateUser = async (req: Request, res: Response) => {
             email,
             address,
             country,
-            company,
+            company: toCapitalizeEachWord(company),
             member_since: member_since ? new Date(member_since) : null,
             occupation,
             photo,
+            marital_status,
+            nationality,
+            emergency_contact: {
+              update: {
+                name: emergency_contact_name,
+                relation: emergency_contact_relation,
+                phone_number: emergency_contact_phone_number,
+              },
+            },
+            work_info: {
+              update: {
+                name_of_institution: work_name,
+                industry: work_industry,
+                position: work_position,
+              },
+            },
           },
         },
       },
@@ -207,7 +292,7 @@ export const updateUser = async (req: Request, res: Response) => {
   } catch (error) {
     return res
       .status(500)
-      .json({ message: "Internal Server Error", data: null });
+      .json({ message: "Internal Server Error", data: error });
   }
 };
 export const updateUserSatus = async (req: Request, res: Response) => {
@@ -361,7 +446,7 @@ export const forgetPassword = async (req: Request, res: Response) => {
         expiresIn: "15m",
       }
     );
-    const link = `https://wwwministries.netlify.app/reset-password/?id=${existingUser.id}&token=${token}`;
+    const link = `${process.env.Frontend_URL}/reset-password/?id=${existingUser.id}&token=${token}`;
     sendEmail(link, email, "Reset Password");
     return res
       .status(200)
@@ -445,7 +530,6 @@ export const ListUsers = async (req: Request, res: Response) => {
       where: {
         AND: {
           is_active,
-          is_visitor,
           is_user: Boolean(is_user),
           name: {
             contains: name ? name.trim() : undefined,

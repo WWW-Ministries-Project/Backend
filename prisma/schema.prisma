@@ -14,11 +14,10 @@ datasource db {
 model user {
   id               Int                @id @default(autoincrement())
   name             String
-  email            String?             @unique
+  email            String?            @unique
   is_active        Boolean?           @default(true)
   partner          Boolean?           @default(false)
   is_user          Boolean?           @default(false)
-  is_visitor       Boolean?
   password         String?
   department       user_departments[]
   position_id      Int?
@@ -32,25 +31,50 @@ model user {
   assets           assets[]
   asset_history    asset_history[]
   event_attendance event_attendance[]
+  membership_type  membership_type?
 }
 
 model user_info {
-  id             Int       @id @default(autoincrement())
-  user_id        Int       @unique
-  user           user      @relation(fields: [user_id], references: [id])
-  title          String?
-  name           String
-  date_of_birth  DateTime?
-  gender         String
-  primary_number String?
-  other_number   String?
-  email          String?
-  address        String?
-  country        String?
-  occupation     String?
-  company        String?
-  member_since   DateTime?
-  photo          String?
+  id                   Int                     @id @default(autoincrement())
+  user_id              Int                     @unique
+  user                 user                    @relation(fields: [user_id], references: [id])
+  title                String?
+  first_name           String?
+  last_name            String?
+  other_name           String?
+  date_of_birth        DateTime?
+  gender               String
+  marital_status       marital_status?
+  nationality          String?
+  primary_number       String?
+  other_number         String?
+  email                String?
+  address              String?
+  country              String?
+  occupation           String?
+  company              String?
+  member_since         DateTime?
+  photo                String?
+  work_info_id         Int?
+  work_info            user_work_info?         @relation(fields: [work_info_id], references: [id])
+  emergency_contact_id Int?
+  emergency_contact    user_emergency_contact? @relation(fields: [emergency_contact_id], references: [id])
+}
+
+model user_work_info {
+  id                  Int         @id @default(autoincrement())
+  name_of_institution String
+  industry            String
+  position            String
+  user_info           user_info[]
+}
+
+model user_emergency_contact {
+  id           Int         @id @default(autoincrement())
+  name         String
+  relation     String
+  phone_number String
+  user_info    user_info[]
 }
 
 model department {
@@ -69,7 +93,7 @@ model department {
 
 model user_departments {
   id              Int         @id @default(autoincrement())
-  user_id         Int
+  user_id         Int         @unique
   user            user        @relation(fields: [user_id], references: [id])
   department_id   Int?
   department_info department? @relation(fields: [department_id], references: [id])
@@ -173,4 +197,15 @@ model event_attendance {
   user_id    Int
   user       user      @relation(fields: [user_id], references: [id])
   created_at DateTime  @default(now())
+}
+
+// Enums
+enum marital_status {
+  SINGLE
+  MARRIED
+}
+
+enum membership_type {
+  MEMBER
+  VISITOR
 }

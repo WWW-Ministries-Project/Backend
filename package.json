@@ -11,7 +11,8 @@
     "start": "yarn run rimraf && yarn run transpile && node dist/index.js",
     "migrate": "npx prisma migrate deploy && npx prisma generate",
     "migrate:2": "npx prisma generate",
-    "prod": "npx tsc && node -r newrelic dist/index.js"
+    "prod": "npx tsc && node -r newrelic dist/index.js",
+    "jack": "yarn run build && node dist/src/utils/rm_user.js"
   },
   "keywords": [],
   "author": "",
