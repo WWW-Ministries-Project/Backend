@@ -201,7 +201,9 @@ export class eventManagement {
                 select: {
                   user_info: {
                     select: {
-                      name: true,
+                      first_name: true,
+                      last_name: true,
+                      other_name: true,
                       primary_number: true,
                     },
                   },
@@ -271,7 +273,9 @@ export class eventManagement {
           user_info: {
             create: {
               gender,
-              name: `${first_name} ${other_name} ${last_name}`,
+              first_name,
+              last_name,
+              other_name,
               title,
               primary_number: phone_number,
             },
@@ -352,7 +356,9 @@ export class eventManagement {
           primary_number: phone,
         },
         select: {
-          name: true,
+          first_name: true,
+          last_name: true,
+          other_name: true,
           primary_number: true,
           user_id: true,
         },
