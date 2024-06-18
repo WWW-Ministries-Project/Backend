@@ -46,6 +46,7 @@ model user_info {
   gender               String
   marital_status       marital_status?
   nationality          String?
+  country_code         String?
   primary_number       String?
   other_number         String?
   email                String?
