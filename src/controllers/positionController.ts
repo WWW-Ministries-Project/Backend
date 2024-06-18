@@ -1,12 +1,13 @@
 import { prisma } from "../Models/context";
 import { Request, Response } from "express";
+import { toCapitalizeEachWord } from "../utils/textFormatter";
 
 export const createPosition = async (req: Request, res: Response) => {
   const { name, department_id, description, created_by } = req.body;
   try {
     const response = await prisma.position.create({
       data: {
-        name,
+        name: toCapitalizeEachWord(name),
         department_id,
         description,
         created_by,
@@ -14,19 +15,19 @@ export const createPosition = async (req: Request, res: Response) => {
       include: {
         department: {
           select: {
-            name: true
-          }
+            name: true,
+          },
         },
         user: {
           select: {
-            name: true
-          }
-        }
-      }
+            name: true,
+          },
+        },
+      },
     });
     const data = await prisma.position.findMany({
       orderBy: {
-        id: "desc"
+        id: "desc",
       },
       select: {
         id: true,
@@ -35,10 +36,10 @@ export const createPosition = async (req: Request, res: Response) => {
         department: {
           select: {
             id: true,
-            name: true
-          }
-        }
-      }
+            name: true,
+          },
+        },
+      },
     });
     res
       .status(200)
@@ -59,7 +60,7 @@ export const updatePosition = async (req: Request, res: Response) => {
         id,
       },
       data: {
-        name,
+        name: toCapitalizeEachWord(name),
         department_id,
         description,
         updated_by,
@@ -72,10 +73,10 @@ export const updatePosition = async (req: Request, res: Response) => {
         department: {
           select: {
             id: true,
-            name: true
-          }
-        }
-      }
+            name: true,
+          },
+        },
+      },
     });
     res
       .status(200)
@@ -94,11 +95,11 @@ export const deletePosition = async (req: Request, res: Response) => {
     const response = await prisma.position.delete({
       where: {
         id,
-      }
+      },
     });
     const data = await prisma.position.findMany({
       orderBy: {
-        id: "desc"
+        id: "desc",
       },
       select: {
         id: true,
@@ -107,10 +108,10 @@ export const deletePosition = async (req: Request, res: Response) => {
         department: {
           select: {
             id: true,
-            name: true
-          }
-        }
-      }
+            name: true,
+          },
+        },
+      },
     });
     res
       .status(200)
@@ -124,24 +125,22 @@ export const deletePosition = async (req: Request, res: Response) => {
 
 export const listPositions = async (req: Request, res: Response) => {
   try {
-    const response = await prisma.position.findMany(
-      {
-        orderBy: {
-          id: "desc"
+    const response = await prisma.position.findMany({
+      orderBy: {
+        id: "desc",
+      },
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        department: {
+          select: {
+            id: true,
+            name: true,
+          },
         },
-        select: {
-          id: true,
-          name: true,
-          description: true,
-          department: {
-            select: {
-              id: true,
-              name: true
-            }
-          }
-        }
-      }
-    );
+      },
+    });
     res.status(200).json({ message: "Success", data: response });
   } catch (error) {
     return res
@@ -165,10 +164,10 @@ export const getPosition = async (req: Request, res: Response) => {
         department: {
           select: {
             id: true,
-            name: true
-          }
-        }
-      }
+            name: true,
+          },
+        },
+      },
     });
     res.status(200).json({ message: "Success", data: response });
   } catch (error) {

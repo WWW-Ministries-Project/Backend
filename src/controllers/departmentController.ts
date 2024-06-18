@@ -1,12 +1,13 @@
 import { prisma } from "../Models/context";
 import { Request, Response } from "express";
+import { toCapitalizeEachWord } from "../utils/textFormatter";
 
 export const createDepartment = async (req: Request, res: Response) => {
   const { name, department_head, description, created_by } = req.body;
   try {
     const response = await prisma.department.create({
       data: {
-        name,
+        name: toCapitalizeEachWord(name),
         department_head,
         description,
         created_by,
@@ -15,7 +16,7 @@ export const createDepartment = async (req: Request, res: Response) => {
 
     const data = await prisma.department.findMany({
       orderBy: {
-        id: "desc"
+        id: "desc",
       },
       select: {
         id: true,
@@ -24,11 +25,10 @@ export const createDepartment = async (req: Request, res: Response) => {
         department_head_info: {
           select: {
             id: true,
-            name: true
-          }
-        }
-
-      }
+            name: true,
+          },
+        },
+      },
     });
     res
       .status(200)
@@ -49,7 +49,7 @@ export const updateDepartment = async (req: Request, res: Response) => {
         id,
       },
       data: {
-        name,
+        name: toCapitalizeEachWord(name),
         department_head,
         description,
         updated_by,
@@ -89,7 +89,7 @@ export const deleteDepartment = async (req: Request, res: Response) => {
     });
     const data = await prisma.department.findMany({
       orderBy: {
-        id: "desc"
+        id: "desc",
       },
       select: {
         id: true,
@@ -98,11 +98,10 @@ export const deleteDepartment = async (req: Request, res: Response) => {
         department_head_info: {
           select: {
             id: true,
-            name: true
-          }
-        }
-
-      }
+            name: true,
+          },
+        },
+      },
     });
     res
       .status(200)
@@ -118,7 +117,7 @@ export const listDepartments = async (req: Request, res: Response) => {
   try {
     const response = await prisma.department.findMany({
       orderBy: {
-        id: "desc"
+        id: "desc",
       },
       select: {
         id: true,
@@ -127,11 +126,10 @@ export const listDepartments = async (req: Request, res: Response) => {
         department_head_info: {
           select: {
             id: true,
-            name: true
-          }
-        }
-
-      }
+            name: true,
+          },
+        },
+      },
     });
     res.status(200).json({ message: "Success", data: response });
   } catch (error) {
@@ -156,11 +154,10 @@ export const getDepartment = async (req: Request, res: Response) => {
         department_head_info: {
           select: {
             id: true,
-            name: true
-          }
-        }
-
-      }
+            name: true,
+          },
+        },
+      },
     });
     if (!response) throw new Error("No Department Found");
 

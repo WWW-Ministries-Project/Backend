@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import { assetSchema } from "../utils/validator";
 import { prisma } from "../Models/context";
 import upload from "../utils/upload";
+import { toCapitalizeEachWord } from "../utils/textFormatter";
 
 export const createAsset = async (req: any, res: any) => {
   try {
@@ -30,7 +31,7 @@ export const createAsset = async (req: any, res: any) => {
 
     const asset = await prisma.assets.create({
       data: {
-        name,
+        name: toCapitalizeEachWord(name),
         asset_code,
         category: hasCategory,
         userId,
@@ -86,7 +87,7 @@ export const updateAsset = async (req: Request, res: Response) => {
         id,
       },
       data: {
-        name,
+        name: toCapitalizeEachWord(name),
         asset_code,
         category: hasCategory,
         userId,

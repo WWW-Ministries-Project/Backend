@@ -3,8 +3,6 @@ name: Docker Image CI
 on:
   push:
     branches: ["main"]
-  pull_request:
-    branches: ["main"]
 
 jobs:
   build:
@@ -30,7 +28,8 @@ jobs:
           echo "CLOUD_NAME=${{ secrets.CLOUD_NAME}}" >> .env
           echo "API_KEY=${{ secrets.API_KEY}}" >> .env
           echo "API_SECRET=${{ secrets.API_SECRET}}" >> .env
-          echo "Frontend_URL=${{ secrets.Frontend_URL}}" >> .env
+          # echo "Frontend_URL=${{ secrets.Frontend_URL}}" >> .env
+          echo "Frontend_URL=http://localhost:5173" >> .env
 
       - name: Build the Docker image
         run: docker build -t eshun/wwm-backend:v1.0 .
@@ -53,4 +52,4 @@ jobs:
             sudo docker-compose down wwm-backend && \
             sudo docker system prune --force && \
             sudo docker pull eshun/wwm-backend:v1.0 && \
-            sudo docker-compose up -d wwm-backend
+            sudo docker run -d -p 8080:8000 eshun/wwm-backend:v1.0
