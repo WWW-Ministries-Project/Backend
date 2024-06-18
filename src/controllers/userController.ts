@@ -7,6 +7,7 @@ import { sendEmail } from "../utils/emailService";
 import { prisma } from "../Models/context";
 import { confirmTemplate } from "../utils/mail_templates/confirmTemplate";
 import { toCapitalizeEachWord } from "../utils/textFormatter";
+import { userInfo } from "os";
 dotenv.config();
 
 const User = model;
@@ -392,6 +393,7 @@ export const login = async (req: Request, res: Response) => {
         .json({ message: "Invalid Credentials", data: null });
     }
   } catch (error) {
+    console.log(error);
     return res
       .status(500)
       .json({ message: "Internal Server Error", data: error });
@@ -523,7 +525,7 @@ export const ListUsers = async (req: Request, res: Response) => {
   const { is_user } = req.query;
 
   try {
-    const response = await prisma.user.findMany({
+    const response: any = await prisma.user.findMany({
       orderBy: {
         id: "desc",
       },
@@ -568,7 +570,17 @@ export const ListUsers = async (req: Request, res: Response) => {
         },
       },
     });
-    res.status(200).json({ message: "Operation Succesful", data: response });
+    const destructure = (data: []) => {
+      let newObg: any = [];
+      data.map((r1: any) => {
+        let { user_info, ...rest } = r1;
+        newObg.push({ ...rest, ...user_info });
+      });
+      return newObg;
+    };
+    res
+      .status(200)
+      .json({ message: "Operation Succesful", data: destructure(response) });
   } catch (error) {
     return res
       .status(500)
@@ -579,32 +591,19 @@ export const getUser = async (req: Request, res: Response) => {
   const { user_id } = req.body;
 
   try {
-    const response = await prisma.user.findMany({
+    const response: any = await prisma.user.findUnique({
       where: {
         id: user_id,
       },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        is_active: true,
-        user_info: true,
-        department: {
-          select: {
-            department_info: {
-              select: {
-                id: true,
-                name: true,
-                description: true,
-              },
-            },
-          },
-        },
-        position: true,
-      },
+      select: selectQuery,
     });
-    res.status(200).json({ message: "Operation Succesful", data: response });
+    let { user_info, ...rest } = response;
+    res.status(200).json({
+      message: "Operation Succesful",
+      data: { ...rest, ...user_info },
+    });
   } catch (error) {
+    console.log(error);
     return res.status(500).json({
       message: "Operation failed",
       data: error,
