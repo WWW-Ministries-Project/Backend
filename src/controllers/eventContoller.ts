@@ -201,6 +201,11 @@ export class eventManagement {
                 select: {
                   user_info: {
                     select: {
+                      user: {
+                        select: {
+                          name: true,
+                        },
+                      },
                       first_name: true,
                       last_name: true,
                       other_name: true,
@@ -364,10 +369,8 @@ export class eventManagement {
     try {
       const data: any = await prisma.user_info.findFirst({
         where: {
-          AND: {
-            primary_number: phone.startsWith("0") ? phone.substring(1) : phone,
-            country_code: code1.includes("+") ? code1 : `+${code1}`,
-          },
+          primary_number: phone.startsWith("0") ? phone.substring(1) : phone,
+          // country_code: code1.includes("+") ? code1 : `+${code1}`,
         },
         select: {
           first_name: true,
