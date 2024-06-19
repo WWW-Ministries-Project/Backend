@@ -302,6 +302,7 @@ export class eventManagement {
         message: "Attendance recorded successfully",
       });
     } catch (error) {
+      console.log(error);
       return res.status(500).json({
         message: "Something went wrong",
         data: error,
@@ -364,7 +365,7 @@ export class eventManagement {
         where: {
           AND: {
             primary_number: phone,
-            country_code: `+${code}`,
+            country_code: code.includes("+") ? code : `+${code}`,
           },
         },
         select: {
