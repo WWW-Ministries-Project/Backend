@@ -360,7 +360,7 @@ export class eventManagement {
 
   private async searchUser(phone: string, code: string) {
     try {
-      return await prisma.user_info.findFirst({
+      const data: any = await prisma.user_info.findFirst({
         where: {
           AND: {
             primary_number: phone,
@@ -373,8 +373,15 @@ export class eventManagement {
           other_name: true,
           primary_number: true,
           user_id: true,
+          user: {
+            select: {
+              name: true,
+            },
+          },
         },
       });
+      const { user, ...rest } = data;
+      return { ...rest, ...user };
     } catch (error) {
       return "User Not Found";
     }
