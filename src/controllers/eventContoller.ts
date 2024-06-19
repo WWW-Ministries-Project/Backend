@@ -204,6 +204,7 @@ export class eventManagement {
                       user: {
                         select: {
                           name: true,
+                          membership_type: true,
                         },
                       },
                       first_name: true,
