@@ -373,6 +373,7 @@ export class eventManagement {
           other_name: true,
           primary_number: true,
           user_id: true,
+          country_code: true,
           user: {
             select: {
               name: true,
