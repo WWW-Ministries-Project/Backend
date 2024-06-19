@@ -231,6 +231,7 @@ export class eventManagement {
         gender,
         marital_status,
         membership_type,
+        country_code,
         title,
         phone_number,
         new_member,
@@ -239,7 +240,10 @@ export class eventManagement {
 
       // If not a new User
       if (!new_member) {
-        const existing_user: any = await this.searchUser(phone_number);
+        const existing_user: any = await this.searchUser(
+          phone_number,
+          country_code
+        );
         if (!existing_user) {
           return res.status(204).json({
             message: "User not found",
@@ -260,7 +264,10 @@ export class eventManagement {
         });
       }
 
-      const existing_user: any = await this.searchUser(phone_number);
+      const existing_user: any = await this.searchUser(
+        phone_number,
+        country_code
+      );
       if (existing_user) {
         return res.status(200).json({
           message: "Already a user",
@@ -270,6 +277,7 @@ export class eventManagement {
       const create_user = await prisma.user.create({
         data: {
           name: `${first_name} ${other_name} ${last_name}`,
+          membership_type,
           user_info: {
             create: {
               gender,
@@ -277,6 +285,8 @@ export class eventManagement {
               last_name,
               other_name,
               title,
+              marital_status,
+              country_code,
               primary_number: phone_number,
             },
           },
@@ -301,9 +311,8 @@ export class eventManagement {
 
   searchUser1 = async (req: Request, res: Response) => {
     try {
-      const { phone }: any = req.query;
-      const convert = `+${phone.trim()}`;
-      const existing_user: any = await this.searchUser(convert);
+      const { country_code, phone }: any = req.query;
+      const existing_user: any = await this.searchUser(phone, country_code);
       if (!existing_user) {
         return res.status(204).json({
           message: "User not found",
@@ -349,11 +358,14 @@ export class eventManagement {
     }
   }
 
-  private async searchUser(phone: string) {
+  private async searchUser(phone: string, code: string) {
     try {
       return await prisma.user_info.findFirst({
         where: {
-          primary_number: phone,
+          AND: {
+            primary_number: phone,
+            country_code: `+${code}`,
+          },
         },
         select: {
           first_name: true,

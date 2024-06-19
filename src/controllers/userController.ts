@@ -594,12 +594,12 @@ export const ListUsers = async (req: Request, res: Response) => {
   }
 };
 export const getUser = async (req: Request, res: Response) => {
-  const { user_id } = req.body;
+  const { user_id } = req.query;
 
   try {
     const response: any = await prisma.user.findUnique({
       where: {
-        id: user_id,
+        id: Number(user_id),
       },
       select: selectQuery,
     });
