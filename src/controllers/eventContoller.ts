@@ -2,61 +2,48 @@ import { generateQR } from "../utils/qr-codeGenerator";
 import { prisma } from "./../Models/context";
 import { Request, Response } from "express";
 import * as dotenv from "dotenv";
+import { generateRecurringDates } from "../utils/dateCalculator";
 dotenv.config();
 
+const selectQuery = {
+  id: true,
+  name: true,
+  start_date: true,
+  end_date: true,
+  start_time: true,
+  end_time: true,
+  location: true,
+  description: true,
+  poster: true,
+  qr_code: true,
+};
 export class eventManagement {
   createEvent = async (req: Request, res: Response) => {
     try {
-      const {
-        name,
-        start_date,
-        end_date,
-        start_time,
-        end_time,
-        location,
-        description,
-        poster,
-        created_by,
-      } = req.body;
-
-      const response = await prisma.event_mgt.create({
-        data: {
-          name,
-          start_date: new Date(start_date),
-          end_date: new Date(end_date),
-          start_time,
-          end_time,
-          location,
-          description,
-          poster,
-          created_by,
-        },
-        select: {
-          id: true,
-          name: true,
-          start_date: true,
-          end_date: true,
-          start_time: true,
-          end_time: true,
-          location: true,
-          description: true,
-          poster: true,
-          qr_code: true,
-        },
-      });
-
-      const qr_code = await generateQR(
-        `${process.env.Frontend_URL}/events/register-event?event_id=${response.id}&event_name=${response.name}`
-      );
-
-      await prisma.event_mgt.update({
-        where: {
-          id: response.id,
-        },
-        data: {
-          qr_code,
-        },
-      });
+      let data = req.body;
+      const { start_date, end_date, day_event, repetitive, recurring } =
+        req.body;
+      if (!day_event && !repetitive) {
+        const data2 = generateRecurringDates(start_date, end_date, recurring);
+        data2.map((new_date: string) => {
+          data.start_date = new_date;
+          this.createEventController(data);
+        });
+      } else if (day_event && !repetitive) {
+        this.createEventController(data);
+      } else if (day_event && repetitive) {
+        const data2 = generateRecurringDates(start_date, end_date, recurring);
+        data2.map((new_date: string) => {
+          data.start_date = new_date;
+          this.createEventController(data);
+        });
+      } else if (!day_event && repetitive) {
+        const data2 = generateRecurringDates(start_date, end_date, recurring);
+        data2.map((new_date: string) => {
+          data.start_date = new_date;
+          this.createEventController(data);
+        });
+      }
 
       res.status(200).json({
         message: "Event Created Succesfully",
@@ -337,6 +324,40 @@ export class eventManagement {
       });
     }
   };
+
+  private async createEventController(data: any): Promise<void> {
+    try {
+      const response = await prisma.event_mgt.create({
+        data: {
+          name: data.name,
+          start_date: new Date(data.start_date),
+          end_date: new Date(data.end_date),
+          start_time: data.start_time,
+          end_time: data.end_time,
+          location: data.location,
+          description: data.description,
+          poster: data.poster,
+          created_by: data.created_by,
+        },
+        select: selectQuery,
+      });
+
+      const qr_code = await generateQR(
+        `${process.env.Frontend_URL}/events/register-event?event_id=${response.id}&event_name=${response.name}`
+      );
+
+      await prisma.event_mgt.update({
+        where: {
+          id: response.id,
+        },
+        data: {
+          qr_code,
+        },
+      });
+    } catch (error) {
+      console.log(error);
+    }
+  }
 
   private async checkSign(event_id: any, user_id: any) {
     return await prisma.event_attendance.findFirst({

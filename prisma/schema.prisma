@@ -128,14 +128,6 @@ model access_level {
 }
 
 // Asset managment
-
-enum asset_status {
-  ASSIGNED
-  UNASSIGNED
-  BROKEN
-  IN_MAINTENANCE
-}
-
 model assets {
   id               Int             @id @default(autoincrement())
   name             String
@@ -180,6 +172,8 @@ model event_mgt {
   end_date         DateTime?
   start_time       String?
   end_time         String?
+  event_type       event_type?
+  event_status     event_status?
   location         String?
   description      String?
   poster           String?
@@ -201,6 +195,13 @@ model event_attendance {
 }
 
 // Enums
+enum asset_status {
+  ASSIGNED
+  UNASSIGNED
+  BROKEN
+  IN_MAINTENANCE
+}
+
 enum marital_status {
   SINGLE
   MARRIED
@@ -209,4 +210,15 @@ enum marital_status {
 enum membership_type {
   MEMBER
   VISITOR
+}
+
+enum event_type {
+  ACTIVITY
+  PROGRAM
+  SERVICE
+}
+
+enum event_status {
+  CONFIRMED
+  TENTATIVE
 }
