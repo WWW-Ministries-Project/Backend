@@ -15,7 +15,7 @@ export function generateRecurringDates(
   const { frequency, interval, daysOfWeek, dayOfMonth, monthOfYear }: any =
     recurring;
   let dates: any = [];
-  let currentDate: any = startOfWeek(new Date(startDate), { weekStartsOn: 1 });
+  let currentDate: any = new Date(startDate);
 
   let currentWeekDay: any;
   let currentMonthDay: any;
@@ -34,11 +34,12 @@ export function generateRecurringDates(
         break;
 
       case "weekly":
-        recurring.daysOfWeek.map((day: number) => {
-          let newshi: Date = addDays(currentDate, day);
+        dates.push(currentDate);
+        for (let i = 1; i <= recurring.daysOfWeek - 1; i++) {
+          let newshi: Date = addDays(currentDate, i);
           currentWeekDay = newshi;
           dates.push(newshi);
-        });
+        }
         currentDate = addWeeks(currentDate, recurring.interval);
         break;
 

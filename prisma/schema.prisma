@@ -216,6 +216,7 @@ enum event_type {
   ACTIVITY
   PROGRAM
   SERVICE
+  OTHER
 }
 
 enum event_status {

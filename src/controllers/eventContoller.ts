@@ -3,6 +3,7 @@ import { prisma } from "./../Models/context";
 import { Request, Response } from "express";
 import * as dotenv from "dotenv";
 import { generateRecurringDates } from "../utils/dateCalculator";
+import { addDays } from "date-fns";
 dotenv.config();
 
 const selectQuery = {
@@ -21,23 +22,23 @@ export class eventManagement {
   createEvent = async (req: Request, res: Response) => {
     try {
       let data = req.body;
-      const { start_date, end_date, day_event, repetitive, recurring } =
-        req.body;
-      if (!day_event && !repetitive) {
+      let { start_date, end_date, day_event, repetitive, recurring } = req.body;
+      if (day_event === "multi" && repetitive === "no") {
+        end_date = addDays(start_date, recurring.daysOfWeek);
         const data2 = generateRecurringDates(start_date, end_date, recurring);
         data2.map((new_date: string) => {
           data.start_date = new_date;
           this.createEventController(data);
         });
-      } else if (day_event && !repetitive) {
+      } else if (day_event === "one" && repetitive === "no") {
         this.createEventController(data);
-      } else if (day_event && repetitive) {
+      } else if (day_event === "one" && repetitive === "yes") {
         const data2 = generateRecurringDates(start_date, end_date, recurring);
         data2.map((new_date: string) => {
           data.start_date = new_date;
           this.createEventController(data);
         });
-      } else if (!day_event && repetitive) {
+      } else if (day_event === "multi" && repetitive === "yes") {
         const data2 = generateRecurringDates(start_date, end_date, recurring);
         data2.map((new_date: string) => {
           data.start_date = new_date;
@@ -70,6 +71,8 @@ export class eventManagement {
         description,
         poster,
         qr_code,
+        event_status,
+        event_type,
         updated_by,
       } = req.body;
       const response = await prisma.event_mgt.update({
@@ -87,6 +90,8 @@ export class eventManagement {
           poster,
           qr_code,
           updated_by,
+          event_type,
+          event_status,
           updated_at: new Date(),
         },
         select: {
@@ -337,6 +342,8 @@ export class eventManagement {
           location: data.location,
           description: data.description,
           poster: data.poster,
+          event_type: data.event_type,
+          event_status: data.event_status,
           created_by: data.created_by,
         },
         select: selectQuery,
