@@ -31,6 +31,7 @@ export class eventManagement {
           this.createEventController(data);
         });
       } else if (day_event === "one" && repetitive === "no") {
+        data.end_date = data.start_date;
         this.createEventController(data);
       } else if (day_event === "one" && repetitive === "yes") {
         const data2 = generateRecurringDates(start_date, end_date, recurring);
@@ -331,12 +332,13 @@ export class eventManagement {
   };
 
   private async createEventController(data: any): Promise<void> {
+    const { start_date, end_date } = data;
     try {
       const response = await prisma.event_mgt.create({
         data: {
           name: data.name,
-          start_date: new Date(data.start_date),
-          end_date: new Date(data.end_date),
+          start_date: start_date ? new Date(data.start_date) : null,
+          end_date: end_date ? new Date(data.end_date) : null,
           start_time: data.start_time,
           end_time: data.end_time,
           location: data.location,
@@ -361,8 +363,9 @@ export class eventManagement {
           qr_code,
         },
       });
-    } catch (error) {
+    } catch (error: any) {
       console.log(error);
+      return error;
     }
   }
 
