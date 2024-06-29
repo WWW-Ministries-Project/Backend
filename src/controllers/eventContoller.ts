@@ -187,6 +187,8 @@ export class eventManagement {
           location: true,
           description: true,
           created_by: true,
+          event_type: true,
+          event_status: true,
           event_attendance: {
             select: {
               created_at: true,
