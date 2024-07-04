@@ -84,15 +84,6 @@ export const updateAccessLevel = async (req: Request, res: Response) => {
       },
     });
 
-    const updateExisting = await prisma.user.updateMany({
-      where: {
-        access_level_id: response.id,
-      },
-      data: {
-        access_level_id: null,
-      },
-    });
-
     if (assigned_users) {
       await prisma.user.updateMany({
         where: {
