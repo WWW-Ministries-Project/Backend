@@ -229,12 +229,33 @@ export const updateUser = async (req: Request, res: Response) => {
     work_position,
   } = req.body;
   try {
+    const existance = await prisma.user.findUnique({
+      where: {
+        id: Number(id),
+      },
+      select: {
+        user_info: {
+          select: {
+            first_name: true,
+            last_name: true,
+            other_name: true,
+          },
+        },
+      },
+    });
+
+    if (!existance) {
+      res.status(400).json({ message: "No user found", data: null });
+    }
+
     const response = await prisma.user.update({
       where: {
         id,
       },
       data: {
-        name: toCapitalizeEachWord(`${first_name} ${other_name} ${last_name}`),
+        name: `${first_name ? first_name : existance?.user_info?.first_name} ${
+          other_name ? other_name : existance?.user_info?.other_name
+        } ${last_name ? last_name : existance?.user_info?.last_name}`,
         email,
         position_id,
         password: is_user ? await hashPassword("123456") : undefined,

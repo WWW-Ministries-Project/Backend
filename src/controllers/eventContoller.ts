@@ -144,13 +144,15 @@ export class eventManagement {
 
   listEvents = async (req: Request, res: Response) => {
     try {
-      const { month, year } = req.query;
+      const { month, year, event_type, event_status }: any = req.query;
       const data = await prisma.event_mgt.findMany({
         where: {
           AND: [
             { start_date: { gte: new Date(`${year}-${month}-01`) } }, // Start of the month
             { start_date: { lt: new Date(`${year}-${Number(month) + 1}-01`) } }, // Start of the next month
           ],
+          event_type,
+          event_status,
         },
         orderBy: {
           start_date: "asc",
@@ -429,7 +431,22 @@ export class eventManagement {
 
   private async listEventsP() {
     try {
+      let date = new Date();
       return await prisma.event_mgt.findMany({
+        where: {
+          AND: [
+            {
+              start_date: {
+                gte: new Date(`${date.getFullYear()}-${date.getMonth()}-01`),
+              },
+            }, // Start of the month
+            {
+              start_date: {
+                lt: new Date(`${date.getFullYear()}-${date.getMonth() + 1}-01`),
+              },
+            }, // Start of the next month
+          ],
+        },
         orderBy: {
           start_date: "asc",
         },
