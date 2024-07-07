@@ -461,7 +461,7 @@ export const forgetPassword = async (req: Request, res: Response) => {
     });
 
     if (!existingUser) {
-      return res.json({ error: "User Not Exists" });
+      return res.status(400).json({ error: "User Not Exists" });
     }
     const secret = JWT_SECRET + existingUser.password;
     const token = JWT.sign(
@@ -553,7 +553,7 @@ export const ListUsers = async (req: Request, res: Response) => {
   try {
     const response: any = await prisma.user.findMany({
       orderBy: {
-        id: "desc",
+        name: "asc",
       },
       where: {
         AND: {
