@@ -205,6 +205,9 @@ enum asset_status {
 enum marital_status {
   SINGLE
   MARRIED
+  DIVORCED
+  WIDOW
+  WIDOWER
 }
 
 enum membership_type {

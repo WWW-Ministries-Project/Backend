@@ -119,7 +119,7 @@ export const registerUser = async (req: Request, res: Response) => {
       const response = await prisma.user.create({
         data: {
           name: toCapitalizeEachWord(
-            `${first_name} ${other_name} ${last_name}`
+            `${first_name} ${other_name ? other_name : ""} ${last_name}`
           ),
           email,
           position_id,
@@ -187,11 +187,11 @@ export const registerUser = async (req: Request, res: Response) => {
         .status(200)
         .json({ message: "User Created Succesfully", data: response });
     }
-  } catch (error) {
+  } catch (error: any) {
     console.log(error);
     return res
       .status(500)
-      .json({ message: "Internal Server Error", data: error });
+      .json({ message: "Internal Server Error", data: error?.message });
   }
 };
 export const updateUser = async (req: Request, res: Response) => {
@@ -234,13 +234,7 @@ export const updateUser = async (req: Request, res: Response) => {
         id: Number(id),
       },
       select: {
-        user_info: {
-          select: {
-            first_name: true,
-            last_name: true,
-            other_name: true,
-          },
-        },
+        user_info: true,
       },
     });
 
@@ -287,13 +281,18 @@ export const updateUser = async (req: Request, res: Response) => {
             other_number,
             email,
             address,
-            country,
-            company: toCapitalizeEachWord(company),
+            country: country ? country : existance?.user_info?.country,
+
+            company: company ? company : existance?.user_info?.company,
             member_since: member_since ? new Date(member_since) : null,
-            occupation,
+            occupation: occupation
+              ? occupation
+              : existance?.user_info?.occupation,
             photo,
             marital_status,
-            nationality,
+            nationality: nationality
+              ? nationality
+              : existance?.user_info?.nationality,
             emergency_contact: {
               update: {
                 name: emergency_contact_name,
@@ -316,10 +315,10 @@ export const updateUser = async (req: Request, res: Response) => {
     res
       .status(200)
       .json({ message: "User Updated Succesfully", data: response });
-  } catch (error) {
+  } catch (error: any) {
     return res
       .status(500)
-      .json({ message: "Internal Server Error", data: error });
+      .json({ message: "Internal Server Error", data: error?.message });
   }
 };
 export const updateUserSatus = async (req: Request, res: Response) => {
@@ -344,20 +343,18 @@ export const updateUserSatus = async (req: Request, res: Response) => {
   }
 };
 export const deleteUser = async (req: Request, res: Response) => {
-  try {
-  } catch (error) {}
-  const { id } = req.body;
+  const { id } = req.query;
   try {
     const response = await prisma.user.delete({
       where: {
-        id,
+        id: Number(id),
       },
     });
     res.status(200).json({ message: "User Deleted Succesfully", data: null });
-  } catch (error) {
+  } catch (error: any) {
     return res
       .status(500)
-      .json({ message: "Internal Server Error", data: null });
+      .json({ message: "Internal Server Error", data: error?.message });
   }
 };
 
