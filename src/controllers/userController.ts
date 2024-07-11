@@ -119,7 +119,7 @@ export const registerUser = async (req: Request, res: Response) => {
       const response = await prisma.user.create({
         data: {
           name: toCapitalizeEachWord(
-            `${first_name} ${other_name} ${last_name}`
+            `${first_name} ${other_name ? other_name : ""} ${last_name}`
           ),
           email,
           position_id,
@@ -187,11 +187,11 @@ export const registerUser = async (req: Request, res: Response) => {
         .status(200)
         .json({ message: "User Created Succesfully", data: response });
     }
-  } catch (error) {
+  } catch (error: any) {
     console.log(error);
     return res
       .status(500)
-      .json({ message: "Internal Server Error", data: error });
+      .json({ message: "Internal Server Error", data: error?.message });
   }
 };
 export const updateUser = async (req: Request, res: Response) => {
@@ -229,12 +229,27 @@ export const updateUser = async (req: Request, res: Response) => {
     work_position,
   } = req.body;
   try {
+    const existance = await prisma.user.findUnique({
+      where: {
+        id: Number(id),
+      },
+      select: {
+        user_info: true,
+      },
+    });
+
+    if (!existance) {
+      res.status(400).json({ message: "No user found", data: null });
+    }
+
     const response = await prisma.user.update({
       where: {
         id,
       },
       data: {
-        name: toCapitalizeEachWord(`${first_name} ${other_name} ${last_name}`),
+        name: `${first_name ? first_name : existance?.user_info?.first_name} ${
+          other_name ? other_name : existance?.user_info?.other_name
+        } ${last_name ? last_name : existance?.user_info?.last_name}`,
         email,
         position_id,
         password: is_user ? await hashPassword("123456") : undefined,
@@ -266,13 +281,18 @@ export const updateUser = async (req: Request, res: Response) => {
             other_number,
             email,
             address,
-            country,
-            company: toCapitalizeEachWord(company),
+            country: country ? country : existance?.user_info?.country,
+
+            company: company ? company : existance?.user_info?.company,
             member_since: member_since ? new Date(member_since) : null,
-            occupation,
+            occupation: occupation
+              ? occupation
+              : existance?.user_info?.occupation,
             photo,
             marital_status,
-            nationality,
+            nationality: nationality
+              ? nationality
+              : existance?.user_info?.nationality,
             emergency_contact: {
               update: {
                 name: emergency_contact_name,
@@ -295,10 +315,10 @@ export const updateUser = async (req: Request, res: Response) => {
     res
       .status(200)
       .json({ message: "User Updated Succesfully", data: response });
-  } catch (error) {
+  } catch (error: any) {
     return res
       .status(500)
-      .json({ message: "Internal Server Error", data: error });
+      .json({ message: "Internal Server Error", data: error?.message });
   }
 };
 export const updateUserSatus = async (req: Request, res: Response) => {
@@ -323,20 +343,18 @@ export const updateUserSatus = async (req: Request, res: Response) => {
   }
 };
 export const deleteUser = async (req: Request, res: Response) => {
-  try {
-  } catch (error) {}
-  const { id } = req.body;
+  const { id } = req.query;
   try {
     const response = await prisma.user.delete({
       where: {
-        id,
+        id: Number(id),
       },
     });
     res.status(200).json({ message: "User Deleted Succesfully", data: null });
-  } catch (error) {
+  } catch (error: any) {
     return res
       .status(500)
-      .json({ message: "Internal Server Error", data: null });
+      .json({ message: "Internal Server Error", data: error?.message });
   }
 };
 
@@ -440,7 +458,7 @@ export const forgetPassword = async (req: Request, res: Response) => {
     });
 
     if (!existingUser) {
-      return res.json({ error: "User Not Exists" });
+      return res.status(400).json({ error: "User Not Exists" });
     }
     const secret = JWT_SECRET + existingUser.password;
     const token = JWT.sign(
@@ -532,7 +550,7 @@ export const ListUsers = async (req: Request, res: Response) => {
   try {
     const response: any = await prisma.user.findMany({
       orderBy: {
-        id: "desc",
+        name: "asc",
       },
       where: {
         AND: {
@@ -594,12 +612,12 @@ export const ListUsers = async (req: Request, res: Response) => {
   }
 };
 export const getUser = async (req: Request, res: Response) => {
-  const { user_id } = req.body;
+  const { user_id } = req.query;
 
   try {
     const response: any = await prisma.user.findUnique({
       where: {
-        id: user_id,
+        id: Number(user_id),
       },
       select: selectQuery,
     });

@@ -2,61 +2,50 @@ import { generateQR } from "../utils/qr-codeGenerator";
 import { prisma } from "./../Models/context";
 import { Request, Response } from "express";
 import * as dotenv from "dotenv";
+import { generateRecurringDates } from "../utils/dateCalculator";
+import { addDays } from "date-fns";
 dotenv.config();
 
+const selectQuery = {
+  id: true,
+  name: true,
+  start_date: true,
+  end_date: true,
+  start_time: true,
+  end_time: true,
+  location: true,
+  description: true,
+  poster: true,
+  qr_code: true,
+};
 export class eventManagement {
   createEvent = async (req: Request, res: Response) => {
     try {
-      const {
-        name,
-        start_date,
-        end_date,
-        start_time,
-        end_time,
-        location,
-        description,
-        poster,
-        created_by,
-      } = req.body;
-
-      const response = await prisma.event_mgt.create({
-        data: {
-          name,
-          start_date: new Date(start_date),
-          end_date: new Date(end_date),
-          start_time,
-          end_time,
-          location,
-          description,
-          poster,
-          created_by,
-        },
-        select: {
-          id: true,
-          name: true,
-          start_date: true,
-          end_date: true,
-          start_time: true,
-          end_time: true,
-          location: true,
-          description: true,
-          poster: true,
-          qr_code: true,
-        },
-      });
-
-      const qr_code = await generateQR(
-        `${process.env.Frontend_URL}/events/register-event?event_id=${response.id}&event_name=${response.name}`
-      );
-
-      await prisma.event_mgt.update({
-        where: {
-          id: response.id,
-        },
-        data: {
-          qr_code,
-        },
-      });
+      let data = req.body;
+      let { start_date, end_date, day_event, repetitive, recurring } = req.body;
+      if (day_event === "multi" && repetitive === "no") {
+        end_date = addDays(start_date, recurring.daysOfWeek);
+        const data2 = generateRecurringDates(start_date, end_date, recurring);
+        data2.map((new_date: string) => {
+          data.start_date = new_date;
+          this.createEventController(data);
+        });
+      } else if (day_event === "one" && repetitive === "no") {
+        data.end_date = data.start_date;
+        this.createEventController(data);
+      } else if (day_event === "one" && repetitive === "yes") {
+        const data2 = generateRecurringDates(start_date, end_date, recurring);
+        data2.map((new_date: string) => {
+          data.start_date = new_date;
+          this.createEventController(data);
+        });
+      } else if (day_event === "multi" && repetitive === "yes") {
+        const data2 = generateRecurringDates(start_date, end_date, recurring);
+        data2.map((new_date: string) => {
+          data.start_date = new_date;
+          this.createEventController(data);
+        });
+      }
 
       res.status(200).json({
         message: "Event Created Succesfully",
@@ -83,6 +72,8 @@ export class eventManagement {
         description,
         poster,
         qr_code,
+        event_status,
+        event_type,
         updated_by,
       } = req.body;
       const response = await prisma.event_mgt.update({
@@ -100,6 +91,8 @@ export class eventManagement {
           poster,
           qr_code,
           updated_by,
+          event_type,
+          event_status,
           updated_at: new Date(),
         },
         select: {
@@ -151,13 +144,15 @@ export class eventManagement {
 
   listEvents = async (req: Request, res: Response) => {
     try {
-      const { month, year } = req.query;
+      const { month, year, event_type, event_status }: any = req.query;
       const data = await prisma.event_mgt.findMany({
         where: {
           AND: [
             { start_date: { gte: new Date(`${year}-${month}-01`) } }, // Start of the month
             { start_date: { lt: new Date(`${year}-${Number(month) + 1}-01`) } }, // Start of the next month
           ],
+          event_type,
+          event_status,
         },
         orderBy: {
           start_date: "asc",
@@ -194,6 +189,8 @@ export class eventManagement {
           location: true,
           description: true,
           created_by: true,
+          event_type: true,
+          event_status: true,
           event_attendance: {
             select: {
               created_at: true,
@@ -201,6 +198,12 @@ export class eventManagement {
                 select: {
                   user_info: {
                     select: {
+                      user: {
+                        select: {
+                          name: true,
+                          membership_type: true,
+                        },
+                      },
                       first_name: true,
                       last_name: true,
                       other_name: true,
@@ -231,6 +234,7 @@ export class eventManagement {
         gender,
         marital_status,
         membership_type,
+        country_code,
         title,
         phone_number,
         new_member,
@@ -239,7 +243,10 @@ export class eventManagement {
 
       // If not a new User
       if (!new_member) {
-        const existing_user: any = await this.searchUser(phone_number);
+        const existing_user: any = await this.searchUser(
+          phone_number,
+          country_code
+        );
         if (!existing_user) {
           return res.status(204).json({
             message: "User not found",
@@ -260,7 +267,10 @@ export class eventManagement {
         });
       }
 
-      const existing_user: any = await this.searchUser(phone_number);
+      const existing_user: any = await this.searchUser(
+        phone_number,
+        country_code
+      );
       if (existing_user) {
         return res.status(200).json({
           message: "Already a user",
@@ -270,6 +280,7 @@ export class eventManagement {
       const create_user = await prisma.user.create({
         data: {
           name: `${first_name} ${other_name} ${last_name}`,
+          membership_type,
           user_info: {
             create: {
               gender,
@@ -277,6 +288,8 @@ export class eventManagement {
               last_name,
               other_name,
               title,
+              marital_status,
+              country_code,
               primary_number: phone_number,
             },
           },
@@ -292,6 +305,7 @@ export class eventManagement {
         message: "Attendance recorded successfully",
       });
     } catch (error) {
+      console.log(error);
       return res.status(500).json({
         message: "Something went wrong",
         data: error,
@@ -301,9 +315,8 @@ export class eventManagement {
 
   searchUser1 = async (req: Request, res: Response) => {
     try {
-      const { phone }: any = req.query;
-      const convert = `+${phone.trim()}`;
-      const existing_user: any = await this.searchUser(convert);
+      const { country_code, phone }: any = req.query;
+      const existing_user: any = await this.searchUser(phone, country_code);
       if (!existing_user) {
         return res.status(204).json({
           message: "User not found",
@@ -321,6 +334,44 @@ export class eventManagement {
       });
     }
   };
+
+  private async createEventController(data: any): Promise<void> {
+    const { start_date, end_date } = data;
+    try {
+      const response = await prisma.event_mgt.create({
+        data: {
+          name: data.name,
+          start_date: start_date ? new Date(data.start_date) : null,
+          end_date: end_date ? new Date(data.end_date) : null,
+          start_time: data.start_time,
+          end_time: data.end_time,
+          location: data.location,
+          description: data.description,
+          poster: data.poster,
+          event_type: data.event_type,
+          event_status: data.event_status,
+          created_by: data.created_by,
+        },
+        select: selectQuery,
+      });
+
+      const qr_code = await generateQR(
+        `${process.env.Frontend_URL}/events/register-event?event_id=${response.id}&event_name=${response.name}`
+      );
+
+      await prisma.event_mgt.update({
+        where: {
+          id: response.id,
+        },
+        data: {
+          qr_code,
+        },
+      });
+    } catch (error: any) {
+      console.log(error);
+      return error;
+    }
+  }
 
   private async checkSign(event_id: any, user_id: any) {
     return await prisma.event_attendance.findFirst({
@@ -349,11 +400,13 @@ export class eventManagement {
     }
   }
 
-  private async searchUser(phone: string) {
+  private async searchUser(phone: string, code: string) {
+    let code1 = code.trim();
     try {
-      return await prisma.user_info.findFirst({
+      const data: any = await prisma.user_info.findFirst({
         where: {
-          primary_number: phone,
+          primary_number: phone.startsWith("0") ? phone.substring(1) : phone,
+          // country_code: code1.includes("+") ? code1 : `+${code1}`,
         },
         select: {
           first_name: true,
@@ -361,16 +414,39 @@ export class eventManagement {
           other_name: true,
           primary_number: true,
           user_id: true,
+          country_code: true,
+          user: {
+            select: {
+              name: true,
+            },
+          },
         },
       });
+      const { user, ...rest } = data;
+      return { ...rest, ...user };
     } catch (error) {
-      return "User Not Found";
+      return null;
     }
   }
 
   private async listEventsP() {
     try {
+      let date = new Date();
       return await prisma.event_mgt.findMany({
+        where: {
+          AND: [
+            {
+              start_date: {
+                gte: new Date(`${date.getFullYear()}-${date.getMonth()}-01`),
+              },
+            }, // Start of the month
+            {
+              start_date: {
+                lt: new Date(`${date.getFullYear()}-${date.getMonth() + 1}-01`),
+              },
+            }, // Start of the next month
+          ],
+        },
         orderBy: {
           start_date: "asc",
         },
