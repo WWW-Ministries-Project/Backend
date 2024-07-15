@@ -170,6 +170,100 @@ export class eventManagement {
     }
   };
 
+  listUpcomingEvents = async (req: Request, res: Response) => {
+    try {
+      const date1 = new Date();
+      const data = await prisma.event_mgt.findMany({
+        where: {
+          AND: [
+            {
+              start_date: {
+                gte: new Date(
+                  `${date1.getFullYear()}-${date1.getMonth()}-${date1.getDay()}`
+                ),
+              },
+            }, // Start of the month
+          ],
+        },
+        orderBy: {
+          start_date: "asc",
+        },
+      });
+      res.status(200).json({
+        message: "Operation successful",
+        data,
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        message: "Event failed to load",
+        data: error.message,
+      });
+    }
+  };
+  eventStats = async (req: Request, res: Response) => {
+    try {
+      const { month, year, event_type, event_status }: any = req.query;
+      const data = await prisma.event_mgt.findMany({
+        where: {
+          AND: [
+            { start_date: { gte: new Date(`${year}-01-01`) } }, // Start of the month
+            { end_date: { lte: new Date(`${year}-12-31`) } },
+          ],
+        },
+        orderBy: {
+          start_date: "asc",
+        },
+        select: {
+          id: true,
+          name: true,
+          start_date: true,
+          end_date: true,
+          event_attendance: {
+            select: {
+              id: true,
+              user_id: true,
+            },
+          },
+        },
+      });
+      function getMonthlyEventStatistics(events: any) {
+        const monthlyStats: any = {};
+
+        events.forEach((event: any) => {
+          const startDate = new Date(event.start_date);
+          const month = startDate.toLocaleString("default", {
+            month: "long",
+            year: "numeric",
+          });
+
+          if (!monthlyStats[month]) {
+            monthlyStats[month] = [];
+          }
+          console.log("zoo");
+
+          const attendanceCount = event.event_attendance.length;
+
+          monthlyStats[month].push({
+            event_name: event.name,
+            attendanceCount,
+          });
+        });
+
+        return monthlyStats;
+      }
+
+      res.status(200).json({
+        message: "Operation successful",
+        data: data,
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        message: "Event failed to load",
+        data: error.message,
+      });
+    }
+  };
+
   getEvent = async (req: Request, res: Response) => {
     try {
       const { id } = req.query;
@@ -449,6 +543,18 @@ export class eventManagement {
         },
         orderBy: {
           start_date: "asc",
+        },
+        select: {
+          id: true,
+          name: true,
+          start_date: true,
+          end_date: true,
+          event_attendance: {
+            select: {
+              id: true,
+              user_id: true,
+            },
+          },
         },
       });
     } catch (error) {

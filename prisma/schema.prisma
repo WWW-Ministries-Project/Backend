@@ -37,7 +37,7 @@ model user {
 model user_info {
   id                   Int                     @id @default(autoincrement())
   user_id              Int                     @unique
-  user                 user                    @relation(fields: [user_id], references: [id])
+  user                 user                    @relation(fields: [user_id], references: [id], onDelete: Cascade)
   title                String?
   first_name           String?
   last_name            String?
@@ -82,7 +82,7 @@ model department {
   id                   Int                @id @default(autoincrement())
   name                 String
   department_head      Int?
-  department_head_info user?              @relation(fields: [department_head], references: [id])
+  department_head_info user?              @relation(fields: [department_head], references: [id], onDelete: SetNull)
   description          String?
   user_departments     user_departments[]
   position             position[]
@@ -95,7 +95,7 @@ model department {
 model user_departments {
   id              Int         @id @default(autoincrement())
   user_id         Int         @unique
-  user            user        @relation(fields: [user_id], references: [id])
+  user            user        @relation(fields: [user_id], references: [id], onDelete: Cascade)
   department_id   Int?
   department_info department? @relation(fields: [department_id], references: [id])
 }
@@ -134,7 +134,7 @@ model assets {
   asset_code       String?         @unique
   category         asset_category? @relation(fields: [asset_categoryId], references: [id])
   asset_categoryId Int?
-  assigned_to      user?           @relation(fields: [userId], references: [id])
+  assigned_to      user?           @relation(fields: [userId], references: [id], onDelete: SetNull)
   userId           Int?
   date_assigned    DateTime?
   date_purchased   DateTime?
@@ -160,7 +160,7 @@ model asset_history {
   title         String
   description   String?
   status_update asset_status
-  related_user  user?        @relation(fields: [userId], references: [id])
+  related_user  user?        @relation(fields: [userId], references: [id], onDelete: SetNull)
   update_date   DateTime
   userId        Int?
 }
@@ -190,7 +190,7 @@ model event_attendance {
   event_id   Int
   event      event_mgt @relation(fields: [event_id], references: [id])
   user_id    Int
-  user       user      @relation(fields: [user_id], references: [id])
+  user       user      @relation(fields: [user_id], references: [id], onDelete: Cascade)
   created_at DateTime  @default(now())
 }
 

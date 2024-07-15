@@ -20,6 +20,7 @@ eventRouter.get(
   [protect, permissions.can_view_events],
   eventContoller.listEvents
 );
+eventRouter.get("/events-stats", [protect], eventContoller.eventStats);
 
 eventRouter.post(
   "/create-event",

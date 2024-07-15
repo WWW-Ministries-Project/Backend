@@ -343,18 +343,33 @@ export const updateUserSatus = async (req: Request, res: Response) => {
   }
 };
 export const deleteUser = async (req: Request, res: Response) => {
-  const { id } = req.query;
   try {
-    const response = await prisma.user.delete({
+    const { id } = req.query;
+    const existance = await prisma.user.findUnique({
+      where: {
+        id: Number(id),
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!existance) {
+      return res.status(400).json({ message: "No user found", data: null });
+    }
+
+    await prisma.user.delete({
       where: {
         id: Number(id),
       },
     });
-    res.status(200).json({ message: "User Deleted Succesfully", data: null });
+    return res
+      .status(200)
+      .json({ message: "User deleted Succesfully", data: null });
   } catch (error: any) {
     return res
       .status(500)
-      .json({ message: "Internal Server Error", data: error?.message });
+      .json({ message: "Internal Server Error", data: error });
   }
 };
 
