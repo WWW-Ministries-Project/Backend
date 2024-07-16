@@ -500,7 +500,7 @@ export const forgetPassword = async (req: Request, res: Response) => {
 
 export const resetPassword = async (req: Request, res: Response) => {
   const { id, token } = req.query;
-  const { password } = req.body;
+  const { newpassword } = req.body;
   //check for the existence of an account using
   try {
     const existingUser = await prisma.user.findUnique({
@@ -508,7 +508,6 @@ export const resetPassword = async (req: Request, res: Response) => {
         id: Number(id),
       },
     });
-
     if (!existingUser) {
       return res.status(404).json({ message: "User Not Exists", data: null });
     }
@@ -521,7 +520,7 @@ export const resetPassword = async (req: Request, res: Response) => {
           id: Number(id),
         },
         data: {
-          password: await hashPassword(password),
+          password: await hashPassword(newpassword),
         },
       });
       return res
