@@ -9,15 +9,18 @@ dotenv.config();
 const selectQuery = {
   id: true,
   name: true,
-  start_date: true,
-  end_date: true,
   start_time: true,
-  end_time: true,
-  location: true,
   description: true,
+  end_date: true,
+  end_time: true,
+  event_status: true,
+  event_type: true,
+  location: true,
   poster: true,
   qr_code: true,
+  start_date: true,
 };
+
 export class eventManagement {
   createEvent = async (req: Request, res: Response) => {
     try {
@@ -76,39 +79,37 @@ export class eventManagement {
         event_type,
         updated_by,
       } = req.body;
+
+      const existance = await prisma.event_mgt.findUnique({
+        where: {
+          id,
+        },
+        select: selectQuery,
+      });
+
+      if (!existance) {
+        return res.status(400).json({ message: "No Event found", data: null });
+      }
+
       const response = await prisma.event_mgt.update({
         where: {
           id,
         },
         data: {
-          name,
-          start_date: new Date(start_date),
-          end_date: new Date(end_date),
-          start_time,
-          end_time,
-          location,
-          description,
-          poster,
-          qr_code,
+          name: name ? name : existance.name,
+          start_date: start_date ? new Date(start_date) : existance.start_date,
+          end_date: end_date ? new Date(end_date) : existance.end_date,
+          start_time: start_time ? start_date : existance.start_date,
+          end_time: end_time ? end_time : existance.end_time,
+          location: location ? location : existance.location,
+          description: description ? description : existance.description,
+          poster: poster ? poster : existance.poster,
           updated_by,
-          event_type,
-          event_status,
+          event_type: event_type ? event_type : existance.event_type,
+          event_status: event_status ? event_status : existance.event_status,
           updated_at: new Date(),
         },
-        select: {
-          id: true,
-          name: true,
-          start_date: true,
-          end_date: true,
-          start_time: true,
-          end_time: true,
-          location: true,
-          description: true,
-          poster: true,
-          qr_code: true,
-          updated_by: true,
-          updated_at: true,
-        },
+        select: selectQuery,
       });
       res.status(200).json({
         message: "Event Updated Succesfully",
@@ -182,7 +183,7 @@ export class eventManagement {
                   `${date1.getFullYear()}-${date1.getMonth()}-${date1.getDay()}`
                 ),
               },
-            }, // Start of the month
+            },
           ],
         },
         orderBy: {

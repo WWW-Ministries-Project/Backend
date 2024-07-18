@@ -22,6 +22,8 @@ eventRouter.get(
 );
 eventRouter.get("/events-stats", [protect], eventContoller.eventStats);
 
+eventRouter.get("/upcoming-events", [protect], eventContoller.listUpcomingEvents);
+
 eventRouter.post(
   "/create-event",
   [protect, permissions.can_edit_events],

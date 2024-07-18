@@ -27,6 +27,8 @@ const selectQuery = {
   membership_type: true,
   created_at: true,
   is_active: true,
+  position_id: true,
+  access_level_id: true,
   user_info: {
     select: {
       first_name: true,
@@ -40,6 +42,10 @@ const selectQuery = {
       nationality: true,
       date_of_birth: true,
       gender: true,
+      country: true,
+      occupation: true,
+      company: true,
+      address: true,
       emergency_contact: {
         select: {
           name: true,
@@ -233,13 +239,11 @@ export const updateUser = async (req: Request, res: Response) => {
       where: {
         id: Number(id),
       },
-      select: {
-        user_info: true,
-      },
+      select: selectQuery,
     });
 
     if (!existance) {
-      res.status(400).json({ message: "No user found", data: null });
+      return res.status(400).json({ message: "No user found", data: null });
     }
 
     const response = await prisma.user.update({
@@ -250,12 +254,17 @@ export const updateUser = async (req: Request, res: Response) => {
         name: `${first_name ? first_name : existance?.user_info?.first_name} ${
           other_name ? other_name : existance?.user_info?.other_name
         } ${last_name ? last_name : existance?.user_info?.last_name}`,
-        email,
-        position_id,
+        email: email ? email : existance?.email,
+        position_id: position_id ? position_id : existance?.position_id,
         password: is_user ? await hashPassword("123456") : undefined,
         is_user,
-        membership_type,
-        access_level_id,
+        membership_type: membership_type
+          ? membership_type
+          : existance?.membership_type,
+        access_level_id: access_level_id
+          ? access_level_id
+          : existance?.access_level_id,
+        updated_at: new Date(),
         department: department_id
           ? {
               update: {
@@ -270,17 +279,26 @@ export const updateUser = async (req: Request, res: Response) => {
           : undefined,
         user_info: {
           update: {
-            title,
-            first_name,
-            last_name,
-            other_name,
-            date_of_birth: date_of_birth ? new Date(date_of_birth) : null,
-            gender,
-            country_code,
-            primary_number,
-            other_number,
+            title: title ? title : existance?.user_info?.title,
+            first_name: first_name
+              ? first_name
+              : existance?.user_info?.first_name,
+            last_name: last_name ? last_name : existance?.user_info?.last_name,
+            other_name: other_name
+              ? other_name
+              : existance?.user_info?.other_name,
+            date_of_birth: date_of_birth
+              ? new Date(date_of_birth)
+              : existance?.user_info?.date_of_birth,
+            gender: gender ? gender : existance?.user_info?.gender,
+            country_code: country_code
+              ? country_code
+              : existance?.user_info?.country_code,
+            primary_number: primary_number
+              ? primary_number
+              : existance?.user_info?.primary_number,
             email,
-            address,
+            address: address ? address : existance?.user_info?.address,
             country: country ? country : existance?.user_info?.country,
 
             company: company ? company : existance?.user_info?.company,
@@ -289,22 +307,36 @@ export const updateUser = async (req: Request, res: Response) => {
               ? occupation
               : existance?.user_info?.occupation,
             photo,
-            marital_status,
+            marital_status: marital_status
+              ? marital_status
+              : existance?.user_info?.marital_status,
             nationality: nationality
               ? nationality
               : existance?.user_info?.nationality,
             emergency_contact: {
               update: {
-                name: emergency_contact_name,
-                relation: emergency_contact_relation,
-                phone_number: emergency_contact_phone_number,
+                name: emergency_contact_name
+                  ? emergency_contact_relation
+                  : existance?.user_info?.emergency_contact?.name,
+                relation: emergency_contact_relation
+                  ? emergency_contact_relation
+                  : existance?.user_info?.emergency_contact?.relation,
+                phone_number: emergency_contact_phone_number
+                  ? emergency_contact_phone_number
+                  : existance?.user_info?.emergency_contact?.phone_number,
               },
             },
             work_info: {
               update: {
-                name_of_institution: work_name,
-                industry: work_industry,
-                position: work_position,
+                name_of_institution: work_name
+                  ? work_name
+                  : existance?.user_info?.work_info?.name_of_institution,
+                industry: work_industry
+                  ? work_industry
+                  : existance?.user_info?.work_info?.industry,
+                position: work_position
+                  ? work_position
+                  : existance?.user_info?.work_info?.position,
               },
             },
           },
