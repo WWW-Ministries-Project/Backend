@@ -1,26 +1,20 @@
 import express from "express";
 import bodyParser from "body-parser";
-import mongoose from "mongoose";
 import * as dotenv from "dotenv";
 import cors from "cors";
 import { router } from "./src/routes/userRoutes";
-import { memberrouter } from "./src/routes/memberRoutes";
-import { attendanceRouter } from "./src/routes/attendanceRoute";
 import { departmentRouter } from "./src/routes/departmentRoute";
 import { positionRouter } from "./src/routes/positionRoute";
-import { hashPassword } from "./src/utils/hashPasswords";
 import { accessRouter } from "./src/routes/accessLevelRoute";
 import { landingPage } from "./src/controllers/userController";
 import { uploadRouter } from "./src/routes/uploadRoute";
 import { assetRouter } from "./src/routes/assetRouter";
-import { generateQR } from "./src/utils/qr-codeGenerator";
 import { eventRouter } from "./src/routes/eventRoute";
 dotenv.config();
 // router
 const userRoutes = router;
 
 const port = process.env.PORT;
-const MONGO_URI: any = process.env.MONGO_URI;
 const app = express();
 app.use(bodyParser.json());
 app.use(cors());

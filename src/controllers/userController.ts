@@ -1,7 +1,6 @@
 import { Request, Response } from "express";
 import JWT from "jsonwebtoken";
 import * as dotenv from "dotenv";
-import { model } from "../Models/user";
 import { comparePassword, hashPassword } from "../utils/hashPasswords";
 import { sendEmail } from "../utils/emailService";
 import { prisma } from "../Models/context";
@@ -10,7 +9,6 @@ import { toCapitalizeEachWord } from "../utils/textFormatter";
 import { userInfo } from "os";
 dotenv.config();
 
-const User = model;
 const JWT_SECRET: any = process.env.JWT_SECRET;
 
 export const landingPage = async (req: Request, res: Response) => {

@@ -1,9 +1,13 @@
-import pkg from "bcrypt";
+import bcrypt from "bcryptjs";
 
 export const hashPassword = async (password: string) => {
-    return await pkg.hash(password, 10);
+  const salt = bcrypt.genSaltSync(10);
+  return await bcrypt.hashSync(password, salt);
 };
 
-export const comparePassword = async (password: string, hashedPassword: string) => {
-    return await pkg.compare(password, hashedPassword);
+export const comparePassword = async (
+  password: string,
+  hashedPassword: string
+) => {
+  return await bcrypt.compareSync(password, hashedPassword);
 };
