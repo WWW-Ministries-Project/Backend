@@ -123,7 +123,7 @@ export const registerUser = async (req: Request, res: Response) => {
       const response = await prisma.user.create({
         data: {
           name: toCapitalizeEachWord(
-            `${first_name} ${other_name ? other_name : ""} ${last_name}`
+            `${first_name} ${other_name || ""} ${last_name}`
           ),
           email,
           position_id,

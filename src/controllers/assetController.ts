@@ -16,6 +16,7 @@ export const createAsset = async (req: any, res: any) => {
       created_by,
       photo,
     } = req.body;
+    const user_id = req.user?.id;
     assetSchema.validate(req.body);
 
     const asset = await prisma.assets.create({
@@ -28,7 +29,7 @@ export const createAsset = async (req: any, res: any) => {
         date_assigned: date_assigned ? new Date(date_assigned) : undefined,
         status,
         photo,
-        created_by: Number(created_by),
+        created_by: user_id,
       },
     });
     res.status(200).json({
@@ -43,7 +44,7 @@ export const createAsset = async (req: any, res: any) => {
   }
 };
 
-export const updateAsset = async (req: Request, res: Response) => {
+export const updateAsset = async (req: any, res: Response) => {
   try {
     const {
       name,
@@ -54,24 +55,42 @@ export const updateAsset = async (req: Request, res: Response) => {
       status,
       description,
       id,
-      updated_by,
       photo,
     } = req.body;
     assetSchema.validate(req.body);
+    const user_id = req.user?.id;
+
+    // Check Existance
+    const existing = await prisma.assets.findUnique({
+      where: {
+        id: Number(id),
+      },
+    });
+    if (!existing) {
+      return res
+        .status(409)
+        .json({ message: "Asset does not exist", data: null });
+    }
     const updatedAsset = await prisma.assets.update({
       where: {
         id,
       },
       data: {
-        name: toCapitalizeEachWord(name),
-        department_assigned: Number(department_assigned),
-        date_purchased: date_purchased ? new Date(date_purchased) : undefined,
-        description,
-        price: Number(price),
-        date_assigned: date_assigned ? new Date(date_assigned) : undefined,
-        status,
-        photo,
-        updated_by: Number(updated_by),
+        name: name ? toCapitalizeEachWord(name) : existing.name,
+        department_assigned: department_assigned
+          ? Number(department_assigned)
+          : existing.department_assigned,
+        date_purchased: date_purchased
+          ? new Date(date_purchased)
+          : existing.date_purchased,
+        description: description || existing.description,
+        price: price ? Number(price) : existing.price,
+        date_assigned: date_assigned
+          ? new Date(date_assigned)
+          : existing.date_assigned,
+        status: status || existing.status,
+        photo: photo || existing.photo,
+        updated_by: user_id,
         updated_at: new Date(),
       },
     });
