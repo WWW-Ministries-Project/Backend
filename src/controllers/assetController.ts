@@ -1,7 +1,6 @@
 import { Request, Response } from "express";
 import { assetSchema } from "../utils/validator";
 import { prisma } from "../Models/context";
-import upload from "../utils/upload";
 import { toCapitalizeEachWord } from "../utils/textFormatter";
 
 export const createAsset = async (req: any, res: any) => {
@@ -17,13 +16,12 @@ export const createAsset = async (req: any, res: any) => {
       created_by,
       photo,
     } = req.body;
-    const file = req.file ? req.file.path : null;
     assetSchema.validate(req.body);
 
     const asset = await prisma.assets.create({
       data: {
         name: toCapitalizeEachWord(name),
-        department_assigned,
+        department_assigned: Number(department_assigned),
         date_purchased: date_purchased ? new Date(date_purchased) : undefined,
         description,
         price: Number(price),
@@ -66,7 +64,7 @@ export const updateAsset = async (req: Request, res: Response) => {
       },
       data: {
         name: toCapitalizeEachWord(name),
-        department_assigned,
+        department_assigned: Number(department_assigned),
         date_purchased: date_purchased ? new Date(date_purchased) : undefined,
         description,
         price: Number(price),
