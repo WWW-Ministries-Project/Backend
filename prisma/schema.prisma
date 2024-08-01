@@ -28,10 +28,9 @@ model user {
   updated_at       DateTime?
   access_level_id  Int?
   access           access_level?      @relation(fields: [access_level_id], references: [id])
-  assets           assets[]
-  asset_history    asset_history[]
   event_attendance event_attendance[]
   membership_type  membership_type?
+  asset_history    asset_history[]
 }
 
 model user_info {
@@ -90,6 +89,7 @@ model department {
   created_at           DateTime           @default(now())
   updated_by           Int?
   updated_at           DateTime?
+  assets               assets[]
 }
 
 model user_departments {
@@ -129,30 +129,20 @@ model access_level {
 
 // Asset managment
 model assets {
-  id               Int             @id @default(autoincrement())
-  name             String
-  asset_code       String?         @unique
-  category         asset_category? @relation(fields: [asset_categoryId], references: [id])
-  asset_categoryId Int?
-  assigned_to      user?           @relation(fields: [userId], references: [id], onDelete: SetNull)
-  userId           Int?
-  date_assigned    DateTime?
-  date_purchased   DateTime?
-  price            Float?
-  photo            String?
-  description      String?
-  created_by       Int?
-  created_at       DateTime        @default(now())
-  updated_by       Int?
-  updated_at       DateTime?
-  status           asset_status
-}
-
-model asset_category {
-  id          Int      @id @default(autoincrement())
-  name        String
-  description String?
-  assets      assets[]
+  id                  Int           @id @default(autoincrement())
+  name                String
+  assigned_to         department?   @relation(fields: [department_assigned], references: [id], onDelete: SetNull)
+  department_assigned Int?
+  date_assigned       DateTime?
+  date_purchased      DateTime?
+  price               Float?
+  photo               String?
+  description         String?
+  created_by          Int?
+  created_at          DateTime      @default(now())
+  updated_by          Int?
+  updated_at          DateTime?
+  status              asset_status?
 }
 
 model asset_history {
