@@ -31,6 +31,7 @@ model user {
   event_attendance event_attendance[]
   membership_type  membership_type?
   asset_history    asset_history[]
+  request          request[]
 }
 
 model user_info {
@@ -182,6 +183,49 @@ model event_attendance {
   user_id    Int
   user       user      @relation(fields: [user_id], references: [id], onDelete: Cascade)
   created_at DateTime  @default(now())
+}
+
+// Request
+
+model request {
+  id                      Int                   @id @default(autoincrement())
+  request_id              String
+  user_id                 Int
+  event_id                Int
+  department_id           Int
+  request_approval_status RequestApprovalStatus
+  requisition_date        DateTime
+  comment                 String
+  products                requested_item[]      @relation("ProductRequest")
+  attachmentsList         request_attachment[]
+  user                    user?                 @relation(fields: [user_id], references: [id])
+}
+
+model request_attachment {
+  id         Int      @id @default(autoincrement())
+  URL        String
+  request    request? @relation(fields: [request_id], references: [id])
+  request_id Int?
+
+  @@map("attachment")
+}
+
+model requested_item {
+  id         Int    @id @default(autoincrement())
+  request_id Int
+  name       String
+  unitPrice  Float
+
+  request request @relation("ProductRequest", fields: [request_id], references: [id])
+
+  @@map("requested_product_item")
+}
+
+enum RequestApprovalStatus {
+  Draft
+  Awaiting_HOD_Approval
+  APPROVED
+  REJECTED
 }
 
 // Enums
