@@ -196,6 +196,7 @@ model request {
   request_approval_status RequestApprovalStatus
   requisition_date        DateTime
   comment                 String
+  currency                String
   products                requested_item[]      @relation("ProductRequest")
   attachmentsList         request_attachment[]
   user                    user?                 @relation(fields: [user_id], references: [id])
@@ -215,6 +216,7 @@ model requested_item {
   request_id Int
   name       String
   unitPrice  Float
+  quantity   Int
 
   request request @relation("ProductRequest", fields: [request_id], references: [id])
 
