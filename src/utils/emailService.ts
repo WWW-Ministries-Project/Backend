@@ -1,13 +1,15 @@
 import nodemailer from "nodemailer";
+import * as dotenv from "dotenv";
+dotenv.config();
 
 export const sendEmail = (template: string, to: string, subject: string) => {
   const transporter = nodemailer.createTransport({
-    host: "sandbox.smtp.mailtrap.io",
-    port: 2525,
+    host: process.env.MAIL_HOST,
+    port: Number(process.env.MAIL_PORT),
     // service: "gmail",
     auth: {
-      user: "dd1ada6646a05a",
-      pass: "8c67c1832fdc6a",
+      user: process.env.MAIL_USER,
+      pass: process.env.MAIL_PASSWORD,
     },
 
     tls: {
@@ -16,7 +18,7 @@ export const sendEmail = (template: string, to: string, subject: string) => {
   });
 
   const mailOptions = {
-    from: `WorldWide Word Ministries <${process.env.USER_EMAIL}>`,
+    from: `WorldWide Word Ministries <${process.env.MAIL_FROM}>`,
     to,
     subject,
     html: template,

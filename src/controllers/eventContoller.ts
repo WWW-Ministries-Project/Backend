@@ -9,15 +9,18 @@ dotenv.config();
 const selectQuery = {
   id: true,
   name: true,
-  start_date: true,
-  end_date: true,
   start_time: true,
-  end_time: true,
-  location: true,
   description: true,
+  end_date: true,
+  end_time: true,
+  event_status: true,
+  event_type: true,
+  location: true,
   poster: true,
   qr_code: true,
+  start_date: true,
 };
+
 export class eventManagement {
   createEvent = async (req: Request, res: Response) => {
     try {
@@ -76,39 +79,37 @@ export class eventManagement {
         event_type,
         updated_by,
       } = req.body;
+
+      const existance = await prisma.event_mgt.findUnique({
+        where: {
+          id,
+        },
+        select: selectQuery,
+      });
+
+      if (!existance) {
+        return res.status(400).json({ message: "No Event found", data: null });
+      }
+
       const response = await prisma.event_mgt.update({
         where: {
           id,
         },
         data: {
-          name,
-          start_date: new Date(start_date),
-          end_date: new Date(end_date),
-          start_time,
-          end_time,
-          location,
-          description,
-          poster,
-          qr_code,
+          name: name ? name : existance.name,
+          start_date: start_date ? new Date(start_date) : existance.start_date,
+          end_date: end_date ? new Date(end_date) : existance.end_date,
+          start_time: start_time ? start_date : existance.start_date,
+          end_time: end_time ? end_time : existance.end_time,
+          location: location ? location : existance.location,
+          description: description ? description : existance.description,
+          poster: poster ? poster : existance.poster,
           updated_by,
-          event_type,
-          event_status,
+          event_type: event_type ? event_type : existance.event_type,
+          event_status: event_status ? event_status : existance.event_status,
           updated_at: new Date(),
         },
-        select: {
-          id: true,
-          name: true,
-          start_date: true,
-          end_date: true,
-          start_time: true,
-          end_time: true,
-          location: true,
-          description: true,
-          poster: true,
-          qr_code: true,
-          updated_by: true,
-          updated_at: true,
-        },
+        select: selectQuery,
       });
       res.status(200).json({
         message: "Event Updated Succesfully",
@@ -161,6 +162,100 @@ export class eventManagement {
       res.status(200).json({
         message: "Operation successful",
         data: month ? data : await this.listEventsP(),
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        message: "Event failed to load",
+        data: error.message,
+      });
+    }
+  };
+
+  listUpcomingEvents = async (req: Request, res: Response) => {
+    try {
+      const date1 = new Date();
+      const data = await prisma.event_mgt.findMany({
+        where: {
+          AND: [
+            {
+              start_date: {
+                gte: new Date(
+                  `${date1.getFullYear()}-${date1.getMonth()}-${date1.getDay()}`
+                ),
+              },
+            },
+          ],
+        },
+        orderBy: {
+          start_date: "asc",
+        },
+      });
+      res.status(200).json({
+        message: "Operation successful",
+        data,
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        message: "Event failed to load",
+        data: error.message,
+      });
+    }
+  };
+  eventStats = async (req: Request, res: Response) => {
+    try {
+      const { month, year, event_type, event_status }: any = req.query;
+      const data = await prisma.event_mgt.findMany({
+        where: {
+          AND: [
+            { start_date: { gte: new Date(`${year}-01-01`) } }, // Start of the month
+            { end_date: { lte: new Date(`${year}-12-31`) } },
+          ],
+        },
+        orderBy: {
+          start_date: "asc",
+        },
+        select: {
+          id: true,
+          name: true,
+          start_date: true,
+          end_date: true,
+          event_attendance: {
+            select: {
+              id: true,
+              user_id: true,
+            },
+          },
+        },
+      });
+      function getMonthlyEventStatistics(events: any) {
+        const monthlyStats: any = {};
+
+        events.forEach((event: any) => {
+          const startDate = new Date(event.start_date);
+          const month = startDate.toLocaleString("default", {
+            month: "long",
+            year: "numeric",
+          });
+
+          if (!monthlyStats[month]) {
+            monthlyStats[month] = [];
+          }
+          console.log("zoo");
+
+          const attendanceCount = event.event_attendance.length;
+
+          monthlyStats[month].push({
+            event_name: event.name,
+            attendanceCount,
+          });
+        });
+
+        return monthlyStats;
+      }
+
+      res.status(200).json({
+        message: "Operation successful",
+        data: data,
       });
     } catch (error: any) {
       return res.status(500).json({
@@ -449,6 +544,18 @@ export class eventManagement {
         },
         orderBy: {
           start_date: "asc",
+        },
+        select: {
+          id: true,
+          name: true,
+          start_date: true,
+          end_date: true,
+          event_attendance: {
+            select: {
+              id: true,
+              user_id: true,
+            },
+          },
         },
       });
     } catch (error) {

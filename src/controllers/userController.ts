@@ -1,7 +1,6 @@
 import { Request, Response } from "express";
 import JWT from "jsonwebtoken";
 import * as dotenv from "dotenv";
-import { model } from "../Models/user";
 import { comparePassword, hashPassword } from "../utils/hashPasswords";
 import { sendEmail } from "../utils/emailService";
 import { prisma } from "../Models/context";
@@ -10,13 +9,12 @@ import { toCapitalizeEachWord } from "../utils/textFormatter";
 import { userInfo } from "os";
 dotenv.config();
 
-const User = model;
 const JWT_SECRET: any = process.env.JWT_SECRET;
 
 export const landingPage = async (req: Request, res: Response) => {
   res.send(
     // `<h1>Welcome to World Wide Word Ministries Backend Server🔥🎉💒</h1>`
-    `<h1>Welcome to World Wide Word Ministries Backend Server🔥🎉🙏💒...Access the Main Page on https://wwwministries.netlify.app</h1>`
+    `<h1>Welcome to World Wide Word Ministries Backend Server🔥🎉🙏💒...Access the Main Page on https://wwwministries.netlify.app🤾‍♂️</h1>`
   );
 };
 
@@ -27,6 +25,8 @@ const selectQuery = {
   membership_type: true,
   created_at: true,
   is_active: true,
+  position_id: true,
+  access_level_id: true,
   user_info: {
     select: {
       first_name: true,
@@ -40,6 +40,10 @@ const selectQuery = {
       nationality: true,
       date_of_birth: true,
       gender: true,
+      country: true,
+      occupation: true,
+      company: true,
+      address: true,
       emergency_contact: {
         select: {
           name: true,
@@ -119,7 +123,7 @@ export const registerUser = async (req: Request, res: Response) => {
       const response = await prisma.user.create({
         data: {
           name: toCapitalizeEachWord(
-            `${first_name} ${other_name ? other_name : ""} ${last_name}`
+            `${first_name} ${other_name || ""} ${last_name}`
           ),
           email,
           position_id,
@@ -233,13 +237,11 @@ export const updateUser = async (req: Request, res: Response) => {
       where: {
         id: Number(id),
       },
-      select: {
-        user_info: true,
-      },
+      select: selectQuery,
     });
 
     if (!existance) {
-      res.status(400).json({ message: "No user found", data: null });
+      return res.status(400).json({ message: "No user found", data: null });
     }
 
     const response = await prisma.user.update({
@@ -250,12 +252,17 @@ export const updateUser = async (req: Request, res: Response) => {
         name: `${first_name ? first_name : existance?.user_info?.first_name} ${
           other_name ? other_name : existance?.user_info?.other_name
         } ${last_name ? last_name : existance?.user_info?.last_name}`,
-        email,
-        position_id,
+        email: email ? email : existance?.email,
+        position_id: position_id ? position_id : existance?.position_id,
         password: is_user ? await hashPassword("123456") : undefined,
         is_user,
-        membership_type,
-        access_level_id,
+        membership_type: membership_type
+          ? membership_type
+          : existance?.membership_type,
+        access_level_id: access_level_id
+          ? access_level_id
+          : existance?.access_level_id,
+        updated_at: new Date(),
         department: department_id
           ? {
               update: {
@@ -270,17 +277,26 @@ export const updateUser = async (req: Request, res: Response) => {
           : undefined,
         user_info: {
           update: {
-            title,
-            first_name,
-            last_name,
-            other_name,
-            date_of_birth: date_of_birth ? new Date(date_of_birth) : null,
-            gender,
-            country_code,
-            primary_number,
-            other_number,
+            title: title ? title : existance?.user_info?.title,
+            first_name: first_name
+              ? first_name
+              : existance?.user_info?.first_name,
+            last_name: last_name ? last_name : existance?.user_info?.last_name,
+            other_name: other_name
+              ? other_name
+              : existance?.user_info?.other_name,
+            date_of_birth: date_of_birth
+              ? new Date(date_of_birth)
+              : existance?.user_info?.date_of_birth,
+            gender: gender ? gender : existance?.user_info?.gender,
+            country_code: country_code
+              ? country_code
+              : existance?.user_info?.country_code,
+            primary_number: primary_number
+              ? primary_number
+              : existance?.user_info?.primary_number,
             email,
-            address,
+            address: address ? address : existance?.user_info?.address,
             country: country ? country : existance?.user_info?.country,
 
             company: company ? company : existance?.user_info?.company,
@@ -289,22 +305,36 @@ export const updateUser = async (req: Request, res: Response) => {
               ? occupation
               : existance?.user_info?.occupation,
             photo,
-            marital_status,
+            marital_status: marital_status
+              ? marital_status
+              : existance?.user_info?.marital_status,
             nationality: nationality
               ? nationality
               : existance?.user_info?.nationality,
             emergency_contact: {
               update: {
-                name: emergency_contact_name,
-                relation: emergency_contact_relation,
-                phone_number: emergency_contact_phone_number,
+                name: emergency_contact_name
+                  ? emergency_contact_relation
+                  : existance?.user_info?.emergency_contact?.name,
+                relation: emergency_contact_relation
+                  ? emergency_contact_relation
+                  : existance?.user_info?.emergency_contact?.relation,
+                phone_number: emergency_contact_phone_number
+                  ? emergency_contact_phone_number
+                  : existance?.user_info?.emergency_contact?.phone_number,
               },
             },
             work_info: {
               update: {
-                name_of_institution: work_name,
-                industry: work_industry,
-                position: work_position,
+                name_of_institution: work_name
+                  ? work_name
+                  : existance?.user_info?.work_info?.name_of_institution,
+                industry: work_industry
+                  ? work_industry
+                  : existance?.user_info?.work_info?.industry,
+                position: work_position
+                  ? work_position
+                  : existance?.user_info?.work_info?.position,
               },
             },
           },
@@ -343,18 +373,33 @@ export const updateUserSatus = async (req: Request, res: Response) => {
   }
 };
 export const deleteUser = async (req: Request, res: Response) => {
-  const { id } = req.query;
   try {
-    const response = await prisma.user.delete({
+    const { id } = req.query;
+    const existance = await prisma.user.findUnique({
+      where: {
+        id: Number(id),
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!existance) {
+      return res.status(400).json({ message: "No user found", data: null });
+    }
+
+    await prisma.user.delete({
       where: {
         id: Number(id),
       },
     });
-    res.status(200).json({ message: "User Deleted Succesfully", data: null });
+    return res
+      .status(200)
+      .json({ message: "User deleted Succesfully", data: null });
   } catch (error: any) {
     return res
       .status(500)
-      .json({ message: "Internal Server Error", data: error?.message });
+      .json({ message: "Internal Server Error", data: error });
   }
 };
 
@@ -485,7 +530,7 @@ export const forgetPassword = async (req: Request, res: Response) => {
 
 export const resetPassword = async (req: Request, res: Response) => {
   const { id, token } = req.query;
-  const { password } = req.body;
+  const { newpassword } = req.body;
   //check for the existence of an account using
   try {
     const existingUser = await prisma.user.findUnique({
@@ -493,7 +538,6 @@ export const resetPassword = async (req: Request, res: Response) => {
         id: Number(id),
       },
     });
-
     if (!existingUser) {
       return res.status(404).json({ message: "User Not Exists", data: null });
     }
@@ -506,7 +550,7 @@ export const resetPassword = async (req: Request, res: Response) => {
           id: Number(id),
         },
         data: {
-          password: await hashPassword(password),
+          password: await hashPassword(newpassword),
         },
       });
       return res

@@ -1,48 +1,35 @@
 import { Request, Response } from "express";
 import { assetSchema } from "../utils/validator";
 import { prisma } from "../Models/context";
-import upload from "../utils/upload";
 import { toCapitalizeEachWord } from "../utils/textFormatter";
 
 export const createAsset = async (req: any, res: any) => {
   try {
     const {
       name,
-      category,
-      userId,
+      department_assigned,
       date_purchased,
       date_assigned,
-      asset_code,
       price,
       status,
       description,
       created_by,
       photo,
     } = req.body;
-    const file = req.file ? req.file.path : null;
+    const user_id = req.user?.id;
     assetSchema.validate(req.body);
-    const hasCategory = category
-      ? {
-          connect: {
-            id: category,
-          },
-        }
-      : undefined;
 
     const asset = await prisma.assets.create({
       data: {
         name: toCapitalizeEachWord(name),
-        asset_code,
-        category: hasCategory,
-        userId,
+        department_assigned: Number(department_assigned),
         date_purchased: date_purchased ? new Date(date_purchased) : undefined,
         description,
         price: Number(price),
         date_assigned: date_assigned ? new Date(date_assigned) : undefined,
         status,
         photo,
-        // photo: file ? await upload(file) : undefined,
-        created_by: Number(created_by),
+        created_by: user_id,
       },
     });
     res.status(200).json({
@@ -57,48 +44,53 @@ export const createAsset = async (req: any, res: any) => {
   }
 };
 
-export const updateAsset = async (req: Request, res: Response) => {
+export const updateAsset = async (req: any, res: Response) => {
   try {
     const {
       name,
-      category,
-      userId,
+      department_assigned,
       date_purchased,
       date_assigned,
-      asset_code,
       price,
       status,
       description,
       id,
-      updated_by,
       photo,
     } = req.body;
-    const file = req.file ? req.file.path : null;
     assetSchema.validate(req.body);
-    const hasCategory = category
-      ? {
-          connect: {
-            id: category,
-          },
-        }
-      : undefined;
+    const user_id = req.user?.id;
+
+    // Check Existance
+    const existing = await prisma.assets.findUnique({
+      where: {
+        id: Number(id),
+      },
+    });
+    if (!existing) {
+      return res
+        .status(409)
+        .json({ message: "Asset does not exist", data: null });
+    }
     const updatedAsset = await prisma.assets.update({
       where: {
         id,
       },
       data: {
-        name: toCapitalizeEachWord(name),
-        asset_code,
-        category: hasCategory,
-        userId,
-        date_purchased: date_purchased ? new Date(date_purchased) : undefined,
-        description,
-        price: Number(price),
-        date_assigned: date_assigned ? new Date(date_assigned) : undefined,
-        status,
-        photo,
-        // photo: file ? await upload(file) : undefined,
-        updated_by: Number(updated_by),
+        name: name ? toCapitalizeEachWord(name) : existing.name,
+        department_assigned: department_assigned
+          ? Number(department_assigned)
+          : existing.department_assigned,
+        date_purchased: date_purchased
+          ? new Date(date_purchased)
+          : existing.date_purchased,
+        description: description || existing.description,
+        price: price ? Number(price) : existing.price,
+        date_assigned: date_assigned
+          ? new Date(date_assigned)
+          : existing.date_assigned,
+        status: status || existing.status,
+        photo: photo || existing.photo,
+        updated_by: user_id,
         updated_at: new Date(),
       },
     });
@@ -139,94 +131,6 @@ export const deleteAsset = async (req: Request, res: Response) => {
       .status(200)
       .json({ message: "Asset deleted successfully", deletedAsset });
   } catch (error: any) {
-    return res
-      .status(500)
-      .json({ message: "Something Went Wrong", data: error });
-  }
-};
-
-export const listAssetCategory = async (req: Request, res: Response) => {
-  try {
-    const { name, description } = req.body;
-    const assetCategory = await prisma.asset_category.findMany({
-      orderBy: {
-        id: "desc",
-      },
-      select: {
-        id: true,
-        name: true,
-        description: true,
-      },
-    });
-    res
-      .status(200)
-      .json({ message: "Operation Succesful", data: assetCategory });
-  } catch (error) {
-    return res
-      .status(500)
-      .json({ message: "Something Went Wrong", data: error });
-  }
-};
-export const createAssetCategory = async (req: Request, res: Response) => {
-  try {
-    const { name, description } = req.body;
-    const assetCategory = await prisma.asset_category.create({
-      data: {
-        name,
-        description,
-      },
-      select: {
-        name: true,
-        description: true,
-      },
-    });
-    res
-      .status(200)
-      .json({ message: "Operation Succesful", data: assetCategory });
-  } catch (error) {
-    return res
-      .status(500)
-      .json({ message: "Something Went Wrong", data: error });
-  }
-};
-
-export const updateAssetCategory = async (req: Request, res: Response) => {
-  try {
-    const { id, name, description } = req.body;
-    const assetCategory = await prisma.asset_category.update({
-      where: {
-        id,
-      },
-      data: {
-        name,
-        description,
-      },
-      select: {
-        name: true,
-        description: true,
-      },
-    });
-    res
-      .status(200)
-      .json({ message: "Operation Succesful", data: assetCategory });
-  } catch (error) {
-    return res
-      .status(500)
-      .json({ message: "Something Went Wrong", data: error });
-  }
-};
-export const deleteAssetCategory = async (req: Request, res: Response) => {
-  try {
-    const { id, name, description } = req.body;
-    const assetCategory = await prisma.asset_category.delete({
-      where: {
-        id,
-      },
-    });
-    res
-      .status(200)
-      .json({ message: "Operation Succesful", data: assetCategory });
-  } catch (error) {
     return res
       .status(500)
       .json({ message: "Something Went Wrong", data: error });

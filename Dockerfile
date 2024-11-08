@@ -4,9 +4,11 @@ WORKDIR /app/www_project
 
 COPY package.json .
 
-RUN yarn install
+RUN npm install
 
 COPY . .
+
+RUN npm install prisma @prisma/client
 
 RUN npm run migrate:2
 

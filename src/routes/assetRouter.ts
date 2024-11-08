@@ -1,13 +1,9 @@
 import { Router } from "express";
 import {
   createAsset,
-  createAssetCategory,
   deleteAsset,
-  deleteAssetCategory,
-  listAssetCategory,
   listAssets,
   updateAsset,
-  updateAssetCategory,
 } from "../controllers/assetController";
 import multer from "multer";
 import { Permissions } from "../middleWare/authorization";
@@ -37,9 +33,3 @@ assetRouter.delete(
   [protect, permissions.can_delete_access, upload.single("file")],
   deleteAsset
 );
-
-// Category
-assetRouter.post("/create-category", createAssetCategory);
-assetRouter.get("/list-category", listAssetCategory);
-assetRouter.put("/update-category", updateAssetCategory);
-assetRouter.delete("/delete-category", deleteAssetCategory);
