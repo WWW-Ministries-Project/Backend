@@ -6,8 +6,8 @@ import {
   updateAccessLevel,
   assignAccessLevelToUser,
   deleteAccessLevel,
-} from "../controllers/accessLevelController";
-import { Permissions } from "../middleWare/authorization";
+} from "../accessLevels/accessLevelController";
+import { Permissions } from "../../middleWare/authorization";
 const permissions = new Permissions();
 dotenv.config();
 export const accessRouter = Router();

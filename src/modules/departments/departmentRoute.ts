@@ -6,8 +6,8 @@ import {
   deleteDepartment,
   listDepartments,
   getDepartment,
-} from "../controllers/departmentController";
-import { Permissions } from "../middleWare/authorization";
+} from "./departmentController";
+import { Permissions } from "../../middleWare/authorization";
 const permissions = new Permissions();
 const protect = permissions.protect;
 

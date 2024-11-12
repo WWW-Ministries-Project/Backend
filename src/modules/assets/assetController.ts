@@ -1,8 +1,6 @@
 import { Request, Response } from "express";
-import { assetSchema } from "../utils/validator";
-import { prisma } from "../Models/context";
-import { toCapitalizeEachWord } from "../utils/textFormatter";
-
+import { assetSchema, toCapitalizeEachWord } from "../../utils";
+import { prisma } from "../../Models/context";
 export const createAsset = async (req: any, res: any) => {
   try {
     const {
