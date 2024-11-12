@@ -14,8 +14,8 @@ import {
   updateUser,
   updateUserSatus,
   statsUsers,
-} from "../controllers/userController";
-import { Permissions } from "../middleWare/authorization";
+} from "../user/userController";
+import { Permissions } from "../../middleWare/authorization";
 const permissions = new Permissions();
 const protect = permissions.protect;
 dotenv.config();

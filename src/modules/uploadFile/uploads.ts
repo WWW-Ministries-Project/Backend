@@ -1,4 +1,4 @@
-import cloudinary from "../utils/cloudinary";
+import {cloudinary} from "../../utils";
 
 export const uploadImage = async (req: any, res: any) => {
   try {

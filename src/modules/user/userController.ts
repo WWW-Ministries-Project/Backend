@@ -1,12 +1,15 @@
 import { Request, Response } from "express";
 import JWT from "jsonwebtoken";
 import * as dotenv from "dotenv";
-import { comparePassword, hashPassword } from "../utils/hashPasswords";
-import { sendEmail } from "../utils/emailService";
-import { prisma } from "../Models/context";
-import { confirmTemplate } from "../utils/mail_templates/confirmTemplate";
-import { toCapitalizeEachWord } from "../utils/textFormatter";
-import { userInfo } from "os";
+import { prisma } from "../../Models/context";
+import {
+  sendEmail,
+  toCapitalizeEachWord,
+  comparePassword,
+  hashPassword,
+  confirmTemplate,
+} from "../../utils";
+
 dotenv.config();
 
 const JWT_SECRET: any = process.env.JWT_SECRET;

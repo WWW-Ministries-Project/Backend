@@ -1,9 +1,6 @@
 import Router from "express";
 import * as dotenv from "dotenv";
-import {
-  createRequisitionHandler,
-  listRequisitionHandler,
-} from "../requisitions/requisitionsController";
+import { createRequisitionHandler, listRequisitionHandler } from "./requisitionsController";
 
 import { Permissions } from "../../middleWare/authorization";
 const permissions = new Permissions();

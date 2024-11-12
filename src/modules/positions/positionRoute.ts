@@ -6,8 +6,8 @@ import {
   deletePosition,
   listPositions,
   getPosition,
-} from "../controllers/positionController";
-import { Permissions } from "../middleWare/authorization";
+} from "../positions/positionController";
+import { Permissions } from "../../middleWare/authorization";
 const permissions = new Permissions();
 const protect = permissions.protect;
 
