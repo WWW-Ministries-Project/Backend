@@ -1,3 +1,6 @@
+export * from "./user/userController";
+export * from "./user/userRoutes";
+
 export * from "./accessLevels/accessLevelController";
 export * from "./accessLevels/accessLevelRoute";
 
@@ -21,6 +24,3 @@ export * from "./events/eventRoute";
 
 export * from "./uploadFile/uploadRoute";
 export * from "./uploadFile/uploads";
-
-
-
