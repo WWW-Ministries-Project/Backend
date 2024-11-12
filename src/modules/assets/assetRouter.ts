@@ -4,9 +4,9 @@ import {
   deleteAsset,
   listAssets,
   updateAsset,
-} from "../controllers/assetController";
+} from "../assets/assetController";
 import multer from "multer";
-import { Permissions } from "../middleWare/authorization";
+import { Permissions } from "../../middleWare/authorization";
 const upload = multer({ dest: "uploads/" });
 const permissions = new Permissions();
 const protect = permissions.protect;

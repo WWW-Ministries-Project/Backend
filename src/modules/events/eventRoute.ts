@@ -1,7 +1,7 @@
 import Router from "express";
 import * as dotenv from "dotenv";
-import { Permissions } from "../middleWare/authorization";
-import { eventManagement } from "../controllers/eventContoller";
+import { Permissions } from "../../middleWare/authorization";
+import { eventManagement } from "../events/eventContoller";
 const eventContoller = new eventManagement();
 const permissions = new Permissions();
 const protect = permissions.protect;
@@ -22,7 +22,11 @@ eventRouter.get(
 );
 eventRouter.get("/events-stats", [protect], eventContoller.eventStats);
 
-eventRouter.get("/upcoming-events", [protect], eventContoller.listUpcomingEvents);
+eventRouter.get(
+  "/upcoming-events",
+  [protect],
+  eventContoller.listUpcomingEvents
+);
 
 eventRouter.post(
   "/create-event",

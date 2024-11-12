@@ -1,6 +1,6 @@
-import { prisma } from "../Models/context";
+import { prisma } from "../../Models/context";
 import { Request, Response } from "express";
-import { toCapitalizeEachWord } from "../utils/textFormatter";
+import { toCapitalizeEachWord } from "../../utils";
 
 export const createDepartment = async (req: Request, res: Response) => {
   const { name, department_head, description, created_by } = req.body;

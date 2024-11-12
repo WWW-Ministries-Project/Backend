@@ -1,8 +1,7 @@
-import { generateQR } from "../utils/qr-codeGenerator";
-import { prisma } from "./../Models/context";
+import { generateQR, generateRecurringDates } from "../../utils";
+import { prisma } from "../../Models/context";
 import { Request, Response } from "express";
 import * as dotenv from "dotenv";
-import { generateRecurringDates } from "../utils/dateCalculator";
 import { addDays } from "date-fns";
 dotenv.config();
 
