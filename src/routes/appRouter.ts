@@ -9,14 +9,15 @@ import {
   assetRouter,
   eventRouter,
   requisitionRouter,
+  userRouter,
 } from "../modules";
-
 
 dotenv.config();
 // router
 export const appRouter = Router();
 
 appRouter.get("/", landingPage);
+appRouter.use("/user", userRouter);
 appRouter.use("/department", departmentRouter);
 appRouter.use("/position", positionRouter);
 appRouter.use("/access", accessRouter);

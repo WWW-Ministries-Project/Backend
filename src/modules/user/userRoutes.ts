@@ -20,40 +20,44 @@ const permissions = new Permissions();
 const protect = permissions.protect;
 dotenv.config();
 
-export const router = Router();
+export const userRouter = Router();
 
-router.get("/get-user", getUser);
+userRouter.get("/get-user", getUser);
 
-router.get("/list-users", [protect, permissions.can_view_users], ListUsers);
+userRouter.get("/list-users", [protect, permissions.can_view_users], ListUsers);
 
-router.get("/stats-users", [protect], statsUsers);
+userRouter.get("/stats-users", [protect], statsUsers);
 
-router.post("/seed-user", seedUser);
+userRouter.post("/seed-user", seedUser);
 
-router.post("/reset-password", resetPassword);
+userRouter.post("/reset-password", resetPassword);
 
-router.post("/forgot-password", forgetPassword);
+userRouter.post("/forgot-password", forgetPassword);
 
-router.post("/change-password", changePassword);
+userRouter.post("/change-password", changePassword);
 
-router.post("/login", login);
+userRouter.post("/login", login);
 
-router.post(
+userRouter.post(
   "/register",
   [protect, permissions.can_create_Members],
   registerUser
 );
-router.post("/update-user", [protect, permissions.edit_Members], updateUser);
+userRouter.post(
+  "/update-user",
+  [protect, permissions.edit_Members],
+  updateUser
+);
 
-router.patch(
+userRouter.patch(
   "/update-user-status",
   [protect, permissions.edit_Members],
   updateUserSatus
 );
-router.delete(
+userRouter.delete(
   "/delete-user",
   [protect, permissions.delete_Members],
   deleteUser
 );
 
-router.get("/", landingPage);
+userRouter.get("/", landingPage);
