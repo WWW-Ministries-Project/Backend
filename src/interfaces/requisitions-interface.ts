@@ -22,7 +22,7 @@ export interface RequisitionInterface {
   id: number;
   requester_name: string;
   comment: string;
-  request_date: Date;
+  request_date: string;
   department_id: number;
   event_id: number;
   currency: string;

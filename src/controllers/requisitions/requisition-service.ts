@@ -21,7 +21,6 @@ export const generateRequestId = async (): Promise<string> => {
  */
 export const createRequisition = async (data: RequisitionInterface) => {
   const requestId = await generateRequestId();
-  
 
   const createdRequest = await prisma.request.create({
     data: {
@@ -29,7 +28,7 @@ export const createRequisition = async (data: RequisitionInterface) => {
       user_id: data.user_id,
       department_id: data.department_id,
       event_id: data.event_id,
-      requisition_date: data.request_date,
+      requisition_date: new Date(data.request_date),
       comment: data.comment,
       request_approval_status: data.approval_status,
       currency: data.currency,
@@ -59,4 +58,13 @@ export const createRequisition = async (data: RequisitionInterface) => {
   });
 
   return createdRequest;
+};
+
+export const listRequisition = async () => {
+  const response = await prisma.request.findMany({
+    orderBy: {
+      id: "desc",
+    },
+  });
+  return response;
 };
