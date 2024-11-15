@@ -65,6 +65,17 @@ export const listRequisition = async () => {
     orderBy: {
       id: "desc",
     },
+    include: {
+      _count: true,
+      attachmentsList: true,
+      products: true,
+      user: {
+        select: {
+          id: true,
+          name: true,
+        },
+      },
+    },
   });
   return response;
 };
