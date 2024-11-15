@@ -1,6 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -19,34 +16,30 @@ model user {
   partner          Boolean?           @default(false)
   is_user          Boolean?           @default(false)
   password         String?
-  department       user_departments[]
   position_id      Int?
-  position         position?          @relation(fields: [position_id], references: [id])
-  user_info        user_info?
-  department_head  department[]
   created_at       DateTime           @default(now())
   updated_at       DateTime?
   access_level_id  Int?
-  access           access_level?      @relation(fields: [access_level_id], references: [id])
-  event_attendance event_attendance[]
   membership_type  membership_type?
   asset_history    asset_history[]
+  department_head  department[]
+  event_attendance event_attendance[]
   request          request[]
+  access           access_level?      @relation(fields: [access_level_id], references: [id])
+  position         position?          @relation(fields: [position_id], references: [id])
+  department       user_departments?
+  user_info        user_info?
+
+  @@index([access_level_id], map: "user_access_level_id_fkey")
+  @@index([position_id], map: "user_position_id_fkey")
 }
 
 model user_info {
   id                   Int                     @id @default(autoincrement())
   user_id              Int                     @unique
-  user                 user                    @relation(fields: [user_id], references: [id], onDelete: Cascade)
   title                String?
-  first_name           String?
-  last_name            String?
-  other_name           String?
   date_of_birth        DateTime?
   gender               String
-  marital_status       marital_status?
-  nationality          String?
-  country_code         String?
   primary_number       String?
   other_number         String?
   email                String?
@@ -56,10 +49,20 @@ model user_info {
   company              String?
   member_since         DateTime?
   photo                String?
-  work_info_id         Int?
-  work_info            user_work_info?         @relation(fields: [work_info_id], references: [id])
   emergency_contact_id Int?
+  first_name           String?
+  last_name            String?
+  marital_status       marital_status?
+  nationality          String?
+  other_name           String?
+  work_info_id         Int?
+  country_code         String?
   emergency_contact    user_emergency_contact? @relation(fields: [emergency_contact_id], references: [id])
+  user                 user                    @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  work_info            user_work_info?         @relation(fields: [work_info_id], references: [id])
+
+  @@index([emergency_contact_id], map: "user_info_emergency_contact_id_fkey")
+  @@index([work_info_id], map: "user_info_work_info_id_fkey")
 }
 
 model user_work_info {
@@ -82,43 +85,49 @@ model department {
   id                   Int                @id @default(autoincrement())
   name                 String
   department_head      Int?
-  department_head_info user?              @relation(fields: [department_head], references: [id], onDelete: SetNull)
   description          String?
-  user_departments     user_departments[]
-  position             position[]
   created_by           Int
   created_at           DateTime           @default(now())
   updated_by           Int?
   updated_at           DateTime?
   assets               assets[]
+  department_head_info user?              @relation(fields: [department_head], references: [id])
+  position             position[]
+  user_departments     user_departments[]
+
+  @@index([department_head], map: "department_department_head_fkey")
 }
 
 model user_departments {
   id              Int         @id @default(autoincrement())
   user_id         Int         @unique
-  user            user        @relation(fields: [user_id], references: [id], onDelete: Cascade)
   department_id   Int?
   department_info department? @relation(fields: [department_id], references: [id])
+  user            user        @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([department_id], map: "user_departments_department_id_fkey")
 }
 
 model position {
   id            Int         @id @default(autoincrement())
   name          String
   department_id Int?
-  department    department? @relation(fields: [department_id], references: [id])
   description   String?
-  user          user[]
   created_by    Int
   created_at    DateTime    @default(now())
   updated_by    Int?
   updated_at    DateTime?
+  department    department? @relation(fields: [department_id], references: [id])
+  user          user[]
+
+  @@index([department_id], map: "position_department_id_fkey")
 }
 
 model access_level {
   id             Int       @id @default(autoincrement())
   name           String    @unique
   description    String?
-  permissions    Json
+  permissions    String    @db.LongText
   created_by     Int?
   updated_by     Int?
   deleted_at     DateTime?
@@ -128,22 +137,23 @@ model access_level {
   users_assigned user[]
 }
 
-// Asset managment
 model assets {
   id                  Int           @id @default(autoincrement())
   name                String
-  assigned_to         department?   @relation(fields: [department_assigned], references: [id], onDelete: SetNull)
-  department_assigned Int?
   date_assigned       DateTime?
   date_purchased      DateTime?
   price               Float?
-  photo               String?
   description         String?
-  created_by          Int?
-  created_at          DateTime      @default(now())
-  updated_by          Int?
   updated_at          DateTime?
   status              asset_status?
+  photo               String?
+  created_by          Int?
+  updated_by          Int?
+  created_at          DateTime      @default(now())
+  department_assigned Int?
+  assigned_to         department?   @relation(fields: [department_assigned], references: [id])
+
+  @@index([department_assigned], map: "assets_department_assigned_fkey")
 }
 
 model asset_history {
@@ -151,20 +161,18 @@ model asset_history {
   title         String
   description   String?
   status_update asset_status
-  related_user  user?        @relation(fields: [userId], references: [id], onDelete: SetNull)
   update_date   DateTime
   userId        Int?
+  related_user  user?        @relation(fields: [userId], references: [id])
+
+  @@index([userId], map: "asset_history_userId_fkey")
 }
 
 model event_mgt {
   id               Int                @id @default(autoincrement())
   name             String
-  start_date       DateTime?
-  end_date         DateTime?
   start_time       String?
   end_time         String?
-  event_type       event_type?
-  event_status     event_status?
   location         String?
   description      String?
   poster           String?
@@ -173,19 +181,24 @@ model event_mgt {
   created_at       DateTime           @default(now())
   updated_by       Int?
   updated_at       DateTime?
+  end_date         DateTime?
+  start_date       DateTime?
+  event_status     event_status?
+  event_type       event_type?
   event_attendance event_attendance[]
 }
 
 model event_attendance {
   id         Int       @id @default(autoincrement())
   event_id   Int
-  event      event_mgt @relation(fields: [event_id], references: [id])
   user_id    Int
-  user       user      @relation(fields: [user_id], references: [id], onDelete: Cascade)
   created_at DateTime  @default(now())
-}
+  event      event_mgt @relation(fields: [event_id], references: [id])
+  user       user      @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
-// Request
+  @@index([event_id], map: "event_attendance_event_id_fkey")
+  @@index([user_id], map: "event_attendance_user_id_fkey")
+}
 
 model request {
   id                      Int                   @id @default(autoincrement())
@@ -197,30 +210,43 @@ model request {
   requisition_date        DateTime
   comment                 String
   currency                String
-  products                requested_item[]      @relation("ProductRequest")
   attachmentsList         request_attachment[]
-  user                    user?                 @relation(fields: [user_id], references: [id])
+  user                    user                  @relation(fields: [user_id], references: [id])
+  products                requested_item[]      @relation("ProductRequest")
+
+  @@index([user_id], map: "request_user_id_fkey")
 }
 
 model request_attachment {
   id         Int      @id @default(autoincrement())
   URL        String
-  request    request? @relation(fields: [request_id], references: [id])
   request_id Int?
+  request    request? @relation(fields: [request_id], references: [id])
 
+  @@index([request_id], map: "attachment_request_id_fkey")
   @@map("attachment")
 }
 
 model requested_item {
-  id         Int    @id @default(autoincrement())
+  id         Int     @id @default(autoincrement())
   request_id Int
   name       String
   unitPrice  Float
   quantity   Int
+  request    request @relation("ProductRequest", fields: [request_id], references: [id])
 
-  request request @relation("ProductRequest", fields: [request_id], references: [id])
-
+  @@index([request_id], map: "requested_product_item_request_id_fkey")
   @@map("requested_product_item")
+}
+
+model requisition_summary {
+  requisition_id  String      @unique
+  product_names   Json
+  date_created    DateTime
+  approval_status String
+  total_amount    Float
+
+  @@map("requisition_summary")
 }
 
 enum RequestApprovalStatus {
@@ -230,7 +256,6 @@ enum RequestApprovalStatus {
   REJECTED
 }
 
-// Enums
 enum asset_status {
   ASSIGNED
   UNASSIGNED
