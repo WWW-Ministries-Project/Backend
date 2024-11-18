@@ -4,6 +4,7 @@ import {
   listRequisition,
   PSapproveRequisition,
   HODapproveRequisition,
+  getRequisition,
 } from "./requisition-service";
 import {
   RequisitionInterface,
@@ -73,5 +74,24 @@ export const psApproveRequisitionHandler = async (
   } catch (error) {
     console.error("Error creating requisition:", error);
     res.status(503).json({ message: "Failed to approve requisition", error });
+  }
+};
+
+export const getRequisitionHandler = async (req: Request, res: Response) => {
+  const { id } = req.params;
+
+  try {
+    if (!id) {
+      res.status(400).json({ message: "Requisition ID is required" });
+      return;
+    }
+    const response = await getRequisition(id);
+    res.status(201).json({
+      message: "Operation successful",
+      data: response,
+    });
+  } catch (error) {
+    console.error("Error retrieving requisition:", error);
+    res.status(503).json({ message: "Failed to get requisition", error });
   }
 };

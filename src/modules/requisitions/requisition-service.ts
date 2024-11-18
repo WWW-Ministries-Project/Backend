@@ -71,24 +71,6 @@ export const createRequisition = async (data: RequisitionInterface) => {
 };
 
 export const listRequisition = async () => {
-  // const response = await prisma.request.findMany({
-  //   orderBy: {
-  //     id: "desc",
-  //   },
-  //   include: {
-  //     _count: true,
-  //     attachmentsList: true,
-  //     products: true,
-  //     user: {
-  //       select: {
-  //         id: true,
-  //         name: true,
-  //       },
-  //     },
-  //   },
-  // });
-  // return response;
-
   const response = await prisma.requisition_summary.findMany({
     orderBy: {
       requisition_id: "desc",
@@ -149,5 +131,18 @@ export const PSapproveRequisition = async (
     },
   });
 
+  return response;
+};
+
+export const getRequisition = async (id: any) => {
+  const response = await prisma.request.findUnique({
+    where: {
+      id: parseInt(id),
+    },
+    include: {
+      products: true,
+      attachmentsList: true,
+    },
+  });
   return response;
 };

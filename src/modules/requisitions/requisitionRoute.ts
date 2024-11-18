@@ -5,6 +5,7 @@ import {
   listRequisitionHandler,
   hodApproveRequisitionHandler,
   psApproveRequisitionHandler,
+  getRequisitionHandler,
 } from "./requisitionsController";
 
 import { Permissions } from "../../middleWare/authorization";
@@ -35,4 +36,10 @@ requisitionRouter.post(
   "/approve-requisition-pastor",
   // [permissions.protect, permissions.can_create_requisitions],
   psApproveRequisitionHandler
+);
+
+requisitionRouter.get(
+  "/get-requisition/:id",
+  // [permissions.protect, permissions.can_create_requisitions],
+  getRequisitionHandler
 );
