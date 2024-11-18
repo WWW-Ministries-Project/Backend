@@ -219,7 +219,8 @@ model request {
 }
 
 model requisition_summary {
-  requisition_id  String   @unique
+  requisition_id  Int      @unique
+  generated_id    String
   product_names   Json
   date_created    DateTime
   approval_status String
