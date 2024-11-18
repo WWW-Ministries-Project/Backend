@@ -1,6 +1,12 @@
 import Router from "express";
 import * as dotenv from "dotenv";
-import { createRequisitionHandler, listRequisitionHandler } from "./requisitionsController";
+import {
+  createRequisitionHandler,
+  listRequisitionHandler,
+  hodApproveRequisitionHandler,
+  psApproveRequisitionHandler,
+  getRequisitionHandler,
+} from "./requisitionsController";
 
 import { Permissions } from "../../middleWare/authorization";
 const permissions = new Permissions();
@@ -18,4 +24,22 @@ requisitionRouter.get(
   "/list-requisition",
   // [permissions.protect, permissions.can_create_requisitions],
   listRequisitionHandler
+);
+
+requisitionRouter.post(
+  "/approve-requisition-hod",
+  // [permissions.protect, permissions.can_create_requisitions],
+  hodApproveRequisitionHandler
+);
+
+requisitionRouter.post(
+  "/approve-requisition-pastor",
+  // [permissions.protect, permissions.can_create_requisitions],
+  psApproveRequisitionHandler
+);
+
+requisitionRouter.get(
+  "/get-requisition/:id",
+  // [permissions.protect, permissions.can_create_requisitions],
+  getRequisitionHandler
 );

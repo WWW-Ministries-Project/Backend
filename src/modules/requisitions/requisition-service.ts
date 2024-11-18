@@ -1,5 +1,8 @@
 import { prisma } from "../../Models/context";
-import { RequisitionInterface } from "../../interfaces/requisitions-interface";
+import {
+  RequisitionInterface,
+  RequestApprovals,
+} from "../../interfaces/requisitions-interface";
 
 /**
  * Generates the next request ID.
@@ -41,7 +44,14 @@ export const createRequisition = async (data: RequisitionInterface) => {
           quantity: product.quantity,
         })),
       },
-
+      request_approvals: {
+        create: {
+          hod_user_id: null,
+          hod_approval_date: null,
+          ps_user_id: null,
+          ps_approval_date: null,
+        },
+      },
       // Create the attachments list for the request, if provided
       attachmentsList: data.attachmentLists?.length
         ? {
@@ -61,27 +71,77 @@ export const createRequisition = async (data: RequisitionInterface) => {
 };
 
 export const listRequisition = async () => {
-  // const response = await prisma.request.findMany({
-  //   orderBy: {
-  //     id: "desc",
-  //   },
-  //   include: {
-  //     _count: true,
-  //     attachmentsList: true,
-  //     products: true,
-  //     user: {
-  //       select: {
-  //         id: true,
-  //         name: true,
-  //       },
-  //     },
-  //   },
-  // });
-  // return response;
-
   const response = await prisma.requisition_summary.findMany({
     orderBy: {
       requisition_id: "desc",
+    },
+  });
+  return response;
+};
+
+export const HODapproveRequisition = async (
+  data: RequestApprovals
+): Promise<{}> => {
+  await prisma.request_approvals.update({
+    where: {
+      request_id: Number(data.request_id),
+    },
+    data: {
+      hod_user_id: data.hod_user_id,
+      hod_approval_date: new Date(),
+      hod_approved: data.hod_approved,
+      hod_comment: data.hod_comment,
+    },
+  });
+
+  const response = await prisma.request.update({
+    where: {
+      id: Number(data.request_id),
+    },
+    data: {
+      request_approval_status: data.hod_approved
+        ? "Awaiting_Executive_Pastor_Approval"
+        : "REJECTED",
+    },
+  });
+  return response;
+};
+
+export const PSapproveRequisition = async (
+  data: RequestApprovals
+): Promise<{}> => {
+  await prisma.request_approvals.update({
+    where: {
+      request_id: Number(data.request_id),
+    },
+    data: {
+      ps_user_id: data.ps_user_id,
+      ps_approval_date: new Date(),
+      ps_approved: data.ps_approved,
+      ps_comment: data.ps_comment,
+    },
+  });
+
+  const response = await prisma.request.update({
+    where: {
+      id: Number(data.request_id),
+    },
+    data: {
+      request_approval_status: data.ps_approved ? "APPROVED" : "REJECTED",
+    },
+  });
+
+  return response;
+};
+
+export const getRequisition = async (id: any) => {
+  const response = await prisma.request.findUnique({
+    where: {
+      id: parseInt(id),
+    },
+    include: {
+      products: true,
+      attachmentsList: true,
     },
   });
   return response;

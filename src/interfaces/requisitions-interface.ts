@@ -31,3 +31,16 @@ export interface RequisitionInterface {
   products: RequestedItem[];
   attachmentLists: RequestAttachment[];
 }
+
+export interface RequestApprovals {
+  id: number;
+  request_id: number | null;
+  hod_user_id: number | null;
+  hod_approved: boolean;
+  hod_approval_date: Date | null;
+  hod_comment: string | null;
+  ps_user_id: number | null;
+  ps_approved: boolean;
+  ps_approval_date?: Date | null;
+  ps_comment: string | null;
+}
