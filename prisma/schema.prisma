@@ -163,7 +163,7 @@ model asset_history {
   status_update asset_status
   update_date   DateTime
   userId        Int?
-  related_user  user?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  related_user  user?        @relation(fields: [userId], references: [id])
 
   @@index([userId], map: "asset_history_userId_fkey")
 }
@@ -213,6 +213,7 @@ model request {
   attachmentsList         request_attachment[]
   user                    user                  @relation(fields: [user_id], references: [id])
   products                requested_item[]      @relation("ProductRequest")
+  request_approvals       request_approvals[]
 
   @@index([user_id], map: "request_user_id_fkey")
 }
@@ -239,19 +240,25 @@ model requested_item {
   @@map("requested_product_item")
 }
 
-model requisition_summary {
-  requisition_id  String   @unique
-  product_names   Json
-  date_created    DateTime
-  approval_status String
-  total_amount    Float
+model request_approvals {
+  id                Int       @id @default(autoincrement())
+  request_id        Int?      @unique
+  hod_user_id       Int?
+  hod_approved      Boolean   @default(false)
+  hod_approval_date DateTime?
+  hod_comment       String?
+  ps_user_id        Int?
+  ps_approved       Boolean   @default(false)
+  ps_approval_date  DateTime?
+  ps_comment        String?
 
-  @@map("requisition_summary")
+  request request? @relation(fields: [request_id], references: [id])
 }
 
 enum RequestApprovalStatus {
   Draft
   Awaiting_HOD_Approval
+  Awaiting_Executive_Pastor_Approval
   APPROVED
   REJECTED
 }
