@@ -142,6 +142,8 @@ export const getRequisition = async (id: any) => {
     include: {
       products: true,
       attachmentsList: true,
+      request_approvals: true,
+      user: true,
     },
   });
   return response;
