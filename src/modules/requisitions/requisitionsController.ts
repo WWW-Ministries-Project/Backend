@@ -78,7 +78,7 @@ export const psApproveRequisitionHandler = async (
 };
 
 export const getRequisitionHandler = async (req: Request, res: Response) => {
-  const { id } = req.params;
+  const { id } = req.query;
 
   try {
     if (!id) {
