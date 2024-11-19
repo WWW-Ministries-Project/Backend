@@ -39,7 +39,7 @@ requisitionRouter.post(
 );
 
 requisitionRouter.get(
-  "/get-requisition/:id",
+  "/get-requisition",
   // [permissions.protect, permissions.can_create_requisitions],
   getRequisitionHandler
 );
