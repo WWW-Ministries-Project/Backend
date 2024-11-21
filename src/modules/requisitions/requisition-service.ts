@@ -141,10 +141,61 @@ export const getRequisition = async (id: any) => {
     },
     include: {
       products: true,
-      attachmentsList: true,
+      department: {
+        select: {
+          name: true,
+        },
+      },
+      event: {
+        select: {
+          name: true,
+        },
+      },
       request_approvals: true,
-      user: true,
+      user: {
+        select: {
+          name: true,
+          email: true,
+          position: {
+            select: {
+              name: true,
+            },
+          },
+        },
+      },
     },
   });
-  return response;
+
+  if (!response) {
+    return null; // Handle case where no requisition is found
+  }
+
+  // Calculate total_cost
+  const totalCost =
+    response.products?.reduce((sum, product) => {
+      return sum + product.unitPrice * product.quantity;
+    }, 0) || 0;
+
+  // Transform the response into the desired shape
+  const structuredResponse = {
+    summary: {
+      requisition_id: response.request_id,
+      department: response.department?.name || null,
+      program: response.event?.name || null,
+      request_date: response.requisition_date,
+      total_cost: totalCost,
+      status: response.request_approval_status,
+    },
+    requester: {
+      name: response.user?.name || null,
+      email: response.user?.email || null,
+      position: response.user?.position?.name || null,
+    },
+    request_approvals: response.request_approvals,
+    comment: response.comment || null,
+    currency: response.currency || null,
+    products: response.products || [],
+  };
+
+  return structuredResponse;
 };
