@@ -94,6 +94,7 @@ model department {
   department_head_info user?              @relation(fields: [department_head], references: [id])
   position             position[]
   user_departments     user_departments[]
+  request              request[]
 
   @@index([department_head], map: "department_department_head_fkey")
 }
@@ -186,6 +187,7 @@ model event_mgt {
   event_status     event_status?
   event_type       event_type?
   event_attendance event_attendance[]
+  request          request[]
 }
 
 model event_attendance {
@@ -214,6 +216,8 @@ model request {
   user                    user                  @relation(fields: [user_id], references: [id])
   request_approvals       request_approvals?
   products                requested_item[]      @relation("ProductRequest")
+  department              department            @relation(fields: [department_id], references: [id])
+  event                   event_mgt             @relation(fields: [event_id], references: [id])
 
   @@index([user_id], map: "request_user_id_fkey")
 }
