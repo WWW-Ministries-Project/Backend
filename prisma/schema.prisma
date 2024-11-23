@@ -93,8 +93,8 @@ model department {
   assets               assets[]
   department_head_info user?              @relation(fields: [department_head], references: [id])
   position             position[]
-  user_departments     user_departments[]
   request              request[]
+  user_departments     user_departments[]
 
   @@index([department_head], map: "department_department_head_fkey")
 }
@@ -128,7 +128,7 @@ model access_level {
   id             Int       @id @default(autoincrement())
   name           String    @unique
   description    String?
-  permissions    Json
+  permissions    String    @db.LongText
   created_by     Int?
   updated_by     Int?
   deleted_at     DateTime?
@@ -164,7 +164,7 @@ model asset_history {
   status_update asset_status
   update_date   DateTime
   userId        Int?
-  related_user  user?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  related_user  user?        @relation(fields: [userId], references: [id])
 
   @@index([userId], map: "asset_history_userId_fkey")
 }
@@ -213,24 +213,15 @@ model request {
   comment                 String
   currency                String
   attachmentsList         request_attachment[]
+  department              department            @relation(fields: [department_id], references: [id])
+  event                   event_mgt             @relation(fields: [event_id], references: [id])
   user                    user                  @relation(fields: [user_id], references: [id])
   request_approvals       request_approvals?
   products                requested_item[]      @relation("ProductRequest")
-  department              department            @relation(fields: [department_id], references: [id])
-  event                   event_mgt             @relation(fields: [event_id], references: [id])
 
   @@index([user_id], map: "request_user_id_fkey")
-}
-
-model requisition_summary {
-  requisition_id  Int      @unique
-  generated_id    String
-  product_names   Json
-  date_created    DateTime
-  approval_status String
-  total_amount    Float
-
-  @@map("requisition_summary")
+  @@index([department_id], map: "request_department_id_fkey")
+  @@index([event_id], map: "request_event_id_fkey")
 }
 
 model request_attachment {
@@ -280,8 +271,9 @@ enum RequestApprovalStatus {
 enum asset_status {
   ASSIGNED
   UNASSIGNED
-  BROKEN
-  IN_MAINTENANCE
+  NOT_FIXABLE
+  OUT_OF_REPAIRS
+  LOST_OR_STOLEN
 }
 
 enum marital_status {

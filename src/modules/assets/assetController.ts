@@ -118,11 +118,11 @@ export const listAssets = async (req: Request, res: Response) => {
 };
 export const deleteAsset = async (req: Request, res: Response) => {
   try {
-    const { id } = req.body;
-    if (!id) res.status(400).json({ message: "Asset ID not provided" });
+    const { id } = req.query;
+    if (!id) return res.status(400).json({ message: "Asset ID not provided" });
     const deletedAsset = await prisma.assets.delete({
       where: {
-        id,
+        id: Number(id),
       },
     });
     res
