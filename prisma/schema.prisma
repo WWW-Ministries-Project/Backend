@@ -128,7 +128,7 @@ model access_level {
   id             Int       @id @default(autoincrement())
   name           String    @unique
   description    String?
-  permissions    String    @db.LongText
+  permissions    Json?
   created_by     Int?
   updated_by     Int?
   deleted_at     DateTime?
