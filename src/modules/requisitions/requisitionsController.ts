@@ -5,6 +5,8 @@ import {
   PSapproveRequisition,
   HODapproveRequisition,
   getRequisition,
+  updateRequisition,
+  deleteRequisition,
 } from "./requisition-service";
 import {
   RequisitionInterface,
@@ -25,6 +27,22 @@ export const createRequisitionHandler = async (req: Request, res: Response) => {
   } catch (error) {
     console.error("Error creating requisition:", error);
     res.status(503).json({ message: "Failed to create requisition", error });
+  }
+};
+export const updateRequisitionHandler = async (req: Request, res: Response) => {
+  const requisitionData: Partial<RequisitionInterface> = req.body;
+
+  try {
+    const updatedRequisition = await updateRequisition(
+      requisitionData as RequisitionInterface
+    );
+    res.status(201).json({
+      message: "Requisition updated successfully",
+      data: updatedRequisition,
+    });
+  } catch (error) {
+    console.error("Error creating requisition:", error);
+    res.status(503).json({ message: "Failed to update requisition", error });
   }
 };
 
@@ -93,5 +111,22 @@ export const getRequisitionHandler = async (req: Request, res: Response) => {
   } catch (error) {
     console.error("Error retrieving requisition:", error);
     res.status(503).json({ message: "Failed to get requisition", error });
+  }
+};
+export const deleteRequisitionHandler = async (req: Request, res: Response) => {
+  const { id } = req.query;
+
+  try {
+    if (!id) {
+      res.status(400).json({ message: "Requisition ID is required" });
+      return;
+    }
+    await deleteRequisition(id);
+    res.status(201).json({
+      message: "Operation successful",
+    });
+  } catch (error) {
+    console.error("Error deleting requisition:", error);
+    res.status(503).json({ message: "Failed to delete requisition", error });
   }
 };

@@ -6,6 +6,8 @@ import {
   hodApproveRequisitionHandler,
   psApproveRequisitionHandler,
   getRequisitionHandler,
+  updateRequisitionHandler,
+  deleteRequisitionHandler,
 } from "./requisitionsController";
 
 import { Permissions } from "../../middleWare/authorization";
@@ -42,4 +44,14 @@ requisitionRouter.get(
   "/get-requisition",
   // [permissions.protect, permissions.can_create_requisitions],
   getRequisitionHandler
+);
+requisitionRouter.put(
+  "/update-requisition",
+  // [permissions.protect, permissions.can_create_requisitions],
+  updateRequisitionHandler
+);
+requisitionRouter.delete(
+  "/delete-requisition",
+  // [permissions.protect, permissions.can_create_requisitions],
+  deleteRequisitionHandler
 );

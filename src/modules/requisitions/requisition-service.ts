@@ -1,8 +1,14 @@
+import Joi from "joi";
 import { prisma } from "../../Models/context";
 import {
   RequisitionInterface,
   RequestApprovals,
 } from "../../interfaces/requisitions-interface";
+import {
+  mapProducts,
+  mapAttachments,
+  calculateTotalCost,
+} from "./requsition-helpers";
 
 /**
  * Generates the next request ID.
@@ -68,6 +74,124 @@ export const createRequisition = async (data: RequisitionInterface) => {
   });
 
   return createdRequest;
+};
+
+/**
+ * Updates an existing requisition by its ID.
+ * @param {Partial<RequisitionInterface>} data The data to update the requisition with.
+ * @returns {Promise<RequisitionInterface>} The updated requisition, including all its products and attachments.
+ */
+/**
+ * @typedef {Object} RequisitionSummary
+ 
+ */
+export const updateRequisition = async (
+  data: Partial<RequisitionInterface>
+) => {
+  if (!data.id) {
+    throw new Error("Requisition ID is required for updates.");
+  }
+
+  const updateData: any = {
+    user_id: data.user_id,
+    department_id: data.department_id,
+    event_id: data.event_id,
+    requisition_date: data.request_date
+      ? new Date(data.request_date)
+      : undefined,
+    comment: data.comment,
+    request_approval_status: data.approval_status,
+    currency: data.currency,
+    products: data.products
+      ? { upsert: mapProducts(data.products) }
+      : undefined,
+    attachmentsList: data.attachmentLists
+      ? { upsert: mapAttachments(data.attachmentLists) }
+      : undefined,
+  };
+
+  const updatedRequest = await prisma.request.update({
+    where: { id: data.id },
+    data: updateData,
+    include: {
+      products: true,
+      attachmentsList: true,
+      department: true,
+      event: true,
+      request_approvals: true,
+      user: { include: { position: true } },
+    },
+  });
+
+  const totalCost = calculateTotalCost(updatedRequest.products);
+
+  return {
+    summary: {
+      requisition_id: updatedRequest.request_id,
+      department: updatedRequest.department?.name || null,
+      program: updatedRequest.event?.name || null,
+      request_date: updatedRequest.requisition_date,
+      total_cost: totalCost,
+      status: updatedRequest.request_approval_status,
+    },
+    requester: {
+      name: updatedRequest.user?.name || null,
+      email: updatedRequest.user?.email || null,
+      position: updatedRequest.user?.position?.name || null,
+    },
+    request_approvals: updatedRequest.request_approvals,
+    comment: updatedRequest.comment || null,
+    currency: updatedRequest.currency || null,
+    products: updatedRequest.products || [],
+    attachmentLists: updatedRequest.attachmentsList || [],
+  };
+};
+
+/**
+ * Deletes a requisition and its related products and attachments.
+ * @param {any} id The ID of the requisition to delete.
+ * @returns {Promise<{message: string}>} A promise containing a message indicating the success of the deletion.
+ */
+export const deleteRequisition = async (id: any) => {
+  await Joi.object({
+    id: Joi.required(),
+  }).validateAsync({ id });
+
+  const parsedId = parseInt(id);
+  const result = await prisma.$transaction(async (prisma) => {
+    const requisition = await prisma.request.findUnique({
+      where: { id: parsedId },
+      include: {
+        products: true,
+        attachmentsList: true,
+      },
+    });
+
+    if (!requisition) {
+      throw new Error(`Requisition with ID ${id} not found.`);
+    }
+
+    const deleteProducts = prisma.requested_item.deleteMany({
+      where: { request_id: parsedId },
+    });
+
+    const deleteAttachments = prisma.request_attachment.deleteMany({
+      where: { request_id: parsedId },
+    });
+
+    const deleteRequisition = prisma.request.delete({
+      where: { id: parsedId },
+    });
+
+    await Promise.all([deleteProducts, deleteAttachments, deleteRequisition]);
+
+    return {
+      message:
+        "Requisition and its related products and attachments have been deleted.",
+    };
+  });
+
+  return result;
 };
 
 export const listRequisition = async () => {
@@ -140,6 +264,7 @@ export const getRequisition = async (id: any) => {
       id: parseInt(id),
     },
     include: {
+      attachmentsList: true,
       products: true,
       department: {
         select: {
@@ -195,6 +320,7 @@ export const getRequisition = async (id: any) => {
     comment: response.comment || null,
     currency: response.currency || null,
     products: response.products || [],
+    attachmentLists: response.attachmentsList || [],
   };
 
   return structuredResponse;
