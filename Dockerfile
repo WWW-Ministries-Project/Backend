@@ -10,8 +10,6 @@ COPY . .
 
 RUN npm install prisma @prisma/client
 
-RUN npx prisma db pull
-
 RUN npm run migrate:2
 
 EXPOSE 8000
