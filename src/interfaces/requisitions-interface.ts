@@ -7,6 +7,7 @@ enum RequestApprovalStatus {
 
 // Interface for individual product items
 export interface RequestedItem {
+  id: number;
   name: string;
   unitPrice: number;
   quantity: number;
@@ -14,6 +15,7 @@ export interface RequestedItem {
 
 // Interface for individual attachments
 export interface RequestAttachment {
+  id: number;
   URL: string;
 }
 
