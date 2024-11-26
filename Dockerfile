@@ -14,4 +14,4 @@ RUN npm run migrate:2
 
 EXPOSE 8000
 
-CMD [ "npm", "run", "dev" ]
+CMD [ "npm", "run", "prod" ]
