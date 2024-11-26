@@ -246,6 +246,17 @@ model requested_item {
   @@map("requested_product_item")
 }
 
+model requisition_summary {
+  requisition_id  Int      @unique
+  generated_id    String
+  product_names   Json
+  date_created    DateTime
+  approval_status String
+  total_amount    Float
+
+  @@map("requisition_summary")
+}
+
 model request_approvals {
   id                Int       @id @default(autoincrement())
   request_id        Int?      @unique
