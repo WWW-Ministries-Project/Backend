@@ -92,6 +92,24 @@ export const updateRequisition = async (
     throw new Error("Requisition ID is required for updates.");
   }
 
+  // Fetch existing attachments for the requisition
+  const existingAttachments = await prisma.request_attachment.findMany({
+    where: { request_id: data.id },
+    select: { id: true },
+  });
+
+  const incomingAttachments = data.attachmentLists || [];
+  const newAttachments = incomingAttachments.filter(
+    (attachment) => !attachment.hasOwnProperty("id")
+  );
+  const attachmentsToUpdate = incomingAttachments.filter((attachment) =>
+    existingAttachments.some((ea) => ea.id === attachment.id)
+  );
+  const attachmentsToDelete = existingAttachments.filter(
+    (ea) => !incomingAttachments.some((ia) => ia.id === ea.id)
+  );
+
+  // Build the update payload
   const updateData: any = {
     user_id: data.user_id,
     department_id: data.department_id,
@@ -105,11 +123,15 @@ export const updateRequisition = async (
     products: data.products
       ? { upsert: mapProducts(data.products) }
       : undefined,
-    attachmentsList: data.attachmentLists
-      ? { upsert: mapAttachments(data.attachmentLists) }
-      : undefined,
+    attachmentsList: {
+      upsert: mapAttachments(attachmentsToUpdate),
+      create: newAttachments.map((attachment) => ({
+        URL: attachment.URL,
+      })),
+    },
   };
 
+  // Update the requisition
   const updatedRequest = await prisma.request.update({
     where: { id: data.id },
     data: updateData,
@@ -123,11 +145,17 @@ export const updateRequisition = async (
     },
   });
 
+  // Delete omitted attachments
+  await prisma.request_attachment.deleteMany({
+    where: { id: { in: attachmentsToDelete.map((a) => a.id) } },
+  });
+
+  // Calculate total cost
   const totalCost = calculateTotalCost(updatedRequest.products);
 
   return {
     summary: {
-      requisition_id: updatedRequest.request_id,
+      requisition_id: updatedRequest.id,
       department: updatedRequest.department?.name || null,
       program: updatedRequest.event?.name || null,
       request_date: updatedRequest.requisition_date,
@@ -146,6 +174,8 @@ export const updateRequisition = async (
     attachmentLists: updatedRequest.attachmentsList || [],
   };
 };
+
+// Helper functions remain the same
 
 /**
  * Deletes a requisition and its related products and attachments.
@@ -268,11 +298,13 @@ export const getRequisition = async (id: any) => {
       products: true,
       department: {
         select: {
+          id: true,
           name: true,
         },
       },
       event: {
         select: {
+          id: true,
           name: true,
         },
       },
@@ -310,6 +342,8 @@ export const getRequisition = async (id: any) => {
       request_date: response.requisition_date,
       total_cost: totalCost,
       status: response.request_approval_status,
+      event_id: response.event?.id || null,
+      department_id: response.department?.id || null,
     },
     requester: {
       name: response.user?.name || null,
