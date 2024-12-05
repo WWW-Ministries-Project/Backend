@@ -1,6 +1,6 @@
 import { prisma } from "../../Models/context";
 import { Request, Response } from "express";
-import { toCapitalizeEachWord } from "../../utils"
+import { toCapitalizeEachWord } from "../../utils";
 
 export const createPosition = async (req: Request, res: Response) => {
   const { name, department_id, description, created_by } = req.body;
@@ -89,12 +89,12 @@ export const updatePosition = async (req: Request, res: Response) => {
 };
 
 export const deletePosition = async (req: Request, res: Response) => {
-  const { id } = req.body;
+  const { id } = req.query;
 
   try {
     const response = await prisma.position.delete({
       where: {
-        id,
+        id: Number(id),
       },
     });
     const data = await prisma.position.findMany({
