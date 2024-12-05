@@ -79,12 +79,12 @@ export const updateDepartment = async (req: Request, res: Response) => {
 };
 
 export const deleteDepartment = async (req: Request, res: Response) => {
-  const { id } = req.body;
+  const { id } = req.query;
 
   try {
     const response = await prisma.department.delete({
       where: {
-        id,
+        id: Number(id),
       },
     });
     const data = await prisma.department.findMany({
