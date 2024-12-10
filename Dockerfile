@@ -1,4 +1,4 @@
-FROM node:alpine
+FROM node:20-slim
 
 WORKDIR /app/www_project
 
@@ -8,7 +8,7 @@ RUN npm install
 
 COPY . .
 
-RUN npm install prisma @prisma/client
+RUN npm install prisma @prisma/client@5.17.0
 
 RUN npm run migrate:2
 
