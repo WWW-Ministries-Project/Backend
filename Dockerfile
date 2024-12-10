@@ -8,7 +8,7 @@ RUN npm install
 
 COPY . .
 
-RUN npm install prisma @prisma/client
+RUN npm install prisma @prisma/client@15.
 
 RUN npm run migrate:2
 
