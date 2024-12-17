@@ -30,19 +30,19 @@ eventRouter.get(
 
 eventRouter.post(
   "/create-event",
-  [protect, permissions.can_edit_events],
+  [protect, permissions.can_manage_events],
   eventContoller.createEvent
 );
 
 eventRouter.put(
   "/update-event",
-  [protect, permissions.can_edit_events],
+  [protect, permissions.can_manage_events],
   eventContoller.updateEvent
 );
 
 eventRouter.delete(
   "/delete-event",
-  [protect, permissions.can_edit_events],
+  [protect, permissions.can_manage_events],
   eventContoller.deleteEvent
 );
 

@@ -23,6 +23,7 @@ export class Permissions {
         .json({ message: "Session Expired", data: "Session Expired" });
     }
   };
+
   // Users/members
   can_view_users = (req: Request, res: Response, next: NextFunction) => {
     const token: any = req.headers["authorization"]?.split(" ")[1];
@@ -33,8 +34,12 @@ export class Permissions {
         process.env.JWT_SECRET as string
       ) as any;
       const permission = decoded.permissions;
+      console.log(permission, "epis");
 
-      if (permission.view_Members) {
+      if (
+        permission.Members === "Can_View" ||
+        permission.Members === "Super_Admin"
+      ) {
         next();
       } else {
         return res
@@ -45,7 +50,7 @@ export class Permissions {
       return res.status(401).json({ message: "Session Expired", data: null });
     }
   };
-  can_create_Members = (req: Request, res: Response, next: NextFunction) => {
+  can_Manage_Members = (req: Request, res: Response, next: NextFunction) => {
     const token: any = req.headers["authorization"]?.split(" ")[1];
 
     try {
@@ -55,54 +60,15 @@ export class Permissions {
       ) as any;
       const permission = decoded.permissions;
 
-      if (permission.create_Members) {
+      if (
+        permission.Members === "Can_Manage" ||
+        permission.Members === "Super_Admin"
+      ) {
         next();
       } else {
         return res
           .status(401)
           .json({ message: "Not authorized to create users", data: null });
-      }
-    } catch (error) {
-      return res.status(401).json({ message: "Session Expired", data: null });
-    }
-  };
-  edit_Members = (req: Request, res: Response, next: NextFunction) => {
-    const token: any = req.headers["authorization"]?.split(" ")[1];
-
-    try {
-      const decoded = JWT.verify(
-        token,
-        process.env.JWT_SECRET as string
-      ) as any;
-      const permission = decoded.permissions;
-
-      if (permission.edit_Members) {
-        next();
-      } else {
-        return res
-          .status(401)
-          .json({ message: "Not authorized to update users", data: null });
-      }
-    } catch (error) {
-      return res.status(401).json({ message: "Session Expired", data: null });
-    }
-  };
-  delete_Members = (req: Request, res: Response, next: NextFunction) => {
-    const token: any = req.headers["authorization"]?.split(" ")[1];
-
-    try {
-      const decoded = JWT.verify(
-        token,
-        process.env.JWT_SECRET as string
-      ) as any;
-      const permission = decoded.permissions;
-
-      if (permission.delete_Members) {
-        next();
-      } else {
-        return res
-          .status(401)
-          .json({ message: "Not authorized to delete users", data: null });
       }
     } catch (error) {
       return res.status(401).json({ message: "Session Expired", data: null });
@@ -119,7 +85,10 @@ export class Permissions {
       ) as any;
       const permission = decoded.permissions;
 
-      if (permission.view_Departments) {
+      if (
+        permission.Departments === "Can_View" ||
+        permission.Departments === "Super_Admin"
+      ) {
         next();
       } else {
         return res
@@ -132,7 +101,7 @@ export class Permissions {
         .json({ message: "Session Expired / Invalid Token", data: null });
     }
   };
-  can_create_department = (req: Request, res: Response, next: NextFunction) => {
+  can_manage_department = (req: Request, res: Response, next: NextFunction) => {
     const token: any = req.headers["authorization"]?.split(" ")[1];
     try {
       const decoded = JWT.verify(
@@ -141,60 +110,15 @@ export class Permissions {
       ) as any;
       const permission = decoded.permissions;
 
-      if (permission.create_Departments) {
+      if (
+        permission.Departments === "Can_Manage" ||
+        permission.Departments === "Super_Admin"
+      ) {
         next();
       } else {
         return res
           .status(401)
           .json({ message: "Not authorized to view departments", data: null });
-      }
-    } catch (error) {
-      return res
-        .status(401)
-        .json({ message: "Session Expired / Invalid Token", data: null });
-    }
-  };
-  can_edit_department = (req: Request, res: Response, next: NextFunction) => {
-    const token: any = req.headers["authorization"]?.split(" ")[1];
-
-    try {
-      const decoded = JWT.verify(
-        token,
-        process.env.JWT_SECRET as string
-      ) as any;
-      const permission = decoded.permissions;
-
-      if (permission.edit_Departments) {
-        next();
-      } else {
-        return res.status(401).json({
-          message: "Not authorized to manage departments",
-          data: null,
-        });
-      }
-    } catch (error) {
-      return res
-        .status(401)
-        .json({ message: "Session Expired / Invalid Token", data: null });
-    }
-  };
-  can_delete_department = (req: Request, res: Response, next: NextFunction) => {
-    const token: any = req.headers["authorization"]?.split(" ")[1];
-
-    try {
-      const decoded = JWT.verify(
-        token,
-        process.env.JWT_SECRET as string
-      ) as any;
-      const permission = decoded.permissions;
-
-      if (permission.delete_Departments) {
-        next();
-      } else {
-        return res.status(401).json({
-          message: "Not authorized to manage departments",
-          data: null,
-        });
       }
     } catch (error) {
       return res
@@ -214,7 +138,10 @@ export class Permissions {
       ) as any;
       const permission = decoded.permissions;
 
-      if (permission.view_Positions) {
+      if (
+        permission.Positions === "Can_View" ||
+        permission.Positions === "Super_Admin"
+      ) {
         next();
       } else {
         return res
@@ -225,7 +152,7 @@ export class Permissions {
       return res.status(401).json({ message: "Session Expired", data: null });
     }
   };
-  can_edit_positions = (req: Request, res: Response, next: NextFunction) => {
+  can_manage_positions = (req: Request, res: Response, next: NextFunction) => {
     const token: any = req.headers["authorization"]?.split(" ")[1];
 
     try {
@@ -235,7 +162,10 @@ export class Permissions {
       ) as any;
       const permission = decoded.permissions;
 
-      if (permission.edit_Positions) {
+      if (
+        permission.Positions === "Can_Manage" ||
+        permission.Positions === "Super_Admin"
+      ) {
         next();
       } else {
         return res
@@ -246,51 +176,9 @@ export class Permissions {
       return res.status(401).json({ message: "Session Expired", data: null });
     }
   };
-  can_create_positions = (req: Request, res: Response, next: NextFunction) => {
-    const token: any = req.headers["authorization"]?.split(" ")[1];
-
-    try {
-      const decoded = JWT.verify(
-        token,
-        process.env.JWT_SECRET as string
-      ) as any;
-      const permission = decoded.permissions;
-
-      if (permission.create_Positions) {
-        next();
-      } else {
-        return res
-          .status(401)
-          .json({ message: "Not authorized to create positions", data: null });
-      }
-    } catch (error) {
-      return res.status(401).json({ message: "Session Expired", data: null });
-    }
-  };
-  can_delete_positions = (req: Request, res: Response, next: NextFunction) => {
-    const token: any = req.headers["authorization"]?.split(" ")[1];
-
-    try {
-      const decoded = JWT.verify(
-        token,
-        process.env.JWT_SECRET as string
-      ) as any;
-      const permission = decoded.permissions;
-
-      if (permission.delete_Positions) {
-        next();
-      } else {
-        return res
-          .status(401)
-          .json({ message: "Not authorized to delete positions", data: null });
-      }
-    } catch (error) {
-      return res.status(401).json({ message: "Session Expired", data: null });
-    }
-  };
 
   // Access Levels
-  can_delete_access = (req: Request, res: Response, next: NextFunction) => {
+  can_manage_access = (req: Request, res: Response, next: NextFunction) => {
     const token: any = req.headers["authorization"]?.split(" ")[1];
 
     try {
@@ -300,55 +188,14 @@ export class Permissions {
       ) as any;
       const permission = decoded.permissions;
 
-      if (permission.delete_Access_Rights) {
+      if (
+        permission.Access_rights === "Can_Manage" ||
+        permission.Access_rights === "Super_Admin"
+      ) {
         next();
       } else {
         return res.status(401).json({
           message: "Not authorized to delete access levels",
-          data: null,
-        });
-      }
-    } catch (error) {
-      return res.status(401).json({ message: "Session Expired", data: null });
-    }
-  };
-  can_create_access = (req: Request, res: Response, next: NextFunction) => {
-    const token: any = req.headers["authorization"]?.split(" ")[1];
-
-    try {
-      const decoded = JWT.verify(
-        token,
-        process.env.JWT_SECRET as string
-      ) as any;
-      const permission = decoded.permissions;
-
-      if (permission.create_Access_Rights) {
-        next();
-      } else {
-        return res.status(401).json({
-          message: "Not authorized to create access levels",
-          data: null,
-        });
-      }
-    } catch (error) {
-      return res.status(401).json({ message: "Session Expired", data: null });
-    }
-  };
-  can_edit_access = (req: Request, res: Response, next: NextFunction) => {
-    const token: any = req.headers["authorization"]?.split(" ")[1];
-
-    try {
-      const decoded = JWT.verify(
-        token,
-        process.env.JWT_SECRET as string
-      ) as any;
-      const permission = decoded.permissions;
-
-      if (permission.edit_Access_Rights) {
-        next();
-      } else {
-        return res.status(401).json({
-          message: "Not authorized to edit access levels",
           data: null,
         });
       }
@@ -366,7 +213,10 @@ export class Permissions {
       ) as any;
       const permission = decoded.permissions;
 
-      if (permission.view_Access_Rights) {
+      if (
+        permission.Access_rights === "Can_View" ||
+        permission.Access_rights === "Super_Admin"
+      ) {
         next();
       } else {
         return res.status(401).json({
@@ -379,7 +229,7 @@ export class Permissions {
     }
   };
   // Asset Levels
-  can_delete_asset = (req: Request, res: Response, next: NextFunction) => {
+  can_manage_asset = (req: Request, res: Response, next: NextFunction) => {
     const token: any = req.headers["authorization"]?.split(" ")[1];
 
     try {
@@ -389,51 +239,10 @@ export class Permissions {
       ) as any;
       const permission = decoded.permissions;
 
-      if (permission.delete_Assets) {
-        next();
-      } else {
-        return res.status(401).json({
-          message: "Not authorized to delete assets",
-          data: null,
-        });
-      }
-    } catch (error) {
-      return res.status(401).json({ message: "Session Expired", data: null });
-    }
-  };
-  can_create_asset = (req: Request, res: Response, next: NextFunction) => {
-    const token: any = req.headers["authorization"]?.split(" ")[1];
-
-    try {
-      const decoded = JWT.verify(
-        token,
-        process.env.JWT_SECRET as string
-      ) as any;
-      const permission = decoded.permissions;
-
-      if (permission.create_Assets) {
-        next();
-      } else {
-        return res.status(401).json({
-          message: "Not authorized to create asset",
-          data: null,
-        });
-      }
-    } catch (error) {
-      return res.status(401).json({ message: "Session Expired", data: null });
-    }
-  };
-  can_edit_asset = (req: Request, res: Response, next: NextFunction) => {
-    const token: any = req.headers["authorization"]?.split(" ")[1];
-
-    try {
-      const decoded = JWT.verify(
-        token,
-        process.env.JWT_SECRET as string
-      ) as any;
-      const permission = decoded.permissions;
-
-      if (permission.edit_Assets) {
+      if (
+        permission.Asset === "Can_Manage" ||
+        permission.Asset === "Super_Admin"
+      ) {
         next();
       } else {
         return res.status(401).json({
@@ -455,7 +264,10 @@ export class Permissions {
       ) as any;
       const permission = decoded.permissions;
 
-      if (permission.view_Assets) {
+      if (
+        permission.Asset === "Can_View" ||
+        permission.Asset === "Super_Admin"
+      ) {
         next();
       } else {
         return res.status(401).json({
@@ -479,7 +291,10 @@ export class Permissions {
       ) as any;
       const permission = decoded.permissions;
 
-      if (permission.view_Events) {
+      if (
+        permission.Events === "Can_View" ||
+        permission.Events === "Super_Admin"
+      ) {
         next();
       } else {
         return res.status(401).json({
@@ -491,7 +306,7 @@ export class Permissions {
       return res.status(401).json({ message: "Session Expired", data: null });
     }
   };
-  can_edit_events = (req: Request, res: Response, next: NextFunction) => {
+  can_manage_events = (req: Request, res: Response, next: NextFunction) => {
     const token: any = req.headers["authorization"]?.split(" ")[1];
 
     try {
@@ -501,7 +316,10 @@ export class Permissions {
       ) as any;
       const permission = decoded.permissions;
 
-      if (permission.edit_Events) {
+      if (
+        permission.Events === "Can_Manage" ||
+        permission.Events === "Super_Admin"
+      ) {
         next();
       } else {
         return res.status(401).json({

@@ -16,19 +16,19 @@ export const positionRouter = Router();
 
 positionRouter.post(
   "/create-position",
-  [protect, permissions.can_create_positions],
+  [protect, permissions.can_manage_positions],
   createPosition
 );
 
 positionRouter.put(
   "/update-position",
-  [protect, permissions.can_edit_positions],
+  [protect, permissions.can_manage_positions],
   updatePosition
 );
 
 positionRouter.delete(
   "/delete-position",
-  [protect, permissions.can_delete_positions],
+  [protect, permissions.can_manage_positions],
   deletePosition
 );
 
