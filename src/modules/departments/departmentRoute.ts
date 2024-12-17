@@ -16,19 +16,19 @@ export const departmentRouter = Router();
 
 departmentRouter.post(
   "/create-department",
-  [permissions.protect, permissions.can_create_department],
+  [permissions.protect, permissions.can_manage_department],
   createDepartment
 );
 
 departmentRouter.put(
   "/update-department",
-  [protect, permissions.can_edit_department],
+  [protect, permissions.can_manage_department],
   updateDepartment
 );
 
 departmentRouter.delete(
   "/delete-department",
-  [protect, permissions.can_delete_department],
+  [protect, permissions.can_manage_department],
   deleteDepartment
 );
 

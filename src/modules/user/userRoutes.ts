@@ -40,23 +40,23 @@ userRouter.post("/login", login);
 
 userRouter.post(
   "/register",
-  [protect, permissions.can_create_Members],
+  [protect, permissions.can_Manage_Members],
   registerUser
 );
 userRouter.post(
   "/update-user",
-  [protect, permissions.edit_Members],
+  [protect, permissions.can_Manage_Members],
   updateUser
 );
 
 userRouter.patch(
   "/update-user-status",
-  [protect, permissions.edit_Members],
+  [protect, permissions.can_Manage_Members],
   updateUserSatus
 );
 userRouter.delete(
   "/delete-user",
-  [protect, permissions.delete_Members],
+  [protect, permissions.can_Manage_Members],
   deleteUser
 );
 
