@@ -38,6 +38,7 @@ export class Permissions {
 
       if (
         permission.Members === "Can_View" ||
+        permission.Members === "Can_Manage" ||
         permission.Members === "Super_Admin"
       ) {
         next();
@@ -87,6 +88,7 @@ export class Permissions {
 
       if (
         permission.Departments === "Can_View" ||
+        permission.Departments === "Can_Manage" ||
         permission.Departments === "Super_Admin"
       ) {
         next();
@@ -140,6 +142,7 @@ export class Permissions {
 
       if (
         permission.Positions === "Can_View" ||
+        permission.Positions === "Can_Manage" ||
         permission.Positions === "Super_Admin"
       ) {
         next();
@@ -215,6 +218,7 @@ export class Permissions {
 
       if (
         permission.Access_rights === "Can_View" ||
+        permission.Access_rights === "Can_Manage" ||
         permission.Access_rights === "Super_Admin"
       ) {
         next();
@@ -266,6 +270,7 @@ export class Permissions {
 
       if (
         permission.Asset === "Can_View" ||
+        permission.Asset === "Can_Manage" ||
         permission.Asset === "Super_Admin"
       ) {
         next();
@@ -293,6 +298,7 @@ export class Permissions {
 
       if (
         permission.Events === "Can_View" ||
+        permission.Events === "Can_Manage" ||
         permission.Events === "Super_Admin"
       ) {
         next();

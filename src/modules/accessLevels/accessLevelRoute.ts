@@ -6,6 +6,7 @@ import {
   updateAccessLevel,
   assignAccessLevelToUser,
   deleteAccessLevel,
+  getAccessLevel,
 } from "../accessLevels/accessLevelController";
 import { Permissions } from "../../middleWare/authorization";
 const permissions = new Permissions();
@@ -37,3 +38,8 @@ accessRouter.get(
   [permissions.can_view_access, permissions.protect],
   listAllAccessLevel
 );
+accessRouter.get("/get-access-level", [
+  permissions.can_view_access,
+  permissions.protect,
+  getAccessLevel,
+]);

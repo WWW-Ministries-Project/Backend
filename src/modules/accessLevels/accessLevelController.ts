@@ -138,6 +138,39 @@ export const listAllAccessLevel = async (req: Request, res: Response) => {
   }
 };
 
+export const getAccessLevel = async (req: Request, res: Response) => {
+  const { id } = req.body;
+  try {
+    const data = await prisma.access_level.findFirst({
+      where: {
+        id: Number(id),
+      },
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        permissions: true,
+        users_assigned: {
+          select: {
+            id: true,
+            name: true,
+            user_info: {
+              select: {
+                photo: true,
+              },
+            },
+          },
+        },
+      },
+    });
+    res.status(200).json({ message: "Operation successful", data: data });
+  } catch (error: any) {
+    return res
+      .status(500)
+      .json({ message: "Operation Failed", data: error.message });
+  }
+};
+
 export const assignAccessLevelToUser = async (req: Request, res: Response) => {
   const { user_id, access_level_id } = req.body;
   try {
