@@ -639,6 +639,12 @@ export const ListUsers = async (req: Request, res: Response) => {
             name: true,
           },
         },
+        access: {
+          select: {
+            name: true,
+            permissions: true,
+          },
+        },
       },
     });
     const destructure = (data: []) => {
