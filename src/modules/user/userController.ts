@@ -672,7 +672,66 @@ export const getUser = async (req: Request, res: Response) => {
       where: {
         id: Number(user_id),
       },
-      select: selectQuery,
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        membership_type: true,
+        created_at: true,
+        is_active: true,
+        position_id: true,
+        access_level_id: true,
+        user_info: {
+          select: {
+            first_name: true,
+            last_name: true,
+            other_name: true,
+            country_code: true,
+            primary_number: true,
+            title: true,
+            photo: true,
+            marital_status: true,
+            nationality: true,
+            date_of_birth: true,
+            gender: true,
+            country: true,
+            occupation: true,
+            company: true,
+            address: true,
+            emergency_contact: {
+              select: {
+                name: true,
+                phone_number: true,
+                relation: true,
+              },
+            },
+            work_info: {
+              select: {
+                name_of_institution: true,
+                industry: true,
+                position: true,
+              },
+            },
+          },
+        },
+        department: {
+          select: {
+            department_info: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+          },
+        },
+        position: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+        access: true,
+      },
     });
     let { user_info, ...rest } = response;
     res.status(200).json({
