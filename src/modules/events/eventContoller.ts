@@ -163,6 +163,7 @@ export class eventManagement {
         data: month ? data : await this.listEventsP(),
       });
     } catch (error: any) {
+      console.log(error);
       return res.status(500).json({
         message: "Event failed to load",
         data: error.message,
@@ -531,7 +532,9 @@ export class eventManagement {
           AND: [
             {
               start_date: {
-                gte: new Date(`${date.getFullYear()}-${date.getMonth()}-01`),
+                gte: new Date(
+                  `${date.getFullYear()}-${date.getMonth() + 1}-01`
+                ),
               },
             }, // Start of the month
             {
