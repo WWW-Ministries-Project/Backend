@@ -615,6 +615,7 @@ export const ListUsers = async (req: Request, res: Response) => {
         email: true,
         created_at: true,
         is_active: true,
+        membership_type: true,
         user_info: {
           select: {
             country_code: true,
