@@ -3,6 +3,7 @@ import {
   createAsset,
   deleteAsset,
   listAssets,
+  getAsset,
   updateAsset,
 } from "../assets/assetController";
 import multer from "multer";
@@ -23,6 +24,7 @@ assetRouter.get(
   [protect, permissions.can_view_asset],
   listAssets
 );
+assetRouter.get("/get-asset", [protect, permissions.can_view_asset], getAsset);
 assetRouter.put(
   "/update-asset",
   [protect, permissions.can_view_asset, upload.single("file")],

@@ -116,6 +116,24 @@ export const listAssets = async (req: Request, res: Response) => {
       .json({ message: "Something Went Wrong", data: error });
   }
 };
+export const getAsset = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.query;
+    const assetsList = await prisma.assets.findFirst({
+      where: {
+        id: Number(id),
+      },
+      include: {
+        assigned_to: true,
+      },
+    });
+    res.status(200).json({ message: "Operation Succesful", data: assetsList });
+  } catch (error: any) {
+    return res
+      .status(500)
+      .json({ message: "Something Went Wrong", data: error });
+  }
+};
 export const deleteAsset = async (req: Request, res: Response) => {
   try {
     const { id } = req.query;
