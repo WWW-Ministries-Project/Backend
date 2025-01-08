@@ -62,7 +62,7 @@ export const updateAccessLevel = async (req: Request, res: Response) => {
   try {
     const response = await prisma.access_level.update({
       where: {
-        id,
+        id: +id,
       },
       data: {
         name,
@@ -176,10 +176,10 @@ export const assignAccessLevelToUser = async (req: Request, res: Response) => {
   try {
     const assign = await prisma.user.update({
       where: {
-        id: user_id,
+        id: +user_id,
       },
       data: {
-        access_level_id: access_level_id,
+        access_level_id: +access_level_id,
       },
     });
     if (!assign) {
@@ -198,7 +198,7 @@ export const deleteAccessLevel = async (req: Request, res: Response) => {
   try {
     const unAssign = await prisma.user.updateMany({
       where: {
-        access_level_id: id,
+        access_level_id: +id,
       },
       data: {
         access_level_id: null,

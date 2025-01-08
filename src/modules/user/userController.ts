@@ -615,6 +615,7 @@ export const ListUsers = async (req: Request, res: Response) => {
         email: true,
         created_at: true,
         is_active: true,
+        is_user: true,
         membership_type: true,
         user_info: {
           select: {
@@ -749,61 +750,7 @@ export const getUser = async (req: Request, res: Response) => {
 };
 export const statsUsers = async (req: Request, res: Response) => {
   try {
-    // const allUserInfos = await prisma.user_info.findMany();
-    // const children: any = [];
-    // const adults: any = [];
-    // allUserInfos.map((user) => {
-    //   if (
-    //     Number(new Date().getFullYear()) -
-    //       Number(user.date_of_birth?.getFullYear()) <=
-    //     18
-    //   ) {
-    //     children.push(user);
-    //   } else {
-    //     adults.push(user);
-    //   }
-    // });
-    // const children_stats = {
-    //   Total: 0,
-    //   Male: 0,
-    //   Female: 0,
-    //   Other: 0,
-    // };
-    // const adults_stats = {
-    //   Total: 0,
-    //   Male: 0,
-    //   Female: 0,
-    //   Other: 0,
-    // };
-    // children_stats.Total += children.length;
-    // adults_stats.Total += adults.length;
-
-    // adults.map((adult: any) => {
-    //   switch (adult.gender) {
-    //     case "Male":
-    //       adults_stats.Male++;
-    //       break;
-    //     case "Female":
-    //       adults_stats.Female++;
-    //       break;
-    //     default:
-    //       adults_stats.Other++;
-    //   }
-    // });
-    // children.map((child: any) => {
-    //   switch (child.gender) {
-    //     case "Male":
-    //       children_stats.Male++;
-    //       break;
-    //     case "Female":
-    //       children_stats.Female++;
-    //       break;
-    //     default:
-    //       children_stats.Other++;
-    //   }
-    // });
-    // console.log("children", children_stats);
-    // console.log("adult", adults_stats);
+   
     interface Stats {
       Total: number;
       Male: number;
