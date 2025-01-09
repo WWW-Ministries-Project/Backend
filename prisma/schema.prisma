@@ -224,6 +224,19 @@ model request {
   @@index([event_id], map: "request_event_id_fkey")
 }
 
+model requisition_summary {
+  requisition_id  Int      @unique
+  user_id         Int
+  generated_id    String
+  product_names   Json
+  date_created    DateTime
+  approval_status String
+  total_amount    Float
+
+  @@map("requisition_summary")
+}
+
+
 model request_attachment {
   id         Int      @id @default(autoincrement())
   URL        String
@@ -244,17 +257,6 @@ model requested_item {
 
   @@index([request_id], map: "requested_product_item_request_id_fkey")
   @@map("requested_product_item")
-}
-
-model requisition_summary {
-  requisition_id  Int      @unique
-  generated_id    String
-  product_names   Json
-  date_created    DateTime
-  approval_status String
-  total_amount    Float
-
-  @@map("requisition_summary")
 }
 
 model request_approvals {
