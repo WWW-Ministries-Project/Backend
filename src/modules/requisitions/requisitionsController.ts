@@ -7,6 +7,7 @@ import {
   getRequisition,
   updateRequisition,
   deleteRequisition,
+  getmyRequisition,
 } from "./requisition-service";
 import {
   RequisitionInterface,
@@ -56,6 +57,23 @@ export const listRequisitionHandler = async (req: Request, res: Response) => {
   } catch (error) {
     console.error("Error listing requisition:", error);
     res.status(503).json({ message: "Failed to list requisition", error });
+  }
+};
+
+export const userRequisitionsHandler = async (req: Request, res: Response) => {
+  const { id } = req.query;
+
+  try {
+    const response = await getmyRequisition(id);
+    res.status(201).json({
+      message: "Operation successful",
+      data: response,
+    });
+  } catch (error) {
+    console.error("Error listing user requisitions:", error);
+    res
+      .status(503)
+      .json({ message: "Failed to list user requisitions", error });
   }
 };
 

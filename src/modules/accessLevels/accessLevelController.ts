@@ -139,7 +139,7 @@ export const listAllAccessLevel = async (req: Request, res: Response) => {
 };
 
 export const getAccessLevel = async (req: Request, res: Response) => {
-  const { id } = req.body;
+  const { id } = req.query;
   try {
     const data = await prisma.access_level.findFirst({
       where: {

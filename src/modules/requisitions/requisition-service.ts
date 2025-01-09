@@ -233,6 +233,18 @@ export const listRequisition = async () => {
   return response;
 };
 
+export const getmyRequisition = async (id: any) => {
+  const response = await prisma.requisition_summary.findMany({
+    where: {
+      user_id: parseInt(id),
+    },
+    orderBy: {
+      requisition_id: "desc",
+    },
+  });
+  return response;
+}
+
 export const HODapproveRequisition = async (
   data: RequestApprovals
 ): Promise<{}> => {
