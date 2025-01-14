@@ -594,7 +594,7 @@ export const ListUsers = async (req: Request, res: Response) => {
         AND: {
           is_active,
           is_user: is_user != undefined ? isUser : undefined,
-          department_id: Number(department_id),
+          department_id: department_id ? Number(department_id) : undefined,
           name: {
             contains: name ? name.trim() : undefined,
             // mode: "insensitive",
