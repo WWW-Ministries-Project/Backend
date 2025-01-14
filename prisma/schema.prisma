@@ -16,7 +16,9 @@ model user {
   partner          Boolean?           @default(false)
   is_user          Boolean?           @default(false)
   password         String?
+  member_id        String?
   position_id      Int?
+  department_id    Int?
   created_at       DateTime           @default(now())
   updated_at       DateTime?
   access_level_id  Int?

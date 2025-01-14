@@ -134,6 +134,7 @@ export const registerUser = async (req: Request, res: Response) => {
           is_user,
           membership_type,
           access_level_id,
+          department_id,
           department: department_id
             ? {
                 create: {
@@ -592,7 +593,8 @@ export const seedUser = async (req: Request, res: Response) => {
 
 export const ListUsers = async (req: Request, res: Response) => {
   const { is_active, is_visitor, name } = req.body;
-  const { is_user } = req.query;
+  const { is_user, department_id } = req.query;
+  const isUser = is_user === "true";
 
   try {
     const response: any = await prisma.user.findMany({
@@ -602,7 +604,8 @@ export const ListUsers = async (req: Request, res: Response) => {
       where: {
         AND: {
           is_active,
-          is_user: Boolean(is_user),
+          is_user: is_user != undefined ? isUser : undefined,
+          department_id: Number(department_id),
           name: {
             contains: name ? name.trim() : undefined,
             // mode: "insensitive",
@@ -616,6 +619,7 @@ export const ListUsers = async (req: Request, res: Response) => {
         created_at: true,
         is_active: true,
         is_user: true,
+        department_id: true,
         membership_type: true,
         user_info: {
           select: {
