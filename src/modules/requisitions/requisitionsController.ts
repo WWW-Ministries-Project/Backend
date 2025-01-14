@@ -8,6 +8,8 @@ import {
   updateRequisition,
   deleteRequisition,
   getmyRequisition,
+  SignDraftRequisitionDocument,
+  
 } from "./requisition-service";
 import {
   RequisitionInterface,
@@ -74,6 +76,26 @@ export const userRequisitionsHandler = async (req: Request, res: Response) => {
     res
       .status(503)
       .json({ message: "Failed to list user requisitions", error });
+  }
+};
+
+export const userApproveRequisitionHandler = async (
+  req: Request,
+  res: Response
+) => {
+  const data: Partial<RequestApprovals> = req.body;
+
+  try {
+    const response = await SignDraftRequisitionDocument(data as RequestApprovals);
+    res.status(201).json({
+      message: response.user_sign
+        ? "Requisition Approved successfully"
+        : "No Signature Found",
+      data: response,
+    });
+  } catch (error) {
+    console.error("Error creating requisition:", error);
+    res.status(503).json({ message: "Failed to approve requisition", error });
   }
 };
 

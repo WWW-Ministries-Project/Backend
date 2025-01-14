@@ -218,6 +218,7 @@ model request {
   user                    user                  @relation(fields: [user_id], references: [id])
   request_approvals       request_approvals?
   products                requested_item[]      @relation("ProductRequest")
+  user_sign               String?
 
   @@index([user_id], map: "request_user_id_fkey")
   @@index([department_id], map: "request_department_id_fkey")
@@ -235,7 +236,6 @@ model requisition_summary {
 
   @@map("requisition_summary")
 }
-
 
 model request_attachment {
   id         Int      @id @default(autoincrement())
