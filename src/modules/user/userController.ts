@@ -267,18 +267,7 @@ export const updateUser = async (req: Request, res: Response) => {
           ? access_level_id
           : existance?.access_level_id,
         updated_at: new Date(),
-        department: department_id
-          ? {
-              update: {
-                where: {
-                  user_id: id,
-                },
-                data: {
-                  department_id,
-                },
-              },
-            }
-          : undefined,
+        department_id: Number(department_id),
         user_info: {
           update: {
             title: title ? title : existance?.user_info?.title,
