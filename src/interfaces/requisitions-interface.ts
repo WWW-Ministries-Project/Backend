@@ -32,10 +32,13 @@ export interface RequisitionInterface {
   user_id: number;
   products: RequestedItem[];
   attachmentLists: RequestAttachment[];
+  user_sign: string;
 }
 
 export interface RequestApprovals {
   id: number;
+  user_sign: string;
+
   request_id: number | null;
   hod_user_id: number | null;
   hod_approved: boolean;
