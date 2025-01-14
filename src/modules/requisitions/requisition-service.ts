@@ -396,6 +396,7 @@ export const getRequisition = async (id: any) => {
     requester: {
       name: response.user?.name || null,
       email: response.user?.email || null,
+      user_sign: response.user_sign || null,
       position: response.user?.position?.name || null,
     },
     request_approvals: response.request_approvals,
