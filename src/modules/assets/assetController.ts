@@ -10,6 +10,7 @@ export const createAsset = async (req: any, res: any) => {
       date_assigned,
       price,
       status,
+      supplier,
       description,
       created_by,
       photo,
@@ -26,6 +27,7 @@ export const createAsset = async (req: any, res: any) => {
         price: Number(price),
         date_assigned: date_assigned ? new Date(date_assigned) : undefined,
         status,
+        supplier,
         photo,
         created_by: user_id,
       },
@@ -52,6 +54,7 @@ export const updateAsset = async (req: any, res: Response) => {
       price,
       status,
       description,
+      supplier,
       id,
       photo,
     } = req.body;
@@ -87,6 +90,7 @@ export const updateAsset = async (req: any, res: Response) => {
           ? new Date(date_assigned)
           : existing.date_assigned,
         status: status || existing.status,
+        supplier: supplier || existing.supplier,
         photo: photo || existing.photo,
         updated_by: user_id,
         updated_at: new Date(),
