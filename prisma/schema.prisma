@@ -148,6 +148,7 @@ model assets {
   price               Float?
   description         String?
   updated_at          DateTime?
+  supplier            String?
   status              asset_status?
   photo               String?
   created_by          Int?
