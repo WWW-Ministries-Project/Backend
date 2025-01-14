@@ -9,6 +9,7 @@ import {
   updateRequisitionHandler,
   deleteRequisitionHandler,
   userRequisitionsHandler,
+  userApproveRequisitionHandler,
 } from "./requisitionsController";
 
 import { Permissions } from "../../middleWare/authorization";
@@ -33,8 +34,6 @@ requisitionRouter.get(
   // [permissions.protect, permissions.can_create_requisitions],
   userRequisitionsHandler
 );
-
-
 
 requisitionRouter.post(
   "/approve-requisition-hod",
@@ -62,4 +61,9 @@ requisitionRouter.delete(
   "/delete-requisition",
   // [permissions.protect, permissions.can_create_requisitions],
   deleteRequisitionHandler
+);
+requisitionRouter.post(
+  "/sign-requisition",
+  // [permissions.protect, permissions.can_create_requisitions],
+  userApproveRequisitionHandler
 );

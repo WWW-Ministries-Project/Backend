@@ -9,6 +9,7 @@ import {
   mapAttachments,
   calculateTotalCost,
 } from "./requsition-helpers";
+import { RequestApprovalStatus } from "@prisma/client";
 
 /**
  * Generates the next request ID.
@@ -34,12 +35,15 @@ export const createRequisition = async (data: RequisitionInterface) => {
   const createdRequest = await prisma.request.create({
     data: {
       request_id: requestId,
+      user_sign: data.user_sign,
       user_id: data.user_id,
       department_id: data.department_id,
       event_id: data.event_id,
       requisition_date: new Date(data.request_date),
       comment: data.comment,
-      request_approval_status: data.approval_status,
+      request_approval_status: data.user_sign
+        ? RequestApprovalStatus.Awaiting_HOD_Approval
+        : data.approval_status,
       currency: data.currency,
 
       // Create the products related to the request
@@ -91,6 +95,7 @@ export const updateRequisition = async (
   if (!data.id) {
     throw new Error("Requisition ID is required for updates.");
   }
+  console.log("user_signature", data.user_sign);
 
   // Fetch existing attachments for the requisition
   const existingAttachments = await prisma.request_attachment.findMany({
@@ -112,13 +117,16 @@ export const updateRequisition = async (
   // Build the update payload
   const updateData: any = {
     user_id: data.user_id,
+    user_sign: data.user_sign,
     department_id: data.department_id,
     event_id: data.event_id,
     requisition_date: data.request_date
       ? new Date(data.request_date)
       : undefined,
     comment: data.comment,
-    request_approval_status: data.approval_status,
+    request_approval_status: data.user_sign
+      ? RequestApprovalStatus.Awaiting_HOD_Approval
+      : data.approval_status,
     currency: data.currency,
     products: data.products
       ? { upsert: mapProducts(data.products) }
@@ -156,6 +164,7 @@ export const updateRequisition = async (
   return {
     summary: {
       requisition_id: updatedRequest.id,
+      user_sign: updatedRequest.user_sign,
       department: updatedRequest.department?.name || null,
       program: updatedRequest.event?.name || null,
       request_date: updatedRequest.requisition_date,
@@ -243,7 +252,34 @@ export const getmyRequisition = async (id: any) => {
     },
   });
   return response;
-}
+};
+
+export const SignDraftRequisitionDocument = async (data: RequestApprovals) => {
+  const { user_sign, request_id } = data;
+
+  const findRequest = await prisma.request.findUnique({
+    where: {
+      id: Number(request_id),
+    },
+  });
+
+  if (!findRequest) {
+    throw new Error("Request not found");
+  }
+
+  const response = await prisma.request.update({
+    where: {
+      id: Number(request_id),
+    },
+    data: {
+      user_sign: user_sign,
+      request_approval_status: user_sign
+        ? RequestApprovalStatus.Awaiting_HOD_Approval
+        : findRequest?.request_approval_status,
+    },
+  });
+  return response;
+};
 
 export const HODapproveRequisition = async (
   data: RequestApprovals
