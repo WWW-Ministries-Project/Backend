@@ -149,7 +149,7 @@ export class eventManagement {
         where: {
           AND: [
             { start_date: { gte: new Date(`${year}-${month}-01`) } }, // Start of the month
-            { start_date: { lt: new Date(`${year}-${Number(month) + 1}-01`) } }, // Start of the next month
+            { end_date: { lt: new Date(`${year}-${Number(month) + 1}-01`) } }, // Start of the next month
           ],
           event_type,
           event_status,
@@ -180,7 +180,9 @@ export class eventManagement {
             {
               start_date: {
                 gte: new Date(
-                  `${date1.getFullYear()}-${date1.getMonth()}-${date1.getDay()}`
+                  `${date1.getFullYear()}-${
+                    date1.getMonth() + 1
+                  }-${date1.getDay()}`
                 ),
               },
             },
@@ -537,11 +539,6 @@ export class eventManagement {
                 ),
               },
             }, // Start of the month
-            {
-              start_date: {
-                lt: new Date(`${date.getFullYear()}-${date.getMonth() + 1}-01`),
-              },
-            }, // Start of the next month
           ],
         },
         orderBy: {
