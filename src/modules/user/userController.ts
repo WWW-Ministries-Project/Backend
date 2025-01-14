@@ -594,7 +594,7 @@ export const ListUsers = async (req: Request, res: Response) => {
         AND: {
           is_active,
           is_user: is_user != undefined ? isUser : undefined,
-          department_id: Number(department_id),
+          department_id: department_id ? Number(department_id) : undefined,
           name: {
             contains: name ? name.trim() : undefined,
             // mode: "insensitive",
@@ -800,7 +800,7 @@ export const statsUsers = async (req: Request, res: Response) => {
       }
     );
 
-    const visitorInfosByCategory = allUserInfos_members.reduce(
+    const visitorInfosByCategory = allUserInfos_visitors.reduce(
       (acc: any, cur) => {
         const gender = cur.gender || "other";
 
@@ -812,7 +812,7 @@ export const statsUsers = async (req: Request, res: Response) => {
       { total: 0, Male: 0, Female: 0, other: 0 }
     );
 
-    const visitor_stats: CategoryStats = allUserInfos_members.reduce(
+    const visitor_stats: CategoryStats = allUserInfos_visitors.reduce(
       (acc: any, user) => {
         const age =
           Number(new Date().getFullYear()) -

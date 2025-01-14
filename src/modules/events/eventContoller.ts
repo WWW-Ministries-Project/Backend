@@ -157,6 +157,44 @@ export class eventManagement {
         orderBy: {
           start_date: "asc",
         },
+        select: {
+          id: true,
+          name: true,
+          poster: true,
+          start_date: true,
+          end_date: true,
+          start_time: true,
+          end_time: true,
+          qr_code: true,
+          location: true,
+          description: true,
+          created_by: true,
+          event_type: true,
+          event_status: true,
+          event_attendance: {
+            select: {
+              created_at: true,
+              user: {
+                select: {
+                  user_info: {
+                    select: {
+                      user: {
+                        select: {
+                          name: true,
+                          membership_type: true,
+                        },
+                      },
+                      first_name: true,
+                      last_name: true,
+                      other_name: true,
+                      primary_number: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
       });
       res.status(200).json({
         message: "Operation successful",
@@ -190,6 +228,44 @@ export class eventManagement {
         },
         orderBy: {
           start_date: "asc",
+        },
+        select: {
+          id: true,
+          name: true,
+          poster: true,
+          start_date: true,
+          end_date: true,
+          start_time: true,
+          end_time: true,
+          qr_code: true,
+          location: true,
+          description: true,
+          created_by: true,
+          event_type: true,
+          event_status: true,
+          event_attendance: {
+            select: {
+              created_at: true,
+              user: {
+                select: {
+                  user_info: {
+                    select: {
+                      user: {
+                        select: {
+                          name: true,
+                          membership_type: true,
+                        },
+                      },
+                      first_name: true,
+                      last_name: true,
+                      other_name: true,
+                      primary_number: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
         },
       });
       res.status(200).json({
@@ -549,6 +625,14 @@ export class eventManagement {
           name: true,
           start_date: true,
           end_date: true,
+          location: true,
+          description: true,
+          event_status: true,
+          poster: true,
+          qr_code: true,
+          event_type: true,
+          start_time: true,
+          end_time: true,
           event_attendance: {
             select: {
               id: true,
