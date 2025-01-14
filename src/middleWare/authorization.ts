@@ -34,8 +34,6 @@ export class Permissions {
         process.env.JWT_SECRET as string
       ) as any;
       const permission = decoded.permissions;
-      console.log(permission, "epis");
-
       if (
         permission.Members === "Can_View" ||
         permission.Members === "Can_Manage" ||
