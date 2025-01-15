@@ -222,7 +222,6 @@ model request {
   request_approvals       request_approvals?
   products                requested_item[]      @relation("ProductRequest")
   user_sign               String?
-  comments                String?
 
   @@index([user_id], map: "request_user_id_fkey")
   @@index([department_id], map: "request_department_id_fkey")

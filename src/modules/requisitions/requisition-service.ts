@@ -36,7 +36,6 @@ export const createRequisition = async (data: RequisitionInterface) => {
     data: {
       request_id: requestId,
       user_sign: data.user_sign,
-      comments: data.user_comment,
       user_id: data.user_id,
       department_id: data.department_id,
       event_id: data.event_id,
@@ -96,7 +95,6 @@ export const updateRequisition = async (
   if (!data.id) {
     throw new Error("Requisition ID is required for updates.");
   }
-  console.log("user_signature", data.user_sign);
 
   // Fetch existing attachments for the requisition
   const existingAttachments = await prisma.request_attachment.findMany({
@@ -119,7 +117,6 @@ export const updateRequisition = async (
   const updateData: any = {
     user_id: data.user_id,
     user_sign: data.user_sign,
-    comments: data.user_comment,
     department_id: data.department_id,
     event_id: data.event_id,
     requisition_date: data.request_date
@@ -177,7 +174,6 @@ export const updateRequisition = async (
       name: updatedRequest.user?.name || null,
       email: updatedRequest.user?.email || null,
       position: updatedRequest.user?.position?.name || null,
-      user_comment: updatedRequest.comments || null,
     },
     request_approvals: updatedRequest.request_approvals,
     comment: updatedRequest.comment || null,
@@ -401,7 +397,6 @@ export const getRequisition = async (id: any) => {
       email: response.user?.email || null,
       user_sign: response.user_sign || null,
       position: response.user?.position?.name || null,
-      user_comment: response.comments || null,
     },
     request_approvals: response.request_approvals,
     comment: response.comment || null,

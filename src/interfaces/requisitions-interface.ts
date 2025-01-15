@@ -33,7 +33,6 @@ export interface RequisitionInterface {
   products: RequestedItem[];
   attachmentLists: RequestAttachment[];
   user_sign: string;
-  user_comment: string;
 }
 
 export interface RequestApprovals {
