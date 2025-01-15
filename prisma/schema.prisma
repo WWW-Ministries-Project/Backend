@@ -235,7 +235,7 @@ model requisition_summary {
   product_names   Json
   date_created    DateTime
   approval_status String
-  total_amount    Float
+  total_amount    Float?
 
   @@map("requisition_summary")
 }
