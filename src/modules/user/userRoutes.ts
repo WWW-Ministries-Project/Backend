@@ -14,6 +14,7 @@ import {
   updateUser,
   updateUserSatus,
   statsUsers,
+  activateUser,
 } from "../user/userController";
 import { Permissions } from "../../middleWare/authorization";
 const permissions = new Permissions();
@@ -58,6 +59,11 @@ userRouter.delete(
   "/delete-user",
   [protect, permissions.can_Manage_Members],
   deleteUser
+);
+userRouter.put(
+  "/activate-user",
+  [protect, permissions.can_Manage_Members],
+  activateUser
 );
 
 userRouter.get("/", landingPage);
