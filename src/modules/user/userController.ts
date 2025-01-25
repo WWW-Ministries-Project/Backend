@@ -555,6 +555,34 @@ export const resetPassword = async (req: Request, res: Response) => {
   }
 };
 
+export const activateUser = async (req: Request, res: Response) => {
+  const { user_id } = req.query;
+  try {
+    const existingUser = await prisma.user.findUnique({
+      where: {
+        id: Number(user_id),
+      },
+    });
+    if (!existingUser) {
+      return res.status(404).json({ message: "User Not Exists", data: null });
+    }
+
+    const response = await prisma.user.update({
+      where: {
+        id: Number(user_id),
+      },
+      data: {
+        is_user: !existingUser.is_user,
+      },
+    });
+    return res
+      .status(200)
+      .json({ message: "Password Successfully changed", data: response });
+  } catch (error) {
+    return res.status(500).json({ message: "Operation Failed", data: error });
+  }
+};
+
 export const seedUser = async (req: Request, res: Response) => {
   try {
     const response = await prisma.user.create({
