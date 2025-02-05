@@ -2,171 +2,98 @@ import { Request, Response } from "express";
 import {
   createRequisition,
   listRequisition,
-  PSapproveRequisition,
-  HODapproveRequisition,
   getRequisition,
   updateRequisition,
   deleteRequisition,
   getmyRequisition,
-  SignDraftRequisitionDocument,
-  
+  getStaffRequisition,
 } from "./requisition-service";
+import { RequisitionInterface } from "../../interfaces/requisitions-interface";
 import {
-  RequisitionInterface,
-  RequestApprovals,
-} from "../../interfaces/requisitions-interface";
+  InputValidationError,
+  NotFoundError,
+} from "../../utils/custom-error-handlers";
 
 export const createRequisitionHandler = async (req: Request, res: Response) => {
   const requisitionData: Partial<RequisitionInterface> = req.body;
 
-  try {
-    const createdRequisition = await createRequisition(
-      requisitionData as RequisitionInterface
-    );
-    res.status(201).json({
-      message: "Requisition created successfully",
-      data: createdRequisition,
-    });
-  } catch (error) {
-    console.error("Error creating requisition:", error);
-    res.status(503).json({ message: "Failed to create requisition", error });
-  }
+  const createdRequisition = await createRequisition(
+    requisitionData as RequisitionInterface
+  );
+
+  res.status(201).json({
+    message: "Requisition created successfully",
+    data: createdRequisition,
+  });
 };
 export const updateRequisitionHandler = async (req: Request, res: Response) => {
   const requisitionData: Partial<RequisitionInterface> = req.body;
 
-  try {
-    const updatedRequisition = await updateRequisition(
-      requisitionData as RequisitionInterface
-    );
-    res.status(201).json({
-      message: "Requisition updated successfully",
-      data: updatedRequisition,
-    });
-  } catch (error) {
-    console.error("Error creating requisition:", error);
-    res.status(503).json({ message: "Failed to update requisition", error });
-  }
+  const user = (req as any).user;
+
+  const updatedRequisition = await updateRequisition(
+    requisitionData as RequisitionInterface,
+    user
+  );
+  res.status(201).json({
+    message: "Requisition updated successfully",
+    data: updatedRequisition,
+  });
 };
 
 export const listRequisitionHandler = async (req: Request, res: Response) => {
-  try {
-    const response = await listRequisition();
-    res.status(201).json({
-      message: "Operation successful",
-      data: response,
-    });
-  } catch (error) {
-    console.error("Error listing requisition:", error);
-    res.status(503).json({ message: "Failed to list requisition", error });
-  }
+  const requisitions = await listRequisition();
+  res.status(200).json({
+    message: "Requisitions retrieved successfully",
+    data: requisitions,
+  });
 };
 
 export const userRequisitionsHandler = async (req: Request, res: Response) => {
   const { id } = req.query;
 
-  try {
-    const response = await getmyRequisition(id);
-    res.status(201).json({
-      message: "Operation successful",
-      data: response,
-    });
-  } catch (error) {
-    console.error("Error listing user requisitions:", error);
-    res
-      .status(503)
-      .json({ message: "Failed to list user requisitions", error });
-  }
-};
-
-export const userApproveRequisitionHandler = async (
-  req: Request,
-  res: Response
-) => {
-  const data: Partial<RequestApprovals> = req.body;
-
-  try {
-    const response = await SignDraftRequisitionDocument(data as RequestApprovals);
-    res.status(201).json({
-      message: response.user_sign
-        ? "Requisition Approved successfully"
-        : "No Signature Found",
-      data: response,
-    });
-  } catch (error) {
-    console.error("Error creating requisition:", error);
-    res.status(503).json({ message: "Failed to approve requisition", error });
-  }
-};
-
-export const hodApproveRequisitionHandler = async (
-  req: Request,
-  res: Response
-) => {
-  const data: Partial<RequestApprovals> = req.body;
-
-  try {
-    await HODapproveRequisition(data as RequestApprovals);
-    res.status(201).json({
-      message: "Requisition Approved successfully by HOD",
-      data: null,
-    });
-  } catch (error) {
-    console.error("Error creating requisition:", error);
-    res.status(503).json({ message: "Failed to approve requisition", error });
-  }
-};
-
-export const psApproveRequisitionHandler = async (
-  req: Request,
-  res: Response
-) => {
-  const data: Partial<RequestApprovals> = req.body;
-
-  try {
-    await PSapproveRequisition(data as RequestApprovals);
-    res.status(201).json({
-      message: "Requisition Approved successfully By Executive Pastor",
-      data: null,
-    });
-  } catch (error) {
-    console.error("Error creating requisition:", error);
-    res.status(503).json({ message: "Failed to approve requisition", error });
-  }
+  const response = await getmyRequisition(id);
+  res.status(201).json({
+    message: "Operation successful",
+    data: response,
+  });
 };
 
 export const getRequisitionHandler = async (req: Request, res: Response) => {
   const { id } = req.query;
 
-  try {
-    if (!id) {
-      res.status(400).json({ message: "Requisition ID is required" });
-      return;
-    }
-    const response = await getRequisition(id);
-    res.status(201).json({
-      message: "Operation successful",
-      data: response,
-    });
-  } catch (error) {
-    console.error("Error retrieving requisition:", error);
-    res.status(503).json({ message: "Failed to get requisition", error });
+  if (!id) {
+    throw new InputValidationError("Requisition ID is required");
   }
+  const response = await getRequisition(id);
+  res.status(201).json({
+    message: "Operation successful",
+    data: response,
+  });
+};
+
+export const staffRequestHandler = async (req: Request, res: Response) => {
+  const user = (req as any).user;
+
+  if (!user) {
+    throw new NotFoundError("User not found");
+  }
+
+  const response = await getStaffRequisition(user);
+
+  res.status(201).json({
+    message: "Operation successful",
+    data: response,
+  });
 };
 export const deleteRequisitionHandler = async (req: Request, res: Response) => {
   const { id } = req.query;
 
-  try {
-    if (!id) {
-      res.status(400).json({ message: "Requisition ID is required" });
-      return;
-    }
-    await deleteRequisition(id);
-    res.status(201).json({
-      message: "Operation successful",
-    });
-  } catch (error) {
-    console.error("Error deleting requisition:", error);
-    res.status(503).json({ message: "Failed to delete requisition", error });
+  if (!id) {
+    throw new InputValidationError("Requisition ID is required");
   }
+  await deleteRequisition(id);
+  res.status(201).json({
+    message: "Operation successful",
+  });
 };
