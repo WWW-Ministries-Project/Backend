@@ -24,7 +24,7 @@ export const userRouter = Router();
 
 userRouter.get("/get-user", getUser);
 
-userRouter.get("/list-users", [protect, permissions.can_view_users], ListUsers);
+userRouter.get("/list-users", ListUsers);
 
 userRouter.get("/stats-users", [protect], statsUsers);
 

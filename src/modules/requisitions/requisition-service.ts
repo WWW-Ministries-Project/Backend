@@ -130,7 +130,7 @@ export const updateRequisition = async (
   if (!findRequest) {
     throw new NotFoundError("Requisition not found");
   }
- // check if logged user has permission to update the requisition
+  // check if logged user has permission to update the requisition
   const { isHOD, isPastor, isMember } = checkPermissions(
     user,
     findRequest.user_id
@@ -160,7 +160,7 @@ export const updateRequisition = async (
   // Build the update payload
   const updateData = updateDataPayload(
     data,
-    { isMember },
+    isMember ,
     requestApprovalStatus,
     attachmentsToUpdate,
     newAttachments
@@ -325,12 +325,12 @@ export const getStaffRequisition = async (user: any) => {
       },
     });
 
-    requisitions = await prisma.request.findMany({
+    requisitions = await prisma.requisition_summary.findMany({
       where: {
         AND: [
           {
             department_id: findDepartment?.department_id as any,
-            request_approval_status: {
+            approval_status: {
               in: ["Awaiting_HOD_Approval", "APPROVED", "REJECTED"],
             },
           },
@@ -340,9 +340,9 @@ export const getStaffRequisition = async (user: any) => {
   }
 
   if (isPastor) {
-    requisitions = await prisma.request.findMany({
+    requisitions = await prisma.requisition_summary.findMany({
       where: {
-        request_approval_status: {
+        approval_status: {
           in: ["Awaiting_Executive_Pastor_Approval", "APPROVED", "REJECTED"],
         },
       },
@@ -353,72 +353,52 @@ export const getStaffRequisition = async (user: any) => {
 };
 
 export const getRequisition = async (id: any) => {
-  const response = await prisma.request.findUnique({
-    where: {
-      id: parseInt(id),
-    },
-    include: {
-      request_comments: {
-        include: { request_comment_user: { select: { name: true } } },
+  if (id) {
+    const response = await prisma.request.findUnique({
+      where: {
+        id: parseInt(id),
       },
-      attachmentsList: true,
-      products: true,
-      department: { select: { id: true, name: true } },
-      event: { select: { id: true, name: true } },
-      request_approvals: {
-        include: {
-          hod_user: {
-            select: { name: true, position: { select: { name: true } } },
+      include: {
+        request_comments: {
+          include: { request_comment_user: { select: { name: true } } },
+        },
+        attachmentsList: true,
+        products: true,
+        department: { select: { id: true, name: true } },
+        event: { select: { id: true, name: true } },
+        request_approvals: {
+          include: {
+            hod_user: {
+              select: { name: true, position: { select: { name: true } } },
+            },
+            ps_user: {
+              select: { name: true, position: { select: { name: true } } },
+            },
           },
-          ps_user: {
-            select: { name: true, position: { select: { name: true } } },
+        },
+        user: {
+          select: {
+            name: true,
+            email: true,
+            position: { select: { name: true } },
           },
         },
       },
-      user: {
-        select: {
-          name: true,
-          email: true,
-          position: { select: { name: true } },
-        },
-      },
-    },
-  });
+    });
 
-  if (!response) {
-    throw new NotFoundError("Requisition not found");
+    if (!response) {
+      throw new NotFoundError("Requisition not found");
+    }
+
+    // Calculate total_cost
+    const totalCost =
+      response.products?.reduce((sum, product) => {
+        return sum + product.unitPrice * product.quantity;
+      }, 0) || 0;
+
+    // Transform the response into the desired shape
+    return updateRequestReturnValue(response, totalCost);
+  } else {
+    return {};
   }
-
-  // Calculate total_cost
-  const totalCost =
-    response.products?.reduce((sum, product) => {
-      return sum + product.unitPrice * product.quantity;
-    }, 0) || 0;
-
-  // Transform the response into the desired shape
-  const structuredResponse = {
-    summary: {
-      requisition_id: response.request_id,
-      department: response.department?.name || null,
-      program: response.event?.name || null,
-      request_date: response.requisition_date,
-      total_cost: totalCost,
-      status: response.request_approval_status,
-      event_id: response.event?.id || null,
-      department_id: response.department?.id || null,
-    },
-    requester: {
-      name: response.user?.name || null,
-      email: response.user?.email || null,
-      user_sign: response.user_sign || null,
-      position: response.user?.position?.name || null,
-    },
-    request_approvals: response.request_approvals,
-    comment: response.request_comments || null,
-    currency: response.currency || null,
-    products: response.products || [],
-    attachmentLists: response.attachmentsList || [],
-  };
-
-  return structuredResponse;
 };
