@@ -1,15 +1,18 @@
 import Joi from "joi";
 import { prisma } from "../../Models/context";
+import { RequisitionInterface } from "../../interfaces/requisitions-interface";
 import {
-  RequisitionInterface,
-  RequestApprovals,
-} from "../../interfaces/requisitions-interface";
-import {
-  mapProducts,
-  mapAttachments,
   calculateTotalCost,
+  checkPermissions,
+  getApprovalData,
+  updateDataPayload,
+  updateRequestReturnValue,
 } from "./requsition-helpers";
 import { RequestApprovalStatus } from "@prisma/client";
+import {
+  InputValidationError,
+  NotFoundError,
+} from "../../utils/custom-error-handlers";
 
 /**
  * Generates the next request ID.
@@ -40,7 +43,6 @@ export const createRequisition = async (data: RequisitionInterface) => {
       department_id: data.department_id,
       event_id: data.event_id,
       requisition_date: new Date(data.request_date),
-      comment: data.comment,
       request_approval_status: data.user_sign
         ? RequestApprovalStatus.Awaiting_HOD_Approval
         : data.approval_status,
@@ -74,8 +76,19 @@ export const createRequisition = async (data: RequisitionInterface) => {
     include: {
       products: true,
       attachmentsList: true,
+      request_comments: true,
     },
   });
+
+  if (data.comment) {
+    return await prisma.request_comments.create({
+      data: {
+        request_id: createdRequest.id,
+        comment: data.comment,
+        user_id: createdRequest.user_id,
+      },
+    });
+  }
 
   return createdRequest;
 };
@@ -83,6 +96,7 @@ export const createRequisition = async (data: RequisitionInterface) => {
 /**
  * Updates an existing requisition by its ID.
  * @param {Partial<RequisitionInterface>} data The data to update the requisition with.
+ * @param {any} user The user making the update request.
  * @returns {Promise<RequisitionInterface>} The updated requisition, including all its products and attachments.
  */
 /**
@@ -90,17 +104,39 @@ export const createRequisition = async (data: RequisitionInterface) => {
  
  */
 export const updateRequisition = async (
-  data: Partial<RequisitionInterface>
+  data: Partial<RequisitionInterface>,
+  user: any
 ) => {
   if (!data.id) {
-    throw new Error("Requisition ID is required for updates.");
+    throw new InputValidationError("Requisition ID is required for updates.");
   }
 
+  const { id: token_user_id } = user;
+
+  const [findRequest, existingApproval, existingAttachments] =
+    await prisma.$transaction([
+      prisma.request.findUnique({
+        where: { id: data.id },
+      }),
+      prisma.request_approvals.findUnique({
+        where: { request_id: data.id },
+      }),
+      prisma.request_attachment.findMany({
+        where: { request_id: data.id },
+        select: { id: true },
+      }),
+    ]);
+
+  if (!findRequest) {
+    throw new NotFoundError("Requisition not found");
+  }
+  // check if logged user has permission to update the requisition
+  const { isHOD, isPastor, isMember } = checkPermissions(
+    user,
+    findRequest.user_id
+  );
+
   // Fetch existing attachments for the requisition
-  const existingAttachments = await prisma.request_attachment.findMany({
-    where: { request_id: data.id },
-    select: { id: true },
-  });
 
   const incomingAttachments = data.attachmentLists || [];
   const newAttachments = incomingAttachments.filter(
@@ -113,30 +149,57 @@ export const updateRequisition = async (
     (ea) => !incomingAttachments.some((ia) => ia.id === ea.id)
   );
 
+  const { requestApprovalStatus, approvalData } = getApprovalData(
+    data,
+    token_user_id,
+    isHOD,
+    isPastor,
+    isMember
+  );
+
   // Build the update payload
-  const updateData: any = {
-    user_id: data.user_id,
-    user_sign: data.user_sign,
-    department_id: data.department_id,
-    event_id: data.event_id,
-    requisition_date: data.request_date
-      ? new Date(data.request_date)
-      : undefined,
-    comment: data.comment,
-    request_approval_status: data.user_sign
-      ? RequestApprovalStatus.Awaiting_HOD_Approval
-      : data.approval_status,
-    currency: data.currency,
-    products: data.products
-      ? { upsert: mapProducts(data.products) }
-      : undefined,
-    attachmentsList: {
-      upsert: mapAttachments(attachmentsToUpdate),
-      create: newAttachments.map((attachment) => ({
-        URL: attachment.URL,
-      })),
-    },
-  };
+  const updateData = updateDataPayload(
+    data,
+    isMember ,
+    requestApprovalStatus,
+    attachmentsToUpdate,
+    newAttachments
+  );
+
+  if (existingApproval) {
+    await prisma.request_approvals.update({
+      where: { request_id: data.id },
+      data: {
+        ...approvalData,
+      },
+    });
+  } else {
+    await prisma.request_approvals.create({
+      data: {
+        request_id: data.id,
+        ...approvalData,
+      },
+    });
+  }
+
+  if (data.comment) {
+    const commentData = {
+      request_id: data.id,
+      comment: data.comment,
+      user_id: token_user_id,
+    };
+
+    if (data.comment_id) {
+      // Update existing comment
+      await prisma.request_comments.update({
+        where: { id: data.comment_id },
+        data: { comment: data.comment },
+      });
+    } else {
+      // Create new comment
+      await prisma.request_comments.create({ data: commentData });
+    }
+  }
 
   // Update the requisition
   const updatedRequest = await prisma.request.update({
@@ -147,8 +210,24 @@ export const updateRequisition = async (
       attachmentsList: true,
       department: true,
       event: true,
-      request_approvals: true,
+      request_approvals: {
+        include: {
+          hod_user: {
+            select: { name: true, position: { select: { name: true } } },
+          },
+          ps_user: {
+            select: { name: true, position: { select: { name: true } } },
+          },
+        },
+      },
       user: { include: { position: true } },
+      request_comments: {
+        include: {
+          request_comment_user: {
+            select: { name: true },
+          },
+        },
+      },
     },
   });
 
@@ -160,30 +239,8 @@ export const updateRequisition = async (
   // Calculate total cost
   const totalCost = calculateTotalCost(updatedRequest.products);
 
-  return {
-    summary: {
-      requisition_id: updatedRequest.id,
-      user_sign: updatedRequest.user_sign,
-      department: updatedRequest.department?.name || null,
-      program: updatedRequest.event?.name || null,
-      request_date: updatedRequest.requisition_date,
-      total_cost: totalCost,
-      status: updatedRequest.request_approval_status,
-    },
-    requester: {
-      name: updatedRequest.user?.name || null,
-      email: updatedRequest.user?.email || null,
-      position: updatedRequest.user?.position?.name || null,
-    },
-    request_approvals: updatedRequest.request_approvals,
-    comment: updatedRequest.comment || null,
-    currency: updatedRequest.currency || null,
-    products: updatedRequest.products || [],
-    attachmentLists: updatedRequest.attachmentsList || [],
-  };
+  return updateRequestReturnValue(updatedRequest, totalCost);
 };
-
-// Helper functions remain the same
 
 /**
  * Deletes a requisition and its related products and attachments.
@@ -196,6 +253,7 @@ export const deleteRequisition = async (id: any) => {
   }).validateAsync({ id });
 
   const parsedId = parseInt(id);
+
   const result = await prisma.$transaction(async (prisma) => {
     const requisition = await prisma.request.findUnique({
       where: { id: parsedId },
@@ -206,7 +264,7 @@ export const deleteRequisition = async (id: any) => {
     });
 
     if (!requisition) {
-      throw new Error(`Requisition with ID ${id} not found.`);
+      throw new NotFoundError(`Requisition with ID ${id} not found.`);
     }
 
     const deleteProducts = prisma.requested_item.deleteMany({
@@ -222,11 +280,6 @@ export const deleteRequisition = async (id: any) => {
     });
 
     await Promise.all([deleteProducts, deleteAttachments, deleteRequisition]);
-
-    return {
-      message:
-        "Requisition and its related products and attachments have been deleted.",
-    };
   });
 
   return result;
@@ -253,157 +306,99 @@ export const getmyRequisition = async (id: any) => {
   return response;
 };
 
-export const SignDraftRequisitionDocument = async (data: RequestApprovals) => {
-  const { user_sign, request_id } = data;
+export const getStaffRequisition = async (user: any) => {
+  const { id, permissions } = user;
 
-  const findRequest = await prisma.request.findUnique({
-    where: {
-      id: Number(request_id),
-    },
-  });
+  // Determine User Role
+  const isHOD = permissions.Requisition === "Can_Manage";
+  const isPastor = permissions.Requisition === "Super_Admin";
 
-  if (!findRequest) {
-    throw new Error("Request not found");
+  let requisitions;
+
+  if (isHOD) {
+    const findDepartment = await prisma.user_departments.findUnique({
+      where: {
+        user_id: id,
+      },
+      include: {
+        department_info: true,
+      },
+    });
+
+    requisitions = await prisma.requisition_summary.findMany({
+      where: {
+        AND: [
+          {
+            department_id: findDepartment?.department_id as any,
+            approval_status: {
+              in: ["Awaiting_HOD_Approval", "APPROVED", "REJECTED"],
+            },
+          },
+        ],
+      },
+    });
   }
 
-  const response = await prisma.request.update({
-    where: {
-      id: Number(request_id),
-    },
-    data: {
-      user_sign: user_sign,
-      request_approval_status: user_sign
-        ? RequestApprovalStatus.Awaiting_HOD_Approval
-        : findRequest?.request_approval_status,
-    },
-  });
-  return response;
-};
+  if (isPastor) {
+    requisitions = await prisma.requisition_summary.findMany({
+      where: {
+        approval_status: {
+          in: ["Awaiting_Executive_Pastor_Approval", "APPROVED", "REJECTED"],
+        },
+      },
+    });
+  }
 
-export const HODapproveRequisition = async (
-  data: RequestApprovals
-): Promise<{}> => {
-  await prisma.request_approvals.update({
-    where: {
-      request_id: Number(data.request_id),
-    },
-    data: {
-      hod_user_id: data.hod_user_id,
-      hod_approval_date: new Date(),
-      hod_approved: data.hod_approved,
-      hod_comment: data.hod_comment,
-    },
-  });
-
-  const response = await prisma.request.update({
-    where: {
-      id: Number(data.request_id),
-    },
-    data: {
-      request_approval_status: data.hod_approved
-        ? "Awaiting_Executive_Pastor_Approval"
-        : "REJECTED",
-    },
-  });
-  return response;
-};
-
-export const PSapproveRequisition = async (
-  data: RequestApprovals
-): Promise<{}> => {
-  await prisma.request_approvals.update({
-    where: {
-      request_id: Number(data.request_id),
-    },
-    data: {
-      ps_user_id: data.ps_user_id,
-      ps_approval_date: new Date(),
-      ps_approved: data.ps_approved,
-      ps_comment: data.ps_comment,
-    },
-  });
-
-  const response = await prisma.request.update({
-    where: {
-      id: Number(data.request_id),
-    },
-    data: {
-      request_approval_status: data.ps_approved ? "APPROVED" : "REJECTED",
-    },
-  });
-
-  return response;
+  return requisitions || [];
 };
 
 export const getRequisition = async (id: any) => {
-  const response = await prisma.request.findUnique({
-    where: {
-      id: parseInt(id),
-    },
-    include: {
-      attachmentsList: true,
-      products: true,
-      department: {
-        select: {
-          id: true,
-          name: true,
-        },
+  if (id) {
+    const response = await prisma.request.findUnique({
+      where: {
+        id: parseInt(id),
       },
-      event: {
-        select: {
-          id: true,
-          name: true,
+      include: {
+        request_comments: {
+          include: { request_comment_user: { select: { name: true } } },
         },
-      },
-      request_approvals: true,
-      user: {
-        select: {
-          name: true,
-          email: true,
-          position: {
-            select: {
-              name: true,
+        attachmentsList: true,
+        products: true,
+        department: { select: { id: true, name: true } },
+        event: { select: { id: true, name: true } },
+        request_approvals: {
+          include: {
+            hod_user: {
+              select: { name: true, position: { select: { name: true } } },
+            },
+            ps_user: {
+              select: { name: true, position: { select: { name: true } } },
             },
           },
         },
+        user: {
+          select: {
+            name: true,
+            email: true,
+            position: { select: { name: true } },
+          },
+        },
       },
-    },
-  });
+    });
 
-  if (!response) {
-    return null; // Handle case where no requisition is found
+    if (!response) {
+      throw new NotFoundError("Requisition not found");
+    }
+
+    // Calculate total_cost
+    const totalCost =
+      response.products?.reduce((sum, product) => {
+        return sum + product.unitPrice * product.quantity;
+      }, 0) || 0;
+
+    // Transform the response into the desired shape
+    return updateRequestReturnValue(response, totalCost);
+  } else {
+    return {};
   }
-
-  // Calculate total_cost
-  const totalCost =
-    response.products?.reduce((sum, product) => {
-      return sum + product.unitPrice * product.quantity;
-    }, 0) || 0;
-
-  // Transform the response into the desired shape
-  const structuredResponse = {
-    summary: {
-      requisition_id: response.request_id,
-      department: response.department?.name || null,
-      program: response.event?.name || null,
-      request_date: response.requisition_date,
-      total_cost: totalCost,
-      status: response.request_approval_status,
-      event_id: response.event?.id || null,
-      department_id: response.department?.id || null,
-    },
-    requester: {
-      name: response.user?.name || null,
-      email: response.user?.email || null,
-      user_sign: response.user_sign || null,
-      position: response.user?.position?.name || null,
-    },
-    request_approvals: response.request_approvals,
-    comment: response.comment || null,
-    currency: response.currency || null,
-    products: response.products || [],
-    attachmentLists: response.attachmentsList || [],
-  };
-
-  return structuredResponse;
 };

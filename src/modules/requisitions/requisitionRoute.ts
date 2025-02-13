@@ -1,69 +1,46 @@
 import Router from "express";
 import * as dotenv from "dotenv";
+import {} from "../../utils/";
 import {
   createRequisitionHandler,
   listRequisitionHandler,
-  hodApproveRequisitionHandler,
-  psApproveRequisitionHandler,
   getRequisitionHandler,
   updateRequisitionHandler,
   deleteRequisitionHandler,
   userRequisitionsHandler,
-  userApproveRequisitionHandler,
+  staffRequestHandler,
 } from "./requisitionsController";
 
 import { Permissions } from "../../middleWare/authorization";
+import { requisitionLogger } from "../../utils/loggers";
+import { wrapControllersWithLogger } from "../../utils/catchAsyncFunction";
 const permissions = new Permissions();
 dotenv.config();
 
 export const requisitionRouter = Router();
 
-requisitionRouter.post(
-  "/create-requisition",
-  // [permissions.protect, permissions.can_create_requisitions],
-  createRequisitionHandler
+const requisitionControllers = {
+  createRequisitionHandler,
+  listRequisitionHandler,
+  getRequisitionHandler,
+  updateRequisitionHandler,
+  deleteRequisitionHandler,
+  userRequisitionsHandler,
+  staffRequestHandler,
+};
+
+// Wrap controllers with logger
+const wrappedControllers = wrapControllersWithLogger(
+  requisitionControllers,
+  requisitionLogger
 );
 
-requisitionRouter.get(
-  "/list-requisition",
-  // [permissions.protect, permissions.can_create_requisitions],
-  listRequisitionHandler
-);
-requisitionRouter.get(
-  "/my-requisitions",
-  // [permissions.protect, permissions.can_create_requisitions],
-  userRequisitionsHandler
-);
-
-requisitionRouter.post(
-  "/approve-requisition-hod",
-  // [permissions.protect, permissions.can_create_requisitions],
-  hodApproveRequisitionHandler
-);
-
-requisitionRouter.post(
-  "/approve-requisition-pastor",
-  // [permissions.protect, permissions.can_create_requisitions],
-  psApproveRequisitionHandler
-);
-
-requisitionRouter.get(
-  "/get-requisition",
-  // [permissions.protect, permissions.can_create_requisitions],
-  getRequisitionHandler
-);
+requisitionRouter.post("/create-requisition", wrappedControllers.createRequisitionHandler);
+requisitionRouter.get("/list-requisition", wrappedControllers.listRequisitionHandler);
+requisitionRouter.get("/my-requisitions", wrappedControllers.userRequisitionsHandler);
+requisitionRouter.get("/get-requisition", wrappedControllers.getRequisitionHandler);
 requisitionRouter.put(
-  "/update-requisition",
-  // [permissions.protect, permissions.can_create_requisitions],
-  updateRequisitionHandler
-);
-requisitionRouter.delete(
-  "/delete-requisition",
-  // [permissions.protect, permissions.can_create_requisitions],
-  deleteRequisitionHandler
-);
-requisitionRouter.post(
-  "/sign-requisition",
-  // [permissions.protect, permissions.can_create_requisitions],
-  userApproveRequisitionHandler
+  "/update-requisition", [permissions.protect ], wrappedControllers.updateRequisitionHandler);
+requisitionRouter.delete("/delete-requisition", wrappedControllers.deleteRequisitionHandler);
+requisitionRouter.get("/staff-requisition", [permissions.can_manage_requisitions], wrappedControllers.staffRequestHandler
 );

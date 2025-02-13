@@ -9,28 +9,31 @@ datasource db {
 }
 
 model user {
-  id               Int                @id @default(autoincrement())
-  name             String
-  email            String?            @unique
-  is_active        Boolean?           @default(true)
-  partner          Boolean?           @default(false)
-  is_user          Boolean?           @default(false)
-  password         String?
-  member_id        String?
-  position_id      Int?
-  department_id    Int?
-  created_at       DateTime           @default(now())
-  updated_at       DateTime?
-  access_level_id  Int?
-  membership_type  membership_type?
-  asset_history    asset_history[]
-  department_head  department[]
-  event_attendance event_attendance[]
-  request          request[]
-  access           access_level?      @relation(fields: [access_level_id], references: [id])
-  position         position?          @relation(fields: [position_id], references: [id])
-  department       user_departments?
-  user_info        user_info?
+  id                    Int                 @id @default(autoincrement())
+  name                  String
+  email                 String?             @unique
+  is_active             Boolean?            @default(true)
+  partner               Boolean?            @default(false)
+  is_user               Boolean?            @default(false)
+  password              String?
+  member_id             String?
+  position_id           Int?
+  department_id         Int?
+  created_at            DateTime            @default(now())
+  updated_at            DateTime?
+  access_level_id       Int?
+  membership_type       membership_type?
+  asset_history         asset_history[]
+  department_head       department[]
+  event_attendance      event_attendance[]
+  request               request[]
+  access                access_level?       @relation(fields: [access_level_id], references: [id])
+  position              position?           @relation(fields: [position_id], references: [id])
+  department            user_departments?
+  user_info             user_info?
+  hod_user              request_approvals[] @relation("hod_user")
+  ps_user               request_approvals[] @relation("ps_user")
+  user_request_comments request_comments[]
 
   @@index([access_level_id], map: "user_access_level_id_fkey")
   @@index([position_id], map: "user_position_id_fkey")
@@ -213,7 +216,6 @@ model request {
   department_id           Int
   request_approval_status RequestApprovalStatus
   requisition_date        DateTime
-  comment                 String
   currency                String
   attachmentsList         request_attachment[]
   department              department            @relation(fields: [department_id], references: [id])
@@ -222,6 +224,7 @@ model request {
   request_approvals       request_approvals?
   products                requested_item[]      @relation("ProductRequest")
   user_sign               String?
+  request_comments        request_comments[]
 
   @@index([user_id], map: "request_user_id_fkey")
   @@index([department_id], map: "request_department_id_fkey")
@@ -236,8 +239,23 @@ model requisition_summary {
   date_created    DateTime
   approval_status String
   total_amount    Float?
+  department_id   Int
 
   @@map("requisition_summary")
+}
+
+model request_comments {
+  id         Int      @id @default(autoincrement())
+  request_id Int?
+  user_id    Int?
+  comment    String?
+  created_at DateTime @default(now())
+
+  requesition          request? @relation(fields: [request_id], references: [id])
+  request_comment_user user?    @relation(fields: [user_id], references: [id])
+
+  @@index([request_id], map: "request_comments_request_id_fkey")
+  @@index([user_id], map: "request_comments_user_id_fkey")
 }
 
 model request_attachment {
@@ -268,12 +286,14 @@ model request_approvals {
   hod_user_id       Int?
   hod_approved      Boolean   @default(false)
   hod_approval_date DateTime?
+  hod_sign          String?
   ps_user_id        Int?
   ps_approved       Boolean   @default(false)
   ps_approval_date  DateTime?
-  hod_comment       String?
-  ps_comment        String?
+  ps_sign           String?
   request           request?  @relation(fields: [request_id], references: [id])
+  hod_user          user?     @relation("hod_user", fields: [hod_user_id], references: [id])
+  ps_user           user?     @relation("ps_user", fields: [ps_user_id], references: [id])
 }
 
 enum RequestApprovalStatus {

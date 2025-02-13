@@ -587,8 +587,8 @@ export const seedUser = async (req: Request, res: Response) => {
   try {
     const response = await prisma.user.create({
       data: {
-        name: "Admin",
-        email: "admin@admin.com",
+        name: "Ordinary Member",
+        email: "member@member.com",
         password:
           "$2b$10$2EYtobxw11Tk1.JXCjplJOQ5mgu1dmNENtbDnpcQiqjnkSgyRrZqu",
         is_user: true,

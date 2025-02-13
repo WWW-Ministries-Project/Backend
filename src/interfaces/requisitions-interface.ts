@@ -24,6 +24,7 @@ export interface RequisitionInterface {
   id: number;
   requester_name: string;
   comment: string;
+  comment_id: number;
   request_date: string;
   department_id: number;
   event_id: number;
@@ -33,7 +34,12 @@ export interface RequisitionInterface {
   products: RequestedItem[];
   attachmentLists: RequestAttachment[];
   user_sign: string;
+  hod_sign: string;
+  ps_sign: string;
+  fnc_sign: string;
 }
+
+
 
 export interface RequestApprovals {
   id: number;
