@@ -348,9 +348,10 @@ export class Permissions {
         process.env.JWT_SECRET as string
       ) as any;
       const permission = decoded.permissions;
+      ( req as any).user = decoded;
       if (
-        permission.Requisitions === "Can_Manage" ||
-        permission.Requisitions === "Super_Admin"
+        permission.Requisition === "Can_Manage" ||
+        permission.Requisition === "Super_Admin"
       ) {
         next();
       } else {
@@ -371,6 +372,7 @@ export class Permissions {
         process.env.JWT_SECRET as string
       ) as any;
       const permission = decoded.permissions;
+      
       if (
         permission.Requisitions === "Can_View" ||
         permission.Requisitions === "Super_Admin" ||

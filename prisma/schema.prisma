@@ -239,6 +239,7 @@ model requisition_summary {
   date_created    DateTime
   approval_status String
   total_amount    Float?
+  department_id   Int
 
   @@map("requisition_summary")
 }

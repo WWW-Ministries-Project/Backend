@@ -62,9 +62,7 @@ export const userRequisitionsHandler = async (req: Request, res: Response) => {
 export const getRequisitionHandler = async (req: Request, res: Response) => {
   const { id } = req.query;
 
-  if (!id) {
-    throw new InputValidationError("Requisition ID is required");
-  }
+  
   const response = await getRequisition(id);
   res.status(201).json({
     message: "Operation successful",

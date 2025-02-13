@@ -61,7 +61,7 @@ export const updateDataPayload = (
 ) => {
   return {
     user_id: data.user_id,
-    user_sign: isMember ? data.user_sign : null,
+    user_sign: isMember ? data.user_sign : undefined,
     department_id: data.department_id,
     event_id: data.event_id,
     requisition_date: data.request_date
