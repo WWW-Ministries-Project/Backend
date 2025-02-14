@@ -160,7 +160,7 @@ export const updateRequisition = async (
   // Build the update payload
   const updateData = updateDataPayload(
     data,
-    isMember ,
+    isMember,
     requestApprovalStatus,
     attachmentsToUpdate,
     newAttachments
