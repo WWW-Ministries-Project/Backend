@@ -9,7 +9,7 @@ const upload: any = async (file: any) => {
         if (err) {
           return "Error uploading file";
         }
-      }
+      },
     );
     return data.secure_url;
   } catch (error) {

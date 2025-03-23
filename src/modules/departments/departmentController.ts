@@ -1,6 +1,9 @@
 import { prisma } from "../../Models/context";
 import { Request, Response } from "express";
 import { toCapitalizeEachWord } from "../../utils";
+import { ZKTecoDepartment } from "../integrationUtils/departmentIntegration";
+
+const zkTeco = new ZKTecoDepartment();
 
 export const createDepartment = async (req: Request, res: Response) => {
   const { name, department_head, description, created_by } = req.body;
@@ -11,6 +14,28 @@ export const createDepartment = async (req: Request, res: Response) => {
         department_head,
         description,
         created_by,
+      },
+    });
+
+    const authResponse = await zkTeco.userAuthentication();
+    if (!authResponse || !authResponse.token) {
+      throw new Error("Failed to authenticate with ZKTeco");
+    }
+    const token = authResponse.token;
+
+    const zktResponse = await zkTeco.createDepartment(
+      {
+        dept_name: response.name,
+        dept_code: response.id.toString(),
+      },
+      token,
+    );
+
+    const updateRes = await prisma.department.update({
+      where: { id: response.id },
+      data: {
+        is_sync: true,
+        sync_id: zktResponse.id,
       },
     });
 
@@ -54,19 +79,8 @@ export const updateDepartment = async (req: Request, res: Response) => {
         description,
         updated_by,
         updated_at: new Date(),
+        is_sync: false,
       },
-      // include: {
-      //   user: {
-      //     select: {
-      //       name: true
-      //     }
-      //   },
-      //   position: {
-      //     select: {
-      //       name: true,
-      //     }
-      //   },
-      // }
     });
     res
       .status(200)

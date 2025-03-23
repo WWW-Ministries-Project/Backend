@@ -39,8 +39,6 @@ export interface RequisitionInterface {
   fnc_sign: string;
 }
 
-
-
 export interface RequestApprovals {
   id: number;
   user_sign: string;

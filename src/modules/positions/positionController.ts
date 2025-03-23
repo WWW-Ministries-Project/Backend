@@ -1,6 +1,9 @@
 import { prisma } from "../../Models/context";
 import { Request, Response } from "express";
 import { toCapitalizeEachWord } from "../../utils";
+import { ZKTecoPosition } from "../integrationUtils/positionIntegration";
+
+const zkTeco = new ZKTecoPosition();
 
 export const createPosition = async (req: Request, res: Response) => {
   const { name, department_id, description, created_by } = req.body;
@@ -25,6 +28,29 @@ export const createPosition = async (req: Request, res: Response) => {
         },
       },
     });
+
+    const authResponse = await zkTeco.userAuthentication();
+    if (!authResponse || !authResponse.token) {
+      throw new Error("Failed to authenticate with ZKTeco");
+    }
+    const token = authResponse.token;
+
+    const zktResponse = await zkTeco.createPosition(
+      {
+        position_name: response.name,
+        position_code: response.id.toString(),
+      },
+      token,
+    );
+
+    const updateRes = await prisma.position.update({
+      where: { id: response.id },
+      data: {
+        is_sync: true,
+        sync_id: zktResponse.id,
+      },
+    });
+
     const data = await prisma.position.findMany({
       orderBy: {
         id: "desc",
@@ -65,6 +91,7 @@ export const updatePosition = async (req: Request, res: Response) => {
         description,
         updated_by,
         updated_at: new Date(),
+        is_sync: false,
       },
       select: {
         id: true,

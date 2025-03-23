@@ -47,23 +47,23 @@ userRouter.post(
 userRouter.post(
   "/update-user",
   [protect, permissions.can_Manage_Members],
-  updateUser
+  updateUser,
 );
 
 userRouter.patch(
   "/update-user-status",
   [protect, permissions.can_Manage_Members],
-  updateUserSatus
+  updateUserSatus,
 );
 userRouter.delete(
   "/delete-user",
   [protect, permissions.can_Manage_Members],
-  deleteUser
+  deleteUser,
 );
 userRouter.put(
   "/activate-user",
   [protect, permissions.can_Manage_Members],
-  activateUser
+  activateUser,
 );
 
 userRouter.get("/", landingPage);

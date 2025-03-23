@@ -46,7 +46,7 @@ export const createAccessLevel = async (req: Request, res: Response) => {
         },
       },
     });
-    
+
     res
       .status(200)
       .json({ message: "Access Level Created Succesfully", data: data });

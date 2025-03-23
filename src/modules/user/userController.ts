@@ -12,12 +12,17 @@ import {
 
 dotenv.config();
 
+import { ZKTeco } from "../integrationUtils/userIntegration";
+
+const zkTeco = new ZKTeco();
+
 const JWT_SECRET: any = process.env.JWT_SECRET;
+const HostArea: number = Number(process.env.AREA) || 2;
 
 export const landingPage = async (req: Request, res: Response) => {
   res.send(
     // `<h1>Welcome to World Wide Word Ministries Backend Server🔥🎉💒</h1>`
-    `<h1>Welcome to World Wide Word Ministries Backend Server🔥🎉🙏💒...</h1>`
+    `<h1>Welcome to World Wide Word Ministries Backend Server🔥🎉🙏💒...</h1>`,
   );
 };
 
@@ -69,6 +74,7 @@ const selectQuery = {
         select: {
           id: true,
           name: true,
+          sync_id:true
         },
       },
     },
@@ -77,6 +83,7 @@ const selectQuery = {
     select: {
       id: true,
       name: true,
+      sync_id:true
     },
   },
 };
@@ -115,93 +122,127 @@ export const registerUser = async (req: Request, res: Response) => {
       work_industry,
       work_position,
     } = req.body;
-    const existingUser = await prisma.user.findMany({
-      where: {
-        email,
-      },
+
+    // Check if user already exists
+    const existingUser = await prisma.user.findUnique({
+      where: { email },
     });
-    if (existingUser.length >= 1) {
-      res.status(409).json({ message: "Email already exists", data: null });
-    } else {
-      const response = await prisma.user.create({
-        data: {
-          name: toCapitalizeEachWord(
-            `${first_name} ${other_name || ""} ${last_name}`
-          ),
-          email,
-          position_id,
-          password: is_user ? await hashPassword("123456") : undefined,
-          is_user,
-          membership_type,
-          access_level_id,
-          department_id,
-          department: department_id
-            ? {
-                create: {
-                  department_id,
-                },
-              }
-            : undefined,
-          user_info: {
-            create: {
-              title,
-              first_name,
-              last_name,
-              other_name,
-              date_of_birth: date_of_birth ? new Date(date_of_birth) : null,
-              gender,
-              country_code,
-              primary_number,
-              other_number,
-              email,
-              address,
-              country,
-              company: toCapitalizeEachWord(company),
-              member_since: member_since ? new Date(member_since) : null,
-              occupation,
-              photo,
-              marital_status,
-              nationality,
-              emergency_contact: {
-                create: {
-                  name: emergency_contact_name,
-                  relation: emergency_contact_relation,
-                  phone_number: emergency_contact_phone_number,
-                },
+
+    if (existingUser) {
+      return res.status(409).json({ message: "Email already exists", data: null });
+    }
+
+    // Create user in database
+    const response = await prisma.user.create({
+      data: {
+        name: toCapitalizeEachWord(`${first_name} ${other_name || ""} ${last_name}`),
+        email,
+        position_id,
+        password: is_user ? await hashPassword(password || "123456") : undefined,
+        is_user,
+        membership_type,
+        access_level_id,
+        department_id,
+        department: department_id
+          ? { create: { department_id } }
+          : undefined,
+        user_info: {
+          create: {
+            title,
+            first_name,
+            last_name,
+            other_name,
+            date_of_birth: date_of_birth ? new Date(date_of_birth) : null,
+            gender,
+            country_code,
+            primary_number,
+            other_number,
+            email,
+            address,
+            country,
+            company: toCapitalizeEachWord(company),
+            member_since: member_since ? new Date(member_since) : null,
+            occupation,
+            photo,
+            marital_status,
+            nationality,
+            emergency_contact: {
+              create: {
+                name: emergency_contact_name,
+                relation: emergency_contact_relation,
+                phone_number: emergency_contact_phone_number,
               },
-              work_info: {
-                create: {
-                  name_of_institution: work_name,
-                  industry: work_industry,
-                  position: work_position,
-                },
+            },
+            work_info: {
+              create: {
+                name_of_institution: work_name,
+                industry: work_industry,
+                position: work_position,
               },
             },
           },
         },
-        select: selectQuery,
-      });
-      const mailDet = {
-        first_name,
-        email,
-        password: password || "123456",
-        frontend_url: `${process.env.Frontend_URL}/login`,
-      };
+      },
+      select: selectQuery,
+    });
 
-      if (is_user) {
-        sendEmail(confirmTemplate(mailDet), email, "Reset Password");
-      }
-      res
-        .status(200)
-        .json({ message: "User Created Succesfully", data: response });
+    // Prepare email details
+    const mailDet = {
+      first_name,
+      email,
+      password: password || "123456",
+      frontend_url: `${process.env.Frontend_URL}/login`,
+    };
+
+    // Send email if user is active
+    if (is_user) {
+      await sendEmail(confirmTemplate(mailDet), email, "Reset Password");
     }
+
+    // Authenticate with ZKTeco
+    const authResponse = await zkTeco.userAuthentication();
+    if (!authResponse?.token) {
+      throw new Error("Failed to authenticate with ZKTeco");
+    }
+
+    const token = authResponse.token;
+
+    // Prepare the payload for ZKTeco
+    const zkPayload = {
+      id: response.id.toString(),
+      department: response.department?.department_info?.sync_id ?? 0,
+      area: [HostArea],
+      hire_date: member_since
+        ? new Date(member_since).toISOString().split("T")[0]
+        : new Date().toISOString().split("T")[0],
+      first_name,
+      last_name,
+      gender: gender === "Male" ? "M" : gender === "Female" ? "F" : "S",
+      email,
+      mobile: primary_number,
+      nationality,
+      address,
+      app_status: 1,
+    };
+
+    console.table(zkPayload);
+
+    // Create user in ZKTeco
+    const zkResponse = await zkTeco.createUser(zkPayload, token);
+    await prisma.user.update({
+      is_sync:true,
+      sync_id:
+    })
+    console.log("User successfully created in ZKTeco:", zkResponse);
+
+
+    return res.status(200).json({ message: "User Created Successfully", data: response });
   } catch (error: any) {
-    console.log(error);
-    return res
-      .status(500)
-      .json({ message: "Internal Server Error", data: error?.message });
+    console.error("Error registering user:", error);
+    return res.status(500).json({ message: "Internal Server Error", data: error?.message });
   }
 };
+
 export const updateUser = async (req: Request, res: Response) => {
   const {
     id,
@@ -442,7 +483,7 @@ export const login = async (req: Request, res: Response) => {
         JWT_SECRET,
         {
           expiresIn: "12h",
-        }
+        },
       );
 
       return res
@@ -507,7 +548,7 @@ export const forgetPassword = async (req: Request, res: Response) => {
       secret,
       {
         expiresIn: "15m",
-      }
+      },
     );
     const link = `${process.env.Frontend_URL}/reset-password/?id=${existingUser.id}&token=${token}`;
     sendEmail(link, email, "Reset Password");
@@ -806,7 +847,7 @@ export const statsUsers = async (req: Request, res: Response) => {
 
         return acc;
       },
-      { total: 0, Male: 0, Female: 0, other: 0 }
+      { total: 0, Male: 0, Female: 0, other: 0 },
     );
 
     const stats: CategoryStats = allUserInfos_members.reduce(
@@ -825,7 +866,7 @@ export const statsUsers = async (req: Request, res: Response) => {
       {
         children: { Total: 0, Male: 0, Female: 0, other: 0 },
         adults: { Total: 0, Male: 0, Female: 0, other: 0 },
-      }
+      },
     );
 
     const visitorInfosByCategory = allUserInfos_visitors.reduce(
@@ -837,7 +878,7 @@ export const statsUsers = async (req: Request, res: Response) => {
 
         return acc;
       },
-      { total: 0, Male: 0, Female: 0, other: 0 }
+      { total: 0, Male: 0, Female: 0, other: 0 },
     );
 
     const visitor_stats: CategoryStats = allUserInfos_visitors.reduce(
@@ -856,7 +897,7 @@ export const statsUsers = async (req: Request, res: Response) => {
       {
         children: { Total: 0, Male: 0, Female: 0, other: 0 },
         adults: { Total: 0, Male: 0, Female: 0, other: 0 },
-      }
+      },
     );
 
     return res.status(202).json({
