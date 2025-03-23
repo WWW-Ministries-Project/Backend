@@ -13,7 +13,7 @@ export class Permissions {
     try {
       const decoded = JWT.verify(
         token,
-        process.env.JWT_SECRET as string
+        process.env.JWT_SECRET as string,
       ) as any;
       req.user = decoded;
       next();
@@ -31,7 +31,7 @@ export class Permissions {
     try {
       const decoded = JWT.verify(
         token,
-        process.env.JWT_SECRET as string
+        process.env.JWT_SECRET as string,
       ) as any;
       const permission = decoded.permissions;
       if (
@@ -55,7 +55,7 @@ export class Permissions {
     try {
       const decoded = JWT.verify(
         token,
-        process.env.JWT_SECRET as string
+        process.env.JWT_SECRET as string,
       ) as any;
       const permission = decoded.permissions;
 
@@ -80,7 +80,7 @@ export class Permissions {
     try {
       const decoded = JWT.verify(
         token,
-        process.env.JWT_SECRET as string
+        process.env.JWT_SECRET as string,
       ) as any;
       const permission = decoded.permissions;
 
@@ -106,7 +106,7 @@ export class Permissions {
     try {
       const decoded = JWT.verify(
         token,
-        process.env.JWT_SECRET as string
+        process.env.JWT_SECRET as string,
       ) as any;
       const permission = decoded.permissions;
 
@@ -134,7 +134,7 @@ export class Permissions {
     try {
       const decoded = JWT.verify(
         token,
-        process.env.JWT_SECRET as string
+        process.env.JWT_SECRET as string,
       ) as any;
       const permission = decoded.permissions;
 
@@ -159,7 +159,7 @@ export class Permissions {
     try {
       const decoded = JWT.verify(
         token,
-        process.env.JWT_SECRET as string
+        process.env.JWT_SECRET as string,
       ) as any;
       const permission = decoded.permissions;
 
@@ -185,7 +185,7 @@ export class Permissions {
     try {
       const decoded = JWT.verify(
         token,
-        process.env.JWT_SECRET as string
+        process.env.JWT_SECRET as string,
       ) as any;
       const permission = decoded.permissions;
 
@@ -210,7 +210,7 @@ export class Permissions {
     try {
       const decoded = JWT.verify(
         token,
-        process.env.JWT_SECRET as string
+        process.env.JWT_SECRET as string,
       ) as any;
       const permission = decoded.permissions;
 
@@ -237,7 +237,7 @@ export class Permissions {
     try {
       const decoded = JWT.verify(
         token,
-        process.env.JWT_SECRET as string
+        process.env.JWT_SECRET as string,
       ) as any;
       const permission = decoded.permissions;
 
@@ -262,7 +262,7 @@ export class Permissions {
     try {
       const decoded = JWT.verify(
         token,
-        process.env.JWT_SECRET as string
+        process.env.JWT_SECRET as string,
       ) as any;
       const permission = decoded.permissions;
 
@@ -290,7 +290,7 @@ export class Permissions {
     try {
       const decoded = JWT.verify(
         token,
-        process.env.JWT_SECRET as string
+        process.env.JWT_SECRET as string,
       ) as any;
       const permission = decoded.permissions;
 
@@ -316,7 +316,7 @@ export class Permissions {
     try {
       const decoded = JWT.verify(
         token,
-        process.env.JWT_SECRET as string
+        process.env.JWT_SECRET as string,
       ) as any;
       const permission = decoded.permissions;
 
@@ -339,16 +339,16 @@ export class Permissions {
   can_manage_requisitions = (
     req: Request,
     res: Response,
-    next: NextFunction
+    next: NextFunction,
   ) => {
     const token: any = req.headers["authorization"]?.split(" ")[1];
     try {
       const decoded = JWT.verify(
         token,
-        process.env.JWT_SECRET as string
+        process.env.JWT_SECRET as string,
       ) as any;
       const permission = decoded.permissions;
-      ( req as any).user = decoded;
+      (req as any).user = decoded;
       if (
         permission.Requisition === "Can_Manage" ||
         permission.Requisition === "Super_Admin"
@@ -369,10 +369,10 @@ export class Permissions {
     try {
       const decoded = JWT.verify(
         token,
-        process.env.JWT_SECRET as string
+        process.env.JWT_SECRET as string,
       ) as any;
       const permission = decoded.permissions;
-      
+
       if (
         permission.Requisitions === "Can_View" ||
         permission.Requisitions === "Super_Admin" ||

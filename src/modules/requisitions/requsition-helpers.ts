@@ -18,7 +18,7 @@ export const mapProducts = (products: RequisitionInterface["products"]) =>
   }));
 
 export const mapAttachments = (
-  attachments: RequisitionInterface["attachmentLists"]
+  attachments: RequisitionInterface["attachmentLists"],
 ) =>
   attachments?.map((attachment) => ({
     where: { id: attachment.id },
@@ -31,11 +31,11 @@ export const mapAttachments = (
   }));
 
 export const calculateTotalCost = (
-  products: requested_item[] | undefined
+  products: requested_item[] | undefined,
 ): number =>
   products?.reduce(
     (sum, product) => sum + product.unitPrice * product.quantity,
-    0
+    0,
   ) || 0;
 
 export const checkPermissions = (user: any, requisitionUserId: number) => {
@@ -45,7 +45,7 @@ export const checkPermissions = (user: any, requisitionUserId: number) => {
 
   if (isMember && requisitionUserId !== user.id) {
     throw new UnauthorizedError(
-      "You do not have permission to access this requisition"
+      "You do not have permission to access this requisition",
     );
   }
 
@@ -57,7 +57,7 @@ export const updateDataPayload = (
   { isMember }: any,
   requestApprovalStatus: any,
   attachmentsToUpdate: any,
-  newAttachments: any
+  newAttachments: any,
 ) => {
   return {
     user_id: data.user_id,
@@ -83,7 +83,7 @@ export const updateDataPayload = (
 
 export const updateRequestReturnValue = (
   updatedRequest: any,
-  totalCost: any
+  totalCost: any,
 ) => {
   return {
     summary: {
@@ -115,7 +115,7 @@ export const getApprovalData = (
   token_user_id: number,
   isHOD: boolean,
   isPastor: boolean,
-  isMember: boolean
+  isMember: boolean,
 ) => {
   let requestApprovalStatus;
   const approvalData: any = {};

@@ -10,7 +10,7 @@ import {
 export function generateRecurringDates(
   startDate: string,
   endDate: string,
-  recurring: any
+  recurring: any,
 ): any {
   const { frequency, interval, daysOfWeek, dayOfMonth, monthOfYear }: any =
     recurring;

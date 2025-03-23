@@ -105,7 +105,7 @@ export const createRequisition = async (data: RequisitionInterface) => {
  */
 export const updateRequisition = async (
   data: Partial<RequisitionInterface>,
-  user: any
+  user: any,
 ) => {
   if (!data.id) {
     throw new InputValidationError("Requisition ID is required for updates.");
@@ -133,20 +133,20 @@ export const updateRequisition = async (
   // check if logged user has permission to update the requisition
   const { isHOD, isPastor, isMember } = checkPermissions(
     user,
-    findRequest.user_id
+    findRequest.user_id,
   );
 
   // Fetch existing attachments for the requisition
 
   const incomingAttachments = data.attachmentLists || [];
   const newAttachments = incomingAttachments.filter(
-    (attachment) => !attachment.hasOwnProperty("id")
+    (attachment) => !attachment.hasOwnProperty("id"),
   );
   const attachmentsToUpdate = incomingAttachments.filter((attachment) =>
-    existingAttachments.some((ea) => ea.id === attachment.id)
+    existingAttachments.some((ea) => ea.id === attachment.id),
   );
   const attachmentsToDelete = existingAttachments.filter(
-    (ea) => !incomingAttachments.some((ia) => ia.id === ea.id)
+    (ea) => !incomingAttachments.some((ia) => ia.id === ea.id),
   );
 
   const { requestApprovalStatus, approvalData } = getApprovalData(
@@ -154,7 +154,7 @@ export const updateRequisition = async (
     token_user_id,
     isHOD,
     isPastor,
-    isMember
+    isMember,
   );
 
   // Build the update payload
@@ -163,7 +163,7 @@ export const updateRequisition = async (
     isMember,
     requestApprovalStatus,
     attachmentsToUpdate,
-    newAttachments
+    newAttachments,
   );
 
   if (existingApproval) {

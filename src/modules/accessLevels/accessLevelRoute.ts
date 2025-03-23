@@ -16,27 +16,27 @@ export const accessRouter = Router();
 accessRouter.post(
   "/create-access-level",
   [permissions.can_manage_access, permissions.protect],
-  createAccessLevel
+  createAccessLevel,
 );
 accessRouter.put(
   "/update-access-level",
   [permissions.can_manage_access, permissions.protect],
-  updateAccessLevel
+  updateAccessLevel,
 );
 accessRouter.put(
   "/assign_access_to_user",
   [permissions.can_manage_access, permissions.protect],
-  assignAccessLevelToUser
+  assignAccessLevelToUser,
 );
 accessRouter.delete(
   "/delete-access-level",
   [permissions.can_manage_access, permissions.protect],
-  deleteAccessLevel
+  deleteAccessLevel,
 );
 accessRouter.get(
   "/list-access-levels",
   [permissions.can_view_access, permissions.protect],
-  listAllAccessLevel
+  listAllAccessLevel,
 );
 accessRouter.get("/get-access-level", [
   permissions.can_view_access,

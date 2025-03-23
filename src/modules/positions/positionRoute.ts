@@ -23,23 +23,23 @@ positionRouter.post(
 positionRouter.put(
   "/update-position",
   [protect, permissions.can_manage_positions],
-  updatePosition
+  updatePosition,
 );
 
 positionRouter.delete(
   "/delete-position",
   [protect, permissions.can_manage_positions],
-  deletePosition
+  deletePosition,
 );
 
 positionRouter.get(
   "/list-positions",
   [protect, permissions.can_view_positions],
-  listPositions
+  listPositions,
 );
 
 positionRouter.get(
   "/get-position",
   [protect, permissions.can_view_positions],
-  getPosition
+  getPosition,
 );

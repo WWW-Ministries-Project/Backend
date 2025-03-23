@@ -21,7 +21,7 @@ export const assetSchema = Joi.object({
   date_purchased: Joi.date(),
   date_assigned: Joi.date(),
   price: Joi.number(),
-  description: Joi.string()
-})
+  description: Joi.string(),
+});
 
 export const validateSignup = validator(signupSchema);

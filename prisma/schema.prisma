@@ -34,6 +34,8 @@ model user {
   hod_user              request_approvals[] @relation("hod_user")
   ps_user               request_approvals[] @relation("ps_user")
   user_request_comments request_comments[]
+  is_sync               Boolean?          @default(false)
+  sync_id               Int?
 
   @@index([access_level_id], map: "user_access_level_id_fkey")
   @@index([position_id], map: "user_position_id_fkey")
@@ -97,6 +99,8 @@ model department {
   updated_at           DateTime?
   assets               assets[]
   department_head_info user?              @relation(fields: [department_head], references: [id])
+  is_sync               Boolean?          @default(false)
+  sync_id               Int?
   position             position[]
   request              request[]
   user_departments     user_departments[]
@@ -124,6 +128,8 @@ model position {
   updated_by    Int?
   updated_at    DateTime?
   department    department? @relation(fields: [department_id], references: [id])
+  is_sync               Boolean?          @default(false)
+  sync_id               Int?
   user          user[]
 
   @@index([department_id], map: "position_department_id_fkey")
