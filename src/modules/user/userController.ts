@@ -47,6 +47,7 @@ const selectQuery = {
       occupation: true,
       company: true,
       address: true,
+      status: true,
       emergency_contact: {
         select: {
           name: true,
@@ -84,124 +85,151 @@ const selectQuery = {
 export const registerUser = async (req: Request, res: Response) => {
   try {
     const {
-      title,
-      date_of_birth,
-      gender,
-      country_code,
-      primary_number,
-      other_number,
-      email,
-      address,
-      country,
-      occupation,
-      company,
-      member_since,
-      photo,
-      is_user,
+      personal_info: {
+        title,
+        first_name,
+        other_name,
+        last_name,
+        date_of_birth,
+        gender,
+        marital_status,
+        nationality,
+        picture,
+      },
+      contact_info: {
+        emergency_contact_name,
+        emergency_contact_relation,
+        emergency_contact_phone_number,
+        primary_number,
+        country_code,
+        email,
+        resident_country,
+        state_region,
+        city,
+        other_number,
+      },
+      work_info: {
+        employment_status,
+        work_name,
+        work_industry,
+        work_position,
+        school_name,
+      },
+      children = [],
+      has_children,
+      status,
+      membership_type,
       department_id,
       position_id,
       password,
-      access_level_id,
-      membership_type,
-      first_name,
-      last_name,
-      other_name,
-      marital_status,
-      nationality,
-      emergency_contact_name,
-      emergency_contact_relation,
-      emergency_contact_phone_number,
-      work_name,
-      work_industry,
-      work_position,
+      is_user,
     } = req.body;
-    const existingUser = await prisma.user.findMany({
-      where: {
-        email,
-      },
-    });
-    if (existingUser.length >= 1) {
-      res.status(409).json({ message: "Email already exists", data: null });
-    } else {
-      const response = await prisma.user.create({
-        data: {
-          name: toCapitalizeEachWord(
-            `${first_name} ${other_name || ""} ${last_name}`
-          ),
-          email,
-          position_id,
-          password: is_user ? await hashPassword("123456") : undefined,
-          is_user,
-          membership_type,
-          access_level_id,
-          department_id,
-          department: department_id
-            ? {
-                create: {
-                  department_id,
-                },
-              }
-            : undefined,
-          user_info: {
-            create: {
-              title,
-              first_name,
-              last_name,
-              other_name,
-              date_of_birth: date_of_birth ? new Date(date_of_birth) : null,
-              gender,
-              country_code,
-              primary_number,
-              other_number,
-              email,
-              address,
-              country,
-              company: toCapitalizeEachWord(company),
-              member_since: member_since ? new Date(member_since) : null,
-              occupation,
-              photo,
-              marital_status,
-              nationality,
-              emergency_contact: {
-                create: {
-                  name: emergency_contact_name,
-                  relation: emergency_contact_relation,
-                  phone_number: emergency_contact_phone_number,
-                },
+
+    let email_placeholder;
+
+    let userEmail = email?.trim();
+    if (!userEmail) {
+      const birthYear = date_of_birth ? new Date(date_of_birth).getFullYear() : "";
+      userEmail = `${first_name.toLowerCase()}${last_name.toLowerCase()}${birthYear}@temp.com`;
+    }
+    
+    
+
+    const hashedPassword = is_user ? await hashPassword(password || "123456") : undefined;
+
+    const response = await prisma.user.create({
+      data: {
+        name: toCapitalizeEachWord(`${first_name} ${other_name || ""} ${last_name}`.trim()),
+        email:userEmail,
+        password: hashedPassword,
+        is_user,
+        status,
+        department_id,
+        position_id,
+        membership_type: membership_type,
+        user_info: {
+          create: {
+            title,
+            first_name,
+            last_name,
+            other_name,
+            date_of_birth: date_of_birth ? new Date(date_of_birth) : null,
+            gender,
+            marital_status,
+            nationality,
+            photo: picture?.src || "",
+            primary_number:primary_number,
+            other_number:other_number,
+            email,
+            country: resident_country,
+            country_code,
+            city,
+            emergency_contact: {
+              create: {
+                name: emergency_contact_name,
+                relation: emergency_contact_relation,
+                phone_number: emergency_contact_phone_number,
               },
-              work_info: {
-                create: {
-                  name_of_institution: work_name,
-                  industry: work_industry,
-                  position: work_position,
-                },
+            },
+            work_info: {
+              create: {
+                name_of_institution: work_name,
+                industry: work_industry,
+                position: work_position,
               },
             },
           },
         },
-        select: selectQuery,
-      });
-      const mailDet = {
-        first_name,
-        email,
-        password: password || "123456",
-        frontend_url: `${process.env.Frontend_URL}/login`,
-      };
+      },
+      select: selectQuery,
+    });
 
-      if (is_user) {
-        sendEmail(confirmTemplate(mailDet), email, "Reset Password");
-      }
-      res
-        .status(200)
-        .json({ message: "User Created Succesfully", data: response });
+    if (has_children && children.length > 0) {
+      await Promise.all(
+        children.map((child) =>
+          prisma.user.create({
+            data: {
+              name: toCapitalizeEachWord(`${child.first_name} ${child.other_name || ""} ${child.last_name}`.trim()),
+              email: `${child.first_name.toLowerCase()}_${child.last_name.toLowerCase()}@temp.com`,
+              is_user: false,
+              parent_id: response.id,
+              user_info: {
+                create: {
+                  first_name: child.first_name,
+                  last_name: child.last_name,
+                  other_name: child.other_name || null,
+                  date_of_birth: new Date(child.date_of_birth),
+                  gender: child.gender,
+                  marital_status: child.marital_status,
+                  nationality: child.nationality,
+                },
+              },
+            },
+          })
+        )
+      );
     }
+
+    if (is_user) {
+      sendEmail(
+        confirmTemplate({
+          first_name,
+          email,
+          password: password || "123456",
+          frontend_url: `${process.env.Frontend_URL}/login`,
+        }),
+        email,
+        "Reset Password"
+      );
+    }
+
+    return res.status(201).json({ message: "User Created Successfully", data: response });
   } catch (error: any) {
-    console.log(error);
-    return res
-      .status(500)
-      .json({ message: "Internal Server Error", data: error?.message });
+    console.error(error);
+    return res.status(500).json({ message: "Internal Server Error", data: error?.message });
   }
 };
+
 export const updateUser = async (req: Request, res: Response) => {
   const {
     id,
@@ -345,7 +373,7 @@ export const updateUser = async (req: Request, res: Response) => {
   }
 };
 export const updateUserSatus = async (req: Request, res: Response) => {
-  const { id, is_active } = req.body;
+  const { id, is_active, status } = req.body;
   try {
     const response = await prisma.user.update({
       where: {
@@ -353,6 +381,7 @@ export const updateUserSatus = async (req: Request, res: Response) => {
       },
       data: {
         is_active,
+        status,
       },
       select: selectQuery,
     });
@@ -638,6 +667,7 @@ export const ListUsers = async (req: Request, res: Response) => {
         is_user: true,
         department_id: true,
         membership_type: true,
+        status: true,
         user_info: {
           select: {
             country_code: true,
@@ -704,6 +734,7 @@ export const getUser = async (req: Request, res: Response) => {
         is_active: true,
         position_id: true,
         access_level_id: true,
+        status: true,
         user_info: {
           select: {
             first_name: true,

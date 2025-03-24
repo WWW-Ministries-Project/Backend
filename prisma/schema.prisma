@@ -35,7 +35,10 @@ model user {
   ps_user               request_approvals[] @relation("ps_user")
   user_request_comments request_comments[]
   enrollments           enrollment[]
-
+  parent_id             Int?
+  parent                user?               @relation("UserParent", fields: [parent_id], references: [id])
+  children              user[]              @relation("UserParent")
+  status                status_type?
   @@index([access_level_id], map: "user_access_level_id_fkey")
   @@index([position_id], map: "user_position_id_fkey")
 }
@@ -51,6 +54,8 @@ model user_info {
   email                String?
   address              String?
   country              String?
+  city                 String?
+  state_region         String?
   occupation           String?
   company              String?
   member_since         DateTime?
@@ -77,6 +82,12 @@ model user_work_info {
   industry            String
   position            String
   user_info           user_info[]
+  employment_status   String?
+  school_name         String?
+}
+
+enum status_type {
+  UNCONFIRMED
 }
 
 model user_emergency_contact {
