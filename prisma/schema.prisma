@@ -34,6 +34,7 @@ model user {
   hod_user              request_approvals[] @relation("hod_user")
   ps_user               request_approvals[] @relation("ps_user")
   user_request_comments request_comments[]
+  enrollments           enrollment[]
 
   @@index([access_level_id], map: "user_access_level_id_fkey")
   @@index([position_id], map: "user_position_id_fkey")
@@ -294,6 +295,71 @@ model request_approvals {
   request           request?  @relation(fields: [request_id], references: [id])
   hod_user          user?     @relation("hod_user", fields: [hod_user_id], references: [id])
   ps_user           user?     @relation("ps_user", fields: [ps_user_id], references: [id])
+}
+
+model program {
+  id          Int       @id @default(autoincrement())
+  title       String
+  description String
+  eligibility Eligibility
+  topics      topic[]
+  cohorts     cohort[]  
+  completed   Boolean @default(false)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model topic {
+  id        Int      @id @default(autoincrement())
+  name      String
+  programId Int
+  program   program  @relation(fields: [programId], references: [id], onDelete: Cascade)
+}
+
+model cohort {
+  id                  Int        @id @default(autoincrement())
+  name                String
+  startDate           DateTime
+  status              String
+  description         String
+  duration            String
+  applicationDeadline DateTime
+  programId           Int
+  program             program    @relation(fields: [programId], references: [id], onDelete: Cascade)
+  courses              course[]
+  createdAt           DateTime   @default(now())
+  updatedAt           DateTime   @updatedAt
+}
+
+model course {
+  id         Int      @id @default(autoincrement())
+  name       String
+  instructor String
+  capacity   Int
+  enrolled   Int      @default(0)
+  schedule   String
+  cohortId   Int
+  cohort     cohort   @relation(fields: [cohortId], references: [id], onDelete: Cascade)
+  enrollments enrollment[]
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+model enrollment {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  courseId   Int
+  user      user     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course   course    @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  enrolledAt DateTime @default(now())
+
+  @@unique([userId, courseId])
+}
+
+enum Eligibility {
+  Both
+  Members
+  Non_Members
 }
 
 enum RequestApprovalStatus {

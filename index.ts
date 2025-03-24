@@ -4,6 +4,7 @@ import * as dotenv from "dotenv";
 import cors from "cors";
 import { appRouter } from "./src/routes/appRouter";
 import logger from "./src/utils/logger-config";
+import { setupSwagger } from "./src/swagger";
 dotenv.config();
 
 
@@ -12,7 +13,9 @@ const app = express();
 app.use(bodyParser.json());
 app.use(cors());
 app.use(express.json());
+setupSwagger(app);
 app.use(appRouter);
+
 
 
 

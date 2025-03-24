@@ -24,3 +24,7 @@ export * from "./events/eventRoute";
 
 export * from "./uploadFile/uploadRoute";
 export * from "./uploadFile/uploads";
+
+export * from "./programs/programController"
+export * from "./programs/programRoute"
+
