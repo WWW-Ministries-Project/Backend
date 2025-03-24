@@ -14,32 +14,32 @@ const cohortController = new CohortController();
 const courseController = new CourseController();
 
 
-programRouter.post("/programs", [protect, permissions.can_manage_programs],programController.createProgram);
-programRouter.get("/programs",[protect, permissions.can_view_programs], programController.getAllPrograms);
-programRouter.get("/programs/:id",[protect, permissions.can_view_programs],programController.getProgramById);
-programRouter.put("/programs/:id", [protect, permissions.can_manage_programs],programController.updateProgram);
-programRouter.delete("/programs/:id",[protect, permissions.can_manage_programs], programController.deleteProgram);
+programRouter.post("/programs",programController.createProgram);
+programRouter.get("/programs", programController.getAllPrograms);
+programRouter.get("/programs/:id", programController.getProgramById);
+programRouter.put("/programs/:id", programController.updateProgram);
+programRouter.delete("/programs/:id", programController.deleteProgram);
 
 //cohort enpoint
-programRouter.post("/cohorts", [protect, permissions.can_manage_programs], cohortController.createCohort);
-programRouter.get("/cohorts", [protect, permissions.can_view_programs],cohortController.getAllCohorts);
-programRouter.get("/program-cohorts/:id", [protect, permissions.can_view_programs], cohortController.getAllCohortsByProgramID)
-programRouter.get("/cohorts/:id",[protect, permissions.can_view_programs],cohortController.getCohortsById);
-programRouter.put("/cohorts/:id", [protect, permissions.can_manage_programs], cohortController.updateChorts);
-programRouter.delete("/cohorts/:id",[protect, permissions.can_manage_programs], cohortController.deleteCohort);
+programRouter.post("/cohorts", cohortController.createCohort);
+programRouter.get("/cohorts", cohortController.getAllCohorts);
+programRouter.get("/program-cohorts/:id", cohortController.getAllCohortsByProgramID)
+programRouter.get("/cohorts/:id", cohortController.getCohortsById);
+programRouter.put("/cohorts/:id", cohortController.updateChorts);
+programRouter.delete("/cohorts/:id", cohortController.deleteCohort);
 
 //course enpoint
-programRouter.post("/courses", [protect, permissions.can_manage_programs],courseController.createCourse);
-programRouter.get("/courses", [protect, permissions.can_view_programs],courseController.getAllCourses);
-programRouter.get("/courses/:id",[protect, permissions.can_view_programs],courseController.getCourseById);
-programRouter.put("/courses/:id", [protect, permissions.can_manage_programs],courseController.updateCourse);
-programRouter.delete("/courses/:id",[protect, permissions.can_manage_programs],courseController.deleteCourse);
+programRouter.post("/courses", courseController.createCourse);
+programRouter.get("/courses", courseController.getAllCourses);
+programRouter.get("/courses/:id", courseController.getCourseById);
+programRouter.put("/courses/:id", courseController.updateCourse);
+programRouter.delete("/courses/:id", courseController.deleteCourse);
 
 
 //enrollment endpoint
-programRouter.post("/enroll",[protect, permissions.can_manage_programs], enrollmentController.enrollUser);
-programRouter.post("/unenroll", [protect, permissions.can_manage_programs],enrollmentController.unEnrollUser);
-programRouter.get("/course-enrollment",[protect, permissions.can_view_programs], enrollmentController.getEnrollmentByCourse)
-programRouter.get("/user-enrollment", [protect, permissions.can_view_programs], enrollmentController.getEnrollmentByCourse)
+programRouter.post("/enroll", enrollmentController.enrollUser);
+programRouter.post("/unenroll", enrollmentController.unEnrollUser);
+programRouter.get("/course-enrollment", enrollmentController.getEnrollmentByCourse)
+programRouter.get("/user-enrollment", enrollmentController.getEnrollmentByCourse)
 
 export default programRouter;
