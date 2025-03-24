@@ -298,15 +298,30 @@ model request_approvals {
 }
 
 model program {
-  id          Int       @id @default(autoincrement())
-  title       String
-  description String
-  eligibility Eligibility
-  topics      topic[]
-  cohorts     cohort[]  
-  completed   Boolean @default(false)
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  id           Int       @id @default(autoincrement())
+  title        String
+  description  String
+  eligibility  Eligibility
+  topics       topic[]
+  cohorts      cohort[]  
+  completed    Boolean   @default(false)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  // Define relation for prerequisites
+  prerequisitePrograms program_prerequisites[] @relation("ProgramToPrerequisite")
+  requiredForPrograms  program_prerequisites[] @relation("ProgramToRequired")
+}
+
+model program_prerequisites {
+  programId        Int
+  prerequisiteId   Int
+
+  // Relations
+  program        program @relation("ProgramToPrerequisite", fields: [programId], references: [id], onDelete: Cascade)
+  prerequisite   program @relation("ProgramToRequired", fields: [prerequisiteId], references: [id], onDelete: Cascade)
+
+  @@id([programId, prerequisiteId])  // Composite Primary Key
 }
 
 model topic {
