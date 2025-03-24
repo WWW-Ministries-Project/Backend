@@ -18,12 +18,12 @@ export class CohortService {
     async getAllCohortsByProgramID(programId: number) {
       return await prisma.cohort.findMany({
         where: { programId },
-        include: { program: true },
+        include: { courses: true},
       });
     }
     async getAllCohorts() {
         return await prisma.cohort.findMany({
-          include: { program: true },
+          include: { program: true, courses: true },
         });
       }
   

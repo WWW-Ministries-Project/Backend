@@ -2,7 +2,6 @@ import { prisma } from "../../Models/context";
 
 export class ProgramService {
   async createProgram(data: any) {
-    console.log(data.topics)
     const createdProgram =  await prisma.program.create({
       data: {
         title: data.title,
@@ -21,14 +20,14 @@ export class ProgramService {
   async getAllPrograms() {
     console.log("Hereeee")
     return await prisma.program.findMany({
-      include: { topics: true },
+      include: { topics: true, cohorts: true },
     });
   }
 
   async getProgramById(id: number) {
     return await prisma.program.findUnique({
       where: { id },
-      include: { topics: true },
+      include: { topics: true, cohorts: true },
     });
   }
 
