@@ -1,6 +1,8 @@
 import { prisma } from "../../Models/context";
 import { Request, Response } from "express";
 import { toCapitalizeEachWord } from "../../utils";
+import { ZKTecoAuth } from "../integrationUtils/authenticationIntegration";
+import { ZKTecoPosition } from "../integrationUtils/positionIntegration";
 
 export const createPosition = async (req: Request, res: Response) => {
   const { name, department_id, description, created_by } = req.body;
@@ -25,6 +27,7 @@ export const createPosition = async (req: Request, res: Response) => {
         },
       },
     });
+    savePositionToZTeco(response);
     const data = await prisma.position.findMany({
       orderBy: {
         id: "desc",
@@ -63,6 +66,7 @@ export const updatePosition = async (req: Request, res: Response) => {
         name: toCapitalizeEachWord(name),
         department_id,
         description,
+        is_sync:false,//setting to to out of sync for cron job to sync to device
         updated_by,
         updated_at: new Date(),
       },
@@ -176,3 +180,32 @@ export const getPosition = async (req: Request, res: Response) => {
       .json({ message: "Position failed to fetch", data: error });
   }
 };
+
+
+const savePositionToZTeco = async (data:any) => {
+  const zKTecoAuth = new ZKTecoAuth()
+  const zkTeco = new ZKTecoPosition()
+  const authResponse = await zKTecoAuth.userAuthentication();
+    if (!authResponse || !authResponse.token) {
+      throw new Error("Failed to authenticate with ZKTeco");
+    }
+    const token = authResponse.token;
+
+    const zktResponse = await zkTeco.createPosition(
+      {
+        position_name: data.name,
+        position_code: data.id.toString(),
+      },
+      token,
+    );
+
+    const updateRes = await prisma.position.update({
+      where: { id: data.id },
+      data: {
+        is_sync: true,
+        sync_id: zktResponse.id,
+      },
+    });
+
+    return updateRes;
+}

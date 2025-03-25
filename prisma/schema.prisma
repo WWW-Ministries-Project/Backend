@@ -39,6 +39,9 @@ model user {
   parent                user?               @relation("UserParent", fields: [parent_id], references: [id])
   children              user[]              @relation("UserParent")
   status                status_type?
+  is_sync               Boolean?          @default(false)
+  sync_id               Int?
+
   @@index([access_level_id], map: "user_access_level_id_fkey")
   @@index([position_id], map: "user_position_id_fkey")
 }
@@ -112,6 +115,8 @@ model department {
   position             position[]
   request              request[]
   user_departments     user_departments[]
+  is_sync               Boolean?          @default(false)
+  sync_id               Int?
 
   @@index([department_head], map: "department_department_head_fkey")
 }
@@ -137,6 +142,8 @@ model position {
   updated_at    DateTime?
   department    department? @relation(fields: [department_id], references: [id])
   user          user[]
+  is_sync               Boolean?          @default(false)
+  sync_id               Int?
 
   @@index([department_id], map: "position_department_id_fkey")
 }
