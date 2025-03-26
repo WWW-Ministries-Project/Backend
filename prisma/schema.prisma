@@ -354,6 +354,9 @@ model course {
   enrolled   Int      @default(0)
   schedule   String
   cohortId   Int
+  classFormat classFormat? 
+  location    String?
+  meetingLink String?
   cohort     cohort   @relation(fields: [cohortId], references: [id], onDelete: Cascade)
   enrollments enrollment[]
   createdAt  DateTime @default(now())
@@ -375,6 +378,12 @@ enum Eligibility {
   Both
   Members
   Non_Members
+}
+
+enum classFormat {
+  In_Person 
+  Online 
+  Hybrid
 }
 
 enum RequestApprovalStatus {

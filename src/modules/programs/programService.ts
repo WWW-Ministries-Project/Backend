@@ -2,6 +2,23 @@ import { prisma } from "../../Models/context";
 
 export class ProgramService {
   async createProgram(data: any) {
+    //check if the prerequisit program is there
+    const existingPrerequisites = await prisma.program.findMany({
+      where: {
+        id: { in: data.prerequisites }, // Fetch all prerequisites that exist
+      },
+      select: { id: true }, 
+    });
+    
+    // Extract the found IDs
+    const foundIds = existingPrerequisites.map(p => p.id);
+    
+    // Find missing prerequisites
+    const missingPrerequisites = data.prerequisites.filter((id: number) => !foundIds.includes(id));
+    
+    if (missingPrerequisites.length > 0) {
+      throw new Error(`Missing prerequisites: ${missingPrerequisites.join(", ")}`);
+    }
     const createdProgram =  await prisma.program.create({
       data: {
         title: data.title,
@@ -34,7 +51,6 @@ export class ProgramService {
     },
     });
 
-    console.log("Created program:", updatedProgram);
     return updatedProgram;
   }
 

@@ -26,7 +26,6 @@ export class CourseController {
       async getCourseById(req: Request, res: Response) {
         try {
           const { id } = req.params;
-          console.log("Hereeee" + req.body)
           const program = await courseService.getCourseById(Number(id));
           if (!program) return res.status(404).json({ message: "Course not found" });
     

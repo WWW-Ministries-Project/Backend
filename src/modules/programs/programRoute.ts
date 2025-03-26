@@ -30,7 +30,7 @@ programRouter.delete("/cohorts/:id", cohortController.deleteCohort);
 
 //course enpoint
 programRouter.post("/courses", courseController.createCourse);
-programRouter.get("/courses", courseController.getAllCourses);
+programRouter.get("/cohort-courses/:id", courseController.getAllCourses);
 programRouter.get("/courses/:id", courseController.getCourseById);
 programRouter.put("/courses/:id", courseController.updateCourse);
 programRouter.delete("/courses/:id", courseController.deleteCourse);

@@ -8,6 +8,9 @@ export class CourseService {
           instructor: data.instructor,
           capacity: data.capacity,
           schedule: data.schedule,
+          classFormat: data.classFormat,
+          location:    data.location,
+          meetingLink: data.meetingLink,
           cohortId,
         },
       });
