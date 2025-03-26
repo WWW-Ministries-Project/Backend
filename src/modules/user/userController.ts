@@ -9,10 +9,13 @@ import {
   hashPassword,
   confirmTemplate,
 } from "../../utils";
+import { ZKTeco } from "../integrationUtils/userIntegration";
+import { ZKTecoAuth } from "../integrationUtils/authenticationIntegration";
 
 dotenv.config();
 
 const JWT_SECRET: any = process.env.JWT_SECRET;
+const HostArea: number = Number(process.env.AREA) || 2;
 
 export const landingPage = async (req: Request, res: Response) => {
   res.send(
@@ -30,6 +33,7 @@ const selectQuery = {
   is_active: true,
   position_id: true,
   access_level_id: true,
+  member_id: true,
   user_info: {
     select: {
       first_name: true,
@@ -125,22 +129,18 @@ export const registerUser = async (req: Request, res: Response) => {
       is_user,
     } = req.body;
 
-    let email_placeholder;
-
     let userEmail = email?.trim();
     if (!userEmail) {
       const birthYear = date_of_birth ? new Date(date_of_birth).getFullYear() : "";
       userEmail = `${first_name.toLowerCase()}${last_name.toLowerCase()}${birthYear}@temp.com`;
     }
-    
-    
 
     const hashedPassword = is_user ? await hashPassword(password || "123456") : undefined;
 
     const response = await prisma.user.create({
       data: {
         name: toCapitalizeEachWord(`${first_name} ${other_name || ""} ${last_name}`.trim()),
-        email:userEmail,
+        email: userEmail,
         password: hashedPassword,
         is_user,
         status,
@@ -158,8 +158,8 @@ export const registerUser = async (req: Request, res: Response) => {
             marital_status,
             nationality,
             photo: picture?.src || "",
-            primary_number:primary_number,
-            other_number:other_number,
+            primary_number,
+            other_number,
             email,
             country: resident_country,
             country_code,
@@ -173,9 +173,11 @@ export const registerUser = async (req: Request, res: Response) => {
             },
             work_info: {
               create: {
+                employment_status,
                 name_of_institution: work_name,
                 industry: work_industry,
                 position: work_position,
+                school_name,
               },
             },
           },
@@ -184,10 +186,12 @@ export const registerUser = async (req: Request, res: Response) => {
       select: selectQuery,
     });
 
+    generateUserId(response.id).catch((err) => console.error("Error generating user ID:", err));
+
     if (has_children && children.length > 0) {
       await Promise.all(
-        children.map((child) =>
-          prisma.user.create({
+        children.map(async (child: any) => {
+          const childResponse = await prisma.user.create({
             data: {
               name: toCapitalizeEachWord(`${child.first_name} ${child.other_name || ""} ${child.last_name}`.trim()),
               email: `${child.first_name.toLowerCase()}_${child.last_name.toLowerCase()}@temp.com`,
@@ -205,8 +209,13 @@ export const registerUser = async (req: Request, res: Response) => {
                 },
               },
             },
-          })
-        )
+          });
+
+          // Generate User ID for each child (asynchronously)
+          generateUserId(childResponse.id).catch((err) =>
+            console.error(`Error generating user ID for child ${childResponse.id}:`, err)
+          );
+        })
       );
     }
 
@@ -229,6 +238,7 @@ export const registerUser = async (req: Request, res: Response) => {
     return res.status(500).json({ message: "Internal Server Error", data: error?.message });
   }
 };
+
 
 export const updateUser = async (req: Request, res: Response) => {
   const {
@@ -912,3 +922,61 @@ export const statsUsers = async (req: Request, res: Response) => {
       .json({ message: "Internal Server Error", data: error });
   }
 };
+
+async function generateUserId(userData: any) {
+  const prefix = process.env.ID_PREFIX || 'WWM-HC'; 
+  const year = new Date().getFullYear();
+  const paddedId = userData.id.toString().padStart(4, '0'); 
+  const generatedUserId = `${prefix}-${year}000${paddedId}`;
+  const zkResponse = await saveUserToZTeco(userData)
+
+  return await updateUserAndSetUserId(userData.id, generatedUserId,zkResponse);
+}
+
+async function saveUserToZTeco(data:any){
+  const zkPayload = {
+    id: data.id.toString(),
+    department: data.department?.department_info?.sync_id ?? 0,
+    area: [HostArea],
+    hire_date: data.member_since
+      ? new Date(data.member_since).toISOString().split("T")[0]
+      : new Date().toISOString().split("T")[0],
+      first_name:data.first_name,
+    last_name:data.last_name,
+    gender: data.gender === "Male" ? "M" : data.gender === "Female" ? "F" : "S",
+    email:data.email,
+    mobile: data.primary_number,
+    nationality:data.nationality,
+    address:data.address,
+    app_status: 1,
+  };
+
+  console.table(zkPayload);
+  const zkTeco = new ZKTeco();
+  const zKTecoAuth = new ZKTecoAuth;
+ 
+  
+  const authResponse = await zKTecoAuth.userAuthentication();
+  if (!authResponse?.token) {
+    throw new Error("Failed to authenticate with ZKTeco");
+  }
+
+  const token = authResponse.token;
+
+  // Create user in ZKTeco
+  const zkResponse = await zkTeco.createUser(zkPayload, token);
+  
+  console.log("User successfully created in ZKTeco:", zkResponse);
+  return zkResponse;
+}
+
+async function updateUserAndSetUserId(id: number, generatedUserId: string,zkResponse: any ) {
+  return await prisma.user.update({
+    where: { id },
+    data: { 
+      member_id: generatedUserId,
+      is_sync:true,
+      sync_id:zkResponse.id
+     },
+  });
+}
