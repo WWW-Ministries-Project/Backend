@@ -1,6 +1,23 @@
 import { prisma } from "../../Models/context";
 
 export class CourseService {
+    async getAllUsers() {
+      return await prisma.user.findMany({
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          is_active: true,
+          user_info: {
+            select: {
+              first_name: true,
+              last_name: true,
+            },
+          },
+        },
+      });
+    }
+
     async createCourse(cohortId: number, data: any) {
       return await prisma.course.create({
         data: {
@@ -26,7 +43,20 @@ export class CourseService {
     async getCourseById(id: number) {
       return await prisma.course.findUnique({
         where: { id },
-        include: { cohort: true, enrollments: true },
+        include: {
+          cohort: {
+            include: {
+              program: true,
+            },
+          },
+          enrollments: true,
+        },
+      }).then((course) => {
+        if (!course) return null;
+        return {
+          ...course,
+          eligibility: course.cohort?.program?.eligibility || null,
+        };
       });
     }
   

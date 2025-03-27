@@ -34,6 +34,7 @@ programRouter.get("/cohort-courses/:id", courseController.getAllCourses);
 programRouter.get("/courses/:id", courseController.getCourseById);
 programRouter.put("/courses/:id", courseController.updateCourse);
 programRouter.delete("/courses/:id", courseController.deleteCourse);
+programRouter.get("/users", courseController.getAllUsers)
 
 
 //enrollment endpoint

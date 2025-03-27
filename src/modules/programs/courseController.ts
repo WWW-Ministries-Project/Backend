@@ -1,8 +1,18 @@
 import { Request, Response } from "express";
 import { CourseService} from "./courseService";
+import { prisma } from "../../Models/context";
 
 const courseService = new CourseService();
 export class CourseController {
+    async getAllUsers(req: Request, res: Response) {
+        try{
+          const users =  await courseService.getAllUsers()
+          return res.status(200).json({ message: "all users", data: users });
+        }
+        catch(error:any){
+          throw new Error(`Error fetching users ${error.message}`)
+        }
+    }
     
     async createCourse(req: Request, res: Response) {
         try {
