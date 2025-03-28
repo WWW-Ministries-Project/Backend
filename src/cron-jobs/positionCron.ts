@@ -16,7 +16,6 @@ export const syncPositions = async () => {
 
   isRunning = true;
   try {
-    console.log("[INFO] Fetching out-of-sync positions...");
 
     const positions = await prisma.position.findMany({
         where: {

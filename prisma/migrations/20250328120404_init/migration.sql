@@ -15,6 +15,9 @@ CREATE TABLE `user` (
     `access_level_id` INTEGER NULL,
     `membership_type` ENUM('MEMBER', 'VISITOR') NULL,
     `parent_id` INTEGER NULL,
+    `status` ENUM('UNCONFIRMED', 'CONFIRMED') NULL,
+    `is_sync` BOOLEAN NULL DEFAULT false,
+    `sync_id` INTEGER NULL,
 
     UNIQUE INDEX `user_email_key`(`email`),
     INDEX `user_access_level_id_fkey`(`access_level_id`),
@@ -34,6 +37,8 @@ CREATE TABLE `user_info` (
     `email` VARCHAR(191) NULL,
     `address` VARCHAR(191) NULL,
     `country` VARCHAR(191) NULL,
+    `city` VARCHAR(191) NULL,
+    `state_region` VARCHAR(191) NULL,
     `occupation` VARCHAR(191) NULL,
     `company` VARCHAR(191) NULL,
     `member_since` DATETIME(3) NULL,
@@ -85,6 +90,8 @@ CREATE TABLE `department` (
     `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     `updated_by` INTEGER NULL,
     `updated_at` DATETIME(3) NULL,
+    `is_sync` BOOLEAN NULL DEFAULT false,
+    `sync_id` INTEGER NULL,
 
     INDEX `department_department_head_fkey`(`department_head`),
     PRIMARY KEY (`id`)
@@ -111,6 +118,8 @@ CREATE TABLE `position` (
     `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     `updated_by` INTEGER NULL,
     `updated_at` DATETIME(3) NULL,
+    `is_sync` BOOLEAN NULL DEFAULT false,
+    `sync_id` INTEGER NULL,
 
     INDEX `position_department_id_fkey`(`department_id`),
     PRIMARY KEY (`id`)
@@ -299,6 +308,14 @@ CREATE TABLE `program` (
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 -- CreateTable
+CREATE TABLE `program_prerequisites` (
+    `programId` INTEGER NOT NULL,
+    `prerequisiteId` INTEGER NOT NULL,
+
+    PRIMARY KEY (`programId`, `prerequisiteId`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
 CREATE TABLE `topic` (
     `id` INTEGER NOT NULL AUTO_INCREMENT,
     `name` VARCHAR(191) NOT NULL,
@@ -332,6 +349,9 @@ CREATE TABLE `course` (
     `enrolled` INTEGER NOT NULL DEFAULT 0,
     `schedule` VARCHAR(191) NOT NULL,
     `cohortId` INTEGER NOT NULL,
+    `classFormat` ENUM('In_Person', 'Online', 'Hybrid') NULL,
+    `location` VARCHAR(191) NULL,
+    `meetingLink` VARCHAR(191) NULL,
     `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     `updatedAt` DATETIME(3) NOT NULL,
 
@@ -420,6 +440,12 @@ ALTER TABLE `request_approvals` ADD CONSTRAINT `request_approvals_hod_user_id_fk
 
 -- AddForeignKey
 ALTER TABLE `request_approvals` ADD CONSTRAINT `request_approvals_ps_user_id_fkey` FOREIGN KEY (`ps_user_id`) REFERENCES `user`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `program_prerequisites` ADD CONSTRAINT `program_prerequisites_programId_fkey` FOREIGN KEY (`programId`) REFERENCES `program`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `program_prerequisites` ADD CONSTRAINT `program_prerequisites_prerequisiteId_fkey` FOREIGN KEY (`prerequisiteId`) REFERENCES `program`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE `topic` ADD CONSTRAINT `topic_programId_fkey` FOREIGN KEY (`programId`) REFERENCES `program`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;

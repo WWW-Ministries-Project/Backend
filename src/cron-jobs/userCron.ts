@@ -16,7 +16,6 @@ export async function startUserSyncing() {
   isRunning = true;
 
   try {
-    console.log("[INFO] Fetching out-of-sync departments...");
 
     // Get all users that need syncing
     const users = await prisma.user.findMany({
@@ -29,7 +28,7 @@ export async function startUserSyncing() {
     });
 
     if (users.length === 0) {
-      console.log("[INFO] No user need syncing.");
+ 
       return;
     }
     console.log(`[INFO] Found ${users.length} users to sync.`);
