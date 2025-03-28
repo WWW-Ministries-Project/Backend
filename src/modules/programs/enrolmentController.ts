@@ -5,13 +5,36 @@ const enrollment = new EnrollmentService();
 
 export class EnrollmentController {
 async enrollUser(req: Request, res: Response) {
-        try {
-          const newCourse= await enrollment.enrollUser(req.body.courseId,req.body.userId);
-          return res.status(201).json({ message: "User Enrolled Sucessfully", data: newCourse });
-        } catch (error:any) {
-          return res.status(500).json({ message: "Error enrolling User", error: error.message });
-        }
-      }
+  try {
+    const { firstName, lastName, email, phone, courseId, isMember, userId } = req.body;
+
+    // Validate required fields
+    if (!firstName || !lastName || !email || !phone || !courseId) {
+      return res.status(400).json({ message: "Missing required fields firstName, lastName, email, phone, courseId" });
+    }
+
+    const newEnrollment = await enrollment.enrollUser({
+      firstName,
+      lastName,
+      email,
+      phone,
+      courseId,
+      isMember,
+      userId: isMember ? userId : undefined, // Only pass userId if the user is a member
+    });
+
+    return res.status(201).json({
+      message: "User Enrolled Successfully",
+      data: newEnrollment,
+    });
+
+  } catch (error: any) {
+    return res.status(500).json({
+      message: "Error enrolling user",
+      error: error.message,
+    });
+  }
+};
 
       async getEnrollmentByCourse(req: Request, res: Response) {
         try {
