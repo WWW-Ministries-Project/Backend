@@ -435,8 +435,8 @@ enum marital_status {
 }
 
 enum membership_type {
-  MEMBER
-  VISITOR
+  ONLINE
+  INPERSON
 }
 
 enum event_type {
