@@ -1,6 +1,8 @@
 import * as dotenv from "dotenv";
 const axios = require("axios");
 
+dotenv.config();
+
 interface DepatmentPayload {
   dept_name: string;
   dept_code: string;

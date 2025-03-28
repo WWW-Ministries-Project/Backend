@@ -251,7 +251,7 @@ export const registerUser = async (req: Request, res: Response) => {
 
 export const updateUser = async (req: Request, res: Response) => {
   try {
-    const { id } = req.params; 
+    const { id } = req.params; // Assuming user ID is passed as a URL param
     const {
       personal_info: {
         title,
@@ -270,11 +270,9 @@ export const updateUser = async (req: Request, res: Response) => {
         phone: { country_code, number: primary_number } = {},
       } = {},
       work_info: {
-        employment_status,
         work_name,
         work_industry,
         work_position,
-        school_name,
       } = {},
       emergency_contact: {
         name: emergency_contact_name,
@@ -283,7 +281,6 @@ export const updateUser = async (req: Request, res: Response) => {
       } = {},
       church_info: { membership_type } = {},
       status,
-      department_id,
       position_id,
       is_user,
     } = req.body;
@@ -309,7 +306,6 @@ export const updateUser = async (req: Request, res: Response) => {
         position_id: position_id || userExists?.position_id,
         is_user,
         status,
-        department_id: department_id ? Number(department_id) : department_id,
         membership_type: membership_type || userExists?.membership_type,
         user_info: {
           update: {
@@ -328,11 +324,9 @@ export const updateUser = async (req: Request, res: Response) => {
             photo: photo || userExists?.user_info?.photo,
             work_info: {
               update: {
-                employment_status: employment_status || userExists?.user_info?.work_info?.employment_status,
                 name_of_institution: work_name || userExists?.user_info?.work_info?.name_of_institution,
                 industry: work_industry || userExists?.user_info?.work_info?.industry,
                 position: work_position || userExists?.user_info?.work_info?.position,
-                school_name: school_name || userExists?.user_info?.work_info?.school_name,
               },
             },
             emergency_contact: {
@@ -919,7 +913,7 @@ async function generateUserId(userData: any) {
 async function saveUserToZTeco(data:any){
   const zkPayload = {
     id: data.id.toString(),
-    department: data.department?.department_info?.sync_id ?? 0,
+    department: data.department?.department_info?.sync_id ?? 1,
     area: [HostArea],
     hire_date: data.member_since
       ? new Date(data.member_since).toISOString().split("T")[0]

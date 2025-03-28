@@ -1,9 +1,10 @@
 import * as dotenv from "dotenv";
 const axios = require("axios");
+dotenv.config();
 
 const host: any = process.env.ZKtecoHost;
-const zkUser: any = process.env.ZKtecoUser;
-const zkPassword: any = process.env.ZKtecoPassword;
+const zkUser: any = process.env.ZKtecoUser || "clementk";
+const zkPassword: any = process.env.ZKtecoPassword || "P@$$W0rd1";
 
 
 export class ZKTecoAuth {
@@ -17,6 +18,7 @@ userAuthentication = async function postAuth() {
         username: zkUser,
         password: zkPassword,
       };
+      console.log(payload)
 
       const response = await axios.post(url, payload, {
         headers: {

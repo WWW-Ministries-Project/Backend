@@ -1,5 +1,6 @@
 import * as dotenv from "dotenv";
 const axios = require("axios");
+dotenv.config();
 
 interface UserPayload {
   id: string;
@@ -31,7 +32,7 @@ export class ZKTeco {
       emp_code: payload.id.toString(),
       ...payload,
     };
-    console.log(requestBody);
+    console.log(url)
     try {
       const response = await axios.post(url, requestBody, {
         headers: {
@@ -47,7 +48,7 @@ export class ZKTeco {
         "Error creating employee:",
         error.response?.data || error.message,
       );
-      return null; // Return a fallback value instead of undefined
+      return null;
     }
   };
 

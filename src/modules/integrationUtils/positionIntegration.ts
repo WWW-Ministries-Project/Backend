@@ -1,5 +1,6 @@
 import * as dotenv from "dotenv";
 const axios = require("axios");
+dotenv.config();
 
 interface PositionPayload {
   position_code: string;
