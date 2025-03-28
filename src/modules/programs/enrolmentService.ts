@@ -38,7 +38,7 @@ export class EnrollmentService {
   }
 
   // Enroll the user/non-user and update enrolled count in a transaction
-  return await prisma.$transaction([
+  const [enrollment] = await prisma.$transaction([
     prisma.enrollment.create({
       data: {
         userId,
@@ -54,6 +54,7 @@ export class EnrollmentService {
       data: { enrolled: { increment: 1 } },
     }),
   ]);
+  return enrollment;
 }
 
   
