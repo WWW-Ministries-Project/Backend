@@ -14,11 +14,14 @@ export class ProgramService {
     const foundIds = existingPrerequisites.map(p => p.id);
     
     // Find missing prerequisites
-    const missingPrerequisites = data.prerequisites.filter((id: number) => !foundIds.includes(id));
+    if (data.prerequisites){
+      const missingPrerequisites = data.prerequisites.filter((id: number) => !foundIds.includes(id));
     
-    if (missingPrerequisites.length > 0) {
-      throw new Error(`Missing prerequisites: ${missingPrerequisites.join(", ")}`);
+      if (missingPrerequisites.length > 0) {
+        throw new Error(`Missing prerequisites: ${missingPrerequisites.join(", ")}`);
+      }
     }
+    
     const createdProgram =  await prisma.program.create({
       data: {
         title: data.title,

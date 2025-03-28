@@ -2,41 +2,61 @@ import { prisma } from "../../Models/context";
 
 
 export class EnrollmentService {
-    async enrollUser(courseId: number, userId: number) {
-      // Check if user is already enrolled
-      const existingEnrollment = await prisma.enrollment.findUnique({
-        where: { userId_courseId: { userId, courseId } },
-      });
-  
-      if (existingEnrollment) {
-        throw new Error("User is already enrolled in this course.");
-      }
-  
-      // Get the course to check capacity
-      const course = await prisma.course.findUnique({
-        where: { id: courseId },
-      });
-  
-      if (!course) {
-        throw new Error("Course not found.");
-      }
-  
-      if (course.enrolled >= course.capacity) {
-        throw new Error("Course is full.");
-      }
-  
-      // Enroll user and update enrolled count
-      const enrollment = await prisma.enrollment.create({
-        data: { userId, courseId },
-      });
-  
-      await prisma.course.update({
-        where: { id: courseId },
-        data: { enrolled: course.enrolled + 1 },
-      });
-  
-      return enrollment;
-    }
+  async enrollUser(payload: {
+    firstName: string;
+    lastName: string;
+    email: string;
+    phone: string;
+    courseId: number;
+    isMember: boolean;
+    userId?: number;
+  }) {
+  const { firstName, lastName, email, phone, courseId, userId } = payload;
+
+  const course = await prisma.course.findUnique({
+    where: { id: courseId },
+    select: { enrolled: true, capacity: true },
+  });
+
+  if (!course) {
+    throw new Error("Course not found.");
+  }
+
+  if (course.enrolled >= course.capacity) {
+    throw new Error("Course is full.");
+  }
+
+  // Check for duplicate enrollment
+  const existingEnrollment = await prisma.enrollment.findFirst({
+    where: userId
+      ? { userId, courseId } // Check by userId for registered users
+      : { email, courseId }, // Check by email for non-users
+  });
+
+  if (existingEnrollment) {
+    throw new Error("User is already enrolled in this course.");
+  }
+
+  // Enroll the user/non-user and update enrolled count in a transaction
+  const [enrollment] = await prisma.$transaction([
+    prisma.enrollment.create({
+      data: {
+        userId,
+        courseId,
+        firstName,
+        lastName,
+        email,
+        phone,
+      },
+    }),
+    prisma.course.update({
+      where: { id: courseId },
+      data: { enrolled: { increment: 1 } },
+    }),
+  ]);
+  return enrollment;
+}
+
   
     async getEnrollmentsByCourse(courseId: number) {
       return await prisma.enrollment.findMany({

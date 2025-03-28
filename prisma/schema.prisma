@@ -364,14 +364,19 @@ model course {
 }
 
 model enrollment {
-  id        Int      @id @default(autoincrement())
-  userId    Int
+  id         Int      @id @default(autoincrement())
+  userId     Int?     // Nullable for non-users
   courseId   Int
-  user      user     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  course   course    @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  firstName  String
+  lastName   String
+  email      String
+  phone      String
+  user       user?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course     course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
   enrolledAt DateTime @default(now())
 
-  @@unique([userId, courseId])
+  @@unique([userId, courseId]) 
+  @@unique([email, courseId])  
 }
 
 enum Eligibility {
