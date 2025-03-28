@@ -9,10 +9,13 @@ import {
   hashPassword,
   confirmTemplate,
 } from "../../utils";
+import { ZKTeco } from "../integrationUtils/userIntegration";
+import { ZKTecoAuth } from "../integrationUtils/authenticationIntegration";
 
 dotenv.config();
 
 const JWT_SECRET: any = process.env.JWT_SECRET;
+const HostArea: number = Number(process.env.AREA) || 2;
 
 export const landingPage = async (req: Request, res: Response) => {
   res.send(
@@ -30,6 +33,8 @@ const selectQuery = {
   is_active: true,
   position_id: true,
   access_level_id: true,
+  member_id: true,
+  status: true,
   user_info: {
     select: {
       first_name: true,
@@ -84,250 +89,101 @@ const selectQuery = {
 export const registerUser = async (req: Request, res: Response) => {
   try {
     const {
-      title,
-      date_of_birth,
-      gender,
-      country_code,
-      primary_number,
-      other_number,
-      email,
-      address,
-      country,
-      occupation,
-      company,
-      member_since,
-      photo,
-      is_user,
+      personal_info: {
+        title,
+        first_name,
+        other_name,
+        last_name,
+        date_of_birth,
+        gender,
+        marital_status,
+        nationality,
+        has_children,
+      } = {}, // Default to an empty object to prevent errors
+
+      picture = {}, // Default to an empty object
+
+      contact_info: {
+        email,
+        resident_country,
+        phone: { country_code, number: primary_number } = {}, // Handle nested phone object
+      } = {},
+
+      work_info: {
+        employment_status,
+        work_name,
+        work_industry,
+        work_position,
+        school_name,
+      } = {},
+
+      emergency_contact: {
+        name: emergency_contact_name,
+        relation: emergency_contact_relation,
+        phone: { country_code: emergency_country_code, number: emergency_phone_number } = {},
+      } = {},
+
+      church_info: { membership_type } = {},
+
+      children = [],
+      status,
       department_id,
       position_id,
       password,
-      access_level_id,
-      membership_type,
-      first_name,
-      last_name,
-      other_name,
-      marital_status,
-      nationality,
-      emergency_contact_name,
-      emergency_contact_relation,
-      emergency_contact_phone_number,
-      work_name,
-      work_industry,
-      work_position,
+      is_user,
     } = req.body;
-    const existingUser = await prisma.user.findMany({
-      where: {
-        email,
-      },
-    });
-    if (existingUser.length >= 1) {
-      res.status(409).json({ message: "Email already exists", data: null });
-    } else {
-      const response = await prisma.user.create({
-        data: {
-          name: toCapitalizeEachWord(
-            `${first_name} ${other_name || ""} ${last_name}`
-          ),
-          email,
-          position_id,
-          password: is_user ? await hashPassword("123456") : undefined,
-          is_user,
-          membership_type,
-          access_level_id,
-          department_id,
-          department: department_id
-            ? {
-                create: {
-                  department_id,
-                },
-              }
-            : undefined,
-          user_info: {
-            create: {
-              title,
-              first_name,
-              last_name,
-              other_name,
-              date_of_birth: date_of_birth ? new Date(date_of_birth) : null,
-              gender,
-              country_code,
-              primary_number,
-              other_number,
-              email,
-              address,
-              country,
-              company: toCapitalizeEachWord(company),
-              member_since: member_since ? new Date(member_since) : null,
-              occupation,
-              photo,
-              marital_status,
-              nationality,
-              emergency_contact: {
-                create: {
-                  name: emergency_contact_name,
-                  relation: emergency_contact_relation,
-                  phone_number: emergency_contact_phone_number,
-                },
-              },
-              work_info: {
-                create: {
-                  name_of_institution: work_name,
-                  industry: work_industry,
-                  position: work_position,
-                },
-              },
-            },
-          },
-        },
-        select: selectQuery,
-      });
-      const mailDet = {
-        first_name,
-        email,
-        password: password || "123456",
-        frontend_url: `${process.env.Frontend_URL}/login`,
-      };
 
-      if (is_user) {
-        sendEmail(confirmTemplate(mailDet), email, "Reset Password");
-      }
-      res
-        .status(200)
-        .json({ message: "User Created Succesfully", data: response });
-    }
-  } catch (error: any) {
-    console.log(error);
-    return res
-      .status(500)
-      .json({ message: "Internal Server Error", data: error?.message });
-  }
-};
-export const updateUser = async (req: Request, res: Response) => {
-  const {
-    id,
-    title,
-    date_of_birth,
-    gender,
-    country_code,
-    primary_number,
-    other_number,
-    email,
-    address,
-    country,
-    occupation,
-    company,
-    member_since,
-    photo,
-    is_user,
-    department_id,
-    position_id,
-    password,
-    access_level_id,
-    membership_type,
-    first_name,
-    last_name,
-    other_name,
-    marital_status,
-    nationality,
-    emergency_contact_name,
-    emergency_contact_relation,
-    emergency_contact_phone_number,
-    work_name,
-    work_industry,
-    work_position,
-  } = req.body;
-  try {
-    const existance = await prisma.user.findUnique({
-      where: {
-        id: Number(id),
-      },
-      select: selectQuery,
-    });
-
-    if (!existance) {
-      return res.status(400).json({ message: "No user found", data: null });
+    // Generate an email if not provided
+    let userEmail = email?.trim();
+    if (!userEmail) {
+      const birthYear = date_of_birth ? new Date(date_of_birth).getFullYear() : "";
+      userEmail = `${first_name.toLowerCase()}${last_name.toLowerCase()}${birthYear}@temp.com`;
     }
 
-    const response = await prisma.user.update({
-      where: {
-        id,
-      },
+    // Hash password for users
+    const hashedPassword = is_user ? await hashPassword(password || "123456") : undefined;
+    const emergency_phone = `${emergency_country_code}${emergency_phone_number}`
+
+    // Create the main user
+    const response = await prisma.user.create({
       data: {
-        name: `${first_name ? first_name : existance?.user_info?.first_name} ${
-          other_name ? other_name : existance?.user_info?.other_name
-        } ${last_name ? last_name : existance?.user_info?.last_name}`,
-        email: email ? email : existance?.email,
-        position_id: position_id ? position_id : existance?.position_id,
-        password: is_user ? await hashPassword("123456") : undefined,
+        name: toCapitalizeEachWord(`${first_name} ${other_name || ""} ${last_name}`.trim()),
+        email: userEmail,
+        password: hashedPassword,
         is_user,
-        membership_type: membership_type
-          ? membership_type
-          : existance?.membership_type,
-        access_level_id: access_level_id
-          ? access_level_id
-          : existance?.access_level_id,
-        updated_at: new Date(),
-        department_id: Number(department_id),
+        status,
+        department_id,
+        position_id,
+        membership_type,
         user_info: {
-          update: {
-            title: title ? title : existance?.user_info?.title,
-            first_name: first_name
-              ? first_name
-              : existance?.user_info?.first_name,
-            last_name: last_name ? last_name : existance?.user_info?.last_name,
-            other_name: other_name
-              ? other_name
-              : existance?.user_info?.other_name,
-            date_of_birth: date_of_birth
-              ? new Date(date_of_birth)
-              : existance?.user_info?.date_of_birth,
-            gender: gender ? gender : existance?.user_info?.gender,
-            country_code: country_code
-              ? country_code
-              : existance?.user_info?.country_code,
-            primary_number: primary_number
-              ? primary_number
-              : existance?.user_info?.primary_number,
+          create: {
+            title,
+            first_name,
+            last_name,
+            other_name,
+            date_of_birth: date_of_birth ? new Date(date_of_birth) : null,
+            gender,
+            marital_status,
+            nationality,
+            photo: picture?.src || "",
+            primary_number,
+            country_code,
             email,
-            address: address ? address : existance?.user_info?.address,
-            country: country ? country : existance?.user_info?.country,
-
-            company: company ? company : existance?.user_info?.company,
-            member_since: member_since ? new Date(member_since) : null,
-            occupation: occupation
-              ? occupation
-              : existance?.user_info?.occupation,
-            photo,
-            marital_status: marital_status
-              ? marital_status
-              : existance?.user_info?.marital_status,
-            nationality: nationality
-              ? nationality
-              : existance?.user_info?.nationality,
+            country: resident_country,
             emergency_contact: {
-              update: {
-                name: emergency_contact_name
-                  ? emergency_contact_relation
-                  : existance?.user_info?.emergency_contact?.name,
-                relation: emergency_contact_relation
-                  ? emergency_contact_relation
-                  : existance?.user_info?.emergency_contact?.relation,
-                phone_number: emergency_contact_phone_number
-                  ? emergency_contact_phone_number
-                  : existance?.user_info?.emergency_contact?.phone_number,
+              create: {
+                name: emergency_contact_name,
+                relation: emergency_contact_relation,
+                phone_number: emergency_phone,
               },
             },
             work_info: {
-              update: {
-                name_of_institution: work_name
-                  ? work_name
-                  : existance?.user_info?.work_info?.name_of_institution,
-                industry: work_industry
-                  ? work_industry
-                  : existance?.user_info?.work_info?.industry,
-                position: work_position
-                  ? work_position
-                  : existance?.user_info?.work_info?.position,
+              create: {
+                employment_status,
+                name_of_institution: work_name,
+                industry: work_industry,
+                position: work_position,
+                school_name,
               },
             },
           },
@@ -335,17 +191,166 @@ export const updateUser = async (req: Request, res: Response) => {
       },
       select: selectQuery,
     });
-    res
-      .status(200)
-      .json({ message: "User Updated Succesfully", data: response });
+
+    // Generate User ID (async)
+    generateUserId(response).catch((err) => console.error("Error generating user ID:", err));
+
+    // Handle children creation if `has_children` is true
+    if (has_children && children.length > 0) {
+      await Promise.all(
+        children.map(async (child: any) => {
+          const childResponse = await prisma.user.create({
+            data: {
+              name: toCapitalizeEachWord(`${child.first_name} ${child.other_name || ""} ${child.last_name}`.trim()),
+              email: `${child.first_name.toLowerCase()}_${child.last_name.toLowerCase()}_${Date.now()}@temp.com`,
+              is_user: false,
+              parent_id: response.id,
+              user_info: {
+                create: {
+                  first_name: child.first_name,
+                  last_name: child.last_name,
+                  other_name: child.other_name || null,
+                  date_of_birth: new Date(child.date_of_birth),
+                  gender: child.gender,
+                  marital_status: child.marital_status,
+                  nationality: child.nationality,
+                },
+              },
+            },
+          });
+
+          // Generate User ID for each child
+          generateUserId(childResponse).catch((err) =>
+            console.error(`Error generating user ID for child ${childResponse.id}:`, err)
+          );
+        })
+      );
+    }
+
+    // Send confirmation email if user
+    if (is_user) {
+      sendEmail(
+        confirmTemplate({
+          first_name,
+          email: userEmail,
+          password: password || "123456",
+          frontend_url: `${process.env.Frontend_URL}/login`,
+        }),
+        userEmail,
+        "Reset Password"
+      );
+    }
+
+    return res.status(201).json({ message: "User Created Successfully", data: response });
   } catch (error: any) {
-    return res
-      .status(500)
-      .json({ message: "Internal Server Error", data: error?.message });
+    console.error(error);
+    return res.status(500).json({ message: "Internal Server Error", data: error?.message });
   }
 };
+
+
+export const updateUser = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params; // Assuming user ID is passed as a URL param
+    const {
+      personal_info: {
+        title,
+        first_name,
+        last_name,
+        other_name,
+        date_of_birth,
+        gender,
+        marital_status,
+        nationality,
+      } = {},
+      picture: { src: photo } = {},
+      contact_info: {
+        email,
+        resident_country: country,
+        phone: { country_code, number: primary_number } = {},
+      } = {},
+      work_info: {
+        work_name,
+        work_industry,
+        work_position,
+      } = {},
+      emergency_contact: {
+        name: emergency_contact_name,
+        relation: emergency_contact_relation,
+        phone: { country_code: emergency_country_code, number: emergency_phone_number } = {},
+      } = {},
+      church_info: { membership_type } = {},
+      status,
+      position_id,
+      is_user,
+    } = req.body;
+
+    const userExists = await prisma.user.findUnique({
+      where: { id: Number(id) },
+      select: selectQuery,
+    });
+
+    if (!userExists) {
+      return res.status(400).json({ message: "User not found", data: null });
+    }
+
+    const emergency_phone = emergency_country_code && emergency_phone_number
+      ? `${emergency_country_code}${emergency_phone_number}`
+      : userExists?.user_info?.emergency_contact?.phone_number;
+
+    const updatedUser = await prisma.user.update({
+      where: { id: Number(id) },
+      data: {
+        name: `${first_name || userExists?.user_info?.first_name} ${other_name || userExists?.user_info?.other_name || ""} ${last_name || userExists?.user_info?.last_name}`.trim(),
+        email: email || userExists?.email,
+        position_id: position_id || userExists?.position_id,
+        is_user,
+        status,
+        membership_type: membership_type || userExists?.membership_type,
+        user_info: {
+          update: {
+            title: title || userExists?.user_info?.title,
+            first_name: first_name || userExists?.user_info?.first_name,
+            last_name: last_name || userExists?.user_info?.last_name,
+            other_name: other_name || userExists?.user_info?.other_name,
+            date_of_birth: date_of_birth ? new Date(date_of_birth) : userExists?.user_info?.date_of_birth,
+            gender: gender || userExists?.user_info?.gender,
+            marital_status: marital_status || userExists?.user_info?.marital_status,
+            nationality: nationality || userExists?.user_info?.nationality,
+            country_code: country_code || userExists?.user_info?.country_code,
+            primary_number: primary_number || userExists?.user_info?.primary_number,
+            email,
+            country: country || userExists?.user_info?.country,
+            photo: photo || userExists?.user_info?.photo,
+            work_info: {
+              update: {
+                name_of_institution: work_name || userExists?.user_info?.work_info?.name_of_institution,
+                industry: work_industry || userExists?.user_info?.work_info?.industry,
+                position: work_position || userExists?.user_info?.work_info?.position,
+              },
+            },
+            emergency_contact: {
+              update: {
+                name: emergency_contact_name || userExists?.user_info?.emergency_contact?.name,
+                relation: emergency_contact_relation || userExists?.user_info?.emergency_contact?.relation,
+                phone_number: emergency_phone,
+              },
+            },
+          },
+        },
+      },
+      select: selectQuery,
+    });
+
+    return res.status(200).json({ message: "User updated successfully", data: updatedUser });
+  } catch (error: any) {
+    console.error(error);
+    return res.status(500).json({ message: "Internal Server Error", data: error?.message });
+  }
+};
+
 export const updateUserSatus = async (req: Request, res: Response) => {
-  const { id, is_active } = req.body;
+  const { id, is_active, status } = req.body;
   try {
     const response = await prisma.user.update({
       where: {
@@ -353,6 +358,7 @@ export const updateUserSatus = async (req: Request, res: Response) => {
       },
       data: {
         is_active,
+        status,
       },
       select: selectQuery,
     });
@@ -638,6 +644,7 @@ export const ListUsers = async (req: Request, res: Response) => {
         is_user: true,
         department_id: true,
         membership_type: true,
+        status: true,
         user_info: {
           select: {
             country_code: true,
@@ -704,6 +711,7 @@ export const getUser = async (req: Request, res: Response) => {
         is_active: true,
         position_id: true,
         access_level_id: true,
+        status: true,
         user_info: {
           select: {
             first_name: true,
@@ -881,3 +889,72 @@ export const statsUsers = async (req: Request, res: Response) => {
       .json({ message: "Internal Server Error", data: error });
   }
 };
+
+async function generateUserId(userData: any) {
+  let sync_id;
+  let is_sync = false;
+  const prefix = process.env.ID_PREFIX || 'WWM-HC'; 
+  const year = new Date().getFullYear();
+  const paddedId = userData.id.toString().padStart(4, '0'); 
+  const generatedUserId = `${prefix}-${year}000${paddedId}`;
+  try {
+    const zkResponse = await saveUserToZTeco(userData)
+    sync_id = zkResponse.sync_id
+    is_sync = true
+  }catch(error:any){
+    sync_id = null
+    is_sync = false
+  }
+  
+
+  return await updateUserAndSetUserId(userData.id, generatedUserId,sync_id,is_sync);
+}
+
+async function saveUserToZTeco(data:any){
+  const zkPayload = {
+    id: data.id.toString(),
+    department: data.department?.department_info?.sync_id ?? 1,
+    area: [HostArea],
+    hire_date: data.member_since
+      ? new Date(data.member_since).toISOString().split("T")[0]
+      : new Date().toISOString().split("T")[0],
+      first_name:data.user_info.first_name,
+    last_name:data.user_info.last_name,
+    gender: data.user_info.gender === "Male" ? "M" : data.gender === "Female" ? "F" : "S",
+    email:data.email,
+    mobile: data.user_info.primary_number,
+    nationality:data.user_info.nationality,
+    address:data.user_info.address,
+    app_status: 1,
+  };
+
+  const zkTeco = new ZKTeco();
+  const zKTecoAuth = new ZKTecoAuth;
+  console.log(zkPayload)
+ 
+  
+  const authResponse = await zKTecoAuth.userAuthentication();
+  if (!authResponse?.token) {
+    throw new Error("Failed to authenticate with ZKTeco");
+  }
+
+  const token = authResponse.token;
+
+  // Create user in ZKTeco
+  const zkResponse = await zkTeco.createUser(zkPayload, token);
+  
+  console.log("User successfully created in ZKTeco:", zkResponse);
+  return zkResponse;
+}
+
+async function updateUserAndSetUserId(id: number, generatedUserId: string,sync_id: number
+  |null, is_sync:boolean) {
+  return await prisma.user.update({
+    where: { id },
+    data: { 
+      member_id: generatedUserId,
+      is_sync:is_sync,
+      sync_id:sync_id
+     },
+  });
+}

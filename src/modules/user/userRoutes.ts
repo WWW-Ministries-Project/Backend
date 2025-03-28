@@ -41,7 +41,6 @@ userRouter.post("/login", login);
 
 userRouter.post(
   "/register",
-  [protect, permissions.can_Manage_Members],
   registerUser
 );
 userRouter.post(
