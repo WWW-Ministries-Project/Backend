@@ -93,6 +93,7 @@ model user_work_info {
 enum status_type {
   UNCONFIRMED
   CONFIRMED
+  MEMBER
 }
 
 model user_emergency_contact {
