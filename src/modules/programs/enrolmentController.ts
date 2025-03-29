@@ -20,7 +20,7 @@ async enrollUser(req: Request, res: Response) {
       phone,
       courseId,
       isMember,
-      userId: isMember ? userId : undefined, // Only pass userId if the user is a member
+      userId
     });
 
     return res.status(201).json({
