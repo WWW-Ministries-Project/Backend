@@ -766,6 +766,7 @@ export const getUser = async (req: Request, res: Response) => {
         access: true,
         enrollments: {
           select: {
+            id: true,
             course: {
               select: {
                 id: true,
@@ -774,6 +775,7 @@ export const getUser = async (req: Request, res: Response) => {
                   select: {
                     id: true,
                     name: true,
+                    status: true,
                     program: {
                       select: {
                         id: true,
@@ -782,6 +784,18 @@ export const getUser = async (req: Request, res: Response) => {
                     },
                   },
                 },
+              },
+            },
+            progress: {
+              select: {
+                id: true,
+                topic: {
+                  select: {
+                    id: true,
+                    name: true,
+                  },
+                },
+                status: true,
               },
             },
           },
@@ -822,6 +836,7 @@ export const getUser = async (req: Request, res: Response) => {
     });
   }
 };
+
 export const statsUsers = async (req: Request, res: Response) => {
   try {
     interface Stats {

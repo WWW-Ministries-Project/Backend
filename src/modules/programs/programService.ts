@@ -2,7 +2,6 @@ import { prisma } from "../../Models/context";
 
 export class ProgramService {
   async createProgram(data: any) {
-    //check if the prerequisit program is there
     const existingPrerequisites = await prisma.program.findMany({
       where: {
         id: { in: data.prerequisites }, // Fetch all prerequisites that exist
@@ -77,29 +76,21 @@ export class ProgramService {
 
   async updateProgram(id: number, data: any) {
     return await prisma.$transaction(async (prisma) => {
-      // Step 1: Update the program details
       const updatedProgram = await prisma.program.update({
         where: { id },
         data: {
           title: data.title,
           description: data.description,
           eligibility: data.eligibility,
-          topics: {
-            deleteMany: {}, // Remove old topics
-            create: data.topics.map((topic: string) => ({ name: topic })),
-          },
         },
         include: { topics: true },
       });
   
-      // Step 2: Update prerequisites (if provided)
       if (data.prerequisites) {
-        // Delete old prerequisites
         await prisma.program_prerequisites.deleteMany({
           where: { programId: id },
         });
   
-        // Add new prerequisites
         if (data.prerequisites.length > 0) {
           await prisma.program_prerequisites.createMany({
             data: data.prerequisites.map((prerequisiteId: number) => ({
@@ -127,4 +118,57 @@ export class ProgramService {
       where: { id },
     });
   }
+
+  //create topic programId, name
+  async createTopic(programId:number, name:string) {
+    // Step 1: Create the new topic
+    const topic = await prisma.topic.create({
+      data: { name, programId },
+    });
+  
+    // Step 2: Find all enrolled students in this program
+    const enrollments = await prisma.enrollment.findMany({
+      where: {
+        course: {
+          cohort: {
+            programId,
+          },
+        },
+      },
+      select: { id: true },
+    });
+  
+    // Step 3: Create missing progress records
+    if (enrollments.length > 0) {
+      const progressEntries = enrollments.map((enrollment) => ({
+        enrollmentId: enrollment.id,
+        topicId: topic.id,
+        score: 0
+      }));
+  
+      await prisma.progress.createMany({ data: progressEntries });
+    }
+  
+    return topic;
+  };
+  
+  //update topic id, name
+  async updateTopic(id:number, name:string){
+    const updatedTopic = await prisma.topic.update({
+      where:{id},data:{name}
+    })
+    return updatedTopic
+  }
+  //delete topic
+  async deleteTopic(topicId: number) {
+    await prisma.$transaction([
+      prisma.progress.deleteMany({
+        where: { topicId },
+      }),
+      prisma.topic.delete({
+        where: { id: topicId }, // Then delete the topic
+      }),
+    ]);
+  };
+
 }
