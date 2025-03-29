@@ -345,10 +345,11 @@ model program_prerequisites {
 }
 
 model topic {
-  id        Int      @id @default(autoincrement())
+  id        Int       @id @default(autoincrement())
   name      String
   programId Int
-  program   program  @relation(fields: [programId], references: [id], onDelete: Cascade)
+  program   program   @relation(fields: [programId], references: [id], onDelete: Cascade)
+  progress  progress[]
 }
 
 model cohort {
@@ -394,6 +395,7 @@ model enrollment {
   user       user?    @relation(fields: [userId], references: [id], onDelete: Cascade)
   course     course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
   enrolledAt DateTime @default(now())
+  progress   progress[]
 
   @@unique([userId, courseId]) 
   @@unique([email, courseId])  
@@ -409,6 +411,26 @@ enum classFormat {
   In_Person 
   Online 
   Hybrid
+}
+
+model progress {
+  id          Int       @id @default(autoincrement())
+  enrollmentId Int      
+  topicId     Int      
+  score       Int      @default(0) // Score for the topic
+  status      progress_status @default(PENDING)
+  completedAt DateTime?  
+
+  enrollment  enrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  topic       topic      @relation(fields: [topicId], references: [id], onDelete: Cascade)
+
+  @@unique([enrollmentId, topicId])
+}
+
+enum progress_status {
+  FAIL
+  PASS
+  PENDING
 }
 
 enum RequestApprovalStatus {

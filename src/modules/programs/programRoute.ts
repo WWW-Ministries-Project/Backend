@@ -42,5 +42,11 @@ programRouter.post("/enroll", enrollmentController.enrollUser);
 programRouter.post("/unenroll", enrollmentController.unEnrollUser);
 programRouter.get("/course-enrollment/:id", enrollmentController.getEnrollmentByCourse)
 programRouter.get("/user-enrollment/:id", enrollmentController.getEnrollmentByUser)
+programRouter.get("/progress/:id", enrollmentController.getProgressReport)
+
+//topics enpoint
+programRouter.post("/topic", programController.createTopic)
+programRouter.put("/topic", programController.updateTopic)
+programRouter.delete("/topic/:id", programController.deleteTopic)
 
 export default programRouter;
