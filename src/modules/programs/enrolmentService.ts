@@ -125,13 +125,7 @@ export class EnrollmentService {
                 include: {
                   program: {
                     include: {
-                      topics: {
-                        include: {
-                          progress: {
-                            where: { enrollmentId },
-                          },
-                        },
-                      },
+                      topics: true, // Do NOT include progress here
                     },
                   },
                 },
@@ -140,7 +134,37 @@ export class EnrollmentService {
           },
         },
       });
+      
+      // Fetch progress separately and map it to topics
+      const progressData = await prisma.progress.findMany({
+        where: { enrollmentId },
+        select: {
+          id:true,
+          topicId: true,
+          score: true,
+          status: true,
+          completedAt: true,
+        },
+      });
+      
+      // Map progress data to topics
+      if (enrollmentData?.course?.cohort?.program?.topics) {
+        const progressMap = Object.fromEntries(
+          progressData.map((p) => [p.topicId, p])
+        );
+      
+        enrollmentData.course.cohort.program.topics = enrollmentData.course.cohort.program.topics.map(
+          (topic) => ({
+            ...topic,
+            score: progressMap[topic.id]?.score ?? null,
+            progressId: progressMap[topic.id]?.id,
+            status: progressMap[topic.id]?.status ?? "PENDING",
+            completedAt: progressMap[topic.id]?.completedAt ?? null,
+          })
+        );
+      }
+      
       return enrollmentData;
-    }
     
   }
+}
