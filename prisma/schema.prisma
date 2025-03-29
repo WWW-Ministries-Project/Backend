@@ -41,6 +41,7 @@ model user {
   status                status_type?
   is_sync               Boolean?          @default(false)
   sync_id               Int?
+  mode                  classFormat?
 
   @@index([access_level_id], map: "user_access_level_id_fkey")
   @@index([position_id], map: "user_position_id_fkey")
@@ -435,8 +436,8 @@ enum marital_status {
 }
 
 enum membership_type {
-  ONLINE
-  INPERSON
+  MEMBER
+  VISITOR
 }
 
 enum event_type {
