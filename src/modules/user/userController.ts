@@ -940,7 +940,7 @@ async function generateUserId(userData: any) {
   const prefix = process.env.ID_PREFIX || 'WWM-HC'; 
   const year = new Date().getFullYear();
   const paddedId = userData.id.toString().padStart(4, '0'); 
-  const generatedUserId = `${prefix}-${year}000${paddedId}`;
+  const generatedUserId = `${prefix}-${year}${paddedId}`;
   // try {
   //   const zkResponse = await saveUserToZTeco(userData)
   //   sync_id = zkResponse.sync_id
