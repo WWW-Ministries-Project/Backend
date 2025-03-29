@@ -771,6 +771,7 @@ export const getUser = async (req: Request, res: Response) => {
               select: {
                 id: true,
                 name: true,
+                instructor: true,
                 cohort: {
                   select: {
                     id: true,
