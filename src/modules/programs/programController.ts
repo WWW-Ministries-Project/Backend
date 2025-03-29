@@ -56,4 +56,33 @@ export class ProgramController {
           return res.status(500).json({ message: "Error deleting program", error: error.message });
         }
       }
+
+      async createTopic(req: Request, res: Response) {
+        try {
+          const { programId, name } = req.body;
+          await programService.createTopic(programId, name);
+          return res.status(200).json({ message: "Topic created successfully" });
+        } catch (error:any) {
+          return res.status(500).json({ message: "Error creating program", error: error.message });
+        }
+      }
+      async updateTopic(req: Request, res: Response) {
+        try {
+          const { id } = req.params;
+          await programService.updateTopic(Number(id), req.body.name);
+          return res.status(200).json({ message: "Topic update successfully" });
+        } catch (error:any) {
+          return res.status(500).json({ message: "Error updating program", error: error.message });
+        }
+      }
+
+      async deleteTopic(req: Request, res: Response) {
+        try {
+          const { id } = req.params;
+          await programService.deleteTopic(Number(id));
+          return res.status(200).json({ message: "Topic deleted successfully" });
+        } catch (error:any) {
+          return res.status(500).json({ message: "Error deleting topicc", error: error.message });
+        }
+      }
     }
