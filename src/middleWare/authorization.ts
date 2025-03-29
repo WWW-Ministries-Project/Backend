@@ -35,9 +35,9 @@ export class Permissions {
       ) as any;
       const permission = decoded.permissions;
       if (
-        permission.Members === "Can_View" ||
-        permission.Members === "Can_Manage" ||
-        permission.Members === "Super_Admin"
+        permission.Members.Can_View ||
+        permission.Members.Can_Manage ||
+        permission.Members.Super_Admin
       ) {
         next();
       } else {
@@ -59,10 +59,7 @@ export class Permissions {
       ) as any;
       const permission = decoded.permissions;
 
-      if (
-        permission.Members === "Can_Manage" ||
-        permission.Members === "Super_Admin"
-      ) {
+      if (permission.Members.Can_Manage || permission.Members.Super_Admin) {
         next();
       } else {
         return res
@@ -85,9 +82,9 @@ export class Permissions {
       const permission = decoded.permissions;
 
       if (
-        permission.Departments === "Can_View" ||
-        permission.Departments === "Can_Manage" ||
-        permission.Departments === "Super_Admin"
+        permission.Departments.Can_View ||
+        permission.Departments.Can_Manage ||
+        permission.Departments.Super_Admin
       ) {
         next();
       } else {
@@ -111,8 +108,8 @@ export class Permissions {
       const permission = decoded.permissions;
 
       if (
-        permission.Departments === "Can_Manage" ||
-        permission.Departments === "Super_Admin"
+        permission.Departments.Can_Manage ||
+        permission.Departments.Super_Admin
       ) {
         next();
       } else {
@@ -139,9 +136,9 @@ export class Permissions {
       const permission = decoded.permissions;
 
       if (
-        permission.Positions === "Can_View" ||
-        permission.Positions === "Can_Manage" ||
-        permission.Positions === "Super_Admin"
+        permission.Positions.Can_View ||
+        permission.Positions.Can_Manage ||
+        permission.Positions.Super_Admin
       ) {
         next();
       } else {
@@ -163,10 +160,7 @@ export class Permissions {
       ) as any;
       const permission = decoded.permissions;
 
-      if (
-        permission.Positions === "Can_Manage" ||
-        permission.Positions === "Super_Admin"
-      ) {
+      if (permission.Positions.Can_Manage || permission.Positions.Super_Admin) {
         next();
       } else {
         return res
@@ -190,8 +184,8 @@ export class Permissions {
       const permission = decoded.permissions;
 
       if (
-        permission.Access_rights === "Can_Manage" ||
-        permission.Access_rights === "Super_Admin"
+        permission.Access_rights.Can_Manage ||
+        permission.Access_rights.Super_Admin
       ) {
         next();
       } else {
@@ -215,9 +209,9 @@ export class Permissions {
       const permission = decoded.permissions;
 
       if (
-        permission.Access_rights === "Can_View" ||
-        permission.Access_rights === "Can_Manage" ||
-        permission.Access_rights === "Super_Admin"
+        permission.Access_rights.Can_View ||
+        permission.Access_rights.Can_Manage ||
+        permission.Access_rights.Super_Admin
       ) {
         next();
       } else {
@@ -241,10 +235,7 @@ export class Permissions {
       ) as any;
       const permission = decoded.permissions;
 
-      if (
-        permission.Asset === "Can_Manage" ||
-        permission.Asset === "Super_Admin"
-      ) {
+      if (permission.Asset.Can_Manage || permission.Asset.Super_Admin) {
         next();
       } else {
         return res.status(401).json({
@@ -267,9 +258,9 @@ export class Permissions {
       const permission = decoded.permissions;
 
       if (
-        permission.Asset === "Can_View" ||
-        permission.Asset === "Can_Manage" ||
-        permission.Asset === "Super_Admin"
+        permission.Asset.Can_View ||
+        permission.Asset.Can_Manage ||
+        permission.Asset.Super_Admin
       ) {
         next();
       } else {
@@ -295,9 +286,9 @@ export class Permissions {
       const permission = decoded.permissions;
 
       if (
-        permission.Events === "Can_View" ||
-        permission.Events === "Can_Manage" ||
-        permission.Events === "Super_Admin"
+        permission.Events.Can_View ||
+        permission.Events.Can_Manage ||
+        permission.Events.Super_Admin
       ) {
         next();
       } else {
@@ -320,10 +311,7 @@ export class Permissions {
       ) as any;
       const permission = decoded.permissions;
 
-      if (
-        permission.Events === "Can_Manage" ||
-        permission.Events === "Super_Admin"
-      ) {
+      if (permission.Events.Can_Manage || permission.Events.Super_Admin) {
         next();
       } else {
         return res.status(401).json({
@@ -348,10 +336,10 @@ export class Permissions {
         process.env.JWT_SECRET as string
       ) as any;
       const permission = decoded.permissions;
-      ( req as any).user = decoded;
+      (req as any).user = decoded;
       if (
-        permission.Requisition === "Can_Manage" ||
-        permission.Requisition === "Super_Admin"
+        permission.Requisition.Can_Manage ||
+        permission.Requisition.Super_Admin
       ) {
         next();
       } else {
@@ -372,11 +360,11 @@ export class Permissions {
         process.env.JWT_SECRET as string
       ) as any;
       const permission = decoded.permissions;
-      
+
       if (
-        permission.Requisitions === "Can_View" ||
-        permission.Requisitions === "Super_Admin" ||
-        permission.Requisitions === "Can_Manage"
+        permission.Requisitions.Can_View ||
+        permission.Requisitions.Super_Admin ||
+        permission.Requisitions.Can_Manage
       ) {
         next();
       } else {
@@ -400,9 +388,9 @@ export class Permissions {
       const permission = decoded.permissions;
 
       if (
-        permission.Program === "Can_View" ||
-        permission.Program === "Can_Manage" ||
-        permission.Program === "Super_Admin"
+        permission.Program.Can_View ||
+        permission.Program.Can_Manage ||
+        permission.Program.Super_Admin
       ) {
         next();
       } else {
@@ -425,10 +413,7 @@ export class Permissions {
       ) as any;
       const permission = decoded.permissions;
 
-      if (
-        permission.Events === "Can_Manage" ||
-        permission.Events === "Super_Admin"
-      ) {
+      if (permission.Program.Can_Manage || permission.Program.Super_Admin) {
         next();
       } else {
         return res.status(401).json({
