@@ -205,6 +205,7 @@ export const registerUser = async (req: Request, res: Response) => {
               email: `${child.first_name.toLowerCase()}_${child.last_name.toLowerCase()}_${Date.now()}@temp.com`,
               is_user: false,
               parent_id: response.id,
+              membership_type,
               user_info: {
                 create: {
                   first_name: child.first_name,
