@@ -40,7 +40,7 @@ programRouter.get("/users", courseController.getAllUsers)
 //enrollment endpoint
 programRouter.post("/enroll", enrollmentController.enrollUser);
 programRouter.post("/unenroll", enrollmentController.unEnrollUser);
-programRouter.get("/course-enrollment", enrollmentController.getEnrollmentByCourse)
-programRouter.get("/user-enrollment", enrollmentController.getEnrollmentByCourse)
+programRouter.get("/course-enrollment/:id", enrollmentController.getEnrollmentByCourse)
+programRouter.get("/user-enrollment/:id", enrollmentController.getEnrollmentByUser)
 
 export default programRouter;

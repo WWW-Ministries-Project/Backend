@@ -205,6 +205,7 @@ export const registerUser = async (req: Request, res: Response) => {
               email: `${child.first_name.toLowerCase()}_${child.last_name.toLowerCase()}_${Date.now()}@temp.com`,
               is_user: false,
               parent_id: response.id,
+              membership_type,
               user_info: {
                 create: {
                   first_name: child.first_name,
@@ -712,6 +713,7 @@ export const getUser = async (req: Request, res: Response) => {
         position_id: true,
         access_level_id: true,
         status: true,
+        member_id: true,
         user_info: {
           select: {
             first_name: true,
@@ -762,11 +764,54 @@ export const getUser = async (req: Request, res: Response) => {
           },
         },
         access: true,
+        enrollments: {
+          select: {
+            course: {
+              select: {
+                id: true,
+                name: true,
+                cohort: {
+                  select: {
+                    id: true,
+                    name: true,
+                    program: {
+                      select: {
+                        id: true,
+                        title: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        children: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            membership_type: true,
+            created_at: true,
+            status: true,
+            user_info: {
+              select: {
+                first_name: true,
+                last_name: true,
+                other_name: true,
+                date_of_birth: true,
+                gender: true,
+                nationality: true,
+              },
+            },
+          },
+        },
       },
     });
+
     let { user_info, ...rest } = response;
     res.status(200).json({
-      message: "Operation Succesful",
+      message: "Operation Successful",
       data: { ...rest, ...user_info },
     });
   } catch (error) {
@@ -891,20 +936,20 @@ export const statsUsers = async (req: Request, res: Response) => {
 };
 
 async function generateUserId(userData: any) {
-  let sync_id;
+  let sync_id=null;
   let is_sync = false;
   const prefix = process.env.ID_PREFIX || 'WWM-HC'; 
   const year = new Date().getFullYear();
   const paddedId = userData.id.toString().padStart(4, '0'); 
-  const generatedUserId = `${prefix}-${year}000${paddedId}`;
-  try {
-    const zkResponse = await saveUserToZTeco(userData)
-    sync_id = zkResponse.sync_id
-    is_sync = true
-  }catch(error:any){
-    sync_id = null
-    is_sync = false
-  }
+  const generatedUserId = `${prefix}-${year}${paddedId}`;
+  // try {
+  //   const zkResponse = await saveUserToZTeco(userData)
+  //   sync_id = zkResponse.sync_id
+  //   is_sync = true
+  // }catch(error:any){
+  //   sync_id = null
+  //   is_sync = false
+  // }
   
 
   return await updateUserAndSetUserId(userData.id, generatedUserId,sync_id,is_sync);
