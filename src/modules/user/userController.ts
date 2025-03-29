@@ -712,6 +712,7 @@ export const getUser = async (req: Request, res: Response) => {
         position_id: true,
         access_level_id: true,
         status: true,
+        member_id: true,
         user_info: {
           select: {
             first_name: true,
