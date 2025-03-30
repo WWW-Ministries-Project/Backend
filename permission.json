@@ -1,42 +1,10 @@
 {
-  "Members": {
-    "Can_View": true,
-    "Can_Manage": true,
-    "Super_Admin": true
-  },
-  "Departments": {
-    "Can_View": true,
-    "Can_Manage": true,
-    "Super_Admin": true
-  },
-  "Positions": {
-    "Can_View": true,
-    "Can_Manage": true,
-    "Super_Admin": true
-  },
-  "Access_rights": {
-    "Can_View": true,
-    "Can_Manage": true,
-    "Super_Admin": true
-  },
-  "Asset": {
-    "Can_View": true,
-    "Can_Manage": true,
-    "Super_Admin": true
-  },
-  "Events": {
-    "Can_View": true,
-    "Can_Manage": true,
-    "Super_Admin": true
-  },
-  "Requisition": {
-    "Can_View": true,
-    "Can_Manage": true,
-    "Super_Admin": true
-  },
-  "Program": {
-    "Can_View": true,
-    "Can_Manage": true,
-    "Super_Admin": true
-  }
+  "Members": "Super_Admin",
+  "Departments": "Super_Admin",
+  "Positions": "Super_Admin",
+  "Access rights": "Super_Admin",
+  "Asset": "Super_Admin",
+  "Events": "Super_Admin",
+  "Requisition": "Super_Admin",
+  "Program": "Super_Admin"
 }
