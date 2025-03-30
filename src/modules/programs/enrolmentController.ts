@@ -53,7 +53,7 @@ export class EnrollmentController {
           return res.status(500).json({ message: "Error enrolling User", error: error.message });
         }}
 
-        async unEnrollUser(req: Request, res: Response) {
+      async unEnrollUser(req: Request, res: Response) {
             try {
               const allEnrollmentByCourse= await enrollment.unenrollUser(req.body.courseId,req.body.userId);
               return res.status(200).json({ message: "Operation sucessfull", data: allEnrollmentByCourse });
@@ -69,6 +69,17 @@ export class EnrollmentController {
           return res.status(200).json({ message: "Operation sucessfull", data: progressDetails });
         } catch (error:any) {
           return res.status(500).json({ message: "Error retrieving Progress report", error: error.message });
+        }
+      }
+
+      async updateProgressReport(req: Request, res: Response) {
+        try {
+
+          const {progressId, score, status} = req.body
+         const progressDetails = await enrollment.updateProgressScores(progressId, score, status)
+          return res.status(200).json({ message: "Operation sucessfull", data: progressDetails });
+        } catch (error:any) {
+          return res.status(500).json({ message: "Error updating Progress report", error: error.message });
         }
       }
 }

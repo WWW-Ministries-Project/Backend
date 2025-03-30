@@ -1,3 +1,4 @@
+import { progress_status } from "@prisma/client";
 import { prisma } from "../../Models/context";
 
 
@@ -166,5 +167,19 @@ export class EnrollmentService {
       
       return enrollmentData;
     
+  }
+  async updateProgressScores(progressId: number,score: number, status: progress_status) {
+    
+    const updatedProgress = await prisma.progress.update({
+      where: {
+        id: progressId
+      },
+      data: {
+        score,
+        status
+      }
+    });
+  
+    return updatedProgress;
   }
 }
