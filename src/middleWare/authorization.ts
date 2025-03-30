@@ -2,7 +2,13 @@ import { Request, Response, NextFunction } from "express";
 
 import JWT from "jsonwebtoken";
 
+// Define permission levels and common messages
+const VIEW_PERMISSIONS = ["Can_View", "Can_Manage", "Super_Admin"];
+const MANAGE_PERMISSIONS = ["Can_Manage", "Super_Admin"];
+const ADMIN_PERMISSIONS = ["Super_Admin"];
+
 export class Permissions {
+  // Keep the protect method as is
   protect = (req: any, res: Response, next: NextFunction) => {
     const token = req.headers["authorization"]?.split(" ")[1];
     if (!token)
@@ -24,405 +30,201 @@ export class Permissions {
     }
   };
 
+  // Generic permission checker function
+  checkPermission = (
+    permissionType: string,
+    action: "view" | "manage" | "admin",
+    errorMessage: string
+  ) => {
+    return (req: Request, res: Response, next: NextFunction) => {
+      const token: any = req.headers["authorization"]?.split(" ")[1];
+
+      try {
+        const decoded = JWT.verify(
+          token,
+          process.env.JWT_SECRET as string
+        ) as any;
+
+        const permission = decoded.permissions?.[permissionType];
+        console.log(permission);
+        let allowedPermissions;
+
+        // Select appropriate permission level based on action
+        if (action === "view") {
+          allowedPermissions = VIEW_PERMISSIONS; // Can_View, Can_Manage, Super_Admin
+        } else if (action === "manage") {
+          allowedPermissions = MANAGE_PERMISSIONS; // Can_Manage, Super_Admin
+        } else {
+          allowedPermissions = ADMIN_PERMISSIONS; // Super_Admin only
+        }
+
+        if (allowedPermissions.includes(permission)) {
+          // For requisitions middleware, we need to set the user
+          if (permissionType === "Requisition") {
+            (req as any).user = decoded;
+          }
+          next();
+        } else {
+          return res.status(401).json({ message: errorMessage, data: null });
+        }
+      } catch (error) {
+        return res.status(401).json({
+          message: "Session Expired",
+          data: null,
+        });
+      }
+    };
+  };
+
   // Users/members
-  can_view_users = (req: Request, res: Response, next: NextFunction) => {
-    const token: any = req.headers["authorization"]?.split(" ")[1];
+  can_view_users = this.checkPermission(
+    "Users",
+    "view",
+    "Not authorized to view members"
+  );
 
-    try {
-      const decoded = JWT.verify(
-        token,
-        process.env.JWT_SECRET as string
-      ) as any;
-      const permission = decoded.permissions;
-      if (
-        permission.Members.Can_View ||
-        permission.Members.Can_Manage ||
-        permission.Members.Super_Admin
-      ) {
-        next();
-      } else {
-        return res
-          .status(401)
-          .json({ message: "Not authorized to view members", data: null });
-      }
-    } catch (error) {
-      return res.status(401).json({ message: "Session Expired", data: null });
-    }
-  };
-  can_Manage_Members = (req: Request, res: Response, next: NextFunction) => {
-    const token: any = req.headers["authorization"]?.split(" ")[1];
+  can_Manage_Members = this.checkPermission(
+    "Users",
+    "manage",
+    "Not authorized to create or update users"
+  );
 
-    try {
-      const decoded = JWT.verify(
-        token,
-        process.env.JWT_SECRET as string
-      ) as any;
-      const permission = decoded.permissions;
-
-      if (permission.Members.Can_Manage || permission.Members.Super_Admin) {
-        next();
-      } else {
-        return res
-          .status(401)
-          .json({ message: "Not authorized to create users", data: null });
-      }
-    } catch (error) {
-      return res.status(401).json({ message: "Session Expired", data: null });
-    }
-  };
+  can_delete_users = this.checkPermission(
+    "Users",
+    "admin",
+    "Not authorized to delete users"
+  );
 
   // Departments
-  can_view_department = (req: Request, res: Response, next: NextFunction) => {
-    const token: any = req.headers["authorization"]?.split(" ")[1];
-    try {
-      const decoded = JWT.verify(
-        token,
-        process.env.JWT_SECRET as string
-      ) as any;
-      const permission = decoded.permissions;
+  can_view_department = this.checkPermission(
+    "Departments",
+    "view",
+    "Not authorized to view departments"
+  );
 
-      if (
-        permission.Departments.Can_View ||
-        permission.Departments.Can_Manage ||
-        permission.Departments.Super_Admin
-      ) {
-        next();
-      } else {
-        return res
-          .status(401)
-          .json({ message: "Not authorized to view departments", data: null });
-      }
-    } catch (error) {
-      return res
-        .status(401)
-        .json({ message: "Session Expired / Invalid Token", data: null });
-    }
-  };
-  can_manage_department = (req: Request, res: Response, next: NextFunction) => {
-    const token: any = req.headers["authorization"]?.split(" ")[1];
-    try {
-      const decoded = JWT.verify(
-        token,
-        process.env.JWT_SECRET as string
-      ) as any;
-      const permission = decoded.permissions;
+  can_manage_department = this.checkPermission(
+    "Departments",
+    "manage",
+    "Not authorized to manage departments"
+  );
 
-      if (
-        permission.Departments.Can_Manage ||
-        permission.Departments.Super_Admin
-      ) {
-        next();
-      } else {
-        return res
-          .status(401)
-          .json({ message: "Not authorized to view departments", data: null });
-      }
-    } catch (error) {
-      return res
-        .status(401)
-        .json({ message: "Session Expired / Invalid Token", data: null });
-    }
-  };
+  can_delete_department = this.checkPermission(
+    "Departments",
+    "admin",
+    "Not authorized to delete departments"
+  );
 
   // Positions
-  can_view_positions = (req: Request, res: Response, next: NextFunction) => {
-    const token: any = req.headers["authorization"]?.split(" ")[1];
+  can_view_positions = this.checkPermission(
+    "Positions",
+    "view",
+    "Not authorized to view positions"
+  );
 
-    try {
-      const decoded = JWT.verify(
-        token,
-        process.env.JWT_SECRET as string
-      ) as any;
-      const permission = decoded.permissions;
+  can_manage_positions = this.checkPermission(
+    "Positions",
+    "manage",
+    "Not authorized to edit positions"
+  );
 
-      if (
-        permission.Positions.Can_View ||
-        permission.Positions.Can_Manage ||
-        permission.Positions.Super_Admin
-      ) {
-        next();
-      } else {
-        return res
-          .status(401)
-          .json({ message: "Not authorized to view positions", data: null });
-      }
-    } catch (error) {
-      return res.status(401).json({ message: "Session Expired", data: null });
-    }
-  };
-  can_manage_positions = (req: Request, res: Response, next: NextFunction) => {
-    const token: any = req.headers["authorization"]?.split(" ")[1];
-
-    try {
-      const decoded = JWT.verify(
-        token,
-        process.env.JWT_SECRET as string
-      ) as any;
-      const permission = decoded.permissions;
-
-      if (permission.Positions.Can_Manage || permission.Positions.Super_Admin) {
-        next();
-      } else {
-        return res
-          .status(401)
-          .json({ message: "Not authorized to edit positions", data: null });
-      }
-    } catch (error) {
-      return res.status(401).json({ message: "Session Expired", data: null });
-    }
-  };
+  can_delete_positions = this.checkPermission(
+    "Positions",
+    "admin",
+    "Not authorized to delete positions"
+  );
 
   // Access Levels
-  can_manage_access = (req: Request, res: Response, next: NextFunction) => {
-    const token: any = req.headers["authorization"]?.split(" ")[1];
+  can_view_access = this.checkPermission(
+    "Access_rights",
+    "view",
+    "Not authorized to view access levels"
+  );
 
-    try {
-      const decoded = JWT.verify(
-        token,
-        process.env.JWT_SECRET as string
-      ) as any;
-      const permission = decoded.permissions;
+  can_manage_access = this.checkPermission(
+    "Access_rights",
+    "manage",
+    "Not authorized to manage access levels"
+  );
 
-      if (
-        permission.Access_rights.Can_Manage ||
-        permission.Access_rights.Super_Admin
-      ) {
-        next();
-      } else {
-        return res.status(401).json({
-          message: "Not authorized to delete access levels",
-          data: null,
-        });
-      }
-    } catch (error) {
-      return res.status(401).json({ message: "Session Expired", data: null });
-    }
-  };
-  can_view_access = (req: Request, res: Response, next: NextFunction) => {
-    const token: any = req.headers["authorization"]?.split(" ")[1];
+  can_delete_access = this.checkPermission(
+    "Access_rights",
+    "admin",
+    "Not authorized to delete access levels"
+  );
 
-    try {
-      const decoded = JWT.verify(
-        token,
-        process.env.JWT_SECRET as string
-      ) as any;
-      const permission = decoded.permissions;
-
-      if (
-        permission.Access_rights.Can_View ||
-        permission.Access_rights.Can_Manage ||
-        permission.Access_rights.Super_Admin
-      ) {
-        next();
-      } else {
-        return res.status(401).json({
-          message: "Not authorized to view access levels",
-          data: null,
-        });
-      }
-    } catch (error) {
-      return res.status(401).json({ message: "Session Expired", data: null });
-    }
-  };
   // Asset Levels
-  can_manage_asset = (req: Request, res: Response, next: NextFunction) => {
-    const token: any = req.headers["authorization"]?.split(" ")[1];
+  can_view_asset = this.checkPermission(
+    "Asset",
+    "view",
+    "Not authorized to view asset"
+  );
 
-    try {
-      const decoded = JWT.verify(
-        token,
-        process.env.JWT_SECRET as string
-      ) as any;
-      const permission = decoded.permissions;
+  can_manage_asset = this.checkPermission(
+    "Asset",
+    "manage",
+    "Not authorized to edit asset"
+  );
 
-      if (permission.Asset.Can_Manage || permission.Asset.Super_Admin) {
-        next();
-      } else {
-        return res.status(401).json({
-          message: "Not authorized to edit asset",
-          data: null,
-        });
-      }
-    } catch (error) {
-      return res.status(401).json({ message: "Session Expired", data: null });
-    }
-  };
-  can_view_asset = (req: Request, res: Response, next: NextFunction) => {
-    const token: any = req.headers["authorization"]?.split(" ")[1];
-
-    try {
-      const decoded = JWT.verify(
-        token,
-        process.env.JWT_SECRET as string
-      ) as any;
-      const permission = decoded.permissions;
-
-      if (
-        permission.Asset.Can_View ||
-        permission.Asset.Can_Manage ||
-        permission.Asset.Super_Admin
-      ) {
-        next();
-      } else {
-        return res.status(401).json({
-          message: "Not authorized to view asset",
-          data: null,
-        });
-      }
-    } catch (error) {
-      return res.status(401).json({ message: "Session Expired", data: null });
-    }
-  };
+  can_delete_asset = this.checkPermission(
+    "Asset",
+    "admin",
+    "Not authorized to delete asset"
+  );
 
   // Events
-  can_view_events = (req: Request, res: Response, next: NextFunction) => {
-    const token: any = req.headers["authorization"]?.split(" ")[1];
+  can_view_events = this.checkPermission(
+    "Events",
+    "view",
+    "Not authorized to view events"
+  );
 
-    try {
-      const decoded = JWT.verify(
-        token,
-        process.env.JWT_SECRET as string
-      ) as any;
-      const permission = decoded.permissions;
+  can_manage_events = this.checkPermission(
+    "Events",
+    "manage",
+    "Not authorized to edit events"
+  );
 
-      if (
-        permission.Events.Can_View ||
-        permission.Events.Can_Manage ||
-        permission.Events.Super_Admin
-      ) {
-        next();
-      } else {
-        return res.status(401).json({
-          message: "Not authorized to view events",
-          data: null,
-        });
-      }
-    } catch (error) {
-      return res.status(401).json({ message: "Session Expired", data: null });
-    }
-  };
-  can_manage_events = (req: Request, res: Response, next: NextFunction) => {
-    const token: any = req.headers["authorization"]?.split(" ")[1];
+  can_delete_events = this.checkPermission(
+    "Events",
+    "admin",
+    "Not authorized to delete events"
+  );
 
-    try {
-      const decoded = JWT.verify(
-        token,
-        process.env.JWT_SECRET as string
-      ) as any;
-      const permission = decoded.permissions;
+  // Requisitions
+  can_view_requisitions = this.checkPermission(
+    "Requisitions",
+    "view",
+    "Not authorized to view requisitions"
+  );
 
-      if (permission.Events.Can_Manage || permission.Events.Super_Admin) {
-        next();
-      } else {
-        return res.status(401).json({
-          message: "Not authorized to edit events",
-          data: null,
-        });
-      }
-    } catch (error) {
-      return res.status(401).json({ message: "Session Expired", data: null });
-    }
-  };
+  can_manage_requisitions = this.checkPermission(
+    "Requisition",
+    "manage",
+    "Not authorized to edit requisitions"
+  );
 
-  can_manage_requisitions = (
-    req: Request,
-    res: Response,
-    next: NextFunction
-  ) => {
-    const token: any = req.headers["authorization"]?.split(" ")[1];
-    try {
-      const decoded = JWT.verify(
-        token,
-        process.env.JWT_SECRET as string
-      ) as any;
-      const permission = decoded.permissions;
-      (req as any).user = decoded;
-      if (
-        permission.Requisition.Can_Manage ||
-        permission.Requisition.Super_Admin
-      ) {
-        next();
-      } else {
-        return res.status(401).json({
-          message: "Not authorized to edit requisitions",
-          data: null,
-        });
-      }
-    } catch (error) {
-      return res.status(401).json({ message: "Session Expired", data: null });
-    }
-  };
-  can_view_requisitions = (req: Request, res: Response, next: NextFunction) => {
-    const token: any = req.headers["authorization"]?.split(" ")[1];
-    try {
-      const decoded = JWT.verify(
-        token,
-        process.env.JWT_SECRET as string
-      ) as any;
-      const permission = decoded.permissions;
+  can_delete_requisitions = this.checkPermission(
+    "Requisition",
+    "admin",
+    "Not authorized to delete requisitions"
+  );
 
-      if (
-        permission.Requisitions.Can_View ||
-        permission.Requisitions.Super_Admin ||
-        permission.Requisitions.Can_Manage
-      ) {
-        next();
-      } else {
-        return res.status(401).json({
-          message: "Not authorized to edit requisitions",
-          data: null,
-        });
-      }
-    } catch (error) {
-      return res.status(401).json({ message: "Session Expired", data: null });
-    }
-  };
-  can_view_programs = (req: Request, res: Response, next: NextFunction) => {
-    const token: any = req.headers["authorization"]?.split(" ")[1];
+  // Programs
+  can_view_programs = this.checkPermission(
+    "Program",
+    "view",
+    "Not authorized to view programs"
+  );
 
-    try {
-      const decoded = JWT.verify(
-        token,
-        process.env.JWT_SECRET as string
-      ) as any;
-      const permission = decoded.permissions;
+  can_manage_programs = this.checkPermission(
+    "Program",
+    "manage",
+    "Not authorized to edit programs"
+  );
 
-      if (
-        permission.Program.Can_View ||
-        permission.Program.Can_Manage ||
-        permission.Program.Super_Admin
-      ) {
-        next();
-      } else {
-        return res.status(401).json({
-          message: "Not authorized to view programs",
-          data: null,
-        });
-      }
-    } catch (error) {
-      return res.status(401).json({ message: "Session Expired", data: null });
-    }
-  };
-  can_manage_programs = (req: Request, res: Response, next: NextFunction) => {
-    const token: any = req.headers["authorization"]?.split(" ")[1];
-
-    try {
-      const decoded = JWT.verify(
-        token,
-        process.env.JWT_SECRET as string
-      ) as any;
-      const permission = decoded.permissions;
-
-      if (permission.Program.Can_Manage || permission.Program.Super_Admin) {
-        next();
-      } else {
-        return res.status(401).json({
-          message: "Not authorized to edit programs",
-          data: null,
-        });
-      }
-    } catch (error) {
-      return res.status(401).json({ message: "Session Expired", data: null });
-    }
-  };
+  can_delete_programs = this.checkPermission(
+    "Program",
+    "admin",
+    "Not authorized to delete programs"
+  );
 }

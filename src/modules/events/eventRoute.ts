@@ -42,7 +42,7 @@ eventRouter.put(
 
 eventRouter.delete(
   "/delete-event",
-  [protect, permissions.can_manage_events],
+  [protect, permissions.can_delete_events],
   eventContoller.deleteEvent
 );
 

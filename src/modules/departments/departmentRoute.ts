@@ -28,7 +28,7 @@ departmentRouter.put(
 
 departmentRouter.delete(
   "/delete-department",
-  [protect, permissions.can_manage_department],
+  [protect, permissions.can_delete_department],
   deleteDepartment
 );
 

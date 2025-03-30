@@ -16,7 +16,7 @@ export const assetRouter = Router();
 // Asset
 assetRouter.post(
   "/create-asset",
-  [protect, upload.single("file"), permissions.can_view_asset],
+  [protect, upload.single("file"), permissions.can_manage_asset],
   createAsset
 );
 assetRouter.get(
@@ -27,11 +27,11 @@ assetRouter.get(
 assetRouter.get("/get-asset", [protect, permissions.can_view_asset], getAsset);
 assetRouter.put(
   "/update-asset",
-  [protect, permissions.can_view_asset, upload.single("file")],
+  [protect, permissions.can_manage_asset, upload.single("file")],
   updateAsset
 );
 assetRouter.delete(
   "/delete-asset",
-  [protect, permissions.can_view_asset, upload.single("file")],
+  [protect, permissions.can_delete_asset, upload.single("file")],
   deleteAsset
 );

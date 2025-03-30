@@ -30,7 +30,7 @@ accessRouter.put(
 );
 accessRouter.delete(
   "/delete-access-level",
-  [permissions.can_manage_access, permissions.protect],
+  [permissions.can_delete_access, permissions.protect],
   deleteAccessLevel
 );
 accessRouter.get(

@@ -28,7 +28,7 @@ positionRouter.put(
 
 positionRouter.delete(
   "/delete-position",
-  [protect, permissions.can_manage_positions],
+  [protect, permissions.can_delete_positions],
   deletePosition
 );
 
