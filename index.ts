@@ -6,9 +6,9 @@ import { appRouter } from "./src/routes/appRouter";
 import logger from "./src/utils/logger-config";
 import { setupSwagger } from "./src/swagger";
 dotenv.config();
-import { startUserSyncing } from "./src/cron-jobs/userCron";
-import { syncDepartments } from "./src/cron-jobs/departmentCron";
-import { syncPositions } from "./src/cron-jobs/positionCron";
+// import { startUserSyncing } from "./src/cron-jobs/userCron";
+// import { syncDepartments } from "./src/cron-jobs/departmentCron";
+// import { syncPositions } from "./src/cron-jobs/positionCron";
 
 
 const port = process.env.PORT;
@@ -19,9 +19,9 @@ app.use(express.json());
 setupSwagger(app);
 app.use(appRouter);
 
-startUserSyncing();
-syncDepartments();
-syncPositions();
+// startUserSyncing();
+// syncDepartments();
+// syncPositions();
 
 
 // mongoose//   .connect(MONGO_URI, {})
