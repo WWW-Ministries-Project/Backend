@@ -12,6 +12,8 @@ export class CourseService {
             select: {
               first_name: true,
               last_name: true,
+              primary_number:true,
+              other_name:true
             },
           },
         },
