@@ -323,6 +323,9 @@ model program {
   title        String
   description  String
   eligibility  Eligibility
+  member_required Boolean @default(false)
+  leader_required Boolean @default(false)
+  ministry_required Boolean @default(false)
   topics       topic[]
   cohorts      cohort[]  
   completed    Boolean   @default(false)
@@ -421,6 +424,7 @@ model progress {
   score       Int      @default(0) // Score for the topic
   status      progress_status @default(PENDING)
   completedAt DateTime?  
+  notes       String?
 
   enrollment  enrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
   topic       topic      @relation(fields: [topicId], references: [id], onDelete: Cascade)

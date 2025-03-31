@@ -144,6 +144,7 @@ export class EnrollmentService {
           topicId: true,
           score: true,
           status: true,
+          notes: true,
           completedAt: true,
         },
       });
@@ -161,6 +162,7 @@ export class EnrollmentService {
             progressId: progressMap[topic.id]?.id,
             status: progressMap[topic.id]?.status ?? "PENDING",
             completedAt: progressMap[topic.id]?.completedAt ?? null,
+            notes: progressMap[topic.id]?.notes ?? null
           })
         );
       }
@@ -168,18 +170,31 @@ export class EnrollmentService {
       return enrollmentData;
     
   }
-  async updateProgressScores(progressId: number,score: number, status: progress_status) {
-    
+  async updateProgressScore(progressId: number,score: number, status: progress_status, notes?:string) {
     const updatedProgress = await prisma.progress.update({
       where: {
         id: progressId
       },
       data: {
         score,
-        status
+        status,
+        notes
       }
     });
   
     return updatedProgress;
+  }
+
+  async updateProgressScores(progressUpdates:[]) {
+    
+    const updates = await prisma.$transaction(
+      progressUpdates.map(({ topicId, enrollmentId, score, status, notes }) =>
+        prisma.progress.updateMany({
+          where: { topicId, enrollmentId },
+          data: { score, status, notes },
+        })
+      )
+    );
+    return updates;
   }
 }

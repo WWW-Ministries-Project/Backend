@@ -75,11 +75,36 @@ export class EnrollmentController {
       async updateProgressReport(req: Request, res: Response) {
         try {
 
-          const {progressId, score, status} = req.body
-         const progressDetails = await enrollment.updateProgressScores(progressId, score, status)
+          const {progressId, score, status, notes} = req.body
+         const progressDetails = await enrollment.updateProgressScore(progressId, score, status, notes)
           return res.status(200).json({ message: "Operation sucessfull", data: progressDetails });
         } catch (error:any) {
           return res.status(500).json({ message: "Error updating Progress report", error: error.message });
         }
       }
+
+      async updateProgressReports(req:Request, res:Response){
+        const { progressUpdates } = req.body;
+
+        try {
+          
+          const response = await enrollment.updateProgressScores(progressUpdates)
+          if (response){
+            res.status(200).json({
+            message: "Progress scores updated successfully.",
+          });
+          } else {
+            res.status(200).json({
+              message: "Progress scores not updated successfully.",
+            });
+          }
+          
+        } catch (error) {
+          console.error(error);
+          res.status(500).json({
+            message: "Failed to update progress scores.",
+            error,
+          });
+      }
+  };      
 }
