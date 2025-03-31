@@ -44,9 +44,7 @@ export class Permissions {
           token,
           process.env.JWT_SECRET as string
         ) as any;
-
         const permission = decoded.permissions?.[permissionType];
-        console.log(permission);
         let allowedPermissions;
 
         // Select appropriate permission level based on action
@@ -78,19 +76,19 @@ export class Permissions {
 
   // Users/members
   can_view_users = this.checkPermission(
-    "Users",
+    "Members",
     "view",
     "Not authorized to view members"
   );
 
   can_Manage_Members = this.checkPermission(
-    "Users",
+    "Members",
     "manage",
     "Not authorized to create or update users"
   );
 
   can_delete_users = this.checkPermission(
-    "Users",
+    "Members",
     "admin",
     "Not authorized to delete users"
   );

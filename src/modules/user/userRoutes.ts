@@ -39,10 +39,7 @@ userRouter.post("/change-password", changePassword);
 
 userRouter.post("/login", login);
 
-userRouter.post(
-  "/register",
-  registerUser
-);
+userRouter.post("/register", registerUser);
 userRouter.post(
   "/update-user",
   [protect, permissions.can_Manage_Members],
@@ -56,7 +53,7 @@ userRouter.patch(
 );
 userRouter.delete(
   "/delete-user",
-  [protect, permissions.can_Manage_Members],
+  [protect, permissions.can_delete_users],
   deleteUser
 );
 userRouter.put(
