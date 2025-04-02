@@ -12,6 +12,7 @@ import {
   userRouter,
 } from "../modules";
 import programRouter from "../modules/programs/programRoute";
+import visitorRouter from "../modules/visitorManagement/visitorRoute"
 
 dotenv.config();
 // router
@@ -27,3 +28,4 @@ appRouter.use("/assets", assetRouter);
 appRouter.use("/event", eventRouter);
 appRouter.use("/requisitions", requisitionRouter);
 appRouter.use("/program", programRouter);
+appRouter.use("/visitor", visitorRouter);
