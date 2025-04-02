@@ -42,6 +42,9 @@ model user {
   is_sync               Boolean?          @default(false)
   sync_id               Int?
   mode                  classFormat?
+  followUps             follow_up[]
+  prayerRequests        prayer_request[]
+  notes                 note[]
 
   @@index([access_level_id], map: "user_access_level_id_fkey")
   @@index([position_id], map: "user_position_id_fkey")
@@ -477,4 +480,80 @@ enum event_type {
 enum event_status {
   CONFIRMED
   TENTATIVE
+}
+
+model visitor{
+  id               Int   @id @default(autoincrement())
+  firstName        String
+  lastName         String
+  email            String?  @unique
+  phone            String?
+  country          String?
+  address          String?
+  city             String?
+  state            String?
+  zipCode          String?
+  visitDate        DateTime
+  howHeard         String?
+  consentToContact Boolean  @default(false)
+  membershipWish   Boolean  @default(false)
+  visits           visit[]
+  followUps        follow_up[]
+  prayerRequests   prayer_request[]
+  notes            note[]
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt 
+}
+
+model visit {
+  id        Int   @id @default(autoincrement())
+  visitor   visitor?  @relation(fields: [visitorId], references: [id])
+  visitorId Int?
+  date      DateTime
+  eventName String
+  eventType String
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model follow_up {
+  id         Int   @id @default(autoincrement())
+  visitor    visitor  @relation(fields: [visitorId], references: [id])
+  visitorId  Int
+  user       user?    @relation(fields: [userId], references: [id])
+  userId     Int?
+  date       DateTime
+  type       String
+  status     String   @default("pending")
+  notes      String?
+  assignedTo String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+model prayer_request {
+  id        Int   @id @default(autoincrement())
+  visitor   visitor?  @relation(fields: [visitorId], references: [id])
+  visitorId Int?
+  user     user?    @relation(fields: [userId], references: [id])
+  userId   Int?
+  date      DateTime
+  request   String
+  status    String   @default("active")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model note {
+  id        Int   @id @default(autoincrement())
+  visitor   visitor?  @relation(fields: [visitorId], references: [id])
+  visitorId Int?
+  user      user?    @relation(fields: [userId], references: [id])
+  userId    Int?
+  date      DateTime
+  author    String
+  content   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
