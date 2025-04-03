@@ -7,7 +7,7 @@ export class VisitService {
         return prisma.visit.findMany({ where: { visitorId:id} });
     }
 
-    async createVisit(data: { visitorId: number; date: Date; eventName: string; eventType: string; notes?: string }){
+    async createVisit(data: { visitorId: number; date: Date; eventId:number, notes?: string }){
         return prisma.visit.create({ data });
       }
     
@@ -19,7 +19,7 @@ export class VisitService {
         return prisma.visit.findUnique({ where: { id } });
       }
     
-      async updateVisit(id: number, data: { visitorId: number; date: Date; eventName: string; eventType: string; notes?: string }){
+      async updateVisit(id: number, data: { visitorId: number; date: Date; eventId:number, notes?: string }){
         return prisma.visit.update({ where: { id }, data });
       }
     
