@@ -14,15 +14,39 @@ export class VisitorService {
         return visitor;
     }
     async getVisitorById(id: number) {
-       return await prisma.visitor.findUnique({
+       const visitor =  await prisma.visitor.findUnique({
         where:{id},
         include:{
-            visits: true,
+            visits:{
+                include :{
+                    event:{
+                        select:{
+                            event_type:true,
+                            name: true
+                        }
+                    }
+                }
+            },
             notes: true,
             followUps: true,
             prayerRequests: true
         }
        })
+       if (!visitor) return null
+
+       return {
+        ...visitor,
+        visits: visitor.visits.map(v => ({
+            id: v.id,
+            visitorId: v.visitorId,
+            date: v.date,
+            eventName: v.event?.name || null,
+            eventType: v.event?.event_type,
+            notes: v.notes,
+            createdAt: v.createdAt,
+            updatedAt: v.updatedAt
+        }))
+    };
     }
     async getAllVisitors() {
         const visitors = await prisma.visitor.findMany({
