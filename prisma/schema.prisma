@@ -39,7 +39,7 @@ model user {
   parent                user?               @relation("UserParent", fields: [parent_id], references: [id])
   children              user[]              @relation("UserParent")
   status                status_type?
-  is_sync               Boolean?          @default(false)
+  is_sync               Boolean?            @default(false)
   sync_id               Int?
   mode                  classFormat?
   followUps             follow_up[]
@@ -121,8 +121,8 @@ model department {
   position             position[]
   request              request[]
   user_departments     user_departments[]
-  is_sync               Boolean?          @default(false)
-  sync_id               Int?
+  is_sync              Boolean?           @default(false)
+  sync_id              Int?
 
   @@index([department_head], map: "department_department_head_fkey")
 }
@@ -148,8 +148,8 @@ model position {
   updated_at    DateTime?
   department    department? @relation(fields: [department_id], references: [id])
   user          user[]
-  is_sync               Boolean?          @default(false)
-  sync_id               Int?
+  is_sync       Boolean?    @default(false)
+  sync_id       Int?
 
   @@index([department_id], map: "position_department_id_fkey")
 }
@@ -219,6 +219,7 @@ model event_mgt {
   event_type       event_type?
   event_attendance event_attendance[]
   request          request[]
+  visit            visit[]
 }
 
 model event_attendance {
@@ -322,18 +323,18 @@ model request_approvals {
 }
 
 model program {
-  id           Int       @id @default(autoincrement())
-  title        String
-  description  String
-  eligibility  Eligibility
-  member_required Boolean @default(false)
-  leader_required Boolean @default(false)
-  ministry_required Boolean @default(false)
-  topics       topic[]
-  cohorts      cohort[]  
-  completed    Boolean   @default(false)
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  id                Int         @id @default(autoincrement())
+  title             String
+  description       String
+  eligibility       Eligibility
+  member_required   Boolean     @default(false)
+  leader_required   Boolean     @default(false)
+  ministry_required Boolean     @default(false)
+  topics            topic[]
+  cohorts           cohort[]
+  completed         Boolean     @default(false)
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
 
   // Define relation for prerequisites
   prerequisitePrograms program_prerequisites[] @relation("ProgramToPrerequisite")
@@ -341,26 +342,26 @@ model program {
 }
 
 model program_prerequisites {
-  programId        Int
-  prerequisiteId   Int
+  programId      Int
+  prerequisiteId Int
 
   // Relations
-  program        program @relation("ProgramToPrerequisite", fields: [programId], references: [id], onDelete: Cascade)
-  prerequisite   program @relation("ProgramToRequired", fields: [prerequisiteId], references: [id], onDelete: Cascade)
+  program      program @relation("ProgramToPrerequisite", fields: [programId], references: [id], onDelete: Cascade)
+  prerequisite program @relation("ProgramToRequired", fields: [prerequisiteId], references: [id], onDelete: Cascade)
 
-  @@id([programId, prerequisiteId])  // Composite Primary Key
+  @@id([programId, prerequisiteId]) // Composite Primary Key
 }
 
 model topic {
-  id        Int       @id @default(autoincrement())
+  id        Int        @id @default(autoincrement())
   name      String
   programId Int
-  program   program   @relation(fields: [programId], references: [id], onDelete: Cascade)
+  program   program    @relation(fields: [programId], references: [id], onDelete: Cascade)
   progress  progress[]
 }
 
 model cohort {
-  id                  Int        @id @default(autoincrement())
+  id                  Int      @id @default(autoincrement())
   name                String
   startDate           DateTime
   status              String
@@ -368,44 +369,44 @@ model cohort {
   duration            String
   applicationDeadline DateTime
   programId           Int
-  program             program    @relation(fields: [programId], references: [id], onDelete: Cascade)
-  courses              course[]
-  createdAt           DateTime   @default(now())
-  updatedAt           DateTime   @updatedAt
+  program             program  @relation(fields: [programId], references: [id], onDelete: Cascade)
+  courses             course[]
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
 }
 
 model course {
-  id         Int      @id @default(autoincrement())
-  name       String
-  instructor String
-  capacity   Int
-  enrolled   Int      @default(0)
-  schedule   String
-  cohortId   Int
-  classFormat classFormat? 
+  id          Int          @id @default(autoincrement())
+  name        String
+  instructor  String
+  capacity    Int
+  enrolled    Int          @default(0)
+  schedule    String
+  cohortId    Int
+  classFormat classFormat?
   location    String?
   meetingLink String?
-  cohort     cohort   @relation(fields: [cohortId], references: [id], onDelete: Cascade)
+  cohort      cohort       @relation(fields: [cohortId], references: [id], onDelete: Cascade)
   enrollments enrollment[]
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
 }
 
 model enrollment {
-  id         Int      @id @default(autoincrement())
-  userId     Int?     // Nullable for non-users
+  id         Int        @id @default(autoincrement())
+  userId     Int? // Nullable for non-users
   courseId   Int
   firstName  String
   lastName   String
   email      String
   phone      String
-  user       user?    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  course     course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
-  enrolledAt DateTime @default(now())
+  user       user?      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course     course     @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  enrolledAt DateTime   @default(now())
   progress   progress[]
 
-  @@unique([userId, courseId]) 
-  @@unique([email, courseId])  
+  @@unique([userId, courseId])
+  @@unique([email, courseId])
 }
 
 enum Eligibility {
@@ -415,22 +416,22 @@ enum Eligibility {
 }
 
 enum classFormat {
-  In_Person 
-  Online 
+  In_Person
+  Online
   Hybrid
 }
 
 model progress {
-  id          Int       @id @default(autoincrement())
-  enrollmentId Int      
-  topicId     Int      
-  score       Int      @default(0) // Score for the topic
-  status      progress_status @default(PENDING)
-  completedAt DateTime?  
-  notes       String?
+  id           Int             @id @default(autoincrement())
+  enrollmentId Int
+  topicId      Int
+  score        Int             @default(0) // Score for the topic
+  status       progress_status @default(PENDING)
+  completedAt  DateTime?
+  notes        String?
 
-  enrollment  enrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
-  topic       topic      @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  enrollment enrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  topic      topic      @relation(fields: [topicId], references: [id], onDelete: Cascade)
 
   @@unique([enrollmentId, topicId])
 }
@@ -482,11 +483,11 @@ enum event_status {
   TENTATIVE
 }
 
-model visitor{
-  id               Int   @id @default(autoincrement())
+model visitor {
+  id               Int              @id @default(autoincrement())
   firstName        String
   lastName         String
-  email            String?  @unique
+  email            String?          @unique
   phone            String?
   country          String?
   address          String?
@@ -495,30 +496,30 @@ model visitor{
   zipCode          String?
   visitDate        DateTime
   howHeard         String?
-  consentToContact Boolean  @default(false)
-  membershipWish   Boolean  @default(false)
+  consentToContact Boolean          @default(false)
+  membershipWish   Boolean          @default(false)
   visits           visit[]
   followUps        follow_up[]
   prayerRequests   prayer_request[]
   notes            note[]
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt 
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
 }
 
 model visit {
-  id        Int   @id @default(autoincrement())
-  visitor   visitor?  @relation(fields: [visitorId], references: [id])
+  id        Int        @id @default(autoincrement())
+  visitor   visitor?   @relation(fields: [visitorId], references: [id])
   visitorId Int?
   date      DateTime
-  eventName String
-  eventType String
+  event     event_mgt? @relation(fields: [eventId], references: [id])
+  eventId   Int?
   notes     String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
 }
 
 model follow_up {
-  id         Int   @id @default(autoincrement())
+  id         Int      @id @default(autoincrement())
   visitor    visitor  @relation(fields: [visitorId], references: [id])
   visitorId  Int
   user       user?    @relation(fields: [userId], references: [id])
@@ -533,11 +534,11 @@ model follow_up {
 }
 
 model prayer_request {
-  id        Int   @id @default(autoincrement())
-  visitor   visitor?  @relation(fields: [visitorId], references: [id])
+  id        Int      @id @default(autoincrement())
+  visitor   visitor? @relation(fields: [visitorId], references: [id])
   visitorId Int?
-  user     user?    @relation(fields: [userId], references: [id])
-  userId   Int?
+  user      user?    @relation(fields: [userId], references: [id])
+  userId    Int?
   date      DateTime
   request   String
   status    String   @default("active")
@@ -546,8 +547,8 @@ model prayer_request {
 }
 
 model note {
-  id        Int   @id @default(autoincrement())
-  visitor   visitor?  @relation(fields: [visitorId], references: [id])
+  id        Int      @id @default(autoincrement())
+  visitor   visitor? @relation(fields: [visitorId], references: [id])
   visitorId Int?
   user      user?    @relation(fields: [userId], references: [id])
   userId    Int?
