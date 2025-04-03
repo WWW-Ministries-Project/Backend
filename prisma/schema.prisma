@@ -528,7 +528,7 @@ model follow_up {
   type       String
   status     String   @default("pending")
   notes      String?
-  assignedTo String
+  assignedTo Int?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 }

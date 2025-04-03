@@ -15,14 +15,15 @@ export class VisitorService {
     }
     async getVisitorById(id: number) {
        const visitor =  await prisma.visitor.findUnique({
-        where:{id},
+        where:{ id  },
         include:{
             visits:{
                 include :{
                     event:{
                         select:{
                             event_type:true,
-                            name: true
+                            name: true,
+                            id: true
                         }
                     }
                 }
@@ -40,6 +41,7 @@ export class VisitorService {
             id: v.id,
             visitorId: v.visitorId,
             date: v.date,
+            eventId: v.event?.id,
             eventName: v.event?.name || null,
             eventType: v.event?.event_type,
             notes: v.notes,
