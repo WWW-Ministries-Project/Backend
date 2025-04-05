@@ -6,6 +6,10 @@ datasource db {
   provider          = "mysql"
   url               = env("DATABASE_URL")
   shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
+  pool {
+    connection_limit = 50
+    idle_timeout = 30000
+  }
 }
 
 model user {
@@ -495,6 +499,7 @@ model visitor {
   state            String?
   zipCode          String?
   visitDate        DateTime
+  is_member        Boolean          @default(false)
   howHeard         String?
   consentToContact Boolean          @default(false)
   membershipWish   Boolean          @default(false)

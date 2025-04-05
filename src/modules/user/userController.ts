@@ -9,13 +9,13 @@ import {
   hashPassword,
   confirmTemplate,
 } from "../../utils";
-import { ZKTeco } from "../integrationUtils/userIntegration";
-import { ZKTecoAuth } from "../integrationUtils/authenticationIntegration";
+import { UserService } from "./userService";
 
 dotenv.config();
 
 const JWT_SECRET: any = process.env.JWT_SECRET;
 const HostArea: number = Number(process.env.AREA) || 2;
+const userService = new UserService();
 
 export const landingPage = async (req: Request, res: Response) => {
   res.send(
@@ -90,154 +90,30 @@ export const registerUser = async (req: Request, res: Response) => {
   try {
     const {
       personal_info: {
-        title,
         first_name,
-        other_name,
-        last_name,
-        date_of_birth,
-        gender,
-        marital_status,
-        nationality,
-        has_children,
-      } = {}, // Default to an empty object to prevent errors
-
-      picture = {}, // Default to an empty object
+      } = {},
 
       contact_info: {
-        email,
-        resident_country,
-        phone: { country_code, number: primary_number } = {}, // Handle nested phone object
+        email
       } = {},
 
-      work_info: {
-        employment_status,
-        work_name,
-        work_industry,
-        work_position,
-        school_name,
-      } = {},
-
-      emergency_contact: {
-        name: emergency_contact_name,
-        relation: emergency_contact_relation,
-        phone: { country_code: emergency_country_code, number: emergency_phone_number } = {},
-      } = {},
-
-      church_info: { membership_type } = {},
-
-      children = [],
-      status,
-      department_id,
-      position_id,
       password,
       is_user,
     } = req.body;
-
-    // Generate an email if not provided
-    let userEmail = email?.trim();
-    if (!userEmail) {
-      const birthYear = date_of_birth ? new Date(date_of_birth).getFullYear() : "";
-      userEmail = `${first_name.toLowerCase()}${last_name.toLowerCase()}${birthYear}@temp.com`;
-    }
-
-    // Hash password for users
-    const hashedPassword = is_user ? await hashPassword(password || "123456") : undefined;
-    const emergency_phone = `${emergency_country_code}${emergency_phone_number}`
-
-    // Create the main user
-    const response = await prisma.user.create({
-      data: {
-        name: toCapitalizeEachWord(`${first_name} ${other_name || ""} ${last_name}`.trim()),
-        email: userEmail,
-        password: hashedPassword,
-        is_user,
-        status,
-        department_id,
-        position_id,
-        membership_type,
-        user_info: {
-          create: {
-            title,
-            first_name,
-            last_name,
-            other_name,
-            date_of_birth: date_of_birth ? new Date(date_of_birth) : null,
-            gender,
-            marital_status,
-            nationality,
-            photo: picture?.src || "",
-            primary_number,
-            country_code,
-            email,
-            country: resident_country,
-            emergency_contact: {
-              create: {
-                name: emergency_contact_name,
-                relation: emergency_contact_relation,
-                phone_number: emergency_phone,
-              },
-            },
-            work_info: {
-              create: {
-                employment_status,
-                name_of_institution: work_name,
-                industry: work_industry,
-                position: work_position,
-                school_name,
-              },
-            },
-          },
-        },
-      },
-      select: selectQuery,
-    });
-
-    // Generate User ID (async)
-    generateUserId(response).catch((err) => console.error("Error generating user ID:", err));
-
-    // Handle children creation if `has_children` is true
-    if (has_children && children.length > 0) {
-      await Promise.all(
-        children.map(async (child: any) => {
-          const childResponse = await prisma.user.create({
-            data: {
-              name: toCapitalizeEachWord(`${child.first_name} ${child.other_name || ""} ${child.last_name}`.trim()),
-              email: `${child.first_name.toLowerCase()}_${child.last_name.toLowerCase()}_${Date.now()}@temp.com`,
-              is_user: false,
-              parent_id: response.id,
-              membership_type,
-              user_info: {
-                create: {
-                  first_name: child.first_name,
-                  last_name: child.last_name,
-                  other_name: child.other_name || null,
-                  date_of_birth: new Date(child.date_of_birth),
-                  gender: child.gender,
-                  marital_status: child.marital_status,
-                  nationality: child.nationality,
-                },
-              },
-            },
-          });
-
-          // Generate User ID for each child
-          generateUserId(childResponse).catch((err) =>
-            console.error(`Error generating user ID for child ${childResponse.id}:`, err)
-          );
-        })
-      );
-    }
+   
+    const response = await userService.registerUser(req.body)
+  
 
     // Send confirmation email if user
     if (is_user) {
       sendEmail(
         confirmTemplate({
           first_name,
-          email: userEmail,
+          email,
           password: password || "123456",
           frontend_url: `${process.env.Frontend_URL}/login`,
         }),
-        userEmail,
+        email,
         "Reset Password"
       );
     }
@@ -951,71 +827,3 @@ export const statsUsers = async (req: Request, res: Response) => {
   }
 };
 
-async function generateUserId(userData: any) {
-  let sync_id=null;
-  let is_sync = false;
-  const prefix = process.env.ID_PREFIX || 'WWM-HC'; 
-  const year = new Date().getFullYear();
-  const paddedId = userData.id.toString().padStart(4, '0'); 
-  const generatedUserId = `${prefix}-${year}${paddedId}`;
-  // try {
-  //   const zkResponse = await saveUserToZTeco(userData)
-  //   sync_id = zkResponse.sync_id
-  //   is_sync = true
-  // }catch(error:any){
-  //   sync_id = null
-  //   is_sync = false
-  // }
-  
-
-  return await updateUserAndSetUserId(userData.id, generatedUserId,sync_id,is_sync);
-}
-
-async function saveUserToZTeco(data:any){
-  const zkPayload = {
-    id: data.id.toString(),
-    department: data.department?.department_info?.sync_id ?? 1,
-    area: [HostArea],
-    hire_date: data.member_since
-      ? new Date(data.member_since).toISOString().split("T")[0]
-      : new Date().toISOString().split("T")[0],
-      first_name:data.user_info.first_name,
-    last_name:data.user_info.last_name,
-    gender: data.user_info.gender === "Male" ? "M" : data.gender === "Female" ? "F" : "S",
-    email:data.email,
-    mobile: data.user_info.primary_number,
-    nationality:data.user_info.nationality,
-    address:data.user_info.address,
-    app_status: 1,
-  };
-
-  const zkTeco = new ZKTeco();
-  const zKTecoAuth = new ZKTecoAuth;
-  console.log(zkPayload)
- 
-  
-  const authResponse = await zKTecoAuth.userAuthentication();
-  if (!authResponse?.token) {
-    throw new Error("Failed to authenticate with ZKTeco");
-  }
-
-  const token = authResponse.token;
-
-  // Create user in ZKTeco
-  const zkResponse = await zkTeco.createUser(zkPayload, token);
-  
-  console.log("User successfully created in ZKTeco:", zkResponse);
-  return zkResponse;
-}
-
-async function updateUserAndSetUserId(id: number, generatedUserId: string,sync_id: number
-  |null, is_sync:boolean) {
-  return await prisma.user.update({
-    where: { id },
-    data: { 
-      member_id: generatedUserId,
-      is_sync:is_sync,
-      sync_id:sync_id
-     },
-  });
-}
