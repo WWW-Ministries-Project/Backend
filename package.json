@@ -4,14 +4,15 @@
   "main": "index.js",
   "scripts": {
     "build": "npx tsc",
-    "dev": "ts-node-dev --transpile-only --ignore-watch node_modules --respawn index.ts",
-    "transpile": "tsc",
+    "dev": "ts-node-dev --transpile-only --ignore-watch node_modules --respawn src/index.ts",
+    "transpile": "npx tsc",
     "rimraf": "rm -rf dist",
-    "start": "npm run rimraf && npm run transpile && node dist/index.js",
+    "start": "npm run rimraf && npm run build && npm run copy:libs && node dist/index.js",
     "migrate": "npx prisma migrate deploy && npx prisma generate",
     "migrate:2": "npx prisma generate",
-    "prod": "npx tsc && node -r newrelic dist/index.js",
-    "jack": "npm run build && node dist/src/utils/rm_user.js"
+    "prod": "npx tsc && npm run copy:libs && node -r newrelic dist/index.js",
+    "jack": "npm run build && node dist/src/utils/rm_user.js",
+    "copy:libs": "cpx \"src/libs/**/*\" dist/src/libs"
   },
   "keywords": [],
   "author": "",
@@ -53,6 +54,7 @@
     "@types/qrcode": "^1.5.5",
     "@types/swagger-jsdoc": "^6.0.4",
     "@types/swagger-ui-express": "^4.1.8",
+    "cpx": "^1.5.0",
     "dotenv": "^16.3.1",
     "newrelic": "^11.17.0",
     "nodemon": "^3.0.3",
