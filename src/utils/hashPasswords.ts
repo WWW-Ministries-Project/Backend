@@ -11,3 +11,10 @@ export const comparePassword = async (
 ) => {
   return await bcrypt.compareSync(password, hashedPassword);
 };
+
+export const toISODate = (dateValue: any): Date | null => {
+  if (!dateValue) return null; // Handle undefined/null values
+
+  const parsedDate = new Date(dateValue);
+  return isNaN(parsedDate.getTime()) ? null : parsedDate; // Ensure it's a valid date
+};

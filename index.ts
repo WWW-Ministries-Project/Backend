@@ -7,8 +7,6 @@ import logger from "./src/utils/logger-config";
 import { setupSwagger } from "./src/swagger";
 dotenv.config();
 // import { startUserSyncing } from "./src/cron-jobs/userCron";
-// import { syncDepartments } from "./src/cron-jobs/departmentCron";
-// import { syncPositions } from "./src/cron-jobs/positionCron";
 
 
 const port = process.env.PORT;
@@ -20,9 +18,6 @@ setupSwagger(app);
 app.use(appRouter);
 
 // startUserSyncing();
-// syncDepartments();
-// syncPositions();
-
 
 // mongoose//   .connect(MONGO_URI, {})
 //   .then(() => {
