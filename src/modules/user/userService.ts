@@ -1,4 +1,3 @@
-import { ru } from "date-fns/locale";
 import { prisma } from "../../Models/context";
 import {
   toCapitalizeEachWord,
@@ -167,9 +166,8 @@ export class UserService {
   
 
   private async updateUserAndSetUserId(id: number, generatedUserId: string, name:string, password: string) {
-    let result = false;
     // this is to save the user to the biometric device
-    // result = await this.saveUserToZTeco(id, generatedUserId, name, password )
+    const result = await this.saveUserToZTeco(id, generatedUserId, name, password )
     let updatedUser;
     if (result){
      updatedUser = await prisma.user.update({
@@ -195,6 +193,9 @@ export class UserService {
   }
 
   async saveUserToZTeco(id: number, member_id: string, name: string, password: string) {
+
+    if (process.env.SAVE_TO_ZKDEVICE=="false") return false;
+    
     const zteco = new ZKTeco();
 
     const userId = member_id.slice(-8)
@@ -204,7 +205,9 @@ export class UserService {
         member_id:userId,
         name,
         password})
-
+    if (result[0]){
+      console.log(`User ${name} is saved to ZKdevice sucessfully`)
+    }
     return result[0];
   
   
