@@ -14,7 +14,6 @@ import { UserService } from "./userService";
 dotenv.config();
 
 const JWT_SECRET: any = process.env.JWT_SECRET;
-const HostArea: number = Number(process.env.AREA) || 2;
 const userService = new UserService();
 
 export const landingPage = async (req: Request, res: Response) => {

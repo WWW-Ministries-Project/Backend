@@ -10,7 +10,7 @@ export class VisitorController {
           const newVisitor = await visitorService.createVisitor(req.body);
           return res.status(201).json({ message: "Visitor Added", data: newVisitor });
         } catch (error:any) {
-          return res.status(500).json({ message: "Error creating program", error: error.message });
+          return res.status(500).json({ message: "Error creating visitor", error: error.message });
         }
       }
     

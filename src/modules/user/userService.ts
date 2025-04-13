@@ -1,4 +1,3 @@
-import { ru } from "date-fns/locale";
 import { prisma } from "../../Models/context";
 import {
   toCapitalizeEachWord,
@@ -59,6 +58,8 @@ export class UserService {
       const hashedPassword = is_user ? await hashPassword(password || "123456") : undefined;
       const emergency_phone = `${emergency_country_code}${emergency_phone_number}`;
 
+      const departmentId = isNaN(parseInt(department_id)) || parseInt(department_id) === 0 ? null : parseInt(department_id);
+
       // Create user in database
       const user = await prisma.user.create({
         data: {
@@ -67,7 +68,7 @@ export class UserService {
           password: hashedPassword,
           is_user,
           status,
-          department_id,
+          department_id:departmentId,
           position_id,
           membership_type,
           user_info: {
@@ -167,9 +168,8 @@ export class UserService {
   
 
   private async updateUserAndSetUserId(id: number, generatedUserId: string, name:string, password: string) {
-    let result = false;
     // this is to save the user to the biometric device
-    // result = await this.saveUserToZTeco(id, generatedUserId, name, password )
+    const result = await this.saveUserToZTeco(id, generatedUserId, name, password )
     let updatedUser;
     if (result){
      updatedUser = await prisma.user.update({
@@ -184,7 +184,7 @@ export class UserService {
         where: { id },
         data: { 
           member_id: generatedUserId,
-          is_sync : true
+          is_sync : false
          },
       });
     }
@@ -195,6 +195,9 @@ export class UserService {
   }
 
   async saveUserToZTeco(id: number, member_id: string, name: string, password: string) {
+
+    if (!process.env.SAVE_TO_ZKDEVICE || process.env.SAVE_TO_ZKDEVICE === "false") return false;
+    
     const zteco = new ZKTeco();
 
     const userId = member_id.slice(-8)
@@ -204,7 +207,10 @@ export class UserService {
         member_id:userId,
         name,
         password})
-
+        console.log(result)
+    if (result[0]){
+      console.log(`User ${name} is saved to ZKdevice sucessfully`)
+    }
     return result[0];
   
   
