@@ -485,10 +485,10 @@ enum event_status {
 
 model visitor {
   id               Int              @id @default(autoincrement())
-  title            String
+  title            String?
   firstName        String
   lastName         String
-  otherName        String
+  otherName        String?
   email            String?          @unique
   phone            String?
   country          String?

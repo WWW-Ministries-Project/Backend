@@ -58,6 +58,8 @@ export class UserService {
       const hashedPassword = is_user ? await hashPassword(password || "123456") : undefined;
       const emergency_phone = `${emergency_country_code}${emergency_phone_number}`;
 
+      const departmentId = isNaN(parseInt(department_id)) || parseInt(department_id) === 0 ? null : parseInt(department_id);
+
       // Create user in database
       const user = await prisma.user.create({
         data: {
@@ -66,7 +68,7 @@ export class UserService {
           password: hashedPassword,
           is_user,
           status,
-          department_id,
+          department_id:departmentId,
           position_id,
           membership_type,
           user_info: {
@@ -182,7 +184,7 @@ export class UserService {
         where: { id },
         data: { 
           member_id: generatedUserId,
-          is_sync : true
+          is_sync : false
          },
       });
     }
@@ -194,7 +196,7 @@ export class UserService {
 
   async saveUserToZTeco(id: number, member_id: string, name: string, password: string) {
 
-    if (process.env.SAVE_TO_ZKDEVICE=="false") return false;
+    if (!process.env.SAVE_TO_ZKDEVICE || process.env.SAVE_TO_ZKDEVICE === "false") return false;
     
     const zteco = new ZKTeco();
 
@@ -205,6 +207,7 @@ export class UserService {
         member_id:userId,
         name,
         password})
+        console.log(result)
     if (result[0]){
       console.log(`User ${name} is saved to ZKdevice sucessfully`)
     }
