@@ -7,7 +7,18 @@ export class VisitController {
   
     async createVisit(req: Request, res: Response) {
         try {
-          const data :{ visitorId: number; date: Date; eventId: number, notes?: string } = req.body
+          const data: {
+            visitorId: number;
+            date: Date;
+            eventId: number;
+            notes?: string;
+          } = {
+            visitorId: Number(req.body.visitorId),
+            date: new Date(req.body.date),
+            eventId: Number(req.body.eventId),
+            notes: req.body.notes
+          };
+          
           const newVisit = await visitService.createVisit(data);
           return res.status(201).json({ message: "Visitor Added", data: newVisit });
         } catch (error:any) {
