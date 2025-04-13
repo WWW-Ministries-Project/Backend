@@ -730,14 +730,14 @@ export const statsUsers = async (req: Request, res: Response) => {
     const allUserInfos_members = await prisma.user_info.findMany({
       where: {
         user: {
-          membership_type: "MEMBER",
+          membership_type: "ONLINE",
         },
       },
     });
     const allUserInfos_visitors = await prisma.user_info.findMany({
       where: {
         user: {
-          membership_type: "VISITOR",
+          membership_type: "IN_HOUSE",
         },
       },
     });
