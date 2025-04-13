@@ -84,7 +84,7 @@ export class UserService {
               photo: picture?.src || "",
               primary_number,
               country_code,
-              member_since,
+              member_since: member_since ? new Date(member_since) : null,
               email,
               country: resident_country,
               emergency_contact: {
