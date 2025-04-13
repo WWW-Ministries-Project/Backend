@@ -804,14 +804,14 @@ export const statsUsers = async (req: Request, res: Response) => {
     );
 
     return res.status(202).json({
-      members: {
+      online: {
         total_members: allUserInfosByCategory.total,
         total_males: allUserInfosByCategory.Male,
         total_females: allUserInfosByCategory.Female,
         total_others: allUserInfosByCategory.other,
         stats: stats,
       },
-      visitors: {
+      inhouse: {
         total_members: visitorInfosByCategory.total,
         total_males: visitorInfosByCategory.Male,
         total_females: visitorInfosByCategory.Female,
