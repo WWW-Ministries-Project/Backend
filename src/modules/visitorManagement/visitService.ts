@@ -7,7 +7,7 @@ export class VisitService {
         return prisma.visit.findMany({ where: { visitorId:id} });
     }
 
-    async createVisit(data: { visitorId: number; date: Date; eventId:number, notes?: string }){
+    async createVisit(data: { visitorId: number; date: Date; eventId:number | null, notes?: string }){
         return prisma.visit.create({ data });
       }
     

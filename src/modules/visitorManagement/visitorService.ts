@@ -112,6 +112,8 @@ export class VisitorService {
     
       const visitDate = new Date(visit.date);
       const email = contact_info.email;
+
+      const event_id = isNaN(parseInt(eventId)) || parseInt(eventId) === 0 ? null : parseInt(eventId);
     
       // Check if the visitor already exists
       const existingVisitor = await prisma.visitor.findUnique({
@@ -122,7 +124,7 @@ export class VisitorService {
         const existingVisit = await prisma.visit.findFirst({
           where: {
             visitorId: existingVisitor.id,
-            eventId,
+            eventId:event_id,
             date: visitDate,
           },
         });
@@ -134,7 +136,7 @@ export class VisitorService {
         const newVisit = await visitService.createVisit({
           visitorId: existingVisitor.id,
           date: visitDate,
-          eventId,
+          eventId:event_id,
         });
     
         return { visitor: existingVisitor, createdVisit: newVisit };
@@ -165,7 +167,7 @@ export class VisitorService {
       const newVisit = await visitService.createVisit({
         visitorId: createdVisitor.id,
         date: visitDate,
-        eventId,
+        eventId:event_id,
       });
     
       return { visitor: createdVisitor, createdVisit: newVisit };
