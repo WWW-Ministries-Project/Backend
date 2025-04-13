@@ -4,7 +4,6 @@ import { VisitService } from "./visitService"
 const visitService = new VisitService()
 
 export class VisitController {
-  
     async createVisit(req: Request, res: Response) {
         try {
           const data :{ visitorId: number; date: Date; eventId: number, notes?: string } = req.body

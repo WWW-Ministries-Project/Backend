@@ -2,6 +2,7 @@ import { prisma } from "../../Models/context";
 import { UserService } from "../user/userService";
 import { VisitService } from "./visitService";
 import { toSentenceCase } from "../../utils";
+import { startOfWeek, startOfMonth, startOfYear } from "date-fns";
 
 const userService = new UserService();
 const visitService = new VisitService();
@@ -233,4 +234,37 @@ export class VisitorService {
       
         return newUser;
     }
+
+    async getVisitorStats(timeframe:string){
+    
+        const startDate = await this.getStartDate(timeframe);
+        console.log(startDate)
+    
+        const visitFilter = startDate ? { date: { gte: startDate } } : {};
+        const allVisits = await prisma.visit.findMany({
+          include: { visitor: true, event: true },
+          where: {
+            date:{
+              gte: startDate == null ? new Date() : startDate
+            }
+          },
+        });
+
+        console.log(allVisits)
+        return null
+    }
+
+    async  getStartDate(timeframe:string) {
+      console.log(timeframe)
+      const now = new Date();
+      switch (timeframe) {
+        case 'week': return startOfWeek(now);
+        case 'month': return startOfMonth(now);
+        case 'quarter': return startOfMonth(now);
+        case 'year': return startOfYear(now);
+        default: return null;
+      }
+
+
+    } 
 }

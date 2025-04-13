@@ -4,6 +4,15 @@ import { VisitorService } from "./visitorService";
 const visitorService = new VisitorService();
 
 export class VisitorController {
+  async getVisitorStats(req: Request, res: Response) {
+      try {
+        const timeframe = (req.query.timeframe as string) || 'month';
+        const data = await visitorService.getVisitorStats(timeframe);
+        return res.status(201).json({ message: "Operation Sucessfull", data: data });
+      } catch (error:any) {
+        return res.status(500).json({ message: "Error creating visit", error: error.message });
+      }
+    }
   
     async createVisitor(req: Request, res: Response) {
         try {

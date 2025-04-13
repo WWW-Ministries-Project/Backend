@@ -20,6 +20,8 @@ visitorRouter.get("/visitors", visitorController.getAllVisitors)
 visitorRouter.get("/visitors/:id", visitorController.getVisitorsById)
 visitorRouter.put("/visitors/:id", visitorController.updateVisitor)
 visitorRouter.delete("/visitors/:id", visitorController.deleteVisitor)
+visitorRouter.get("/visitor-stats/", visitorController.getVisitorStats)
+
 
 //visitor routes
 visitorRouter.post("/visit", visitController.createVisit)
