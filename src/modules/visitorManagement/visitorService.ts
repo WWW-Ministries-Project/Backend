@@ -1,7 +1,10 @@
 import { prisma } from "../../Models/context";
 import { UserService } from "../user/userService";
+import { VisitService } from "./visitService";
+import { toSentenceCase } from "../../utils";
 
 const userService = new UserService();
+const visitService = new VisitService();
 
 export class VisitorService {
     async deleteVisitor(id: number) {
@@ -10,12 +13,41 @@ export class VisitorService {
           });
     }
     async updateVisitor(id: number, body: any) {
-        const visitor = await prisma.visitor.update({ 
-            where: { id: id }, 
-            data: body 
-        });
-        return visitor;
-    }
+      const {
+        personal_info,
+        contact_info,
+        visit,
+        consentToContact,
+        membershipWish,
+        event,
+      } = body;
+    
+      const visitorData = {
+        title: personal_info.title,
+        firstName: toSentenceCase(personal_info.first_name),
+        lastName: toSentenceCase(personal_info.last_name),
+        otherName: toSentenceCase(personal_info.other_name),
+        email: contact_info.email.toLowerCase(),
+        phone: contact_info.phone?.number ?? null,
+        country: contact_info.resident_country,
+        address: contact_info.address,
+        city: contact_info.city,
+        state: contact_info.state_region,
+        zipCode: null,
+        visitDate: new Date(visit.date),
+        howHeard: visit.howHeard,
+        consentToContact: consentToContact === 'true' || consentToContact === true,
+        membershipWish: membershipWish === 'true' || membershipWish === true,
+        // is_member is not included here; optionally set it if needed
+      };
+    
+      const updatedVisitor = await prisma.visitor.update({
+        where: { id },
+        data: visitorData,
+      });
+    
+      return updatedVisitor;
+    }  
     async getVisitorById(id: number) {
        const visitor =  await prisma.visitor.findUnique({
         where:{ id  },
@@ -69,8 +101,74 @@ export class VisitorService {
         return visitorsWithVisitCount;
     }
     async createVisitor(body: any) {
-        const visitor = await prisma.visitor.create({ data: body });
-        return visitor;
+      const {
+        personal_info,
+        contact_info,
+        visit,
+        consentToContact,
+        membershipWish,
+        eventId,
+      } = body;
+    
+      const visitDate = new Date(visit.date);
+      const email = contact_info.email;
+    
+      // Check if the visitor already exists
+      const existingVisitor = await prisma.visitor.findUnique({
+        where: { email },
+      });
+    
+      if (existingVisitor) {
+        const existingVisit = await prisma.visit.findFirst({
+          where: {
+            visitorId: existingVisitor.id,
+            eventId,
+            date: visitDate,
+          },
+        });
+    
+        if (existingVisit) {
+          throw new Error("Visit has already been recorded for this Visitor and Event.");
+        }
+    
+        const newVisit = await visitService.createVisit({
+          visitorId: existingVisitor.id,
+          date: visitDate,
+          eventId,
+        });
+    
+        return { visitor: existingVisitor, createdVisit: newVisit };
+      }
+    
+      // Prepare new visitor data
+      const newVisitorData = {
+        title: personal_info.title,
+        firstName: toSentenceCase(personal_info.first_name),
+        lastName: toSentenceCase(personal_info.last_name),
+        otherName: toSentenceCase(personal_info.other_name),
+        email: contact_info.email.toLowerCase(),
+        phone: contact_info.phone?.number ?? null,
+        country: contact_info.resident_country,
+        address: contact_info.address,
+        city: contact_info.city,
+        state: contact_info.state_region,
+        zipCode: null,
+        visitDate,
+        howHeard: visit.howHeard,
+        consentToContact: consentToContact === 'true' || consentToContact === true,
+        membershipWish: membershipWish === 'true' || membershipWish === true,
+        is_member: false,
+      };
+    
+      const createdVisitor = await prisma.visitor.create({ data: newVisitorData });
+    
+      const newVisit = await visitService.createVisit({
+        visitorId: createdVisitor.id,
+        date: visitDate,
+        eventId,
+      });
+    
+      return { visitor: createdVisitor, createdVisit: newVisit };
     }
 
     async changeVisitorStatusToMember(id: number) {
@@ -134,5 +232,5 @@ export class VisitorService {
         });
       
         return newUser;
-      }
+    }
 }
