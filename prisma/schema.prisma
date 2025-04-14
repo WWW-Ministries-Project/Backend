@@ -511,7 +511,7 @@ model visitor {
 
 model visit {
   id        Int        @id @default(autoincrement())
-  visitor   visitor?   @relation(fields: [visitorId], references: [id])
+  visitor   visitor?   @relation(fields: [visitorId], references: [id], onDelete: Cascade)
   visitorId Int?
   date      DateTime
   event     event_mgt? @relation(fields: [eventId], references: [id])
@@ -523,9 +523,9 @@ model visit {
 
 model follow_up {
   id         Int      @id @default(autoincrement())
-  visitor    visitor  @relation(fields: [visitorId], references: [id])
+  visitor    visitor  @relation(fields: [visitorId], references: [id], onDelete: Cascade)
   visitorId  Int
-  user       user?    @relation(fields: [userId], references: [id])
+  user       user?    @relation(fields: [userId], references: [id], onDelete: Cascade)
   userId     Int?
   date       DateTime
   type       String
@@ -538,9 +538,9 @@ model follow_up {
 
 model prayer_request {
   id        Int      @id @default(autoincrement())
-  visitor   visitor? @relation(fields: [visitorId], references: [id])
+  visitor   visitor? @relation(fields: [visitorId], references: [id], onDelete: Cascade)
   visitorId Int?
-  user      user?    @relation(fields: [userId], references: [id])
+  user      user?    @relation(fields: [userId], references: [id], onDelete: Cascade)
   userId    Int?
   date      DateTime
   request   String
@@ -551,9 +551,9 @@ model prayer_request {
 
 model note {
   id        Int      @id @default(autoincrement())
-  visitor   visitor? @relation(fields: [visitorId], references: [id])
+  visitor   visitor? @relation(fields: [visitorId], references: [id], onDelete: Cascade)
   visitorId Int?
-  user      user?    @relation(fields: [userId], references: [id])
+  user      user?    @relation(fields: [userId], references: [id], onDelete: Cascade)
   userId    Int?
   date      DateTime
   author    String

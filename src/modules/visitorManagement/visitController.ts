@@ -38,7 +38,7 @@ export class VisitController {
     
       async getVisitById(req: Request, res: Response) {
         try {
-          const { id } = req.params;
+          const { id } = req.query;
           
           const visitor = await visitService.getVisitById(Number(id));
           if (!visitor) return res.status(404).json({ message: "Visit not found" });
@@ -51,7 +51,7 @@ export class VisitController {
 
       async getAllVisitsByVisitorsId(req: Request, res: Response) {
         try {
-          const { id } = req.params;
+          const { id } = req.query;
           
           const visitor = await visitService.getVisitByVisitorId(Number(id));
           if (!visitor) return res.status(404).json({ message: "Visitor not found" });
@@ -64,7 +64,7 @@ export class VisitController {
     
       async updateVisit(req: Request, res: Response) {
         try {
-          const { id } = req.params;
+          const { id } = req.query;
           const updatedVisit = await visitService.updateVisit(Number(id), req.body);
           return res.status(200).json({ message: "Visit updated", data: updatedVisit });
         } catch (error:any) {
@@ -74,7 +74,7 @@ export class VisitController {
     
       async deleteVisits(req: Request, res: Response) {
         try {
-          const { id } = req.params;
+          const { id } = req.query;
           await visitService.deleteVisit(Number(id));
           return res.status(200).json({ message: "Visit deleted successfully" });
         } catch (error:any) {

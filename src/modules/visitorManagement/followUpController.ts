@@ -26,7 +26,7 @@ export class FollowUPController {
     
       async getFollowUpById(req: Request, res: Response) {
         try {
-          const { id } = req.params;
+          const { id } = req.query;
           
           const follow = await follow_up.getFollowUpById(Number(id));
           if (!follow) return res.status(404).json({ message: "Follow Up not found" });
@@ -39,7 +39,7 @@ export class FollowUPController {
     
       async updateFollowUp(req: Request, res: Response) {
         try {
-          const { id } = req.params;
+          const { id } = req.query;
           const updatedfollowup = await follow_up.updateFollowUp(Number(id), req.body);
           return res.status(200).json({ message: "Follow Up updated", data: updatedfollowup });
         } catch (error:any) {
@@ -49,7 +49,7 @@ export class FollowUPController {
     
       async deleteFollowUp(req: Request, res: Response) {
         try {
-          const { id } = req.params;
+          const { id } = req.query;
           await follow_up.deleteFollowUp(Number(id));
           return res.status(200).json({ message: "Follow Up deleted successfully" });
         } catch (error:any) {

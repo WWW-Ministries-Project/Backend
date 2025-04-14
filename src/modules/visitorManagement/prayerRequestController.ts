@@ -26,7 +26,7 @@ export class PrayerRequestController {
     
       async getPrayerRequestById(req: Request, res: Response) {
         try {
-          const { id } = req.params;
+          const { id } = req.query;
           
           const prayerRequest = await prayerRequestService.getPrayerRequestById(Number(id));
           if (!prayerRequest) return res.status(404).json({ message: "PrayerRequest not found" });
@@ -39,7 +39,7 @@ export class PrayerRequestController {
     
       async updatePrayerRequest(req: Request, res: Response) {
         try {
-          const { id } = req.params;
+          const { id } = req.query;
           const updatedPrayerRequest = await prayerRequestService.updatePrayerRequest(Number(id), req.body);
           return res.status(200).json({ message: "PrayerRequest updated", data: updatedPrayerRequest });
         } catch (error:any) {
@@ -49,7 +49,7 @@ export class PrayerRequestController {
     
       async deletePrayerRequest(req: Request, res: Response) {
         try {
-          const { id } = req.params;
+          const { id } = req.query;
           await prayerRequestService.deletePrayerRequest(Number(id));
           return res.status(200).json({ message: "PrayerRequest deleted successfully" });
         } catch (error:any) {
