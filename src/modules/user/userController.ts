@@ -804,7 +804,9 @@ export const statsUsers = async (req: Request, res: Response) => {
     );
 
     return res.status(202).json({
-      online: {
+      message:"Operation Sucessful",
+      data:{
+        online: {
         total_members: allUserInfosByCategory.total,
         total_males: allUserInfosByCategory.Male,
         total_females: allUserInfosByCategory.Female,
@@ -818,6 +820,7 @@ export const statsUsers = async (req: Request, res: Response) => {
         total_others: visitorInfosByCategory.other,
         stats: visitor_stats,
       },
+    }
     });
   } catch (error) {
     return res
