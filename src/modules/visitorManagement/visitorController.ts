@@ -26,7 +26,7 @@ export class VisitorController {
     
       async getVisitorsById(req: Request, res: Response) {
         try {
-          const { id } = req.params;
+          const { id } = req.query;
           
           const visitor = await visitorService.getVisitorById(Number(id));
           if (!visitor) return res.status(404).json({ message: "Visitor not found" });
@@ -39,7 +39,7 @@ export class VisitorController {
     
       async updateVisitor(req: Request, res: Response) {
         try {
-          const { id } = req.params;
+          const { id } = req.query;
           const updatedProgram = await visitorService.updateVisitor(Number(id), req.body);
           return res.status(200).json({ message: "Visitor updated", data: updatedProgram });
         } catch (error:any) {
@@ -49,11 +49,11 @@ export class VisitorController {
     
       async deleteVisitor(req: Request, res: Response) {
         try {
-          const { id } = req.params;
+          const { id } = req.query;
           await visitorService.deleteVisitor(Number(id));
-          return res.status(200).json({ message: "Program deleted successfully" });
+          return res.status(200).json({ message: "Visitor deleted successfully" });
         } catch (error:any) {
-          return res.status(500).json({ message: "Error deleting program", error: error.message });
+          return res.status(500).json({ message: "Error deleting visitor", error: error.message });
         }
       }
     }
