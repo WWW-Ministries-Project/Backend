@@ -492,6 +492,7 @@ model visitor {
   email            String?          @unique
   phone            String?
   country          String?
+  country_code     String?
   address          String?
   city             String?
   state            String?
