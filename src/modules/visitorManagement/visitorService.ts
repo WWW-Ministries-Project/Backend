@@ -30,6 +30,7 @@ export class VisitorService {
         email: contact_info.email.toLowerCase(),
         phone: contact_info.phone?.number ?? null,
         country: contact_info.resident_country,
+        country_code: contact_info.phone?.country_code ?? null,
         address: contact_info.address,
         city: contact_info.city,
         state: contact_info.state_region,
@@ -95,6 +96,7 @@ export class VisitorService {
 
         const visitorsWithVisitCount = visitors.map(({visits,followUps, ...visitor}) => ({
             ...visitor,
+            evendId:visits[0]?.eventId || null,
             visitCount: visits.length,
             followUp: followUps[followUps.length - 1]?.status || "No Follow Ups Yet"
         }));
@@ -151,6 +153,7 @@ export class VisitorService {
         email: contact_info.email.toLowerCase(),
         phone: contact_info.phone?.number ?? null,
         country: contact_info.resident_country,
+        country_code: contact_info.phone?.country_code ?? null,
         address: contact_info.address,
         city: contact_info.city,
         state: contact_info.state_region,
@@ -211,7 +214,7 @@ export class VisitorService {
           work_info: {},
           emergency_contact: {},
           church_info: {
-            membership_type: "MEMBER",
+            membership_type: "IN_HOUSE",
             department_id: null,
             position_id: null,
             member_since: new Date(),
