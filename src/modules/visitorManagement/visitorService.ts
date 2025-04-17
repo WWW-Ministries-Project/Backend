@@ -238,23 +238,121 @@ export class VisitorService {
     async getVisitorStats(timeframe:string){
     
         const startDate = await this.getStartDate(timeframe);
-        console.log(startDate)
     
-        const visitFilter = startDate ? { date: { gte: startDate } } : {};
         const allVisits = await prisma.visit.findMany({
           include: { visitor: true, event: true },
           where: {
-            date:{
+            createdAt:{
               gte: startDate == null ? new Date() : startDate
             }
           },
         });
 
-        console.log(allVisits)
-        return null
-    }
+        const totalVisitors = await prisma.visitor.count();
 
-    async  getStartDate(timeframe:string) {
+      // 3. First-time visitors in timeframe
+      const newVisitorIds = new Set(allVisits.map(v => v.visitorId));
+      const thisMonth = newVisitorIds.size;
+
+      // 4. Returning visitors
+      const allVisitorVisitCounts = await prisma.visit.groupBy({
+        by: ['visitorId'],
+        _count: true,
+      });
+      const returningVisitors = allVisitorVisitCounts.filter(v => v._count > 1).length;
+
+      // 5. Converted to members
+      const members = await prisma.visitor.count({
+        where: { is_member: true },
+      });
+      const conversionRate = totalVisitors ? Math.round((members / totalVisitors) * 100) : 0;
+
+
+      // 6. Breakdown by event
+      const eventBreakdown = await prisma.visit.groupBy({
+        by: ['eventId'],
+        _count: true,
+      });
+      const byEvent: Record<string, number> = {};
+      for (const e of eventBreakdown) {
+        if (e.eventId == null) continue; 
+        const event = await prisma.event_mgt.findUnique({ where: { id: e.eventId } });
+        if (event) byEvent[event.name] = e._count;
+      }
+
+      // 7. Breakdown by source (howHeard)
+      const sourceBreakdown = await prisma.visitor.groupBy({
+        by: ['howHeard'],
+        _count: true,
+      });
+      const bySource = Object.fromEntries(sourceBreakdown.map(s => [s.howHeard, s._count]));
+
+      // 8. Follow-up status breakdown
+      const followUpBreakdown = await prisma.follow_up.groupBy({
+        by: ['status'],
+        _count: true,
+      });
+      const followUpStatus = Object.fromEntries(followUpBreakdown.map(f => [f.status, f._count]));
+
+      // 10. Trend data (past 6 months)
+      const trendData = await this.getTrendData();
+
+    // Final result
+    return {
+      total: totalVisitors,
+      thisMonth,
+      returningVisitors,
+      conversionRate,
+      byEvent,
+      bySource,
+      followUpStatus,
+      trendData,
+      
+    };
+}
+
+private async getTrendData() {
+  const now = new Date();
+  const data = [];
+
+  for (let i = 5; i >= 0; i--) {
+    const start = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const end = new Date(now.getFullYear(), now.getMonth() - i + 1, 0);
+    const monthName = start.toLocaleString('default', { month: 'short' });
+
+    const visits = await prisma.visit.findMany({
+      where: {
+        createdAt: {
+          gte: start,
+          lte: end,
+        },
+      },
+    });
+
+    const visitorMap = new Map<number, number>();
+    visits.forEach(v => {
+      if (v.visitorId){
+        visitorMap.set(v.visitorId, (visitorMap.get(v.visitorId) || 0) + 1);
+      }
+    });
+
+    const newVisitors = Array.from(visitorMap.values()).filter(count => count === 1).length;
+    const returningVisitors = Array.from(visitorMap.values()).filter(count => count > 1).length;
+
+    data.push({
+      month: monthName,
+      visitors: visitorMap.size,
+      newVisitors,
+      returningVisitors,
+    });
+  }
+
+  return data;
+}
+
+
+
+    private async getStartDate(timeframe:string) {
       console.log(timeframe)
       const now = new Date();
       switch (timeframe) {

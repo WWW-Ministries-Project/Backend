@@ -5,6 +5,7 @@ import cors from "cors";
 import { appRouter } from "./src/routes/appRouter";
 import logger from "./src/utils/logger-config";
 import { setupSwagger } from "./src/swagger";
+import { prisma } from "./src/Models/context";
 dotenv.config();
 // import { startUserSyncing } from "./src/cron-jobs/userCron";
 
@@ -17,11 +18,19 @@ app.use(express.json());
 setupSwagger(app);
 app.use(appRouter);
 
-// startUserSyncing();
+async function startServer() {
+  try {
+    await prisma.$connect();
+    console.log('✅ Successfully connected to the database');
 
-// mongoose//   .connect(MONGO_URI, {})
-//   .then(() => {
-// console.log("Connected to MongoDB");
-app.listen(port, () => {
-  logger.info(`Server running on port ${port}`);
-});
+    app.listen(port, () => {
+      logger.info(`Server running on port ${port}`);
+    });
+    
+  } catch (error) {
+    console.error('❌ Unable to connect to the database:', error);
+    process.exit(1); // Exit the app with failure
+  }
+}
+
+startServer();

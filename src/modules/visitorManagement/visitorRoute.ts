@@ -17,9 +17,9 @@ const prayerRequestController = new PrayerRequestController();
 //visitor routes
 visitorRouter.post("/visitors", visitorController.createVisitor)
 visitorRouter.get("/visitors", visitorController.getAllVisitors)
-visitorRouter.get("/visitors/:id", visitorController.getVisitorsById)
-visitorRouter.put("/visitors/:id", visitorController.updateVisitor)
-visitorRouter.delete("/visitors/:id", visitorController.deleteVisitor)
+visitorRouter.get("/visitor", visitorController.getVisitorsById)
+visitorRouter.put("/visitor", visitorController.updateVisitor)
+visitorRouter.delete("/visitor", visitorController.deleteVisitor)
 visitorRouter.get("/visitor-stats/", visitorController.getVisitorStats)
 
 
