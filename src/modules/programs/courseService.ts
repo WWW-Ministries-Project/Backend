@@ -38,7 +38,6 @@ export class CourseService {
     async getAllCourses(cohortId: number) {
       return await prisma.course.findMany({
         where: { cohortId },
-        include: { cohort: true },
       });
     }
   

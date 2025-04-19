@@ -10,11 +10,13 @@ import {
   confirmTemplate,
 } from "../../utils";
 import { UserService } from "./userService";
+import { CourseService } from "../programs/courseService";
 
 dotenv.config();
 
 const JWT_SECRET: any = process.env.JWT_SECRET;
 const userService = new UserService();
+const courseService = new CourseService;
 
 export const landingPage = async (req: Request, res: Response) => {
   res.send(
@@ -830,36 +832,56 @@ export const statsUsers = async (req: Request, res: Response) => {
 };
 
 export const getUserByEmailPhone = async (req: Request, res: Response) => {
-  const { email } = req.query;
+  const { email, cohortId } = req.query;
 
 try {
-  const response: any = await prisma.user_info.findFirst({
-    where: {
-      OR: [
-        { email: email as string },
-        { primary_number: email as string },
-      ],
-    },
-    select: {
-      user_id:true,
-      first_name: true,
-      last_name: true,
-      other_name: true,
-      email: true,
-      country_code: true,
-      primary_number: true,
-      title: true,
-      user:{
-        select:{
-          membership_type:true,
-          status: true,
-        }
-        
-      }
-    },
-  });
+  let user = null;
+  let courses:any[] = [];
 
-  if (!response) {
+  // If email is passed, find user
+  if (email) {
+    user = await prisma.user_info.findFirst({
+      where: {
+        OR: [
+          { email: email as string },
+          { primary_number: email as string },
+        ],
+      },
+      select: {
+        user_id: true,
+        first_name: true,
+        last_name: true,
+        other_name: true,
+        email: true,
+        country_code: true,
+        primary_number: true,
+        title: true,
+        user: {
+          select: {
+            membership_type: true,
+            status: true,
+          }
+        }
+      },
+    });
+  }
+
+  // If cohortId is passed, get courses
+  if (cohortId) {
+    courses = await courseService.getAllCourses(Number(cohortId));
+  }
+
+  console.log(cohortId)
+
+  // If no params were passed
+  if (!email && !cohortId) {
+    return res.status(400).json({
+      message: "At least one query parameter (email or cohortId) must be provided.",
+    });
+  }
+
+  // If email was provided but no user found
+  if (email && !user) {
     return res.status(404).json({
       message: "User not found",
     });
@@ -867,7 +889,10 @@ try {
 
   return res.status(200).json({
     message: "Operation successful",
-    data: response,
+    data: {
+      user,
+      courses,
+    }
   });
 
 } catch (error) {
