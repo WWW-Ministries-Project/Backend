@@ -3,7 +3,7 @@ import {
   toCapitalizeEachWord,
   hashPassword,
 } from "../../utils";
-import { ZKTeco } from "../integrationUtils/userIntegration"
+import axios from 'axios';
 
 export class UserService {
 
@@ -197,22 +197,28 @@ export class UserService {
   async saveUserToZTeco(id: number, member_id: string, name: string, password: string) {
 
     if (!process.env.SAVE_TO_ZKDEVICE || process.env.SAVE_TO_ZKDEVICE === "false") return false;
-    
-    const zteco = new ZKTeco();
+
+    if (!process.env.ZTECO_SERVICE) return false;
+
+    const URL = process.env.ZTECO_SERVICE
 
     const userId = member_id.slice(-8)
 
-    const result = await zteco.createUser({ 
-        id,
-        member_id:userId,
-        name,
-        password})
-        console.log(result)
-    if (result[0]){
+    try {
+   
+      await axios.post(`${URL}/zteco`, {
+      id,
+      member_id: userId,
+      name,
+      password,
+    }).then((res) => {
       console.log(`User ${name} is saved to ZKdevice sucessfully`)
-    }
-    return result[0];
-  
+      console.log(res.data)
+      return res.data[0];
+    });
+  } catch (error: any) {
+    console.error('❌ Failed to call ZKTeco service:', error.message);
+  }
   
   }
 }

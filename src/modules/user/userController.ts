@@ -829,3 +829,52 @@ export const statsUsers = async (req: Request, res: Response) => {
   }
 };
 
+export const getUserByEmailPhone = async (req: Request, res: Response) => {
+  const { email } = req.query;
+
+try {
+  const response: any = await prisma.user_info.findFirst({
+    where: {
+      OR: [
+        { email: email as string },
+        { primary_number: email as string },
+      ],
+    },
+    select: {
+      first_name: true,
+      last_name: true,
+      other_name: true,
+      email: true,
+      country_code: true,
+      primary_number: true,
+      title: true,
+      user:{
+        select:{
+          membership_type:true,
+          status: true,
+        }
+        
+      }
+    },
+  });
+
+  if (!response) {
+    return res.status(404).json({
+      message: "User not found",
+    });
+  }
+
+  return res.status(200).json({
+    message: "Operation successful",
+    data: response,
+  });
+
+} catch (error) {
+  console.log(error);
+  return res.status(500).json({
+    message: "Operation failed",
+    data: error,
+  });
+}
+
+};
