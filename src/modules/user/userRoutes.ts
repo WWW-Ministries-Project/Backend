@@ -15,6 +15,7 @@ import {
   updateUserSatus,
   statsUsers,
   activateUser,
+  getUserByEmailPhone,
 } from "../user/userController";
 import { Permissions } from "../../middleWare/authorization";
 const permissions = new Permissions();
@@ -61,5 +62,9 @@ userRouter.put(
   [protect, permissions.can_Manage_Members],
   activateUser
 );
+userRouter.get(
+  "/get-user-email",
+  getUserByEmailPhone
+)
 
 userRouter.get("/", landingPage);

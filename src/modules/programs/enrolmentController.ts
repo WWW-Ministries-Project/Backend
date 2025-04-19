@@ -4,75 +4,75 @@ import { EnrollmentService } from "./enrolmentService";
 const enrollment = new EnrollmentService();
 
 export class EnrollmentController {
-      async enrollUser(req: Request, res: Response) {
-        try {
-          const { firstName, lastName, email, phone, courseId, isMember, userId } = req.body;
+  async enrollUser(req: Request, res: Response) {
+    try {
+      const { firstName, lastName, email, phone, courseId, isMember, userId } = req.body;
 
-          // Validate required fields
-          if (!firstName || !lastName || !email || !phone || !courseId) {
-            return res.status(400).json({ message: "Missing required fields firstName, lastName, email, phone, courseId" });
-          }
-
-          const newEnrollment = await enrollment.enrollUser({
-            firstName,
-            lastName,
-            email,
-            phone,
-            courseId,
-            isMember,
-            userId
-          });
-
-          return res.status(201).json({
-            message: "User Enrolled Successfully",
-            data: newEnrollment,
-          });
-
-        } catch (error: any) {
-          return res.status(500).json({
-            message: "Error enrolling user",
-            error: error.message,
-          });
-        }
-      };
-
-      async getEnrollmentByCourse(req: Request, res: Response) {
-        try {
-          const allEnrollmentByCourse= await enrollment.getEnrollmentsByCourse(Number(req.params.id));
-          return res.status(200).json({ message: "Operation sucessfull", data: allEnrollmentByCourse });
-        } catch (error:any) {
-          return res.status(500).json({ message: "Error retrieving enrollment", error: error.message });
-        }
+      // Validate required fields
+      if (!firstName || !lastName || !email || !phone || !courseId) {
+        return res.status(400).json({ message: "Missing required fields firstName, lastName, email, phone, courseId" });
       }
 
-      async getEnrollmentByUser(req: Request, res: Response) {
+      const newEnrollment = await this.saveEnrollUser(
+        firstName,
+        lastName,
+        email,
+        phone,
+        courseId,
+        isMember,
+        userId
+      )
+
+      return res.status(201).json({
+        message: "User Enrolled Successfully",
+        data: newEnrollment,
+      });
+
+    } catch (error: any) {
+      return res.status(500).json({
+        message: "Error enrolling user",
+        error: error.message,
+      });
+    }
+  };
+
+  async getEnrollmentByCourse(req: Request, res: Response) {
+    try {
+      const allEnrollmentByCourse= await enrollment.getEnrollmentsByCourse(Number(req.params.id));
+      return res.status(200).json({ message: "Operation sucessfull", data: allEnrollmentByCourse });
+    } catch (error:any) {
+      return res.status(500).json({ message: "Error retrieving enrollment", error: error.message });
+    }
+  }
+
+  async getEnrollmentByUser(req: Request, res: Response) {
+    try {
+      const allEnrollmentByCourse= await enrollment.getUserEnrollments(Number(req.params.id));
+      return res.status(200).json({ message: "Operation sucessfull", data: allEnrollmentByCourse });
+    } catch (error:any) {
+      return res.status(500).json({ message: "Error enrolling User", error: error.message });
+    }}
+
+  async unEnrollUser(req: Request, res: Response) {
         try {
-          const allEnrollmentByCourse= await enrollment.getUserEnrollments(Number(req.params.id));
+          const allEnrollmentByCourse= await enrollment.unenrollUser(req.body.courseId,req.body.userId);
           return res.status(200).json({ message: "Operation sucessfull", data: allEnrollmentByCourse });
         } catch (error:any) {
           return res.status(500).json({ message: "Error enrolling User", error: error.message });
-        }}
-
-      async unEnrollUser(req: Request, res: Response) {
-            try {
-              const allEnrollmentByCourse= await enrollment.unenrollUser(req.body.courseId,req.body.userId);
-              return res.status(200).json({ message: "Operation sucessfull", data: allEnrollmentByCourse });
-            } catch (error:any) {
-              return res.status(500).json({ message: "Error enrolling User", error: error.message });
-            }
-      }
-
-      async getProgressReport(req: Request, res: Response) {
-        try {
-          const enrollmentId = req.params.id
-         const progressDetails = await enrollment.getProgressDetails(Number(enrollmentId))
-          return res.status(200).json({ message: "Operation sucessfull", data: progressDetails });
-        } catch (error:any) {
-          return res.status(500).json({ message: "Error retrieving Progress report", error: error.message });
         }
-      }
+  }
 
-      async updateProgressReport(req: Request, res: Response) {
+  async getProgressReport(req: Request, res: Response) {
+    try {
+      const enrollmentId = req.params.id
+      const progressDetails = await enrollment.getProgressDetails(Number(enrollmentId))
+      return res.status(200).json({ message: "Operation sucessfull", data: progressDetails });
+    } catch (error:any) {
+      return res.status(500).json({ message: "Error retrieving Progress report", error: error.message });
+    }
+  }
+
+  async updateProgressReport(req: Request, res: Response) {
         try {
 
           const {progressId, score, status, notes} = req.body
@@ -81,9 +81,9 @@ export class EnrollmentController {
         } catch (error:any) {
           return res.status(500).json({ message: "Error updating Progress report", error: error.message });
         }
-      }
+  }
 
-      async updateProgressReports(req:Request, res:Response){
+  async updateProgressReports(req:Request, res:Response){
         const { progressUpdates } = req.body;
 
         try {
@@ -106,5 +106,27 @@ export class EnrollmentController {
             error,
           });
       }
-  };      
+  };   
+  
+  private async saveEnrollUser(
+    firstName:string,
+    lastName:string,
+    email:string,
+    phone:string,
+    course_id:string|number,
+    isMember:boolean,
+    user_id:string|number
+  ){
+  const newEnrollment = await enrollment.enrollUser({
+    firstName,
+    lastName,
+    email,
+    phone,
+    courseId: parseInt(course_id as string),
+    isMember,
+    userId: parseInt(user_id as string),
+  });
+
+    return newEnrollment;
+  }
 }
