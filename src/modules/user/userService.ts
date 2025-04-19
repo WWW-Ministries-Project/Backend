@@ -52,7 +52,7 @@ export class UserService {
     } = userData;
 
       // Generate email if not provided
-      let userEmail = email?.trim() || `${first_name.toLowerCase()}${last_name.toLowerCase()}_${Date.now()}@temp.com`;
+      let userEmail = email?.trim().toLowerCase() || `${first_name.toLowerCase()}${last_name.toLowerCase()}_${Date.now()}@temp.com`;
 
       // Hash password if the user needs an account
       const hashedPassword = is_user ? await hashPassword(password || "123456") : undefined;

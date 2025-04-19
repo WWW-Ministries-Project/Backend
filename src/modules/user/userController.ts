@@ -841,6 +841,7 @@ try {
       ],
     },
     select: {
+      user_id:true,
       first_name: true,
       last_name: true,
       other_name: true,
