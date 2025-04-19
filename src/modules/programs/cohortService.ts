@@ -60,7 +60,6 @@ export class CohortService {
   }
 }
 
-// ✅ Improved addDeadlineFlag function
 const addDeadlineFlag = (data: any | null) => {
   if (!data) return null; // Prevent errors if data is null
   const currentDate = new Date();
