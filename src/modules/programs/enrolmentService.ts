@@ -4,18 +4,18 @@ import { prisma } from "../../Models/context";
 
 export class EnrollmentService {
       async enrollUser(payload: {
-        firstName: string;
-        lastName: string;
+        first_name: string;
+        last_name: string;
         email: string;
-        phone: string;
-        courseId: number;
+        primary_number: string;
+        course_id: number;
         isMember: boolean;
-        userId?: number;
+        user_id?: number;
       }) {
-        const { firstName, lastName, email, phone, courseId, userId } = payload;
+        const { first_name, last_name, email, primary_number, course_id, user_id } = payload;
 
         const course = await prisma.course.findUnique({
-          where: { id: courseId },
+          where: { id: course_id },
           select: { enrolled: true, capacity: true, cohortId: true }, // Get cohortId
         });
         
@@ -29,9 +29,9 @@ export class EnrollmentService {
         
         // Check for duplicate enrollment
         const existingEnrollment = await prisma.enrollment.findFirst({
-          where: userId
-            ? { userId, courseId } // Check by userId for registered users
-            : { email, courseId }, // Check by email for non-users
+          where: user_id
+            ? { user_id, course_id } // Check by userId for registered users
+            : { email, course_id }, // Check by email for non-users
         });
         
         if (existingEnrollment) {
@@ -42,16 +42,16 @@ export class EnrollmentService {
         const [enrollment] = await prisma.$transaction([
           prisma.enrollment.create({
             data: {
-              userId,
-              courseId,
-              firstName,
-              lastName,
+              user_id,
+              course_id,
+              first_name,
+              last_name,
+              primary_number,
               email,
-              phone,
             },
           }),
           prisma.course.update({
-            where: { id: courseId },
+            where: { id: course_id },
             data: { enrolled: { increment: 1 } },
           }),
         ]);
@@ -86,29 +86,29 @@ export class EnrollmentService {
   
     async getEnrollmentsByCourse(courseId: number) {
       return await prisma.enrollment.findMany({
-        where: { courseId },
+        where: { course_id:courseId },
         include: { user: true },
       });
     }
   
     async getUserEnrollments(userId: number) {
       return await prisma.enrollment.findMany({
-        where: { userId },
+        where: { user_id:userId },
         include: { course: true },
       });
     }
   
-    async unenrollUser(courseId: number, userId: number) {
+    async unenrollUser(course_id: number, user_id: number) {
       // Remove enrollment
       const enrollment = await prisma.enrollment.delete({
-        where: { userId_courseId: { userId, courseId } },
+        where: { user_id_course_id: { user_id, course_id } },
       });
   
       // Update enrolled count
-      const course = await prisma.course.findUnique({ where: { id: courseId } });
+      const course = await prisma.course.findUnique({ where: { id: course_id } });
       if (course) {
         await prisma.course.update({
-          where: { id: courseId },
+          where: { id: course_id },
           data: { enrolled: course.enrolled - 1 },
         });
       }

@@ -6,21 +6,21 @@ const enrollment = new EnrollmentService();
 export class EnrollmentController {
   async enrollUser(req: Request, res: Response) {
     try {
-      const { firstName, lastName, email, phone, courseId, isMember, userId } = req.body;
+      const { first_name, last_name, email, primary_number, course_id, user_id, isMember } = req.body;
 
       // Validate required fields
-      if (!firstName || !lastName || !email || !phone || !courseId) {
+      if (!first_name || !last_name || !email || !primary_number || !course_id) {
         return res.status(400).json({ message: "Missing required fields firstName, lastName, email, phone, courseId" });
       }
 
       const newEnrollment = await enrollment.enrollUser({
-        firstName,
-        lastName,
+        first_name,
+        last_name,
         email,
-        phone,
-        courseId: parseInt(courseId as string),
+        primary_number,
+        course_id: parseInt(course_id as string),
         isMember,
-        userId: parseInt(userId as string),
+        user_id: parseInt(user_id as string),
       });
 
       return res.status(201).json({
@@ -55,7 +55,7 @@ export class EnrollmentController {
 
   async unEnrollUser(req: Request, res: Response) {
         try {
-          const allEnrollmentByCourse= await enrollment.unenrollUser(req.body.courseId,req.body.userId);
+          const allEnrollmentByCourse= await enrollment.unenrollUser(req.body.course_id,req.body.user_id);
           return res.status(200).json({ message: "Operation sucessfull", data: allEnrollmentByCourse });
         } catch (error:any) {
           return res.status(500).json({ message: "Error enrolling User", error: error.message });
