@@ -871,7 +871,6 @@ try {
     courses = await courseService.getAllCourses(Number(cohortId));
   }
 
-  console.log(cohortId)
 
   // If no params were passed
   if (!email && !cohortId) {
