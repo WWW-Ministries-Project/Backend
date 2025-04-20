@@ -13,15 +13,15 @@ export class EnrollmentController {
         return res.status(400).json({ message: "Missing required fields firstName, lastName, email, phone, courseId" });
       }
 
-      const newEnrollment = await this.saveEnrollUser(
+      const newEnrollment = await enrollment.enrollUser({
         firstName,
         lastName,
         email,
         phone,
-        courseId,
+        courseId: parseInt(courseId as string),
         isMember,
-        userId
-      )
+        userId: parseInt(userId as string),
+      });
 
       return res.status(201).json({
         message: "User Enrolled Successfully",
@@ -106,27 +106,7 @@ export class EnrollmentController {
             error,
           });
       }
-  };   
+  };
   
-  private async saveEnrollUser(
-    firstName:string,
-    lastName:string,
-    email:string,
-    phone:string,
-    course_id:string|number,
-    isMember:boolean,
-    user_id:string|number
-  ){
-  const newEnrollment = await enrollment.enrollUser({
-    firstName,
-    lastName,
-    email,
-    phone,
-    courseId: parseInt(course_id as string),
-    isMember,
-    userId: parseInt(user_id as string),
-  });
-
-    return newEnrollment;
-  }
+  
 }
