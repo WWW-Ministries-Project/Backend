@@ -70,11 +70,25 @@ export class ProgramService {
   async getProgramById(id: number) {
     return await prisma.program.findUnique({
       where: { id },
-      include: { topics: true, cohorts: true, prerequisitePrograms: {
-        select: { prerequisiteId: true,prerequisite: true },
-    },
-  }
-  });
+      include: {
+        topics: true,
+        prerequisitePrograms: {
+          select: {
+            prerequisiteId: true,
+            prerequisite: true,
+          },
+        },
+        cohorts: {
+          include: {
+            courses: {
+              include: {
+                enrollments: true,
+              },
+            },
+          },
+        },
+      },
+    });
   }
 
   async updateProgram(id: number, data: any) {
