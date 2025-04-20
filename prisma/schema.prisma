@@ -394,19 +394,19 @@ model course {
 
 model enrollment {
   id         Int        @id @default(autoincrement())
-  userId     Int? // Nullable for non-users
-  courseId   Int
-  firstName  String
-  lastName   String
+  user_id     Int? // Nullable for non-users
+  course_id   Int
+  first_name  String
+  last_name   String
   email      String
-  phone      String
-  user       user?      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  course     course     @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  primary_number     String
+  user       user?      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  course     course     @relation(fields: [course_id], references: [id], onDelete: Cascade)
   enrolledAt DateTime   @default(now())
   progress   progress[]
 
-  @@unique([userId, courseId])
-  @@unique([email, courseId])
+  @@unique([user_id, course_id])
+  @@unique([email, course_id])
 }
 
 enum Eligibility {
