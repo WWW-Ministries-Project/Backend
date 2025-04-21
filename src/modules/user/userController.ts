@@ -129,7 +129,7 @@ export const registerUser = async (req: Request, res: Response) => {
 
 export const updateUser = async (req: Request, res: Response) => {
   try {
-    const { id } = req.params; // Assuming user ID is passed as a URL param
+    const { id } = req.query
     const {
       personal_info: {
         title,
