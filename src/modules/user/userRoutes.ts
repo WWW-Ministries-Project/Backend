@@ -41,7 +41,7 @@ userRouter.post("/change-password", changePassword);
 userRouter.post("/login", login);
 
 userRouter.post("/register", registerUser);
-userRouter.post(
+userRouter.put(
   "/update-user",
   [protect, permissions.can_Manage_Members],
   updateUser
