@@ -10,7 +10,7 @@ export class EnrollmentController {
 
       // Validate required fields
       if (!first_name || !last_name || !email || !primary_number || !course_id) {
-        return res.status(400).json({ message: "Missing required fields firstName, lastName, email, phone, courseId" });
+        return res.status(400).json({ message: "Missing required fields first_name, last_name, email, primary_number, course_id" });
       }
 
       const newEnrollment = await enrollment.enrollUser({
