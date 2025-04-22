@@ -59,7 +59,7 @@ export class UserService {
       const emergency_phone = `${emergency_country_code}${emergency_phone_number}`;
 
       const departmentId = isNaN(parseInt(department_id)) || parseInt(department_id) === 0 ? null : parseInt(department_id);
-
+  
       // Create user in database
       const user = await prisma.user.create({
         data: {
@@ -110,26 +110,30 @@ export class UserService {
 
       
       const savedUser = await this.generateUserId(user).catch((err) => console.error("Error generating user ID:", err));
+      let savedChildren;
 
       if (has_children && children.length > 0) {
-       await this.registerChildren(children, savedUser, membership_type)
+        savedChildren = await this.registerChildren(children, savedUser, membership_type)
       }
 
-      return savedUser;
+      return { parent:savedUser, children:savedChildren };
 
   }
 
-   async registerChildren(children: any[], parentObj: any, membership_type: any) {
-    await Promise.all(
+  async registerChildren(children: any[], parentObj: any, membership_type: any) {
+    const createdChildren = await Promise.all(
       children.map(async (child) => {
         try {
           const childUser = await prisma.user.create({
             data: {
-              name: toCapitalizeEachWord(`${child.first_name} ${child.other_name || ""} ${child.last_name}`.trim()),
+              name: toCapitalizeEachWord(
+                `${child.first_name} ${child.other_name || ""} ${child.last_name}`.trim()
+              ),
               email: `${child.first_name.toLowerCase()}_${child.last_name.toLowerCase()}_${Date.now()}@temp.com`,
               is_user: false,
               parent_id: parentObj.id,
               membership_type,
+              status: parentObj.status,
               user_info: {
                 create: {
                   first_name: child.first_name,
@@ -143,18 +147,20 @@ export class UserService {
               },
             },
           });
-
-          // Generate User ID for each child
-          this.generateUserId(childUser).catch((err) =>
-            console.error(`Error generating user ID for child ${childUser.id}:`, err)
-          );
+  
+          const createdChild = await this.generateUserId(childUser);
+  
+          return createdChild;
         } catch (error) {
           console.error("Error creating child user:", error);
+          return null; // Optional: skip this child if an error occurs
         }
       })
     );
-  }
-
+  
+    return createdChildren.filter(Boolean); 
+  }  
+  
    private async generateUserId(userData: any) {
     const prefix = process.env.ID_PREFIX || 'WWM-HC'; 
     const year = new Date().getFullYear();
