@@ -7,7 +7,19 @@ export class FollowUPController {
   
     async createFollowUp(req: Request, res: Response) {
         try {
-          const follow = await follow_up.createFollowUp(req.body);
+          const { date, type, assignedTo, notes, visitorId } = req.body;
+          
+          const dateObject = new Date(date);
+
+          const followUpData = {
+            date: dateObject,
+            type,
+            assignedTo:Number(assignedTo),
+            notes,
+            visitorId:Number(visitorId)
+          };
+
+          const follow = await follow_up.createFollowUp(followUpData);
           return res.status(201).json({ message: "Follow Up Added", data: follow });
         } catch (error:any) {
           return res.status(500).json({ message: "Error creating follow up", error: error.message });
