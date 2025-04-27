@@ -8,7 +8,7 @@ export class FollowUPController {
     async createFollowUp(req: Request, res: Response) {
         try {
           const { date, type, assignedTo, notes, visitorId } = req.body;
-
+          
           const dateObject = new Date(date);
 
           const followUpData = {
