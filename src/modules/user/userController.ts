@@ -517,6 +517,7 @@ export const ListUsers = async (req: Request, res: Response) => {
         id: true,
         name: true,
         email: true,
+        member_id: true,
         created_at: true,
         is_active: true,
         is_user: true,
