@@ -148,11 +148,8 @@ export const listAllAccessLevel = async (req: Request, res: Response) => {
 
 export const getAccessLevel = async (req: Request, res: Response) => {
   const { id } = req.query;
-  if (!id) {
-    return res.status(400).json({
-      message: "Operation successful",
-      data: "Missing ID for the access level",
-    });
+  if (!id){
+    return res.status(400).json({ message: "Operation successful", data: "Missing ID for the access level" });
   }
   try {
     const data = await prisma.access_level.findFirst({
