@@ -50,42 +50,57 @@ export class VisitorService {
       return updatedVisitor;
     }  
     async getVisitorById(id: number) {
-       const visitor =  await prisma.visitor.findUnique({
-        where:{ id  },
-        include:{
-            visits:{
-                include :{
-                    event:{
-                        select:{
-                            event_type:true,
-                            name: true,
-                            id: true
-                        }
-                    }
-                }
+        const visitor = await prisma.visitor.findUnique({
+          where: { id },
+          include: {
+            visits: {
+              include: {
+                event: {
+                  select: {
+                    id: true,
+                    name: true,
+                    event_type: true,
+                  },
+                },
+              },
             },
             notes: true,
             followUps: true,
-            prayerRequests: true
-        }
-       })
-       if (!visitor) return null
-
-       return {
-        ...visitor,
-        visits: visitor.visits.map(v => ({
-            id: v.id,
-            visitorId: v.visitorId,
-            date: v.date,
-            eventId: v.event?.id,
-            eventName: v.event?.name || null,
-            eventType: v.event?.event_type,
-            notes: v.notes,
-            createdAt: v.createdAt,
-            updatedAt: v.updatedAt
-        }))
-    };
-    }
+            prayerRequests: true,
+          },
+        });
+      
+        if (!visitor) return null;
+      
+        // Get unique assignedTo user IDs
+        const assignedToIds = Array.from(
+          new Set(visitor.followUps.map(f => f.assignedTo).filter(Boolean))
+        ) as number[];
+      
+        // Fetch corresponding user names
+        const users = assignedToIds.length
+          ? await prisma.user.findMany({
+              where: { id: { in: assignedToIds } },
+              select: { id: true, name: true },
+            })
+          : [];
+      
+        const userMap = Object.fromEntries(users.map(user => [user.id, user.name]));
+      
+        return {
+          ...visitor,
+          visits: visitor.visits.map(({ event, ...v }) => ({
+            ...v,
+            eventId: event?.id || null,
+            eventName: event?.name || null,
+            eventType: event?.event_type || null,
+          })),
+          followUps: visitor.followUps.map(f => ({
+            ...f,
+            assignedTo: f.assignedTo ? userMap[f.assignedTo] || null : null,
+          })),
+        };
+      }
     async getAllVisitors() {
         const visitors = await prisma.visitor.findMany({
             include :{
