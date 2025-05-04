@@ -1,0 +1,16 @@
+version: "3"
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: www_backend_prod
+    env_file: .env
+    deploy:
+      restart_policy:
+        condition: on-failure
+        max_attempts: 1
+    restart: on-failure
+    ports:
+      - 8001:8000
