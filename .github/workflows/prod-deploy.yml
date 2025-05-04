@@ -2,7 +2,7 @@ name: Production CI/CD
 
 on:
   push:
-    branches: ["production"]
+    branches: ["production", "main"]
 
 jobs:
   deploy:
@@ -16,4 +16,8 @@ jobs:
           key: ${{ secrets.PROD_SSH_KEY }}
           script: |
             cd /home/ubuntu/scripts && \
-            sudo ./deploy-wwm.sh
+            if [ "${{ github.ref }}" = "refs/heads/production" ]; then
+              sudo ./deploy-wwm-prod.sh
+            else
+              sudo ./deploy-wwm.sh
+            fi
