@@ -67,6 +67,7 @@ export class UserService {
           email: userEmail,
           password: hashedPassword,
           is_user,
+          is_active: false,
           status,
           department_id:departmentId,
           position_id,
@@ -109,14 +110,38 @@ export class UserService {
       });
 
       
-      const savedUser = await this.generateUserId(user).catch((err) => console.error("Error generating user ID:", err));
+       await this.generateUserId(user).catch((err) => console.error("Error generating user ID:", err));
+      const savedUser = await prisma.user.findUnique({
+        where: { id: user.id },
+        include: {
+          user_info: {
+            select: {
+              photo: true,
+            },
+          },
+        },
+      });
+
+      if (!savedUser) {
+        throw new Error('User not found');
+      }
+
+      const { password:_, user_info, ...userWithoutPassword } = savedUser;
+      const photo = user_info?.photo || null;
+
       let savedChildren;
 
       if (has_children && children.length > 0) {
-        savedChildren = await this.registerChildren(children, savedUser, membership_type)
+        savedChildren = await this.registerChildren(children, savedUser, membership_type);
       }
 
-      return { parent:savedUser, children:savedChildren };
+      return {
+        parent: {
+          ...userWithoutPassword,
+          photo,
+        },
+        children:savedChildren,
+      };
 
   }
 
@@ -131,6 +156,7 @@ export class UserService {
               ),
               email: `${child.first_name.toLowerCase()}_${child.last_name.toLowerCase()}_${Date.now()}@temp.com`,
               is_user: false,
+              is_active: false,
               parent_id: parentObj.id,
               membership_type,
               status: parentObj.status,
