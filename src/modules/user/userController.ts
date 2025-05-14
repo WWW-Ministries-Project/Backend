@@ -238,7 +238,12 @@ export const updateUserSatus = async (req: Request, res: Response) => {
         is_active,
         status,
       },
-      select: selectQuery,
+      select: {
+        id: true,
+        is_active: true,
+        member_id: true,
+        status: true,
+      },
     });
     res
       .status(200)
@@ -246,7 +251,7 @@ export const updateUserSatus = async (req: Request, res: Response) => {
   } catch (error) {
     return res
       .status(500)
-      .json({ message: "Internal Server Error", data: null });
+      .json({ message: " Error updating User status "+ error, data: null });
   }
 };
 export const deleteUser = async (req: Request, res: Response) => {
