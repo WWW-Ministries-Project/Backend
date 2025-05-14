@@ -56,6 +56,7 @@ const selectQuery = {
       emergency_contact: {
         select: {
           name: true,
+          country_code: true,
           phone_number: true,
           relation: true,
         },
@@ -211,7 +212,8 @@ export const updateUser = async (req: Request, res: Response) => {
               update: {
                 name: emergency_contact_name || userExists?.user_info?.emergency_contact?.name,
                 relation: emergency_contact_relation || userExists?.user_info?.emergency_contact?.relation,
-                phone_number: emergency_phone,
+                country_code: emergency_country_code || userExists?.user_info?.emergency_contact?.country_code,
+                phone_number: emergency_phone_number || userExists?.user_info?.emergency_contact?.phone_number,
               },
             },
           },
@@ -617,6 +619,7 @@ export const getUser = async (req: Request, res: Response) => {
             emergency_contact: {
               select: {
                 name: true,
+                country_code: true,
                 phone_number: true,
                 relation: true,
               },

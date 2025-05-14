@@ -56,7 +56,6 @@ export class UserService {
 
       // Hash password if the user needs an account
       const hashedPassword = is_user ? await hashPassword(password || "123456") : undefined;
-      const emergency_phone = `${emergency_country_code}${emergency_phone_number}`;
 
       const departmentId = isNaN(parseInt(department_id)) || parseInt(department_id) === 0 ? null : parseInt(department_id);
   
@@ -92,7 +91,8 @@ export class UserService {
                 create: {
                   name: emergency_contact_name,
                   relation: emergency_contact_relation,
-                  phone_number: emergency_phone,
+                  country_code: emergency_country_code,
+                  phone_number: emergency_phone_number,
                 },
               },
               work_info: {
