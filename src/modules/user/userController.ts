@@ -32,6 +32,7 @@ const selectQuery = {
   membership_type: true,
   created_at: true,
   is_active: true,
+  is_user: true,
   position_id: true,
   access_level_id: true,
   member_id: true,
@@ -53,6 +54,8 @@ const selectQuery = {
       occupation: true,
       company: true,
       address: true,
+      state_region: true,
+      city: true,
       emergency_contact: {
         select: {
           name: true,
@@ -172,10 +175,6 @@ export const updateUser = async (req: Request, res: Response) => {
     if (!userExists) {
       return res.status(400).json({ message: "User not found", data: null });
     }
-
-    const emergency_phone = emergency_country_code && emergency_phone_number
-      ? `${emergency_country_code}${emergency_phone_number}`
-      : userExists?.user_info?.emergency_contact?.phone_number;
 
     const updatedUser = await prisma.user.update({
       where: { id: Number(user_id) },
