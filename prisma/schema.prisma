@@ -103,6 +103,7 @@ model user_emergency_contact {
   id           Int         @id @default(autoincrement())
   name         String
   relation     String
+  country_code String?
   phone_number String
   user_info    user_info[]
 }

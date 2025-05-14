@@ -56,6 +56,7 @@ const selectQuery = {
       emergency_contact: {
         select: {
           name: true,
+          country_code: true,
           phone_number: true,
           relation: true,
         },
@@ -129,7 +130,7 @@ export const registerUser = async (req: Request, res: Response) => {
 
 export const updateUser = async (req: Request, res: Response) => {
   try {
-    const { id } = req.query
+    const { user_id } = req.query
     const {
       personal_info: {
         title,
@@ -141,7 +142,7 @@ export const updateUser = async (req: Request, res: Response) => {
         marital_status,
         nationality,
       } = {},
-      picture: { src: photo } = {},
+      picture = {},
       contact_info: {
         email,
         resident_country: country,
@@ -157,14 +158,14 @@ export const updateUser = async (req: Request, res: Response) => {
         relation: emergency_contact_relation,
         phone: { country_code: emergency_country_code, number: emergency_phone_number } = {},
       } = {},
-      church_info: { membership_type } = {},
+      church_info: { membership_type, department_id, member_since } = {},
       status,
       position_id,
       is_user,
     } = req.body;
 
     const userExists = await prisma.user.findUnique({
-      where: { id: Number(id) },
+      where: { id: Number(user_id) },
       select: selectQuery,
     });
 
@@ -177,7 +178,7 @@ export const updateUser = async (req: Request, res: Response) => {
       : userExists?.user_info?.emergency_contact?.phone_number;
 
     const updatedUser = await prisma.user.update({
-      where: { id: Number(id) },
+      where: { id: Number(user_id) },
       data: {
         name: `${first_name || userExists?.user_info?.first_name} ${other_name || userExists?.user_info?.other_name || ""} ${last_name || userExists?.user_info?.last_name}`.trim(),
         email: email || userExists?.email,
@@ -199,7 +200,7 @@ export const updateUser = async (req: Request, res: Response) => {
             primary_number: primary_number || userExists?.user_info?.primary_number,
             email,
             country: country || userExists?.user_info?.country,
-            photo: photo || userExists?.user_info?.photo,
+            photo: picture.src || userExists?.user_info?.photo,
             work_info: {
               update: {
                 name_of_institution: work_name || userExists?.user_info?.work_info?.name_of_institution,
@@ -211,7 +212,8 @@ export const updateUser = async (req: Request, res: Response) => {
               update: {
                 name: emergency_contact_name || userExists?.user_info?.emergency_contact?.name,
                 relation: emergency_contact_relation || userExists?.user_info?.emergency_contact?.relation,
-                phone_number: emergency_phone,
+                country_code: emergency_country_code || userExists?.user_info?.emergency_contact?.country_code,
+                phone_number: emergency_phone_number || userExists?.user_info?.emergency_contact?.phone_number,
               },
             },
           },
@@ -238,7 +240,12 @@ export const updateUserSatus = async (req: Request, res: Response) => {
         is_active,
         status,
       },
-      select: selectQuery,
+      select: {
+        id: true,
+        is_active: true,
+        member_id: true,
+        status: true,
+      },
     });
     res
       .status(200)
@@ -246,7 +253,7 @@ export const updateUserSatus = async (req: Request, res: Response) => {
   } catch (error) {
     return res
       .status(500)
-      .json({ message: "Internal Server Error", data: null });
+      .json({ message: " Error updating User status "+ error, data: null });
   }
 };
 export const deleteUser = async (req: Request, res: Response) => {
@@ -612,6 +619,7 @@ export const getUser = async (req: Request, res: Response) => {
             emergency_contact: {
               select: {
                 name: true,
+                country_code: true,
                 phone_number: true,
                 relation: true,
               },

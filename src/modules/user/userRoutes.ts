@@ -47,7 +47,7 @@ userRouter.put(
   updateUser
 );
 
-userRouter.patch(
+userRouter.put(
   "/update-user-status",
   [protect, permissions.can_Manage_Members],
   updateUserSatus
