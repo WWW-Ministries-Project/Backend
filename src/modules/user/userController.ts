@@ -32,7 +32,6 @@ const selectQuery = {
   membership_type: true,
   created_at: true,
   is_active: true,
-  is_user: true,
   position_id: true,
   access_level_id: true,
   member_id: true,
@@ -54,8 +53,6 @@ const selectQuery = {
       occupation: true,
       company: true,
       address: true,
-      state_region: true,
-      city: true,
       emergency_contact: {
         select: {
           name: true,
@@ -597,6 +594,7 @@ export const getUser = async (req: Request, res: Response) => {
         position_id: true,
         access_level_id: true,
         status: true,
+        is_user: true,
         member_id: true,
         user_info: {
           select: {
@@ -607,6 +605,8 @@ export const getUser = async (req: Request, res: Response) => {
             primary_number: true,
             title: true,
             photo: true,
+            state_region: true,
+            city: true,
             marital_status: true,
             nationality: true,
             date_of_birth: true,
