@@ -215,7 +215,7 @@ export const deleteAccessLevel = async (req: Request, res: Response) => {
         access_level_id: null,
       },
     });
-    const deleteAccess = await prisma.access_level.delete({ where: { id } });
+    const deleteAccess = await prisma.access_level.delete({ where: { id: Number(id) } });
     if (!deleteAccess) {
       res.status(500).json({ message: "Invalid Access Level Id" });
     }
