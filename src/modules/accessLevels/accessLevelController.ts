@@ -58,12 +58,16 @@ export const createAccessLevel = async (req: Request, res: Response) => {
 };
 
 export const updateAccessLevel = async (req: Request, res: Response) => {
-  const { id, name, description, permissions, created_by, assigned_users } =
+  const { id } = req.query
+  if (!id){
+    return res.status(400).json({ message: "Operation successful", data: "Missing ID for the access level" });
+  }
+  const { name, description, permissions, created_by, assigned_users } =
     req.body;
   try {
     const response = await prisma.access_level.update({
       where: {
-        id: +id,
+        id: Number(id),
       },
       data: {
         name,
