@@ -728,13 +728,36 @@ export const getUser = async (req: Request, res: Response) => {
       },
     });
 
-    let { user_info, parent, ...rest } = response;
+    if (!response) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    // Flatten user_info for main user
+    const { user_info, parent, children, ...rest } = response;
+    const user = { ...rest, ...user_info };
+
+    // Flatten user_info for parent
+    if (parent?.user_info) {
+      user.parent = { ...parent, ...parent.user_info };
+      delete user.parent.user_info;
+    }
+
+    // Flatten user_info for each child
+    if (children && Array.isArray(children)) {
+      user.children = children.map((child) => {
+        if (child.user_info) {
+          const { user_info, ...restChild } = child;
+          return { ...restChild, ...user_info };
+        }
+        return child;
+      });
+    }
+
     res.status(200).json({
       message: "Operation Successful",
-      data: { ...rest, ...user_info, parent },
+      data: user,
     });
   } catch (error) {
-    console.log(error);
     return res.status(500).json({
       message: "Operation failed",
       data: error,
