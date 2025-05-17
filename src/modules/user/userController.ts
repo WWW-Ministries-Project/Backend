@@ -173,10 +173,6 @@ export const updateUser = async (req: Request, res: Response) => {
       return res.status(400).json({ message: "User not found", data: null });
     }
 
-    const emergency_phone = emergency_country_code && emergency_phone_number
-      ? `${emergency_country_code}${emergency_phone_number}`
-      : userExists?.user_info?.emergency_contact?.phone_number;
-
     const updatedUser = await prisma.user.update({
       where: { id: Number(user_id) },
       data: {
@@ -598,6 +594,7 @@ export const getUser = async (req: Request, res: Response) => {
         position_id: true,
         access_level_id: true,
         status: true,
+        is_user: true,
         member_id: true,
         user_info: {
           select: {
@@ -608,6 +605,8 @@ export const getUser = async (req: Request, res: Response) => {
             primary_number: true,
             title: true,
             photo: true,
+            state_region: true,
+            city: true,
             marital_status: true,
             nationality: true,
             date_of_birth: true,
@@ -707,16 +706,58 @@ export const getUser = async (req: Request, res: Response) => {
             },
           },
         },
+        parent: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            membership_type: true,
+            created_at: true,
+            user_info: {
+              select: {
+                first_name: true,
+                last_name: true,
+                other_name: true,
+                date_of_birth: true,
+                gender: true,
+                nationality: true,
+              },
+            },
+          },
+        },
       },
     });
 
-    let { user_info, ...rest } = response;
+    if (!response) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    // Flatten user_info for main user
+    const { user_info, parent, children, ...rest } = response;
+    const user = { ...rest, ...user_info };
+
+    // Flatten user_info for parent
+    if (parent?.user_info) {
+      user.parent = { ...parent, ...parent.user_info };
+      delete user.parent.user_info;
+    }
+
+    // Flatten user_info for each child
+    if (children && Array.isArray(children)) {
+      user.children = children.map((child) => {
+        if (child.user_info) {
+          const { user_info, ...restChild } = child;
+          return { ...restChild, ...user_info };
+        }
+        return child;
+      });
+    }
+
     res.status(200).json({
       message: "Operation Successful",
-      data: { ...rest, ...user_info },
+      data: user,
     });
   } catch (error) {
-    console.log(error);
     return res.status(500).json({
       message: "Operation failed",
       data: error,

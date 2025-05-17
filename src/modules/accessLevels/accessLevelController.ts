@@ -58,12 +58,16 @@ export const createAccessLevel = async (req: Request, res: Response) => {
 };
 
 export const updateAccessLevel = async (req: Request, res: Response) => {
-  const { id, name, description, permissions, created_by, assigned_users } =
+  const { id } = req.query
+  if (!id){
+    return res.status(400).json({ message: "Operation successful", data: "Missing ID for the access level" });
+  }
+  const { name, description, permissions, created_by, assigned_users } =
     req.body;
   try {
     const response = await prisma.access_level.update({
       where: {
-        id: +id,
+        id: Number(id),
       },
       data: {
         name,
@@ -198,17 +202,20 @@ export const assignAccessLevelToUser = async (req: Request, res: Response) => {
 };
 
 export const deleteAccessLevel = async (req: Request, res: Response) => {
-  const { id } = req.body;
+  const { id } = req.query;
+  if (!id){
+    return res.status(400).json({ message: "Operation successful", data: "Missing ID for the access level" });
+  }
   try {
     const unAssign = await prisma.user.updateMany({
       where: {
-        access_level_id: +id,
+        access_level_id: Number(id),
       },
       data: {
         access_level_id: null,
       },
     });
-    const deleteAccess = await prisma.access_level.delete({ where: { id } });
+    const deleteAccess = await prisma.access_level.delete({ where: { id: Number(id) } });
     if (!deleteAccess) {
       res.status(500).json({ message: "Invalid Access Level Id" });
     }
