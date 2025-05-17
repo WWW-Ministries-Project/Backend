@@ -706,13 +706,32 @@ export const getUser = async (req: Request, res: Response) => {
             },
           },
         },
+        parent: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            membership_type: true,
+            created_at: true,
+            user_info: {
+              select: {
+                first_name: true,
+                last_name: true,
+                other_name: true,
+                date_of_birth: true,
+                gender: true,
+                nationality: true,
+              },
+            },
+          },
+        },
       },
     });
 
-    let { user_info, ...rest } = response;
+    let { user_info, parent, ...rest } = response;
     res.status(200).json({
       message: "Operation Successful",
-      data: { ...rest, ...user_info },
+      data: { ...rest, ...user_info, parent },
     });
   } catch (error) {
     console.log(error);
