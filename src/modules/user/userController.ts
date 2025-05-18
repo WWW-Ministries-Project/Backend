@@ -47,6 +47,8 @@ const selectQuery = {
       photo: true,
       marital_status: true,
       nationality: true,
+      state_region: true,
+      city: true,
       date_of_birth: true,
       gender: true,
       country: true,
@@ -145,7 +147,9 @@ export const updateUser = async (req: Request, res: Response) => {
       picture = {},
       contact_info: {
         email,
-        resident_country: country,
+        resident_country,
+        state_region,
+        city,
         phone: { country_code, number: primary_number } = {},
       } = {},
       work_info: {
@@ -192,10 +196,12 @@ export const updateUser = async (req: Request, res: Response) => {
             gender: gender || userExists?.user_info?.gender,
             marital_status: marital_status || userExists?.user_info?.marital_status,
             nationality: nationality || userExists?.user_info?.nationality,
+            state_region: state_region || userExists?.user_info?.state_region,
+            city: city || userExists?.user_info?.state_region,
             country_code: country_code || userExists?.user_info?.country_code,
             primary_number: primary_number || userExists?.user_info?.primary_number,
             email,
-            country: country || userExists?.user_info?.country,
+            country: resident_country || userExists?.user_info?.country,
             photo: picture.src || userExists?.user_info?.photo,
             work_info: {
               update: {
