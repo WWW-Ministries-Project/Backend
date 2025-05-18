@@ -201,7 +201,7 @@ export const updateUser = async (req: Request, res: Response) => {
             city: city || userExists?.user_info?.state_region,
             country_code: country_code || userExists?.user_info?.country_code,
             primary_number: primary_number || userExists?.user_info?.primary_number,
-            member_since: member_since || userExists?.user_info?.member_since,
+            member_since: new Date(member_since) || userExists?.user_info?.member_since,
             email,
             country: resident_country || userExists?.user_info?.country,
             photo: picture.src || userExists?.user_info?.photo,
