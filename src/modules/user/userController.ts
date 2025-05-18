@@ -600,6 +600,7 @@ export const getUser = async (req: Request, res: Response) => {
         created_at: true,
         is_active: true,
         position_id: true,
+        department_id: true,
         access_level_id: true,
         status: true,
         is_user: true,
