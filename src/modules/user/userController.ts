@@ -10,12 +10,14 @@ import {
 } from "../../utils";
 import { UserService } from "./userService";
 import { CourseService } from "../programs/courseService";
+import { forgetPasswordTemplate } from "../../utils/mail_templates/forgot-password";
+import { activateUserTemplate } from "../../utils/mail_templates/activateUserTemplate";
 
 dotenv.config();
 
 const JWT_SECRET: any = process.env.JWT_SECRET;
 const userService = new UserService();
-const courseService = new CourseService;
+const courseService = new CourseService();
 
 export const landingPage = async (req: Request, res: Response) => {
   res.send(
@@ -94,20 +96,15 @@ const selectQuery = {
 export const registerUser = async (req: Request, res: Response) => {
   try {
     const {
-      personal_info: {
-        first_name,
-      } = {},
+      personal_info: { first_name } = {},
 
-      contact_info: {
-        email
-      } = {},
+      contact_info: { email } = {},
 
       password,
       is_user,
     } = req.body;
-   
-    const response = await userService.registerUser(req.body)
-  
+
+    const response = await userService.registerUser(req.body);
 
     // Send confirmation email if user
     if (is_user) {
@@ -123,17 +120,20 @@ export const registerUser = async (req: Request, res: Response) => {
       );
     }
 
-    return res.status(201).json({ message: "User Created Successfully", data: response });
+    return res
+      .status(201)
+      .json({ message: "User Created Successfully", data: response });
   } catch (error: any) {
     console.error(error);
-    return res.status(500).json({ message: "Internal Server Error", data: error?.message });
+    return res
+      .status(500)
+      .json({ message: "Internal Server Error", data: error?.message });
   }
 };
 
-
 export const updateUser = async (req: Request, res: Response) => {
   try {
-    const { user_id } = req.query
+    const { user_id } = req.query;
     const {
       personal_info: {
         title,
@@ -153,17 +153,21 @@ export const updateUser = async (req: Request, res: Response) => {
         city,
         phone: { country_code, number: primary_number } = {},
       } = {},
-      work_info: {
-        work_name,
-        work_industry,
-        work_position,
-      } = {},
+      work_info: { work_name, work_industry, work_position } = {},
       emergency_contact: {
         name: emergency_contact_name,
         relation: emergency_contact_relation,
-        phone: { country_code: emergency_country_code, number: emergency_phone_number } = {},
+        phone: {
+          country_code: emergency_country_code,
+          number: emergency_phone_number,
+        } = {},
       } = {},
-      church_info: { membership_type, position_id, department_id, member_since } = {},
+      church_info: {
+        membership_type,
+        position_id,
+        department_id,
+        member_since,
+      } = {},
       status,
       is_user,
     } = req.body;
@@ -180,7 +184,9 @@ export const updateUser = async (req: Request, res: Response) => {
     const updatedUser = await prisma.user.update({
       where: { id: Number(user_id) },
       data: {
-        name: `${first_name || userExists?.user_info?.first_name} ${other_name || userExists?.user_info?.other_name || ""} ${last_name || userExists?.user_info?.last_name}`.trim(),
+        name: `${first_name || userExists?.user_info?.first_name} ${
+          other_name || userExists?.user_info?.other_name || ""
+        } ${last_name || userExists?.user_info?.last_name}`.trim(),
         email: email || userExists?.email,
         position_id: Number(position_id) || userExists?.position_id,
         department_id: Number(department_id) || userExists?.department_id,
@@ -193,31 +199,48 @@ export const updateUser = async (req: Request, res: Response) => {
             first_name: first_name || userExists?.user_info?.first_name,
             last_name: last_name || userExists?.user_info?.last_name,
             other_name: other_name || userExists?.user_info?.other_name,
-            date_of_birth: date_of_birth ? new Date(date_of_birth) : userExists?.user_info?.date_of_birth,
+            date_of_birth: date_of_birth
+              ? new Date(date_of_birth)
+              : userExists?.user_info?.date_of_birth,
             gender: gender || userExists?.user_info?.gender,
-            marital_status: marital_status || userExists?.user_info?.marital_status,
+            marital_status:
+              marital_status || userExists?.user_info?.marital_status,
             nationality: nationality || userExists?.user_info?.nationality,
             state_region: state_region || userExists?.user_info?.state_region,
             city: city || userExists?.user_info?.state_region,
             country_code: country_code || userExists?.user_info?.country_code,
-            primary_number: primary_number || userExists?.user_info?.primary_number,
-            member_since: new Date(member_since) || userExists?.user_info?.member_since,
+            primary_number:
+              primary_number || userExists?.user_info?.primary_number,
+            member_since:
+              new Date(member_since) || userExists?.user_info?.member_since,
             email,
             country: resident_country || userExists?.user_info?.country,
             photo: picture.src || userExists?.user_info?.photo,
             work_info: {
               update: {
-                name_of_institution: work_name || userExists?.user_info?.work_info?.name_of_institution,
-                industry: work_industry || userExists?.user_info?.work_info?.industry,
-                position: work_position || userExists?.user_info?.work_info?.position,
+                name_of_institution:
+                  work_name ||
+                  userExists?.user_info?.work_info?.name_of_institution,
+                industry:
+                  work_industry || userExists?.user_info?.work_info?.industry,
+                position:
+                  work_position || userExists?.user_info?.work_info?.position,
               },
             },
             emergency_contact: {
               update: {
-                name: emergency_contact_name || userExists?.user_info?.emergency_contact?.name,
-                relation: emergency_contact_relation || userExists?.user_info?.emergency_contact?.relation,
-                country_code: emergency_country_code || userExists?.user_info?.emergency_contact?.country_code,
-                phone_number: emergency_phone_number || userExists?.user_info?.emergency_contact?.phone_number,
+                name:
+                  emergency_contact_name ||
+                  userExists?.user_info?.emergency_contact?.name,
+                relation:
+                  emergency_contact_relation ||
+                  userExists?.user_info?.emergency_contact?.relation,
+                country_code:
+                  emergency_country_code ||
+                  userExists?.user_info?.emergency_contact?.country_code,
+                phone_number:
+                  emergency_phone_number ||
+                  userExists?.user_info?.emergency_contact?.phone_number,
               },
             },
           },
@@ -226,10 +249,14 @@ export const updateUser = async (req: Request, res: Response) => {
       select: selectQuery,
     });
 
-    return res.status(200).json({ message: "User updated successfully", data: updatedUser });
+    return res
+      .status(200)
+      .json({ message: "User updated successfully", data: updatedUser });
   } catch (error: any) {
     console.error(error);
-    return res.status(500).json({ message: "Internal Server Error", data: error?.message });
+    return res
+      .status(500)
+      .json({ message: "Internal Server Error", data: error?.message });
   }
 };
 
@@ -257,7 +284,7 @@ export const updateUserSatus = async (req: Request, res: Response) => {
   } catch (error) {
     return res
       .status(500)
-      .json({ message: " Error updating User status "+ error, data: null });
+      .json({ message: " Error updating User status " + error, data: null });
   }
 };
 export const deleteUser = async (req: Request, res: Response) => {
@@ -404,8 +431,13 @@ export const forgetPassword = async (req: Request, res: Response) => {
         expiresIn: "15m",
       }
     );
+
     const link = `${process.env.Frontend_URL}/reset-password/?id=${existingUser.id}&token=${token}`;
-    sendEmail(link, email, "Reset Password");
+    const mailDetails = {
+      user_name: existingUser.name,
+      link,
+    };
+    sendEmail(forgetPasswordTemplate(mailDetails), email, "Reset Password");
     return res
       .status(200)
       .json({ message: `Link Send to your Mail`, data: null });
@@ -470,9 +502,17 @@ export const activateUser = async (req: Request, res: Response) => {
         is_user: !existingUser.is_user,
       },
     });
+
+    // Send Mail
+    sendEmail(
+      activateUserTemplate({ user_name: existingUser.name }),
+      existingUser.email || "",
+      "User Activation"
+    );
+
     return res
       .status(200)
-      .json({ message: "Password Successfully changed", data: response });
+      .json({ message: "User Activated Successfully", data: response });
   } catch (error) {
     return res.status(500).json({ message: "Operation Failed", data: error });
   }
@@ -866,23 +906,23 @@ export const statsUsers = async (req: Request, res: Response) => {
     );
 
     return res.status(202).json({
-      message:"Operation Sucessful",
-      data:{
+      message: "Operation Sucessful",
+      data: {
         online: {
-        total_members: allUserInfosByCategory.total,
-        total_males: allUserInfosByCategory.Male,
-        total_females: allUserInfosByCategory.Female,
-        total_others: allUserInfosByCategory.other,
-        stats: stats,
+          total_members: allUserInfosByCategory.total,
+          total_males: allUserInfosByCategory.Male,
+          total_females: allUserInfosByCategory.Female,
+          total_others: allUserInfosByCategory.other,
+          stats: stats,
+        },
+        inhouse: {
+          total_members: visitorInfosByCategory.total,
+          total_males: visitorInfosByCategory.Male,
+          total_females: visitorInfosByCategory.Female,
+          total_others: visitorInfosByCategory.other,
+          stats: visitor_stats,
+        },
       },
-      inhouse: {
-        total_members: visitorInfosByCategory.total,
-        total_males: visitorInfosByCategory.Male,
-        total_females: visitorInfosByCategory.Female,
-        total_others: visitorInfosByCategory.other,
-        stats: visitor_stats,
-      },
-    }
     });
   } catch (error) {
     return res
@@ -894,72 +934,67 @@ export const statsUsers = async (req: Request, res: Response) => {
 export const getUserByEmailPhone = async (req: Request, res: Response) => {
   const { email, cohortId } = req.query;
 
-try {
-  let user = null;
-  let courses:any[] = [];
+  try {
+    let user = null;
+    let courses: any[] = [];
 
-  // If email is passed, find user
-  if (email) {
-    user = await prisma.user_info.findFirst({
-      where: {
-        OR: [
-          { email: email as string },
-          { primary_number: email as string },
-        ],
-      },
-      select: {
-        user_id: true,
-        first_name: true,
-        last_name: true,
-        other_name: true,
-        email: true,
-        country_code: true,
-        primary_number: true,
-        title: true,
-        user: {
-          select: {
-            membership_type: true,
-            status: true,
-          }
-        }
-      },
-    });
-  }
-
-  // If cohortId is passed, get courses
-  if (cohortId) {
-    courses = await courseService.getAllCourses(Number(cohortId));
-  }
-
-
-  // If no params were passed
-  if (!email && !cohortId) {
-    return res.status(400).json({
-      message: "At least one query parameter (email or cohortId) must be provided.",
-    });
-  }
-
-  // If email was provided but no user found
-  if (email && !user) {
-    return res.status(404).json({
-      message: "User not found",
-    });
-  }
-
-  return res.status(200).json({
-    message: "Operation successful",
-    data: {
-      user,
-      courses,
+    // If email is passed, find user
+    if (email) {
+      user = await prisma.user_info.findFirst({
+        where: {
+          OR: [{ email: email as string }, { primary_number: email as string }],
+        },
+        select: {
+          user_id: true,
+          first_name: true,
+          last_name: true,
+          other_name: true,
+          email: true,
+          country_code: true,
+          primary_number: true,
+          title: true,
+          user: {
+            select: {
+              membership_type: true,
+              status: true,
+            },
+          },
+        },
+      });
     }
-  });
 
-} catch (error) {
-  console.log(error);
-  return res.status(500).json({
-    message: "Operation failed",
-    data: error,
-  });
-}
+    // If cohortId is passed, get courses
+    if (cohortId) {
+      courses = await courseService.getAllCourses(Number(cohortId));
+    }
 
+    // If no params were passed
+    if (!email && !cohortId) {
+      return res.status(400).json({
+        message:
+          "At least one query parameter (email or cohortId) must be provided.",
+      });
+    }
+
+    // If email was provided but no user found
+    if (email && !user) {
+      return res.status(404).json({
+        message: "User not found",
+      });
+    }
+
+    return res.status(200).json({
+      message: "Operation successful",
+      data: {
+        user,
+        courses,
+      },
+    });
+  } catch (error) {
+    console.log(error);
+    return res.status(500).json({
+      message: "Operation failed",
+      data: error,
+    });
+  }
 };
