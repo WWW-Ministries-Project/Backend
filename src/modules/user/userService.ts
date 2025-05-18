@@ -26,6 +26,8 @@ export class UserService {
       contact_info: {
         email,
         resident_country,
+        state_region,
+        city,
         phone: { country_code, number: primary_number } = {},
       } = {},
 
@@ -69,7 +71,7 @@ export class UserService {
           is_active: false,
           status,
           department_id:departmentId,
-          position_id,
+          position_id: Number(position_id),
           membership_type,
           user_info: {
             create: {
@@ -87,6 +89,8 @@ export class UserService {
               member_since: member_since ? new Date(member_since) : null,
               email,
               country: resident_country,
+              state_region,
+              city,
               emergency_contact: {
                 create: {
                   name: emergency_contact_name,
