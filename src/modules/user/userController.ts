@@ -182,8 +182,8 @@ export const updateUser = async (req: Request, res: Response) => {
       data: {
         name: `${first_name || userExists?.user_info?.first_name} ${other_name || userExists?.user_info?.other_name || ""} ${last_name || userExists?.user_info?.last_name}`.trim(),
         email: email || userExists?.email,
-        position_id: position_id || userExists?.position_id,
-        department_id: department_id || userExists?.department_id,
+        position_id: Number(position_id) || userExists?.position_id,
+        department_id: Number(department_id) || userExists?.department_id,
         is_user,
         status,
         membership_type: membership_type || userExists?.membership_type,
