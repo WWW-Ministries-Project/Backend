@@ -4,7 +4,6 @@ import * as dotenv from "dotenv";
 import { prisma } from "../../Models/context";
 import {
   sendEmail,
-  toCapitalizeEachWord,
   comparePassword,
   hashPassword,
   confirmTemplate,
@@ -33,6 +32,7 @@ const selectQuery = {
   created_at: true,
   is_active: true,
   position_id: true,
+  department_id: true,
   access_level_id: true,
   member_id: true,
   status: true,
@@ -55,6 +55,7 @@ const selectQuery = {
       occupation: true,
       company: true,
       address: true,
+      member_since: true,
       emergency_contact: {
         select: {
           name: true,
@@ -162,9 +163,8 @@ export const updateUser = async (req: Request, res: Response) => {
         relation: emergency_contact_relation,
         phone: { country_code: emergency_country_code, number: emergency_phone_number } = {},
       } = {},
-      church_info: { membership_type, department_id, member_since } = {},
+      church_info: { membership_type, position_id, department_id, member_since } = {},
       status,
-      position_id,
       is_user,
     } = req.body;
 
@@ -183,6 +183,7 @@ export const updateUser = async (req: Request, res: Response) => {
         name: `${first_name || userExists?.user_info?.first_name} ${other_name || userExists?.user_info?.other_name || ""} ${last_name || userExists?.user_info?.last_name}`.trim(),
         email: email || userExists?.email,
         position_id: position_id || userExists?.position_id,
+        department_id: department_id || userExists?.department_id,
         is_user,
         status,
         membership_type: membership_type || userExists?.membership_type,
@@ -200,6 +201,7 @@ export const updateUser = async (req: Request, res: Response) => {
             city: city || userExists?.user_info?.state_region,
             country_code: country_code || userExists?.user_info?.country_code,
             primary_number: primary_number || userExists?.user_info?.primary_number,
+            member_since: member_since || userExists?.user_info?.member_since,
             email,
             country: resident_country || userExists?.user_info?.country,
             photo: picture.src || userExists?.user_info?.photo,
@@ -614,6 +616,7 @@ export const getUser = async (req: Request, res: Response) => {
             state_region: true,
             city: true,
             marital_status: true,
+            member_since: true,
             nationality: true,
             date_of_birth: true,
             gender: true,
