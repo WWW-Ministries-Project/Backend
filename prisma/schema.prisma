@@ -175,7 +175,7 @@ model assets {
   date_assigned       DateTime?
   date_purchased      DateTime?
   price               Float?
-  assert_id           String?
+  asset_id           String?
   description         String?
   updated_at          DateTime?
   supplier            String?

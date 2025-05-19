@@ -171,7 +171,7 @@ export const deleteAsset = async (req: Request, res: Response) => {
     return await prisma.assets.update({
       where: { id: asset.id },
       data:{
-        assert_id : generatedId
+        asset_id : generatedId
       }
     })
     
