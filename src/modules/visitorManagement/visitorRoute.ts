@@ -27,7 +27,7 @@ visitorRouter.get("/visits", visitController.getAllVisits)
 visitorRouter.get("/visit", visitController.getVisitById)
 visitorRouter.put("/visit", visitController.updateVisit)
 visitorRouter.delete("/visit", visitController.deleteVisits)
-visitorRouter.put("/visit/visitor", visitController.getAllVisitsByVisitorsId)
+visitorRouter.get("/visit/visitor", visitController.getAllVisitsByVisitorsId)
 
 //follow ups
 visitorRouter.post("/followup", followUpController.createFollowUp)
