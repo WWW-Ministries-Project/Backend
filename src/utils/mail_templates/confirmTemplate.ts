@@ -1,59 +1,79 @@
 export const confirmTemplate = (mailDetails: any) => {
   return `
     <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
     <meta charset="UTF-8">
-    <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Email Confirmation</title>
+    <title>Account Activation</title>
     <style>
         body {
             font-family: Arial, sans-serif;
+            background-color: #f4f4f4;
             margin: 0;
             padding: 0;
-            background-color: #f4f4f4;
         }
         .container {
+            width: 100%;
             max-width: 600px;
             margin: 0 auto;
-            padding: 20px;
             background-color: #ffffff;
             border-radius: 8px;
-            box-shadow: 0px 0px 10px 0px rgba(0,0,0,0.1);
+            box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+            overflow: hidden;
         }
-        h1 {
+        .header {
+            background-color: #6539C4;
+            color: #ffffff;
+            text-align: center;
+            padding: 20px;
+        }
+        .header img {
+            max-width: 150px;
+            margin-bottom: 10px;
+        }
+        .content {
+            padding: 30px;
             color: #333333;
-        }
-        p {
-            color: #666666;
-            line-height: 1.5;
         }
         .button {
             display: inline-block;
-            padding: 10px 20px;
-            background-color: #007bff;
+            padding: 15px 30px;
             color: #ffffff;
+            background-color: #6539C4;
             text-decoration: none;
-            border-radius: 4px;
+            border-radius: 5px;
+            margin-top: 20px;
         }
-        .button:hover {
-            background-color: #0056b3;
+        .footer {
+            text-align: center;
+            color: #888888;
+            padding: 20px;
+            font-size: 12px;
+            background-color: #f4f4f4;
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>Email Confirmation</h1>
+        <div class="header">
+            <img src="YOUR_LOGO_URL" alt="Company Logo">
+            <h1>Welcome to [Your Company Name]</h1>
+        </div>
+        <div class="content">
+              <h1>Email Confirmation</h1>
         <p>Hello ${mailDetails.name}!</p>
         <p>You've been invited to the WWWM System! Please click the find below your default credential.</p>
         <p><strong>email:</strong> ${mailDetails.email}</p>
         <p><strong>Password:</strong> ${mailDetails.password}</p>
         <a href="${mailDetails.frontend_url}" class="button">Login Here</a>
         <p>Have a great Day!</p>
+        </div>
+        <div class="footer">
+            © 2025 Your Company Name. All rights reserved.
+        </div>
     </div>
 </body>
 </html>
-
     `;
 };
