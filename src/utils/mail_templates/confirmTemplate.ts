@@ -57,8 +57,8 @@ export const confirmTemplate = (mailDetails: any) => {
 <body>
     <div class="container">
         <div class="header">
-            <img src="YOUR_LOGO_URL" alt="Company Logo">
-            <h1>Welcome to [Your Company Name]</h1>
+            <img src="https://res.cloudinary.com/dt8vgj0u3/image/upload/v1747597889/main-logo_nuhmgv.svg" alt="Company Logo">
+            <h1>Welcome to World Wide Word Ministries</h1>
         </div>
         <div class="content">
               <h1>Email Confirmation</h1>

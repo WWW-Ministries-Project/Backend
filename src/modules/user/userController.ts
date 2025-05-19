@@ -105,18 +105,19 @@ export const registerUser = async (req: Request, res: Response) => {
     } = req.body;
 
     const response = await userService.registerUser(req.body);
+    const name = response.parent.name;
 
     // Send confirmation email if user
     if (is_user) {
       sendEmail(
         confirmTemplate({
-          first_name,
+          name,
           email,
           password: password || "123456",
           frontend_url: `${process.env.Frontend_URL}/login`,
         }),
         email,
-        "Reset Password"
+        "New User Register - WWWM"
       );
     }
 
