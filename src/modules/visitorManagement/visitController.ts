@@ -65,7 +65,18 @@ export class VisitController {
       async updateVisit(req: Request, res: Response) {
         try {
           const { id } = req.query;
-          const updatedVisit = await visitService.updateVisit(Number(id), req.body);
+          const data: {
+            visitorId: number;
+            date: Date;
+            eventId: number;
+            notes?: string;
+          } = {
+            visitorId: Number(req.body.visitorId),
+            date: new Date(req.body.date),
+            eventId: Number(req.body.eventId),
+            notes: req.body.notes
+          };
+          const updatedVisit = await visitService.updateVisit(Number(id), data);
           return res.status(200).json({ message: "Visit updated", data: updatedVisit });
         } catch (error:any) {
           return res.status(500).json({ message: "Error updating visit", error: error.message });

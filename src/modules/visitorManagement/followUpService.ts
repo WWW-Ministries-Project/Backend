@@ -3,7 +3,17 @@ import { prisma } from "../../Models/context";
 export class FollowUpService {
     
     async createFollowUp(data:any) {
-        return await prisma.follow_up.create({ data });
+
+        const followUpData = {
+            visitorId  : data.visitorId,
+            date: new Date(data.date),
+            type: (data.type),
+            status: data.status || "pending",
+            notes:     data.notes,
+            assignedTo: data.assigned_to
+  
+        } 
+        return await prisma.follow_up.create({ data:followUpData });
     }
 
     async getAllFollowUps() {
@@ -45,7 +55,16 @@ export class FollowUpService {
     }
 
     async updateFollowUp(id:number, data:any) {
-        return await prisma.follow_up.update({ where: { id }, data });
+        const followUpData = {
+            visitorId  : data.visitorId,
+            date: new Date(data.date),
+            type: (data.type),
+            status: data.status || "pending",
+            notes:     data.notes,
+            assignedTo: data.assigned_to
+  
+        } 
+        return await prisma.follow_up.update({ where: { id }, data:followUpData, });
     }
 
     async deleteFollowUp(id:number) {
