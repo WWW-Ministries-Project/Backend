@@ -13,6 +13,7 @@ const selectQuery = {
   end_date: true,
   end_time: true,
   event_status: true,
+  event_act_id: true, 
   event_type: true,
   location: true,
   poster: true,
@@ -220,7 +221,7 @@ export class eventManagement {
                 gte: new Date(
                   `${date1.getFullYear()}-${
                     date1.getMonth() + 1
-                  }-${date1.getDay()}`
+                  }-${date1.getDay()}`,
                 ),
               },
             },
@@ -418,7 +419,7 @@ export class eventManagement {
       if (!new_member) {
         const existing_user: any = await this.searchUser(
           phone_number,
-          country_code
+          country_code,
         );
         if (!existing_user) {
           return res.status(204).json({
@@ -442,7 +443,7 @@ export class eventManagement {
 
       const existing_user: any = await this.searchUser(
         phone_number,
-        country_code
+        country_code,
       );
       if (existing_user) {
         return res.status(200).json({
@@ -511,11 +512,20 @@ export class eventManagement {
   private async createEventController(data: any): Promise<void> {
     const { start_date, end_date } = data;
     try {
+      const event_act_response = await prisma.event_act.create({
+        data:{
+          name: data.name,
+          event_status: data.event_status,
+          event_type: data.event_type
+        }
+      }) 
+      console.log(event_act_response)
       const response = await prisma.event_mgt.create({
         data: {
           name: data.name,
           start_date: start_date ? new Date(data.start_date) : null,
           end_date: end_date ? new Date(data.end_date) : null,
+          event_act_id: event_act_response?.id,
           start_time: data.start_time,
           end_time: data.end_time,
           location: data.location,
@@ -529,7 +539,7 @@ export class eventManagement {
       });
 
       const qr_code = await generateQR(
-        `${process.env.Frontend_URL}/events/register-event?event_id=${response.id}&event_name=${response.name}`
+        `${process.env.Frontend_URL}/events/register-event?event_id=${response.id}&event_name=${response.name}`,
       );
 
       await prisma.event_mgt.update({
@@ -611,7 +621,7 @@ export class eventManagement {
             {
               start_date: {
                 gte: new Date(
-                  `${date.getFullYear()}-${date.getMonth() + 1}-01`
+                  `${date.getFullYear()}-${date.getMonth() + 1}-01`,
                 ),
               },
             }, // Start of the month

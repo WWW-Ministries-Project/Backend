@@ -3,7 +3,7 @@ import * as path from "path";
 
 dotenv.config();
 
-const zkPath = path.resolve(__dirname, '../../libs/zkteco-js/index.js');
+const zkPath = path.resolve(__dirname, "../../libs/zkteco-js/index.js");
 const ZktecoJs = require(zkPath);
 
 interface UserPayload {
@@ -22,9 +22,11 @@ export class ZKTeco {
   private devices: ZKDevice[] = [];
 
   constructor() {
-    const deviceIps = (process.env.ZK_DEVICES || '').split(',').map(ip => ip.trim());
+    const deviceIps = (process.env.ZK_DEVICES || "")
+      .split(",")
+      .map((ip) => ip.trim());
 
-    this.devices = deviceIps.map(ip => ({
+    this.devices = deviceIps.map((ip) => ({
       ip,
       instance: new ZktecoJs(ip, 4370, 10000),
     }));
@@ -78,7 +80,7 @@ export class ZKTeco {
           user.name,
           user.password || "",
           0,
-          0
+          0,
         );
 
         if (result) {
@@ -128,8 +130,11 @@ export class ZKTeco {
         const logs = await device.instance.getAttendances();
         allLogs.push({ ip: device.ip, logs });
         console.log(`📅 Attendance fetched from ${device.ip}`);
-      } catch (err:any) {
-        console.error(`❌ Failed to get attendance from ${device.ip}:`, err.message);
+      } catch (err: any) {
+        console.error(
+          `❌ Failed to get attendance from ${device.ip}:`,
+          err.message,
+        );
       }
     }
 
@@ -144,11 +149,13 @@ export class ZKTeco {
     for (const device of connected) {
       try {
         const result = await device.instance.deleteUser(uid);
-        console.log(result
-          ? `🗑️ User ${uid} deleted on ${device.ip}`
-          : `⚠️ Could not delete user ${uid} on ${device.ip}`);
+        console.log(
+          result
+            ? `🗑️ User ${uid} deleted on ${device.ip}`
+            : `⚠️ Could not delete user ${uid} on ${device.ip}`,
+        );
         results.push(!!result);
-      } catch (err:any) {
+      } catch (err: any) {
         console.error(`❌ Error deleting user from ${device.ip}:`, err.message);
         results.push(false);
       }
@@ -157,5 +164,4 @@ export class ZKTeco {
     await this.disconnectDevices();
     return results;
   }
-
 }

@@ -16,6 +16,7 @@ import {
   statsUsers,
   activateUser,
   getUserByEmailPhone,
+  convertMemeberToConfirmedMember,
 } from "../user/userController";
 import { Permissions } from "../../middleWare/authorization";
 const permissions = new Permissions();
@@ -44,27 +45,30 @@ userRouter.post("/register", registerUser);
 userRouter.put(
   "/update-user",
   [protect, permissions.can_Manage_Members],
-  updateUser
+  updateUser,
 );
 
 userRouter.put(
   "/update-user-status",
   [protect, permissions.can_Manage_Members],
-  updateUserSatus
+  updateUserSatus,
 );
 userRouter.delete(
   "/delete-user",
   [protect, permissions.can_delete_users],
-  deleteUser
+  deleteUser,
 );
 userRouter.put(
   "/activate-user",
   [protect, permissions.can_Manage_Members],
-  activateUser
+  activateUser,
 );
-userRouter.get(
-  "/get-user-email",
-  getUserByEmailPhone
-)
+userRouter.get("/get-user-email", getUserByEmailPhone);
 
 userRouter.get("/", landingPage);
+
+userRouter.put(
+  "/update-member-status",
+  [protect, permissions.can_Manage_Members],
+  convertMemeberToConfirmedMember,
+);

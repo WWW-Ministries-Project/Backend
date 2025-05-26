@@ -54,7 +54,7 @@ export const updateDepartment = async (req: Request, res: Response) => {
         description,
         updated_by,
         updated_at: new Date(),
-        is_sync:false,//setting to to out of sync for cron job to sync to device
+        is_sync: false, //setting to to out of sync for cron job to sync to device
       },
       // include: {
       //   user: {

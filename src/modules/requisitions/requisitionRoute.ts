@@ -32,15 +32,36 @@ const requisitionControllers = {
 // Wrap controllers with logger
 const wrappedControllers = wrapControllersWithLogger(
   requisitionControllers,
-  requisitionLogger
+  requisitionLogger,
 );
 
-requisitionRouter.post("/create-requisition", wrappedControllers.createRequisitionHandler);
-requisitionRouter.get("/list-requisition", wrappedControllers.listRequisitionHandler);
-requisitionRouter.get("/my-requisitions", wrappedControllers.userRequisitionsHandler);
-requisitionRouter.get("/get-requisition", wrappedControllers.getRequisitionHandler);
+requisitionRouter.post(
+  "/create-requisition",
+  wrappedControllers.createRequisitionHandler,
+);
+requisitionRouter.get(
+  "/list-requisition",
+  wrappedControllers.listRequisitionHandler,
+);
+requisitionRouter.get(
+  "/my-requisitions",
+  wrappedControllers.userRequisitionsHandler,
+);
+requisitionRouter.get(
+  "/get-requisition",
+  wrappedControllers.getRequisitionHandler,
+);
 requisitionRouter.put(
-  "/update-requisition", [permissions.protect ], wrappedControllers.updateRequisitionHandler);
-requisitionRouter.delete("/delete-requisition", wrappedControllers.deleteRequisitionHandler);
-requisitionRouter.get("/staff-requisition", [permissions.can_manage_requisitions], wrappedControllers.staffRequestHandler
+  "/update-requisition",
+  [permissions.protect],
+  wrappedControllers.updateRequisitionHandler,
+);
+requisitionRouter.delete(
+  "/delete-requisition",
+  wrappedControllers.deleteRequisitionHandler,
+);
+requisitionRouter.get(
+  "/staff-requisition",
+  [permissions.can_manage_requisitions],
+  wrappedControllers.staffRequestHandler,
 );

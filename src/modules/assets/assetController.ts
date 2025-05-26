@@ -35,12 +35,12 @@ export const createAsset = async (req: any, res: any) => {
     });
 
     if (asset) {
-      const assertwithid = await generateAndSaveAssetId(asset)
-      return  res.status(200).json({
-      message: "Asset created successfully",
-      assertwithid,
-    });
-  }
+      const assertwithid = await generateAndSaveAssetId(asset);
+      return res.status(200).json({
+        message: "Asset created successfully",
+        assertwithid,
+      });
+    }
   } catch (error: any) {
     console.log(error.message);
     return res
@@ -162,17 +162,16 @@ export const deleteAsset = async (req: Request, res: Response) => {
   }
 };
 
- async function generateAndSaveAssetId(asset: any) {
-    const prefix = process.env.ID_PREFIX || 'WWM-HC-ASSET'; 
-    const year = new Date().getFullYear();
-    const paddedId = asset.id.toString().padStart(4, '0'); 
-    const generatedId = `${prefix}-${year}${paddedId}`;
+async function generateAndSaveAssetId(asset: any) {
+  const prefix = process.env.ID_PREFIX || "WWM-HC-ASSET";
+  const year = new Date().getFullYear();
+  const paddedId = asset.id.toString().padStart(4, "0");
+  const generatedId = `${prefix}-${year}${paddedId}`;
 
-    return await prisma.assets.update({
-      where: { id: asset.id },
-      data:{
-        asset_id : generatedId
-      }
-    })
-    
- }
+  return await prisma.assets.update({
+    where: { id: asset.id },
+    data: {
+      asset_id: generatedId,
+    },
+  });
+}

@@ -18,7 +18,7 @@ export const createRequisitionHandler = async (req: Request, res: Response) => {
   const requisitionData: Partial<RequisitionInterface> = req.body;
 
   const createdRequisition = await createRequisition(
-    requisitionData as RequisitionInterface
+    requisitionData as RequisitionInterface,
   );
 
   res.status(201).json({
@@ -33,7 +33,7 @@ export const updateRequisitionHandler = async (req: Request, res: Response) => {
 
   const updatedRequisition = await updateRequisition(
     requisitionData as RequisitionInterface,
-    user
+    user,
   );
   res.status(201).json({
     message: "Requisition updated successfully",
@@ -62,7 +62,6 @@ export const userRequisitionsHandler = async (req: Request, res: Response) => {
 export const getRequisitionHandler = async (req: Request, res: Response) => {
   const { id } = req.query;
 
-  
   const response = await getRequisition(id);
   res.status(201).json({
     message: "Operation successful",

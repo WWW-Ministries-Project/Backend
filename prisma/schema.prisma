@@ -175,7 +175,7 @@ model assets {
   date_assigned       DateTime?
   date_purchased      DateTime?
   price               Float?
-  asset_id           String?
+  asset_id            String?
   description         String?
   updated_at          DateTime?
   supplier            String?
@@ -202,6 +202,15 @@ model asset_history {
   @@index([userId], map: "asset_history_userId_fkey")
 }
 
+model event_act {
+  id           Int           @id @default(autoincrement())
+  name         String
+  event_status event_status?
+  event_type       event_type?
+
+  event_mgt event_mgt[]
+}
+
 model event_mgt {
   id               Int                @id @default(autoincrement())
   name             String
@@ -211,6 +220,8 @@ model event_mgt {
   description      String?
   poster           String?
   qr_code          String?
+  event_act_id     Int                @default(1)
+  event            event_act          @relation(fields: [event_act_id], references: [id])
   created_by       Int
   created_at       DateTime           @default(now())
   updated_by       Int?
@@ -395,17 +406,17 @@ model course {
 }
 
 model enrollment {
-  id         Int        @id @default(autoincrement())
-  user_id     Int? // Nullable for non-users
-  course_id   Int
-  first_name  String
-  last_name   String
-  email      String
-  primary_number     String
-  user       user?      @relation(fields: [user_id], references: [id], onDelete: Cascade)
-  course     course     @relation(fields: [course_id], references: [id], onDelete: Cascade)
-  enrolledAt DateTime   @default(now())
-  progress   progress[]
+  id             Int        @id @default(autoincrement())
+  user_id        Int? // Nullable for non-users
+  course_id      Int
+  first_name     String
+  last_name      String
+  email          String
+  primary_number String
+  user           user?      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  course         course     @relation(fields: [course_id], references: [id], onDelete: Cascade)
+  enrolledAt     DateTime   @default(now())
+  progress       progress[]
 
   @@unique([user_id, course_id])
   @@unique([email, course_id])

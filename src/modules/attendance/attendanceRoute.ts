@@ -7,7 +7,6 @@ const protect = permissions.protect;
 const attendanceRouter = Router();
 const attendanceController = new AtttendanceController();
 
-
-attendanceRouter.get("/attendance",attendanceController.getAttendance);
+attendanceRouter.get("/attendance", attendanceController.getAttendance);
 
 export default attendanceRouter;

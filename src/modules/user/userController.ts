@@ -22,7 +22,7 @@ const courseService = new CourseService();
 export const landingPage = async (req: Request, res: Response) => {
   res.send(
     // `<h1>Welcome to World Wide Word Ministries Backend Server🔥🎉💒</h1>`
-    `<h1>Welcome to World Wide Word Ministries Backend Server🔥🎉🙏💒...</h1>`
+    `<h1>Welcome to World Wide Word Ministries Backend Server🔥🎉🙏💒...</h1>`,
   );
 };
 
@@ -117,7 +117,7 @@ export const registerUser = async (req: Request, res: Response) => {
           frontend_url: `${process.env.Frontend_URL}/login`,
         }),
         email,
-        "New User Register - WWWM"
+        "New User Register - WWWM",
       );
     }
 
@@ -365,7 +365,7 @@ export const login = async (req: Request, res: Response) => {
         JWT_SECRET,
         {
           expiresIn: "12h",
-        }
+        },
       );
 
       return res
@@ -430,7 +430,7 @@ export const forgetPassword = async (req: Request, res: Response) => {
       secret,
       {
         expiresIn: "15m",
-      }
+      },
     );
 
     const link = `${process.env.Frontend_URL}/reset-password/?id=${existingUser.id}&token=${token}`;
@@ -508,7 +508,7 @@ export const activateUser = async (req: Request, res: Response) => {
     sendEmail(
       activateUserTemplate({ user_name: existingUser.name }),
       existingUser.email || "",
-      "User Activation"
+      "User Activation",
     );
 
     return res
@@ -845,7 +845,7 @@ export const statsUsers = async (req: Request, res: Response) => {
       },
     });
     const allUserInfosByCategory = allUserInfos_members.reduce(
-      (acc: any, cur) => {
+      (acc: any, cur:any) => {
         const gender = cur.gender || "other";
 
         acc.total++;
@@ -853,11 +853,11 @@ export const statsUsers = async (req: Request, res: Response) => {
 
         return acc;
       },
-      { total: 0, Male: 0, Female: 0, other: 0 }
+      { total: 0, Male: 0, Female: 0, other: 0 },
     );
 
     const stats: CategoryStats = allUserInfos_members.reduce(
-      (acc: any, user) => {
+      (acc: any, user:any) => {
         const age =
           Number(new Date().getFullYear()) -
           Number(user.date_of_birth?.getFullYear());
@@ -872,11 +872,11 @@ export const statsUsers = async (req: Request, res: Response) => {
       {
         children: { Total: 0, Male: 0, Female: 0, other: 0 },
         adults: { Total: 0, Male: 0, Female: 0, other: 0 },
-      }
+      },
     );
 
     const visitorInfosByCategory = allUserInfos_visitors.reduce(
-      (acc: any, cur) => {
+      (acc: any, cur:any) => {
         const gender = cur.gender || "other";
 
         acc.total++;
@@ -884,11 +884,11 @@ export const statsUsers = async (req: Request, res: Response) => {
 
         return acc;
       },
-      { total: 0, Male: 0, Female: 0, other: 0 }
+      { total: 0, Male: 0, Female: 0, other: 0 },
     );
 
     const visitor_stats: CategoryStats = allUserInfos_visitors.reduce(
-      (acc: any, user) => {
+      (acc: any, user:any) => {
         const age =
           Number(new Date().getFullYear()) -
           Number(user.date_of_birth?.getFullYear());
@@ -903,7 +903,7 @@ export const statsUsers = async (req: Request, res: Response) => {
       {
         children: { Total: 0, Male: 0, Female: 0, other: 0 },
         adults: { Total: 0, Male: 0, Female: 0, other: 0 },
-      }
+      },
     );
 
     return res.status(202).json({
@@ -993,6 +993,34 @@ export const getUserByEmailPhone = async (req: Request, res: Response) => {
     });
   } catch (error) {
     console.log(error);
+    return res.status(500).json({
+      message: "Operation failed",
+      data: error,
+    });
+  }
+};
+
+export const convertMemeberToConfirmedMember = async (
+  req: Request,
+  res: Response,
+) => {
+  const { user_id } = req.query;
+
+  try {
+    const result = await userService.convertMemeberToConfirmedMember(
+      Number(user_id),
+    );
+    if (result.error == "") {
+      return res.status(400).json({
+        message: "Operation failed",
+        data: result,
+      });
+    }
+    return res.status(200).json({
+      message: "Operation successful",
+      data: result,
+    });
+  } catch (error) {
     return res.status(500).json({
       message: "Operation failed",
       data: error,

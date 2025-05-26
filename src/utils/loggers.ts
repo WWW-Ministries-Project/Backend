@@ -32,7 +32,4 @@ export const loggers: Record<string, Logger> = {
   requisitionLogger: createCustomLogger(warnOptions.requisition),
 };
 
-export const {
-    requisitionLogger,
-  
-} = loggers;
+export const { requisitionLogger } = loggers;

@@ -63,7 +63,7 @@ export const updatePosition = async (req: Request, res: Response) => {
         name: toCapitalizeEachWord(name),
         department_id,
         description,
-        is_sync:false,//setting to to out of sync for cron job to sync to device
+        is_sync: false, //setting to to out of sync for cron job to sync to device
         updated_by,
         updated_at: new Date(),
       },

@@ -8,7 +8,6 @@ import { setupSwagger } from "./src/swagger";
 dotenv.config();
 // import { startUserSyncing } from "./src/cron-jobs/userCron";
 
-
 const port = process.env.PORT;
 const app = express();
 app.use(bodyParser.json());
