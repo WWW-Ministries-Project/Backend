@@ -30,6 +30,7 @@ eventRouter.get(
 
 eventRouter.post(
   "/create-event",
+  [protect, permissions.can_manage_events],
   eventContoller.createEvent,
 );
 

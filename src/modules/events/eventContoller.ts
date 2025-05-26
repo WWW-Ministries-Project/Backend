@@ -519,7 +519,6 @@ export class eventManagement {
           event_type: data.event_type
         }
       }) 
-      console.log(event_act_response)
       const response = await prisma.event_mgt.create({
         data: {
           name: data.name,
