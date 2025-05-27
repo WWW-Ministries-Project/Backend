@@ -146,12 +146,15 @@ export class eventManagement {
   listEvents = async (req: Request, res: Response) => {
     try {
       const { month, year, event_type, event_status }: any = req.query;
+      const startOfMonth = new Date(year, month - 1, 1); // month is 0-based
+      const startOfNextMonth = new Date(year, month, 1); // next month
+
       const data = await prisma.event_mgt.findMany({
         where: {
           AND: [
-            { start_date: { gte: new Date(`${year}-${month}-01`) } }, // Start of the month
-            { end_date: { lt: new Date(`${year}-${Number(month) + 1}-01`) } }, // Start of the next month
-          ],
+            { start_date: { gte: startOfMonth } },
+            { end_date: { lt: startOfNextMonth } },
+         ],
           event_type,
           event_status,
         },
@@ -172,6 +175,7 @@ export class eventManagement {
           created_by: true,
           event_type: true,
           event_status: true,
+          event_act_id: true,
           event_attendance: {
             select: {
               created_at: true,
