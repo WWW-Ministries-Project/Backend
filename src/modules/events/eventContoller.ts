@@ -145,73 +145,81 @@ export class eventManagement {
 
   listEvents = async (req: Request, res: Response) => {
     try {
-      const { month, year, event_type, event_status }: any = req.query;
-      const startOfMonth = new Date(year, month - 1, 1); // month is 0-based
-      const startOfNextMonth = new Date(year, month, 1); // next month
+  const { month, year, event_type, event_status }: any = req.query;
 
-      const data = await prisma.event_mgt.findMany({
-        where: {
-          AND: [
-            { start_date: { gte: startOfMonth } },
-            { end_date: { lt: startOfNextMonth } },
-         ],
-          event_type,
-          event_status,
-        },
-        orderBy: {
-          start_date: "asc",
-        },
+  let whereClause: any = {
+    event_type,
+    event_status,
+  };
+
+  if (month && year) {
+    const startOfMonth = new Date(year, month - 1, 1);
+    const startOfNextMonth = new Date(year, month, 1);
+
+    whereClause.AND = [
+      { start_date: { gte: startOfMonth } },
+      { end_date: { lt: startOfNextMonth } },
+    ];
+  }
+
+  const data = await prisma.event_mgt.findMany({
+    where: whereClause,
+    orderBy: {
+      start_date: "asc",
+    },
+    select: {
+      id: true,
+      name: true,
+      poster: true,
+      start_date: true,
+      end_date: true,
+      start_time: true,
+      end_time: true,
+      qr_code: true,
+      location: true,
+      description: true,
+      created_by: true,
+      event_type: true,
+      event_status: true,
+      event_act_id: true,
+      event_attendance: {
         select: {
-          id: true,
-          name: true,
-          poster: true,
-          start_date: true,
-          end_date: true,
-          start_time: true,
-          end_time: true,
-          qr_code: true,
-          location: true,
-          description: true,
-          created_by: true,
-          event_type: true,
-          event_status: true,
-          event_act_id: true,
-          event_attendance: {
+          created_at: true,
+          user: {
             select: {
-              created_at: true,
-              user: {
+              user_info: {
                 select: {
-                  user_info: {
+                  user: {
                     select: {
-                      user: {
-                        select: {
-                          name: true,
-                          membership_type: true,
-                        },
-                      },
-                      first_name: true,
-                      last_name: true,
-                      other_name: true,
-                      primary_number: true,
+                      name: true,
+                      membership_type: true,
                     },
                   },
+                  first_name: true,
+                  last_name: true,
+                  other_name: true,
+                  primary_number: true,
                 },
               },
             },
           },
         },
-      });
-      res.status(200).json({
-        message: "Operation successful",
-        data: month ? data : await this.listEventsP(),
-      });
-    } catch (error: any) {
-      console.log(error);
-      return res.status(500).json({
-        message: "Event failed to load",
-        data: error.message,
-      });
-    }
+      },
+    },
+  });
+
+  res.status(200).json({
+    message: "Operation successful",
+    data,
+  });
+} catch (error: any) {
+  console.log(error);
+  return res.status(500).json({
+    message: "Event failed to load",
+    data: error.message,
+  });
+}
+
   };
 
   listUpcomingEvents = async (req: Request, res: Response) => {
