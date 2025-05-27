@@ -5,7 +5,6 @@ const programService = new ProgramService();
 export class ProgramController {
   async createProgram(req: Request, res: Response) {
     try {
-      console.log(req.body);
       const newProgram = await programService.createProgram(req.body);
       return res
         .status(201)
@@ -30,8 +29,7 @@ export class ProgramController {
 
   async getProgramById(req: Request, res: Response) {
     try {
-      const { id } = req.params;
-      console.log("Hereeee" + req.body);
+      const { id } = req.query;
       const program = await programService.getProgramById(Number(id));
       if (!program)
         return res.status(404).json({ message: "Program not found" });
@@ -46,7 +44,7 @@ export class ProgramController {
 
   async updateProgram(req: Request, res: Response) {
     try {
-      const { id } = req.params;
+      const { id } = req.query;
       const updatedProgram = await programService.updateProgram(
         Number(id),
         req.body,
@@ -63,7 +61,7 @@ export class ProgramController {
 
   async deleteProgram(req: Request, res: Response) {
     try {
-      const { id } = req.params;
+      const { id } = req.query;
       await programService.deleteProgram(Number(id));
       return res.status(200).json({ message: "Program deleted successfully" });
     } catch (error: any) {

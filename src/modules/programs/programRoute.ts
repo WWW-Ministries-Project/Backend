@@ -13,11 +13,11 @@ const enrollmentController = new EnrollmentController();
 const cohortController = new CohortController();
 const courseController = new CourseController();
 
-programRouter.post("/programs", programController.createProgram);
+programRouter.post("/program", programController.createProgram);
 programRouter.get("/programs", programController.getAllPrograms);
-programRouter.get("/programs/:id", programController.getProgramById);
-programRouter.put("/programs/:id", programController.updateProgram);
-programRouter.delete("/programs/:id", programController.deleteProgram);
+programRouter.get("/program", programController.getProgramById);
+programRouter.put("/program", programController.updateProgram);
+programRouter.delete("/program", programController.deleteProgram);
 
 //cohort enpoint
 programRouter.post("/cohorts", cohortController.createCohort);
