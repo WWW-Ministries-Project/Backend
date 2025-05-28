@@ -77,7 +77,7 @@ export class CohortController {
 
   async deleteCohort(req: Request, res: Response) {
     try {
-      const { id } = req.params;
+      const { id } = req.query;
       await cohortService.deleteCohort(Number(id));
       return res.status(200).json({ message: "Cohort deleted successfully" });
     } catch (error: any) {
