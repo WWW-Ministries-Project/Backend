@@ -75,6 +75,12 @@ export const updatePosition = async (req: Request, res: Response) => {
           select: {
             id: true,
             name: true,
+            department_head_info: {
+              select:{
+                id: true,
+                name: true
+              }
+            }
           },
         },
       },

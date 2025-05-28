@@ -56,19 +56,26 @@ export const updateDepartment = async (req: Request, res: Response) => {
         updated_at: new Date(),
         is_sync: false, //setting to to out of sync for cron job to sync to device
       },
-      // include: {
-      //   user: {
-      //     select: {
-      //       name: true
-      //     }
-      //   },
-      //   position: {
-      //     select: {
-      //       name: true,
-      //     }
-      //   },
-      // }
+      select:{
+        id: true,
+        name:true,
+        description: true,
+        department_head_info: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      }
+      
     });
+    const result = {
+      id: response.id,
+    name: response.name,
+    description: response.description,
+    department_head_id: response.department_head_info?.id ?? null,
+    department_head_name: response.department_head_info?.name ?? null,
+  };
     res
       .status(200)
       .json({ message: "Department Updated Succesfully", data: response });
