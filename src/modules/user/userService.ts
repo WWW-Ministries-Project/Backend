@@ -217,7 +217,7 @@ export class UserService {
   private async generateUserId(userData: any) {
     const prefix = process.env.ID_PREFIX || "WWM-HC";
     const year = new Date().getFullYear();
-    const paddedId = userData.id.toString().padStart(4, "0");
+    const paddedId = (userData.id - 1).toString().padStart(4, "0");
     const generatedUserId = `${prefix}-${year}${paddedId}`;
 
     const password = userData.password || "";
