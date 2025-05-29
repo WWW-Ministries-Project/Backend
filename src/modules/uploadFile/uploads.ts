@@ -1,4 +1,4 @@
-import {cloudinary} from "../../utils";
+import { cloudinary } from "../../utils";
 
 export const uploadImage = async (req: any, res: any) => {
   try {
@@ -20,7 +20,7 @@ export const uploadImage = async (req: any, res: any) => {
             link: result.secure_url,
           },
         });
-      }
+      },
     );
   } catch (error) {
     return res.status(404).send(error);

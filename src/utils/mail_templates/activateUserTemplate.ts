@@ -1,6 +1,12 @@
-export const confirmTemplate = (mailDetails: any) => {
+import * as dotenv from "dotenv";
+dotenv.config();
+
+const frontend_url = process.env.Frontend_URL;
+
+export const activateUserTemplate = (mailDetails: { user_name: string }) => {
+  const { user_name } = mailDetails;
   return `
-    <!DOCTYPE html>
+  <!DOCTYPE html>
 <html>
 <head>
     <meta charset="UTF-8">
@@ -58,22 +64,21 @@ export const confirmTemplate = (mailDetails: any) => {
     <div class="container">
         <div class="header">
             <img src="https://res.cloudinary.com/dt8vgj0u3/image/upload/v1747597889/main-logo_nuhmgv.svg" alt="Company Logo">
-            <h1>Welcome to World Wide Word Ministries</h1>
+            <h1>Welcome</h1>
         </div>
         <div class="content">
-              <h1>Email Confirmation</h1>
-        <p>Hello ${mailDetails.name}!</p>
-        <p>You've been invited to the WWWM System! Please click the find below your default credential.</p>
-        <p><strong>email:</strong> ${mailDetails.email}</p>
-        <p><strong>Password:</strong> ${mailDetails.password}</p>
-        <a href="${mailDetails.frontend_url}" class="button">Login Here</a>
-        <p>Have a great Day!</p>
+            <p>Hi ${user_name},</p>
+            <p>We're excited to let you know that your account has been activated. You can now log in and start using the system.</p>
+            <a href="${frontend_url}" class="button">Log In Now</a>
+            <p>If you have any questions or need assistance, feel free to reach out to our support team.</p>
+            <p>Welcome aboard!</p>
         </div>
         <div class="footer">
-            © 2025 Your Company Name. All rights reserved.
+            © 2025 World Wide Word Ministries. All rights reserved.
         </div>
     </div>
 </body>
 </html>
-    `;
+  
+  `;
 };

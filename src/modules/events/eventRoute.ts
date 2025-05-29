@@ -12,38 +12,38 @@ export const eventRouter = Router();
 eventRouter.get(
   "/get-event",
   [protect, permissions.can_view_events],
-  eventContoller.getEvent
+  eventContoller.getEvent,
 );
 
 eventRouter.get(
   "/list-events",
   [protect, permissions.can_view_events],
-  eventContoller.listEvents
+  eventContoller.listEvents,
 );
 eventRouter.get("/events-stats", [protect], eventContoller.eventStats);
 
 eventRouter.get(
   "/upcoming-events",
   [protect],
-  eventContoller.listUpcomingEvents
+  eventContoller.listUpcomingEvents,
 );
 
 eventRouter.post(
   "/create-event",
   [protect, permissions.can_manage_events],
-  eventContoller.createEvent
+  eventContoller.createEvent,
 );
 
 eventRouter.put(
   "/update-event",
   [protect, permissions.can_manage_events],
-  eventContoller.updateEvent
+  eventContoller.updateEvent,
 );
 
 eventRouter.delete(
   "/delete-event",
   [protect, permissions.can_delete_events],
-  eventContoller.deleteEvent
+  eventContoller.deleteEvent,
 );
 
 eventRouter.post("/sign-attendance", eventContoller.eventAttendance);

@@ -17,21 +17,21 @@ export const assetRouter = Router();
 assetRouter.post(
   "/create-asset",
   [protect, upload.single("file"), permissions.can_manage_asset],
-  createAsset
+  createAsset,
 );
 assetRouter.get(
   "/list-assets",
   [protect, permissions.can_view_asset],
-  listAssets
+  listAssets,
 );
 assetRouter.get("/get-asset", [protect, permissions.can_view_asset], getAsset);
 assetRouter.put(
   "/update-asset",
   [protect, permissions.can_manage_asset, upload.single("file")],
-  updateAsset
+  updateAsset,
 );
 assetRouter.delete(
   "/delete-asset",
   [protect, permissions.can_delete_asset, upload.single("file")],
-  deleteAsset
+  deleteAsset,
 );

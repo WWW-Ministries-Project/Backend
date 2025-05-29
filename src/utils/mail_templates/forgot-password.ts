@@ -1,11 +1,15 @@
-export const confirmTemplate = (mailDetails: any) => {
+export const forgetPasswordTemplate = (mailDetails: {
+  user_name: string;
+  link: string;
+}) => {
+  const { user_name, link } = mailDetails;
   return `
-    <!DOCTYPE html>
+  <!DOCTYPE html>
 <html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Account Activation</title>
+    <title>Password Reset Request</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -58,22 +62,20 @@ export const confirmTemplate = (mailDetails: any) => {
     <div class="container">
         <div class="header">
             <img src="https://res.cloudinary.com/dt8vgj0u3/image/upload/v1747597889/main-logo_nuhmgv.svg" alt="Company Logo">
-            <h1>Welcome to World Wide Word Ministries</h1>
+            <h1>Password Reset Request</h1>
         </div>
         <div class="content">
-              <h1>Email Confirmation</h1>
-        <p>Hello ${mailDetails.name}!</p>
-        <p>You've been invited to the WWWM System! Please click the find below your default credential.</p>
-        <p><strong>email:</strong> ${mailDetails.email}</p>
-        <p><strong>Password:</strong> ${mailDetails.password}</p>
-        <a href="${mailDetails.frontend_url}" class="button">Login Here</a>
-        <p>Have a great Day!</p>
+            <p>Hi ${user_name},</p>
+            <p>You recently requested to reset your password. Click the button below to set a new password:</p>
+            <a href="${link}" class="button">Reset Password</a>
+            <p>If you did not request a password reset, please ignore this email or contact support if you have any questions.</p>
+            <p>Thank you</p>
         </div>
         <div class="footer">
-            © 2025 Your Company Name. All rights reserved.
+            © 2025 World Wide Word Ministires. All rights reserved.
         </div>
     </div>
 </body>
 </html>
-    `;
+  `;
 };

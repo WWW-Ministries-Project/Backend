@@ -19,7 +19,7 @@ export class Permissions {
     try {
       const decoded = JWT.verify(
         token,
-        process.env.JWT_SECRET as string
+        process.env.JWT_SECRET as string,
       ) as any;
       req.user = decoded;
       next();
@@ -34,7 +34,7 @@ export class Permissions {
   checkPermission = (
     permissionType: string,
     action: "view" | "manage" | "admin",
-    errorMessage: string
+    errorMessage: string,
   ) => {
     return (req: Request, res: Response, next: NextFunction) => {
       const token: any = req.headers["authorization"]?.split(" ")[1];
@@ -42,7 +42,7 @@ export class Permissions {
       try {
         const decoded = JWT.verify(
           token,
-          process.env.JWT_SECRET as string
+          process.env.JWT_SECRET as string,
         ) as any;
         const permission = decoded.permissions?.[permissionType];
         let allowedPermissions;
@@ -78,151 +78,151 @@ export class Permissions {
   can_view_users = this.checkPermission(
     "Members",
     "view",
-    "Not authorized to view members"
+    "Not authorized to view members",
   );
 
   can_Manage_Members = this.checkPermission(
     "Members",
     "manage",
-    "Not authorized to create or update users"
+    "Not authorized to create or update users",
   );
 
   can_delete_users = this.checkPermission(
     "Members",
     "admin",
-    "Not authorized to delete users"
+    "Not authorized to delete users",
   );
 
   // Departments
   can_view_department = this.checkPermission(
     "Departments",
     "view",
-    "Not authorized to view departments"
+    "Not authorized to view departments",
   );
 
   can_manage_department = this.checkPermission(
     "Departments",
     "manage",
-    "Not authorized to manage departments"
+    "Not authorized to manage departments",
   );
 
   can_delete_department = this.checkPermission(
     "Departments",
     "admin",
-    "Not authorized to delete departments"
+    "Not authorized to delete departments",
   );
 
   // Positions
   can_view_positions = this.checkPermission(
     "Positions",
     "view",
-    "Not authorized to view positions"
+    "Not authorized to view positions",
   );
 
   can_manage_positions = this.checkPermission(
     "Positions",
     "manage",
-    "Not authorized to edit positions"
+    "Not authorized to edit positions",
   );
 
   can_delete_positions = this.checkPermission(
     "Positions",
     "admin",
-    "Not authorized to delete positions"
+    "Not authorized to delete positions",
   );
 
   // Access Levels
   can_view_access = this.checkPermission(
     "Access_rights",
     "view",
-    "Not authorized to view access levels"
+    "Not authorized to view access levels",
   );
 
   can_manage_access = this.checkPermission(
     "Access_rights",
     "manage",
-    "Not authorized to manage access levels"
+    "Not authorized to manage access levels",
   );
 
   can_delete_access = this.checkPermission(
     "Access_rights",
     "admin",
-    "Not authorized to delete access levels"
+    "Not authorized to delete access levels",
   );
 
   // Asset Levels
   can_view_asset = this.checkPermission(
     "Asset",
     "view",
-    "Not authorized to view asset"
+    "Not authorized to view asset",
   );
 
   can_manage_asset = this.checkPermission(
     "Asset",
     "manage",
-    "Not authorized to edit asset"
+    "Not authorized to edit asset",
   );
 
   can_delete_asset = this.checkPermission(
     "Asset",
     "admin",
-    "Not authorized to delete asset"
+    "Not authorized to delete asset",
   );
 
   // Events
   can_view_events = this.checkPermission(
     "Events",
     "view",
-    "Not authorized to view events"
+    "Not authorized to view events",
   );
 
   can_manage_events = this.checkPermission(
     "Events",
     "manage",
-    "Not authorized to edit events"
+    "Not authorized to edit events",
   );
 
   can_delete_events = this.checkPermission(
     "Events",
     "admin",
-    "Not authorized to delete events"
+    "Not authorized to delete events",
   );
 
   // Requisitions
   can_view_requisitions = this.checkPermission(
     "Requisitions",
     "view",
-    "Not authorized to view requisitions"
+    "Not authorized to view requisitions",
   );
 
   can_manage_requisitions = this.checkPermission(
     "Requisition",
     "manage",
-    "Not authorized to edit requisitions"
+    "Not authorized to edit requisitions",
   );
 
   can_delete_requisitions = this.checkPermission(
     "Requisition",
     "admin",
-    "Not authorized to delete requisitions"
+    "Not authorized to delete requisitions",
   );
 
   // Programs
   can_view_programs = this.checkPermission(
     "Program",
     "view",
-    "Not authorized to view programs"
+    "Not authorized to view programs",
   );
 
   can_manage_programs = this.checkPermission(
     "Program",
     "manage",
-    "Not authorized to edit programs"
+    "Not authorized to edit programs",
   );
 
   can_delete_programs = this.checkPermission(
     "Program",
     "admin",
-    "Not authorized to delete programs"
+    "Not authorized to delete programs",
   );
 }

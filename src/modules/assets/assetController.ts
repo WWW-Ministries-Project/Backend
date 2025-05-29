@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import { assetSchema, toCapitalizeEachWord } from "../../utils";
 import { prisma } from "../../Models/context";
+import { number } from "joi";
 export const createAsset = async (req: any, res: any) => {
   try {
     const {
@@ -32,10 +33,14 @@ export const createAsset = async (req: any, res: any) => {
         created_by: user_id,
       },
     });
-    res.status(200).json({
-      message: "Asset created successfully",
-      asset,
-    });
+
+    if (asset) {
+      const assertwithid = await generateAndSaveAssetId(asset);
+      return res.status(200).json({
+        message: "Asset created successfully",
+        assertwithid,
+      });
+    }
   } catch (error: any) {
     console.log(error.message);
     return res
@@ -156,3 +161,17 @@ export const deleteAsset = async (req: Request, res: Response) => {
       .json({ message: "Something Went Wrong", data: error });
   }
 };
+
+async function generateAndSaveAssetId(asset: any) {
+  const prefix = process.env.ID_PREFIX || "WWM-HC-ASSET";
+  const year = new Date().getFullYear();
+  const paddedId = asset.id.toString().padStart(4, "0");
+  const generatedId = `${prefix}-${year}${paddedId}`;
+
+  return await prisma.assets.update({
+    where: { id: asset.id },
+    data: {
+      asset_id: generatedId,
+    },
+  });
+}

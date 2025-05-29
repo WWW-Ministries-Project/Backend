@@ -5,7 +5,6 @@ import { StatusCodes } from "http-status-codes";
 
 const development = process.env.NODE_ENV === "development" || "test";
 
-
 /**
  * Wraps an asynchronous controller function with error handling and logging logic.
  *
@@ -18,14 +17,14 @@ export const catchAsyncFunction = (
   controllerFunction: (
     req: Request,
     res: Response,
-    next: NextFunction
+    next: NextFunction,
   ) => Promise<any>,
-  logger: Logger
+  logger: Logger,
 ): ((req: Request, res: Response, next: NextFunction) => Promise<any>) => {
   return async (
     req: Request,
     res: Response,
-    next: NextFunction
+    next: NextFunction,
   ): Promise<any> => {
     try {
       await controllerFunction(req, res, next);
@@ -56,7 +55,7 @@ const handleError = (
   error: Error,
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ): void => {
   if (error instanceof InputValidationError) {
     res.status(StatusCodes.BAD_REQUEST).json({
@@ -75,7 +74,7 @@ const handleError = (
 type ExpressHandler = (
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ) => Promise<any>;
 
 /**
@@ -87,7 +86,7 @@ type ExpressHandler = (
  */
 export const wrapControllersWithLogger = (
   controllers: Record<string, ExpressHandler>,
-  logger: Logger
+  logger: Logger,
 ): Record<string, ExpressHandler> => {
   const wrappedControllers: Record<string, ExpressHandler> = {};
   for (const [key, controller] of Object.entries(controllers)) {
@@ -111,7 +110,7 @@ export const handleDevelopmentError = (
   error: Error,
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ): void => {
   if (error instanceof AppError) {
     res.status(error.statusCode).json({
@@ -146,7 +145,7 @@ export const handleProductionError = (
   error: Error,
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ): void => {
   if (error instanceof AppError) {
     res.status(error.statusCode).json({

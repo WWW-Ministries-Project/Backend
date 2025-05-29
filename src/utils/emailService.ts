@@ -18,7 +18,7 @@ export const sendEmail = (template: string, to: string, subject: string) => {
   });
 
   const mailOptions = {
-    from: `WorldWide Word Ministries <${process.env.MAIL_FROM}>`,
+    from: `World Wide Word Ministries <${process.env.MAIL_FROM}>`,
     to,
     subject,
     html: template,

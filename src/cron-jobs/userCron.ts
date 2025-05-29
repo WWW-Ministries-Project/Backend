@@ -15,11 +15,10 @@ export async function startUserSyncing() {
   isRunning = true;
 
   try {
-
     // Get all users that need syncing
     const users = await prisma.user.findMany({
       where: {
-           is_sync: false
+        is_sync: false,
       },
     });
 
@@ -29,28 +28,37 @@ export async function startUserSyncing() {
     console.log(`[INFO] Found ${users.length} users to sync.`);
 
     await Promise.allSettled(
-      users.map(async (user:any) => {
-        try{
+      users.map(async (user: any) => {
+        try {
           let response;
           const year = new Date().getFullYear();
-          const paddedId = user.id.toString().padStart(4, '0'); 
-          const userId = user.member_id ? user.member_id.slice(-8) :`${year}${paddedId}`
-          response = await userService.saveUserToZTeco(user.id,userId,user.name, "")
-          if (response){
-             await prisma.user.update({
-              where:{id:user.id},
-              data:{
-                is_sync: true
-              }
-            })
+          const paddedId = user.id.toString().padStart(4, "0");
+          const userId = user.member_id
+            ? user.member_id.slice(-8)
+            : `${year}${paddedId}`;
+          response = await userService.saveUserToZTeco(
+            user.id,
+            userId,
+            user.name,
+            "",
+          );
+          if (response) {
+            await prisma.user.update({
+              where: { id: user.id },
+              data: {
+                is_sync: true,
+              },
+            });
             console.log(`[INFO] Successfully synced user ${user.id}`);
           }
-        } catch(error:any){
-          console.error(`[ERROR] Failed to sync users ${user.name}:`, error.message || error);
+        } catch (error: any) {
+          console.error(
+            `[ERROR] Failed to sync users ${user.name}:`,
+            error.message || error,
+          );
         }
-      })
-    )
-    
+      }),
+    );
   } catch (error: any) {
     console.error(
       "[ERROR] Error fetching users for sync:",
