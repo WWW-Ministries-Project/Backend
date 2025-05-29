@@ -73,6 +73,11 @@ export class UserService {
       isNaN(parseInt(department_id)) || parseInt(department_id) === 0
         ? null
         : parseInt(department_id);
+        
+      const positionId =
+      isNaN(parseInt(position_id)) || parseInt(position_id) === 0
+        ? null
+        : parseInt(position_id);
 
     // Create user in database
     const user = await prisma.user.create({
@@ -86,7 +91,7 @@ export class UserService {
         is_active: false,
         status,
         department_id: departmentId,
-        position_id: Number(position_id),
+        position_id: positionId,
         membership_type,
         user_info: {
           create: {
