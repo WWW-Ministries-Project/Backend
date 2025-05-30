@@ -12,6 +12,7 @@ import { UserService } from "./userService";
 import { CourseService } from "../programs/courseService";
 import { forgetPasswordTemplate } from "../../utils/mail_templates/forgot-password";
 import { activateUserTemplate } from "../../utils/mail_templates/activateUserTemplate";
+import { userActivatedTemplate } from "../../utils/mail_templates/userActivatedTemplate"
 
 dotenv.config();
 
@@ -277,11 +278,37 @@ export const updateUserSatus = async (req: Request, res: Response) => {
         is_active: true,
         member_id: true,
         status: true,
+        name: true,
+        email: true
       },
     });
-    res
-      .status(200)
-      .json({ message: "User Status Updated Succesfully", data: response });
+    const email:any =response.email
+    const secret = JWT_SECRET
+    const token = JWT.sign(
+      {
+        id: response.id,
+        email: response.email,
+      },
+      secret,
+      {
+        expiresIn: "15m",
+      },
+    );
+    
+    
+      const link = `${process.env.Frontend_URL}/reset-password/?id=${response.id}&token=${token}`;
+
+      const mailDetails = {
+      user_name: response.name,
+      link,
+      expiration:"15mins"
+    };
+
+      sendEmail(userActivatedTemplate(mailDetails), email, "Reset Password");
+      
+    return res
+    .status(200)
+    .json({ message: "User Status Updated Succesfully", data: response });
   } catch (error) {
     return res
       .status(500)
