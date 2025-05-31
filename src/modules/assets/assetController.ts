@@ -19,10 +19,15 @@ export const createAsset = async (req: any, res: any) => {
     const user_id = req.user?.id;
     assetSchema.validate(req.body);
 
+    const departmentId =
+      isNaN(parseInt(department_assigned)) || parseInt(department_assigned) === 0
+        ? null
+        : parseInt(department_assigned);
+
     const asset = await prisma.assets.create({
       data: {
         name: toCapitalizeEachWord(name),
-        department_assigned: Number(department_assigned),
+        department_assigned: departmentId,
         date_purchased: date_purchased ? new Date(date_purchased) : undefined,
         description,
         price: Number(price),

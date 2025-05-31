@@ -10,7 +10,10 @@ import {
 } from "../../utils";
 import { UserService } from "./userService";
 import { CourseService } from "../programs/courseService";
-import { forgetPasswordTemplate } from "../../utils/mail_templates/forgot-password";
+// import { forgetPasswordTemplate } from "../../utils/mail_templates/forgot-password";
+// import { forgetPasswordTemplate } from "../../utils/mail_templates/forgetPasswordTemplate";
+import { forgetPasswordTemplate } from "../../utils/mail_templates/forgotPasswordTemplate"
+import { userActivatedTemplate } from "../../utils/mail_templates/userActivatedTemplate";
 import { activateUserTemplate } from "../../utils/mail_templates/activateUserTemplate";
 
 dotenv.config();
@@ -277,11 +280,39 @@ export const updateUserSatus = async (req: Request, res: Response) => {
         is_active: true,
         member_id: true,
         status: true,
+        name: true,
+        email: true
       },
     });
-    res
-      .status(200)
-      .json({ message: "User Status Updated Succesfully", data: response });
+    const email:any =response.email
+    const secret = JWT_SECRET
+    const token = JWT.sign(
+      {
+        id: response.id,
+        email: response.email,
+      },
+      secret,
+      {
+        expiresIn: "15m",
+      },
+    );
+    
+    
+      const link = `${process.env.Frontend_URL}/reset-password/?id=${response.id}&token=${token}`;
+
+      const mailDetails = {
+      user_name: response.name,
+      link,
+      expiration:"15mins"
+    };
+
+      if (is_active){
+        sendEmail(userActivatedTemplate(mailDetails), email, "Reset Password");
+      }
+      
+    return res
+    .status(200)
+    .json({ message: "User Status Updated Succesfully", data: response });
   } catch (error) {
     return res
       .status(500)
@@ -437,6 +468,7 @@ export const forgetPassword = async (req: Request, res: Response) => {
     const mailDetails = {
       user_name: existingUser.name,
       link,
+      expiration:"15mins"
     };
     sendEmail(forgetPasswordTemplate(mailDetails), email, "Reset Password");
     return res
@@ -550,6 +582,15 @@ export const ListUsers = async (req: Request, res: Response) => {
   const isUser = is_user === "true";
 
   try {
+    const departments = await prisma.department.findMany({
+      select: {
+        id: true,
+        name: true,
+      },
+    });
+
+    const departmentMap = new Map(departments.map(d => [d.id, d.name]));
+
     const response: any = await prisma.user.findMany({
       orderBy: {
         name: "asc",
@@ -608,6 +649,12 @@ export const ListUsers = async (req: Request, res: Response) => {
         },
       },
     });
+
+    const usersWithDeptName = response.map((user:any) => ({
+      ...user,
+      department_name: departmentMap.get(user.department_id) || null,
+    }));
+
     const destructure = (data: []) => {
       let newObg: any = [];
       data.map((r1: any) => {
@@ -616,9 +663,10 @@ export const ListUsers = async (req: Request, res: Response) => {
       });
       return newObg;
     };
+
     res
       .status(200)
-      .json({ message: "Operation Succesful", data: destructure(response) });
+      .json({ message: "Operation Succesful", data: destructure(usersWithDeptName) });
   } catch (error) {
     return res
       .status(500)
