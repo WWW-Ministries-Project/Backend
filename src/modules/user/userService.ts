@@ -303,6 +303,7 @@ export class UserService {
         });
     } catch (error: any) {
       console.error("❌ Failed to call ZKTeco service:", error.message);
+      return false
     }
   }
 
