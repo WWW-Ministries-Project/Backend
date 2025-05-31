@@ -10,9 +10,11 @@ import {
 } from "../../utils";
 import { UserService } from "./userService";
 import { CourseService } from "../programs/courseService";
-import { forgetPasswordTemplate } from "../../utils/mail_templates/forgot-password";
+// import { forgetPasswordTemplate } from "../../utils/mail_templates/forgot-password";
+// import { forgetPasswordTemplate } from "../../utils/mail_templates/forgetPasswordTemplate";
+import { forgetPasswordTemplate } from "../../utils/mail_templates/forgotPasswordTemplate"
+import { userActivatedTemplate } from "../../utils/mail_templates/userActivatedTemplate";
 import { activateUserTemplate } from "../../utils/mail_templates/activateUserTemplate";
-import { userActivatedTemplate } from "../../utils/mail_templates/userActivatedTemplate"
 
 dotenv.config();
 
@@ -466,6 +468,7 @@ export const forgetPassword = async (req: Request, res: Response) => {
     const mailDetails = {
       user_name: existingUser.name,
       link,
+      expiration:"15mins"
     };
     sendEmail(forgetPasswordTemplate(mailDetails), email, "Reset Password");
     return res
@@ -660,7 +663,7 @@ export const ListUsers = async (req: Request, res: Response) => {
       });
       return newObg;
     };
-    
+
     res
       .status(200)
       .json({ message: "Operation Succesful", data: destructure(usersWithDeptName) });
