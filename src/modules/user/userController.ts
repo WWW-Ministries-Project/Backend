@@ -579,6 +579,15 @@ export const ListUsers = async (req: Request, res: Response) => {
   const isUser = is_user === "true";
 
   try {
+    const departments = await prisma.department.findMany({
+      select: {
+        id: true,
+        name: true,
+      },
+    });
+
+    const departmentMap = new Map(departments.map(d => [d.id, d.name]));
+
     const response: any = await prisma.user.findMany({
       orderBy: {
         name: "asc",
@@ -637,6 +646,12 @@ export const ListUsers = async (req: Request, res: Response) => {
         },
       },
     });
+
+    const usersWithDeptName = response.map((user:any) => ({
+      ...user,
+      department_name: departmentMap.get(user.department_id) || null,
+    }));
+
     const destructure = (data: []) => {
       let newObg: any = [];
       data.map((r1: any) => {
@@ -645,9 +660,10 @@ export const ListUsers = async (req: Request, res: Response) => {
       });
       return newObg;
     };
+    
     res
       .status(200)
-      .json({ message: "Operation Succesful", data: destructure(response) });
+      .json({ message: "Operation Succesful", data: destructure(usersWithDeptName) });
   } catch (error) {
     return res
       .status(500)
