@@ -304,7 +304,9 @@ export const updateUserSatus = async (req: Request, res: Response) => {
       expiration:"15mins"
     };
 
-      sendEmail(userActivatedTemplate(mailDetails), email, "Reset Password");
+      if (is_active){
+        sendEmail(userActivatedTemplate(mailDetails), email, "Reset Password");
+      }
       
     return res
     .status(200)
