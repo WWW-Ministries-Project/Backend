@@ -285,10 +285,12 @@ export class UserService {
     if (!process.env.ZTECO_SERVICE) return false;
 
     const URL = process.env.ZTECO_SERVICE;
+    console.log(`${URL}`)
 
     const userId = member_id.slice(-8);
 
     try {
+      console.log(`attempting to save user to ${URL}/zteco`)
       await axios
         .post(`${URL}/zteco`, {
           id,
