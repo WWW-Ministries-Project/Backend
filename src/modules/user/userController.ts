@@ -111,18 +111,18 @@ export const registerUser = async (req: Request, res: Response) => {
     const name = response.parent.name;
 
     // Send confirmation email if user
-    if (is_user) {
-      sendEmail(
-        confirmTemplate({
-          name,
-          email,
-          password: password || "123456",
-          frontend_url: `${process.env.Frontend_URL}/login`,
-        }),
-        email,
-        "New User Register - WWWM",
-      );
-    }
+    // if (is_user) {
+    //   sendEmail(
+    //     confirmTemplate({
+    //       name,
+    //       email,
+    //       password: password || "123456",
+    //       frontend_url: `${process.env.Frontend_URL}/login`,
+    //     }),
+    //     email,
+    //     "New User Register - WWWM",
+    //   );
+    // }
 
     return res
       .status(201)
@@ -382,6 +382,12 @@ export const login = async (req: Request, res: Response) => {
       return res
         .status(404)
         .json({ message: "No user with Email", data: null });
+    }
+
+    if (!existance?.is_active){
+    return res
+            .status(401)
+            .json({ message: "Invalid Account is deactivated", data: null });
     }
 
     if (await comparePassword(password, existance?.password)) {
