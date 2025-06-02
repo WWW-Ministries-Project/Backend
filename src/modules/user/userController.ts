@@ -385,8 +385,14 @@ export const login = async (req: Request, res: Response) => {
     }
 
 
-    if (existance?.is_active ){
-      if (await comparePassword(password, existance?.password)) {
+    if (existance && existance.is_active === false) {
+    return res.status(401).json({
+        message: "Account is deactivated",
+        data: null
+    });
+}
+
+    if (await comparePassword(password, existance?.password)) {
       const token = JWT.sign(
         {
           id: existance.id,
@@ -409,14 +415,6 @@ export const login = async (req: Request, res: Response) => {
         .status(401)
         .json({ message: "Invalid Credentials", data: null });
     }
-    
-    }else{
-      return res
-            .status(401)
-            .json({ message: "Invalid Account is deactivated", data: null });
-    }
-
-    
   } catch (error) {
     console.log(error);
     return res
