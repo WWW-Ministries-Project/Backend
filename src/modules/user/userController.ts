@@ -107,22 +107,17 @@ export const registerUser = async (req: Request, res: Response) => {
       is_user,
     } = req.body;
 
-    const response = await userService.registerUser(req.body);
-    const name = response.parent.name;
+    const existance = await prisma.user.findUnique({
+      where: {email}
+    })
 
-    // Send confirmation email if user
-    // if (is_user) {
-    //   sendEmail(
-    //     confirmTemplate({
-    //       name,
-    //       email,
-    //       password: password || "123456",
-    //       frontend_url: `${process.env.Frontend_URL}/login`,
-    //     }),
-    //     email,
-    //     "New User Register - WWWM",
-    //   );
-    // }
+    if (existance){
+      return res
+      .status(404)
+      .json({ message: "User exist with this email " + email, data: null });
+    }
+
+    const response = await userService.registerUser(req.body);
 
     return res
       .status(201)
@@ -365,6 +360,7 @@ export const login = async (req: Request, res: Response) => {
         email: true,
         name: true,
         password: true,
+        is_active:true,
         user_info: {
           select: {
             photo: true,
