@@ -384,11 +384,13 @@ export const login = async (req: Request, res: Response) => {
         .json({ message: "No user with Email", data: null });
     }
 
-    if (!existance?.is_active){
-    return res
-            .status(401)
-            .json({ message: "Invalid Account is deactivated", data: null });
-    }
+
+    if (existance && existance.is_active === false) {
+    return res.status(401).json({
+        message: "Account is deactivated",
+        data: null
+    });
+}
 
     if (await comparePassword(password, existance?.password)) {
       const token = JWT.sign(
