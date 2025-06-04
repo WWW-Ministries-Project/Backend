@@ -32,4 +32,4 @@ appRouter.use("/requisitions", requisitionRouter);
 appRouter.use("/program", programRouter);
 appRouter.use("/visitor", visitorRouter);
 appRouter.use("/attendance", attendanceRouter);
-appRouter.use("/lifecenter",lifeCenterRouter)
+appRouter.use("/lifecenter", lifeCenterRouter);

@@ -6,22 +6,30 @@ const lifeCenterService = new LifeCenterService();
 export class LifeCenterController {
   async createLifeCenter(req: Request, res: Response) {
     try {
-      const { name, description, meetingLocation, meetingDays } = req.body;
+      const { name, description, location, meeting_dates } = req.body;
+
+      const meetingDays = Array.isArray(meeting_dates)
+        ? meeting_dates.join(", ")
+        : "";
 
       const data = {
         name,
         description,
-        meetingLocation,
+        meetingLocation: location,
         meetingDays,
       };
+
       const newLifeCenter = await lifeCenterService.create(data);
-      return res
-        .status(201)
-        .json({ message: "Life center Added", data: newLifeCenter });
+
+      return res.status(201).json({
+        message: "Life center added successfully",
+        data: newLifeCenter,
+      });
     } catch (error: any) {
-      return res
-        .status(500)
-        .json({ message: "Error creating life center", error: error.message });
+      return res.status(500).json({
+        message: "Error creating life center",
+        error: error.message,
+      });
     }
   }
 
@@ -29,7 +37,9 @@ export class LifeCenterController {
     try {
       const { id } = req.query;
       const lifeCenters = await lifeCenterService.getAllLifeCenters();
-      return res.status(200).json({ message:"Operation sucessful",data: lifeCenters });
+      return res
+        .status(200)
+        .json({ message: "Operation sucessful", data: lifeCenters });
     } catch (error: any) {
       return res
         .status(500)
@@ -55,27 +65,38 @@ export class LifeCenterController {
 
   async updateLifeCenter(req: Request, res: Response) {
     try {
-      const { id } = req.query;
+      const id = Number(req.query.id);
+      if (isNaN(id)) {
+        return res.status(400).json({ message: "Invalid Life Center ID" });
+      }
 
-      const { name, description, meetingLocation, meetingDays } = req.body;
+      const { name, description, location, meeting_dates } = req.body;
+
+      const meetingDays = Array.isArray(meeting_dates)
+        ? meeting_dates.join(", ")
+        : "";
 
       const data = {
         name,
         description,
-        meetingLocation,
+        meetingLocation: location,
         meetingDays,
       };
+
       const updatedLifeCenter = await lifeCenterService.updateLifeCenter(
-        Number(id),
+        id,
         data,
       );
-      return res
-        .status(200)
-        .json({ message: "Life Center updated", data: updatedLifeCenter });
+
+      return res.status(200).json({
+        message: "Life Center updated",
+        data: updatedLifeCenter,
+      });
     } catch (error: any) {
-      return res
-        .status(500)
-        .json({ message: "Error updating Life Center", error: error.message });
+      return res.status(500).json({
+        message: "Error updating Life Center",
+        error: error.message,
+      });
     }
   }
 

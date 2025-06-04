@@ -37,6 +37,7 @@ lifeCenterRouter.delete(
   lifeCenterController.deleteLifeCenter,
 );
 
+//adding members to life center
 lifeCenterRouter.post(
   "/add-lifecenter-member",
   lifeCenterController.addMemberToLifeCenter,
@@ -51,6 +52,5 @@ lifeCenterRouter.delete(
   "/remove-lifecenter-member",
   lifeCenterController.removeMemberFromLifeCenter,
 );
-
 
 export default lifeCenterRouter;

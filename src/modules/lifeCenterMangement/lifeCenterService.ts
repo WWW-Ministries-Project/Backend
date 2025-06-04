@@ -10,7 +10,7 @@ export class LifeCenterService {
     meetingLocation: string;
     meetingDays: string;
   }) {
-    return await prisma.life_center.create({
+    const response = await prisma.life_center.create({
       data: {
         name: data.name,
         description: data.description,
@@ -18,16 +18,47 @@ export class LifeCenterService {
         meetingDays: data.meetingDays,
       },
     });
+
+    if (response) {
+      const response_data = {
+        name: response.name,
+        description: response.description,
+        location: response.meetingLocation,
+        meeting_dates: response.meetingDays.split(","),
+      };
+      return response_data;
+    }
+
+    return null;
   }
 
   async getAllLifeCenters() {
-    return await prisma.life_center.findMany({});
+    const results = await prisma.life_center.findMany({});
+
+    return results.map((response) => {
+      return {
+        id: response.id,
+        name: response.name,
+        description: response.description,
+        location: response.meetingLocation,
+        meeting_dates: response.meetingDays.split(",").map((day) => day.trim()),
+      };
+    });
   }
 
   async getLifeCenterById(id: number) {
-    return await prisma.life_center.findMany({
+    const response = await prisma.life_center.findUnique({
       where: { id },
     });
+
+    if (!response) return null;
+
+    return {
+      name: response.name,
+      description: response.description,
+      location: response.meetingLocation,
+      meeting_dates: response.meetingDays.split(",").map((day) => day.trim()),
+    };
   }
 
   async deleteLifeCenter(id: number) {
@@ -48,10 +79,17 @@ export class LifeCenterService {
       meetingDays: string;
     },
   ) {
-    return await prisma.life_center.update({
+    const response = await prisma.life_center.update({
       where: { id },
       data,
     });
+
+    return {
+      name: response.name,
+      description: response.description,
+      location: response.meetingLocation,
+      meeting_dates: response.meetingDays.split(",").map((day) => day.trim()),
+    };
   }
 
   /**
