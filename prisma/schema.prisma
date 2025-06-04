@@ -9,17 +9,17 @@ datasource db {
 }
 
 model user {
-  id                    Int                 @id @default(autoincrement())
+  id                    Int                  @id @default(autoincrement())
   name                  String
-  email                 String?             @unique
-  is_active             Boolean?            @default(true)
-  partner               Boolean?            @default(false)
-  is_user               Boolean?            @default(false)
+  email                 String?              @unique
+  is_active             Boolean?             @default(true)
+  partner               Boolean?             @default(false)
+  is_user               Boolean?             @default(false)
   password              String?
   member_id             String?
   position_id           Int?
   department_id         Int?
-  created_at            DateTime            @default(now())
+  created_at            DateTime             @default(now())
   updated_at            DateTime?
   access_level_id       Int?
   membership_type       membership_type?
@@ -27,24 +27,25 @@ model user {
   department_head       department[]
   event_attendance      event_attendance[]
   request               request[]
-  access                access_level?       @relation(fields: [access_level_id], references: [id])
-  position              position?           @relation(fields: [position_id], references: [id])
+  access                access_level?        @relation(fields: [access_level_id], references: [id])
+  position              position?            @relation(fields: [position_id], references: [id])
   department            user_departments?
   user_info             user_info?
-  hod_user              request_approvals[] @relation("hod_user")
-  ps_user               request_approvals[] @relation("ps_user")
+  hod_user              request_approvals[]  @relation("hod_user")
+  ps_user               request_approvals[]  @relation("ps_user")
   user_request_comments request_comments[]
   enrollments           enrollment[]
   parent_id             Int?
-  parent                user?               @relation("UserParent", fields: [parent_id], references: [id])
-  children              user[]              @relation("UserParent")
+  parent                user?                @relation("UserParent", fields: [parent_id], references: [id])
+  children              user[]               @relation("UserParent")
   status                status_type?
-  is_sync               Boolean?            @default(false)
+  is_sync               Boolean?             @default(false)
   sync_id               Int?
   mode                  classFormat?
   followUps             follow_up[]
   prayerRequests        prayer_request[]
   notes                 note[]
+  life_center_member    life_center_member[]
 
   @@index([access_level_id], map: "user_access_level_id_fkey")
   @@index([position_id], map: "user_position_id_fkey")
@@ -206,7 +207,7 @@ model event_act {
   id           Int           @id @default(autoincrement())
   name         String
   event_status event_status?
-  event_type       event_type?
+  event_type   event_type?
 
   event_mgt event_mgt[]
 }
@@ -220,7 +221,7 @@ model event_mgt {
   description      String?
   poster           String?
   qr_code          String?
-  event_act_id     Int                
+  event_act_id     Int
   event            event_act          @relation(fields: [event_act_id], references: [id])
   created_by       Int
   created_at       DateTime           @default(now())
@@ -574,4 +575,31 @@ model note {
   content   String
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model life_center_role {
+  id                 Int                  @id @default(autoincrement())
+  name               String
+  life_center_member life_center_member[]
+}
+
+model life_center {
+  id                 Int                  @id @default(autoincrement())
+  name               String
+  description        String
+  meetingLocation    String
+  meetingDays        String
+  life_center_member life_center_member[]
+}
+
+model life_center_member {
+  id           Int              @id @default(autoincrement())
+  user         user             @relation(fields: [userId], references: [id])
+  userId       Int
+  lifeCenter   life_center      @relation(fields: [lifeCenterId], references: [id])
+  lifeCenterId Int
+  role         life_center_role @relation(fields: [roleId], references: [id])
+  roleId       Int
+
+  @@unique([userId, lifeCenterId])
 }

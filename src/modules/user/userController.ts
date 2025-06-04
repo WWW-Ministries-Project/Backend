@@ -12,7 +12,7 @@ import { UserService } from "./userService";
 import { CourseService } from "../programs/courseService";
 // import { forgetPasswordTemplate } from "../../utils/mail_templates/forgot-password";
 // import { forgetPasswordTemplate } from "../../utils/mail_templates/forgetPasswordTemplate";
-import { forgetPasswordTemplate } from "../../utils/mail_templates/forgotPasswordTemplate"
+import { forgetPasswordTemplate } from "../../utils/mail_templates/forgotPasswordTemplate";
 import { userActivatedTemplate } from "../../utils/mail_templates/userActivatedTemplate";
 import { activateUserTemplate } from "../../utils/mail_templates/activateUserTemplate";
 
@@ -108,13 +108,13 @@ export const registerUser = async (req: Request, res: Response) => {
     } = req.body;
 
     const existance = await prisma.user.findUnique({
-      where: {email}
-    })
+      where: { email },
+    });
 
-    if (existance){
+    if (existance) {
       return res
-      .status(404)
-      .json({ message: "User exist with this email " + email, data: null });
+        .status(404)
+        .json({ message: "User exist with this email " + email, data: null });
     }
 
     const response = await userService.registerUser(req.body);
@@ -276,11 +276,11 @@ export const updateUserSatus = async (req: Request, res: Response) => {
         member_id: true,
         status: true,
         name: true,
-        email: true
+        email: true,
       },
     });
-    const email:any =response.email
-    const secret = JWT_SECRET
+    const email: any = response.email;
+    const secret = JWT_SECRET;
     const token = JWT.sign(
       {
         id: response.id,
@@ -291,23 +291,22 @@ export const updateUserSatus = async (req: Request, res: Response) => {
         expiresIn: "15m",
       },
     );
-    
-    
-      const link = `${process.env.Frontend_URL}/reset-password/?id=${response.id}&token=${token}`;
 
-      const mailDetails = {
+    const link = `${process.env.Frontend_URL}/reset-password/?id=${response.id}&token=${token}`;
+
+    const mailDetails = {
       user_name: response.name,
       link,
-      expiration:"15mins"
+      expiration: "15mins",
     };
 
-      if (is_active){
-        sendEmail(userActivatedTemplate(mailDetails), email, "Reset Password");
-      }
-      
+    if (is_active) {
+      sendEmail(userActivatedTemplate(mailDetails), email, "Reset Password");
+    }
+
     return res
-    .status(200)
-    .json({ message: "User Status Updated Succesfully", data: response });
+      .status(200)
+      .json({ message: "User Status Updated Succesfully", data: response });
   } catch (error) {
     return res
       .status(500)
@@ -360,7 +359,7 @@ export const login = async (req: Request, res: Response) => {
         email: true,
         name: true,
         password: true,
-        is_active:true,
+        is_active: true,
         user_info: {
           select: {
             photo: true,
@@ -380,13 +379,12 @@ export const login = async (req: Request, res: Response) => {
         .json({ message: "No user with Email", data: null });
     }
 
-
     if (existance && existance.is_active === false) {
-    return res.status(401).json({
+      return res.status(401).json({
         message: "Account is deactivated",
-        data: null
-    });
-}
+        data: null,
+      });
+    }
 
     if (await comparePassword(password, existance?.password)) {
       const token = JWT.sign(
@@ -472,7 +470,7 @@ export const forgetPassword = async (req: Request, res: Response) => {
     const mailDetails = {
       user_name: existingUser.name,
       link,
-      expiration:"15mins"
+      expiration: "15mins",
     };
     sendEmail(forgetPasswordTemplate(mailDetails), email, "Reset Password");
     return res
@@ -593,7 +591,7 @@ export const ListUsers = async (req: Request, res: Response) => {
       },
     });
 
-    const departmentMap = new Map(departments.map(d => [d.id, d.name]));
+    const departmentMap = new Map(departments.map((d) => [d.id, d.name]));
 
     const response: any = await prisma.user.findMany({
       orderBy: {
@@ -654,7 +652,7 @@ export const ListUsers = async (req: Request, res: Response) => {
       },
     });
 
-    const usersWithDeptName = response.map((user:any) => ({
+    const usersWithDeptName = response.map((user: any) => ({
       ...user,
       department_name: departmentMap.get(user.department_id) || null,
     }));
@@ -668,9 +666,10 @@ export const ListUsers = async (req: Request, res: Response) => {
       return newObg;
     };
 
-    res
-      .status(200)
-      .json({ message: "Operation Succesful", data: destructure(usersWithDeptName) });
+    res.status(200).json({
+      message: "Operation Succesful",
+      data: destructure(usersWithDeptName),
+    });
   } catch (error) {
     return res
       .status(500)
@@ -897,7 +896,7 @@ export const statsUsers = async (req: Request, res: Response) => {
       },
     });
     const allUserInfosByCategory = allUserInfos_members.reduce(
-      (acc: any, cur:any) => {
+      (acc: any, cur: any) => {
         const gender = cur.gender || "other";
 
         acc.total++;
@@ -909,7 +908,7 @@ export const statsUsers = async (req: Request, res: Response) => {
     );
 
     const stats: CategoryStats = allUserInfos_members.reduce(
-      (acc: any, user:any) => {
+      (acc: any, user: any) => {
         const age =
           Number(new Date().getFullYear()) -
           Number(user.date_of_birth?.getFullYear());
@@ -928,7 +927,7 @@ export const statsUsers = async (req: Request, res: Response) => {
     );
 
     const visitorInfosByCategory = allUserInfos_visitors.reduce(
-      (acc: any, cur:any) => {
+      (acc: any, cur: any) => {
         const gender = cur.gender || "other";
 
         acc.total++;
@@ -940,7 +939,7 @@ export const statsUsers = async (req: Request, res: Response) => {
     );
 
     const visitor_stats: CategoryStats = allUserInfos_visitors.reduce(
-      (acc: any, user:any) => {
+      (acc: any, user: any) => {
         const age =
           Number(new Date().getFullYear()) -
           Number(user.date_of_birth?.getFullYear());

@@ -73,8 +73,8 @@ export class UserService {
       isNaN(parseInt(department_id)) || parseInt(department_id) === 0
         ? null
         : parseInt(department_id);
-        
-      const positionId =
+
+    const positionId =
       isNaN(parseInt(position_id)) || parseInt(position_id) === 0
         ? null
         : parseInt(position_id);
@@ -242,14 +242,14 @@ export class UserService {
     password: string,
   ) {
     // this is to save the user to the biometric device
-    const result = await this.saveUserToZTeco(
+    const result: any = await this.saveUserToZTeco(
       id,
       generatedUserId,
       name,
       password,
     );
     let updatedUser;
-    if (result) {
+    if (result.length > 0 && result[0]) {
       updatedUser = await prisma.user.update({
         where: { id },
         data: {
@@ -285,12 +285,12 @@ export class UserService {
     if (!process.env.ZTECO_SERVICE) return false;
 
     const URL = process.env.ZTECO_SERVICE;
-    console.log(`${URL}`)
+    console.log(`${URL}`);
 
     const userId = member_id.slice(-8);
 
     try {
-      console.log(`attempting to save user to ${URL}/zteco`)
+      console.log(`attempting to save user to ${URL}/zteco`);
       await axios
         .post(`${URL}/zteco`, {
           id,
@@ -305,7 +305,7 @@ export class UserService {
         });
     } catch (error: any) {
       console.error("❌ Failed to call ZKTeco service:", error.message);
-      return false
+      return false;
     }
   }
 
@@ -320,7 +320,9 @@ export class UserService {
       return this.updateMemberToConfirmedMember(id);
     }
 
-    const programIds = allRequiredMemberPrograms.map((program:program) => program.id);
+    const programIds = allRequiredMemberPrograms.map(
+      (program: program) => program.id,
+    );
     const completionResults = await this.checkMultipleProgramCompletion(
       id,
       programIds,
@@ -336,8 +338,8 @@ export class UserService {
 
     const getProgramTitles = (ids: number[]) =>
       allRequiredMemberPrograms
-        .filter((p:program) => ids.includes(p.id))
-        .map((p:any) => p.title);
+        .filter((p: program) => ids.includes(p.id))
+        .map((p: any) => p.title);
 
     if (notEnrolledPrograms.length > 0 || incompletePrograms.length > 0) {
       const notEnrolledTitles = getProgramTitles(notEnrolledPrograms);
@@ -412,7 +414,7 @@ export class UserService {
           where: { programId },
           select: { id: true },
         });
-        const topicIds = topics.map((t:any) => t.id);
+        const topicIds = topics.map((t: any) => t.id);
 
         // 3. Check progress
         const passedCount = await prisma.progress.count({
