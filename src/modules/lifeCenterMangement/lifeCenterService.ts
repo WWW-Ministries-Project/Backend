@@ -36,8 +36,16 @@ export class LifeCenterService {
   async getAllLifeCenters() {
     const results = await prisma.life_center.findMany({
       orderBy: {
-       name: "desc",
-      }
+        name: "desc",
+      },
+      include: {
+        _count: {
+          select: {
+            life_center_member: true,
+            soul_won: true,
+          },
+        },
+      },
     });
 
     return results.map((response) => {
@@ -47,6 +55,8 @@ export class LifeCenterService {
         description: response.description,
         location: response.meetingLocation,
         meeting_dates: response.meetingDays.split(",").map((day) => day.trim()),
+        totalMembers: response._count.life_center_member,
+        totalSoulsWon: response._count.soul_won,
       };
     });
   }

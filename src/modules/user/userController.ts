@@ -1137,16 +1137,17 @@ export const linkChildren = async (req: Request, res: Response) => {
       }
 
       return {
-        message: "Operation Failed", data: "Something Happened, Contact Eshun"
-      }
+        message: "Operation Failed",
+        data: "Something Happened, Contact Eshun",
+      };
     }
 
     return {
-      message: "Operation Failed", data: "We expect the children Id to be an Array"
-    }
-
+      message: "Operation Failed",
+      data: "We expect the children Id to be an Array",
+    };
   } catch (error) {
-    console.error("❌ Error linking children:", error);
+    console.error("Error linking children:", error);
     throw error;
   }
 };
