@@ -46,6 +46,7 @@ model user {
   prayerRequests        prayer_request[]
   notes                 note[]
   life_center_member    life_center_member[]
+  soul_won              soul_won[]           @relation("user_soul_winner")
 
   @@index([access_level_id], map: "user_access_level_id_fkey")
   @@index([position_id], map: "user_position_id_fkey")
@@ -590,6 +591,8 @@ model life_center {
   meetingLocation    String
   meetingDays        String
   life_center_member life_center_member[]
+
+  soul_won soul_won[] @relation("life_center_soul_won")
 }
 
 model life_center_member {
@@ -602,4 +605,24 @@ model life_center_member {
   roleId       Int
 
   @@unique([userId, lifeCenterId])
+}
+
+model soul_won {
+  id             Int      @id @default(autoincrement())
+  first_name     String
+  last_name      String
+  other_name     String?
+  contact_number String
+  contact_email  String?
+  country        String
+  city           String
+  date_won       DateTime
+
+  wonBy   user @relation("user_soul_winner", fields: [wonById], references: [id], map: "soulwon_wonby_fkey")
+  wonById Int
+
+  lifeCenter   life_center @relation("life_center_soul_won", fields: [lifeCenterId], references: [id], map: "soulwon_lifecenter_fkey")
+  lifeCenterId Int
+
+  @@unique(id)
 }

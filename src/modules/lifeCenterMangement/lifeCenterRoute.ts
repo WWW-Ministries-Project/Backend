@@ -53,4 +53,21 @@ lifeCenterRouter.delete(
   lifeCenterController.removeMemberFromLifeCenter,
 );
 
+//getlifecentermembers
+lifeCenterRouter.get(
+  "/get-lifecenter-members",
+  lifeCenterController.getAllLifeCenterMembers,
+);
+
+//addsoul
+lifeCenterRouter.post("/soulwon", lifeCenterController.createSoulWon);
+//removesoul
+lifeCenterRouter.delete("/soulwon", lifeCenterController.removeSoulWon);
+//updatesoul
+lifeCenterRouter.put("/soulwon", lifeCenterController.updateSoulWon);
+//getsouls
+lifeCenterRouter.get("/soulswon", lifeCenterController.getSouls);
+//getsoul
+lifeCenterRouter.get("/soulwon", lifeCenterController.getSoul);
+
 export default lifeCenterRouter;
