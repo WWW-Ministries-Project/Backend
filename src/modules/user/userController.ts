@@ -1078,3 +1078,75 @@ export const convertMemeberToConfirmedMember = async (
     });
   }
 };
+
+export const linkSpouses = async (req: Request, res: Response) => {
+  try {
+    const { husband, wife } = req.body;
+    const result = await userService.linkSpouses(Number(husband), Number(wife));
+    if (result.error == "") {
+      return res.status(400).json({
+        message: "Operation failed",
+        data: result,
+      });
+    }
+    return res.status(200).json({
+      message: "Operation successful",
+      data: result,
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      message: "Operation failed",
+      data: error.message,
+    });
+  }
+};
+
+export const getUserFamily = async (req: Request, res: Response) => {
+  try {
+    const { user_id } = req.query;
+
+    const family = await userService.getUserFamily(Number(user_id));
+
+    if (!family) {
+      return res.status(404).json({
+        message: "",
+        data: "Error in getting the family",
+      });
+    }
+
+    return res.status(200).json({
+      message: "Operation Successfull",
+      data: family,
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      message: "Operation failed",
+      data: error,
+    });
+  }
+};
+
+export const linkChildren = async (req: Request, res: Response) => {
+  try {
+    const { childrenIds, parentId } = req.body;
+
+    if (Array.isArray(childrenIds) && childrenIds.length > 0) {
+      const result = await userService.linkChildren(childrenIds, parentId);
+      if (result) {
+        return { message: "Operation Sucess", data: result };
+      }
+
+      return {
+        message: "Operation Failed", data: "Something Happened, Contact Eshun"
+      }
+    }
+
+    return {
+      message: "Operation Failed", data: "We expect the children Id to be an Array"
+    }
+
+  } catch (error) {
+    console.error("❌ Error linking children:", error);
+    throw error;
+  }
+};
