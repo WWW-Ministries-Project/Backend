@@ -21,6 +21,7 @@ export class LifeCenterService {
 
     if (response) {
       const response_data = {
+        id: response.id,
         name: response.name,
         description: response.description,
         location: response.meetingLocation,
@@ -67,9 +68,6 @@ export class LifeCenterService {
     });
   }
 
-  /**
-   * Update an existing LifeCenter by ID
-   */
   async updateLifeCenter(
     id: number,
     data: {
@@ -91,10 +89,6 @@ export class LifeCenterService {
       meeting_dates: response.meetingDays.split(",").map((day) => day.trim()),
     };
   }
-
-  /**
-   * Add a member to the life centers
-   */
 
   async addMemberToLifeCenter(data: {
     userId: number;
@@ -137,7 +131,109 @@ export class LifeCenterService {
     lifeCenterId: number;
   }) {
     const member = await prisma.life_center_member.findFirst({
-      where: {},
+      where: {
+        userId: data.userId,
+        lifeCenterId: data.lifeCenterId,
+      },
+    });
+
+    if (!member) {
+      throw new Error("Member not found in this Life Center");
+    }
+
+    await prisma.life_center_member.delete({
+      where: {
+        id: member.id,
+      },
+    });
+
+    return { message: "Member removed successfully" };
+  }
+
+  async getAllLifeCenterMembers(lifeCenterId: number) {
+    const members = await prisma.life_center_member.findMany({
+      where: {
+        lifeCenterId,
+      },
+      include: {
+        user: true,
+        role: true,
+      },
+    });
+
+    return members;
+  }
+
+  async removeSoul(id: number) {
+    const soul = await prisma.soul_won.findUnique({ where: { id } });
+    if (!soul) throw new Error("Soul not found");
+
+    await prisma.soul_won.delete({ where: { id } });
+
+    return { message: "Soul removed successfully" };
+  }
+
+  async getSouls(filter?: { lifeCenterId?: number; wonById?: number }) {
+    return await prisma.soul_won.findMany({
+      where: {
+        lifeCenterId: filter?.lifeCenterId,
+        wonById: filter?.wonById,
+      },
+      include: {
+        wonBy: true,
+        lifeCenter: true,
+      },
+    });
+  }
+
+  async getSoul(id: number) {
+    const soul = await prisma.soul_won.findUnique({
+      where: { id },
+      include: {
+        wonBy: true,
+        lifeCenter: true,
+      },
+    });
+
+    if (!soul) throw new Error("Soul not found");
+    return soul;
+  }
+
+  async createSoulWon(data: {
+    first_name: string;
+    last_name: string;
+    other_name?: string;
+    contact_number: string;
+    contact_email?: string;
+    country: string;
+    city: string;
+    date_won: Date;
+    wonById: number;
+    lifeCenterId: number;
+  }) {
+    return await prisma.soul_won.create({
+      data,
+    });
+  }
+
+  async updateSoulWon(
+    id: number,
+    data: {
+      firstName?: string;
+      lastName?: string;
+      otherName?: string;
+      contactNumber?: string;
+      contactEmail?: string;
+      country?: string;
+      city?: string;
+      dateWon?: Date;
+      wonById?: number;
+      lifeCenterId?: number;
+    },
+  ) {
+    return await prisma.soul_won.update({
+      where: { id },
+      data,
     });
   }
 }
