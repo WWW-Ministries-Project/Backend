@@ -48,6 +48,9 @@ model user {
   life_center_member    life_center_member[]
   soul_won              soul_won[]           @relation("user_soul_winner")
 
+  spouse_id             Int?                 @unique
+  spouse                user?                @relation("SpouseRelation", fields: [spouse_id], references: [id])
+  spouse_of             user?                @relation("SpouseRelation")
   @@index([access_level_id], map: "user_access_level_id_fkey")
   @@index([position_id], map: "user_position_id_fkey")
 }

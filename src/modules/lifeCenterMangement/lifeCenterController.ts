@@ -263,12 +263,10 @@ export class LifeCenterController {
         .status(201)
         .json({ message: "Soul won record created", data: newSoul });
     } catch (error: any) {
-      return res
-        .status(500)
-        .json({
-          message: "Error creating soul won record",
-          error: error.message,
-        });
+      return res.status(500).json({
+        message: "Error creating soul won record",
+        error: error.message,
+      });
     }
   }
   async updateSoulWon(req: Request, res: Response) {
@@ -310,12 +308,10 @@ export class LifeCenterController {
         .status(200)
         .json({ message: "Soul won record updated", data: updatedSoul });
     } catch (error: any) {
-      return res
-        .status(500)
-        .json({
-          message: "Error updating soul won record",
-          error: error.message,
-        });
+      return res.status(500).json({
+        message: "Error updating soul won record",
+        error: error.message,
+      });
     }
   }
 }

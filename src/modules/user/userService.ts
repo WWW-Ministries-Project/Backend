@@ -433,4 +433,99 @@ export class UserService {
 
     return results;
   }
+
+  async linkSpouses(userId1: number, userId2: number) {
+    const [user1, user2] = await Promise.all([
+      prisma.user.findUnique({ where: { id: userId1 } }),
+      prisma.user.findUnique({ where: { id: userId2 } }),
+    ]);
+
+    if (!user1 || !user2) {
+      return {
+        message: "",
+        error: "One or both users not found.",
+      };
+    }
+
+    // Avoid circular linking or overwriting existing links unless intentional
+    if (user1.spouse_id || user2.spouse_id) {
+      return {
+        message: "",
+        error: "One or both users already have a spouse linked.",
+      };
+    }
+
+    await Promise.all([
+      prisma.user.update({
+        where: { id: userId1 },
+        data: { spouse_id: userId2 },
+      }),
+      prisma.user.update({
+        where: { id: userId2 },
+        data: { spouse_id: userId1 },
+      }),
+    ]);
+
+    return { message: "Spouses linked successfully.", error: "" };
+  }
+
+  async getUserFamily(userId: number) {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      include: {
+        spouse: {
+          include: {
+            user_info: true,
+          },
+        },
+        user_info: true,
+      },
+    });
+
+    if (!user) {
+      throw new Error("User not found");
+    }
+
+    const spouse = user.spouse;
+
+    const children = await prisma.user.findMany({
+      where: {
+        OR: [
+          { parent_id: user.id },
+          ...(spouse?.id ? [{ parent_id: spouse.id }] : []),
+        ],
+      },
+      include: {
+        user_info: true,
+      },
+    });
+
+    return {
+      user,
+      spouse,
+      children,
+    };
+  }
+
+  async linkChildren(childrenIds: number[], parentId: number) {
+    if (!childrenIds || childrenIds.length === 0) return;
+
+    try {
+      const result = await prisma.user.updateMany({
+        where: {
+          id: { in: childrenIds },
+        },
+        data: {
+          parent_id: parentId,
+        },
+      });
+
+      if (result) {
+        return result;
+      }
+    } catch (error) {
+      console.error("Error linking children:", error);
+      throw error;
+    }
+  }
 }
