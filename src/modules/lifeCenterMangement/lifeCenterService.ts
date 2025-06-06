@@ -100,7 +100,7 @@ export class LifeCenterService {
       name: raw.name,
       description: raw.description,
       location: raw.meetingLocation,
-      meetingDays: raw.meetingDays.split(",").map((day) => day.trim()),
+      meeting_dates: raw.meetingDays.split(",").map((day) => day.trim()),
 
       members: raw.life_center_member.map((member) => ({
         id: member.user.id,
