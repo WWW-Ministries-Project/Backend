@@ -1,8 +1,8 @@
 import { prisma } from "../../Models/context";
 
-export class DeviceService { 
-    //create
-    async create(data: {
+export class DeviceService {
+  //create
+  async create(data: {
     name: string;
     ip_address: string;
     port: string;
@@ -23,18 +23,17 @@ export class DeviceService {
         name: response.device_name,
         ip_address: response.ip_address,
         location: response.location,
-        port: response.port
-      
+        port: response.port,
       };
       return response_data;
     }
 
     return null;
   }
-  
+
   async findAll() {
     const devices = await prisma.devices.findMany();
-    return devices.map(device => ({
+    return devices.map((device) => ({
       id: device.id,
       name: device.device_name,
       ip_address: device.ip_address,
@@ -48,7 +47,7 @@ export class DeviceService {
     });
 
     if (!device) {
-      throw new Error('Device not found');
+      throw new Error("Device not found");
     }
 
     return {
@@ -59,15 +58,18 @@ export class DeviceService {
       port: device.port,
     };
   }
-    async update(id: number, data: {
-    name?: string;
-    ip_address?: string;
-    port?: string;
-    location?: string;
-  }) {
+  async update(
+    id: number,
+    data: {
+      name?: string;
+      ip_address?: string;
+      port?: string;
+      location?: string;
+    },
+  ) {
     const existing = await prisma.devices.findUnique({ where: { id } });
     if (!existing) {
-      throw new Error('Device not found');
+      throw new Error("Device not found");
     }
 
     const updated = await prisma.devices.update({
@@ -93,11 +95,11 @@ export class DeviceService {
   async delete(id: number) {
     const device = await prisma.devices.findUnique({ where: { id } });
     if (!device) {
-      throw new Error('Device not found');
+      throw new Error("Device not found");
     }
 
     await prisma.devices.delete({ where: { id } });
 
-    return { message: 'Device deleted successfully', id };
+    return { message: "Device deleted successfully", id };
   }
 }

@@ -1,3 +1,4 @@
+import { tr } from "date-fns/locale";
 import { prisma } from "../../Models/context";
 
 export class LifeCenterService {
@@ -62,17 +63,67 @@ export class LifeCenterService {
   }
 
   async getLifeCenterById(id: number) {
-    const response = await prisma.life_center.findUnique({
+    const raw = await prisma.life_center.findUnique({
       where: { id },
+      include: {
+        life_center_member: {
+          select: {
+            role: {
+              select: { id: true, name: true },
+            },
+            user: {
+              select: { id: true, name: true, email: true },
+            },
+          },
+        },
+        soul_won: {
+          select: {
+            id: true,
+            first_name: true,
+            last_name: true,
+            contact_email: true,
+            city: true,
+            date_won: true,
+            wonBy: {
+              select: { id: true, name: true, email: true },
+            },
+          },
+        },
+      },
     });
 
-    if (!response) return null;
+    if (!raw) return null;
 
+    // Structure the response
     return {
-      name: response.name,
-      description: response.description,
-      location: response.meetingLocation,
-      meeting_dates: response.meetingDays.split(",").map((day) => day.trim()),
+      id: raw.id,
+      name: raw.name,
+      description: raw.description,
+      location: raw.meetingLocation,
+      meetingDays: raw.meetingDays.split(",").map((day) => day.trim()),
+
+      members: raw.life_center_member.map((member) => ({
+        id: member.user.id,
+        name: member.user.name,
+        email: member.user.email,
+        role: {
+          id: member.role.id,
+          name: member.role.name,
+        },
+      })),
+
+      soulsWon: raw.soul_won.map((soul) => ({
+        id: soul.id,
+        name: `${soul.first_name} ${soul.last_name}`,
+        email: soul.contact_email,
+        city: soul.city,
+        dateWon: soul.date_won,
+        wonBy: {
+          id: soul.wonBy.id,
+          name: soul.wonBy.name,
+          email: soul.wonBy.email,
+        },
+      })),
     };
   }
 

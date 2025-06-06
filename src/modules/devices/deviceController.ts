@@ -8,7 +8,6 @@ export class DeviceController {
     try {
       const { name, ip_address, port, location } = req.body;
 
-      
       const data = {
         name,
         ip_address,
@@ -48,8 +47,7 @@ export class DeviceController {
       const { id } = req.query;
 
       const device = await devices.findOne(Number(id));
-      if (!device)
-        return res.status(404).json({ message: "device not found" });
+      if (!device) return res.status(404).json({ message: "device not found" });
 
       return res.status(200).json({ data: device });
     } catch (error: any) {
@@ -68,7 +66,6 @@ export class DeviceController {
 
       const { name, ip_address, port, location } = req.body;
 
-
       const data = {
         name,
         ip_address,
@@ -76,10 +73,7 @@ export class DeviceController {
         port,
       };
 
-      const updatedDevices = await devices.update(
-        id,
-        data,
-      );
+      const updatedDevices = await devices.update(id, data);
 
       return res.status(200).json({
         message: "Life Center updated",
@@ -97,14 +91,11 @@ export class DeviceController {
     try {
       const { id } = req.query;
       await devices.delete(Number(id));
-      return res
-        .status(200)
-        .json({ message: "Device deleted successfully" });
+      return res.status(200).json({ message: "Device deleted successfully" });
     } catch (error: any) {
       return res
         .status(500)
         .json({ message: "Error deleting device", error: error.message });
     }
   }
-
 }
