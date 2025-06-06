@@ -629,3 +629,11 @@ model soul_won {
 
   @@unique(id)
 }
+
+model devices {
+  id             Int      @id @default(autoincrement())
+  device_name    String
+  ip_address     String
+  port           String
+  location       String 
+}
