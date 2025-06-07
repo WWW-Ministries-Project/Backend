@@ -51,6 +51,7 @@ export class UserService {
         department_id,
         position_id,
         member_since,
+        department_positions
       } = {},
 
       children = [],
@@ -136,6 +137,8 @@ export class UserService {
     await this.generateUserId(user).catch((err) =>
       console.error("Error generating user ID:", err),
     );
+
+    await this.savedDepartments(user.id,department_positions)
     const savedUser = await prisma.user.findUnique({
       where: { id: user.id },
       include: {
@@ -172,6 +175,16 @@ export class UserService {
       children: savedChildren,
     };
   }
+  private async savedDepartments(userId: number, department_positions: { department_id: number; position_id: number }[]) {
+  return await prisma.department_positions.createMany({
+    data: department_positions.map((dp) => ({
+      user_id: userId,
+      department_id: Number(dp.department_id),
+      position_id: Number(dp.position_id),
+    })),
+    skipDuplicates: true,
+  });
+}
 
   async registerChildren(
     children: any[],
@@ -249,7 +262,7 @@ export class UserService {
       password,
     );
     let updatedUser;
-    if (result.length > 0 && result[0]) {
+    if (result) {
       updatedUser = await prisma.user.update({
         where: { id },
         data: {
