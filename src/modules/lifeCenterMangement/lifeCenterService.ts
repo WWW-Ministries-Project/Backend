@@ -84,6 +84,9 @@ export class LifeCenterService {
             contact_email: true,
             city: true,
             date_won: true,
+            country: true,
+            other_name:true,
+            contact_number:true,
             wonBy: {
               select: { id: true, name: true, email: true },
             },
@@ -114,15 +117,18 @@ export class LifeCenterService {
 
       soulsWon: raw.soul_won.map((soul) => ({
         id: soul.id,
-        name: `${soul.first_name} ${soul.last_name}`,
-        email: soul.contact_email,
+        first_name: soul.first_name,
+        last_name: soul.last_name,
+        other_name:soul.other_name,
+        contact_number: soul.contact_number,
+        contact_email: soul.contact_email,
+        country: soul.country,
         city: soul.city,
-        dateWon: soul.date_won,
-        wonBy: {
-          id: soul.wonBy.id,
-          name: soul.wonBy.name,
-          email: soul.wonBy.email,
-        },
+        date_won: soul.date_won ? soul.date_won.toISOString().split("T")[0] : "",
+        wonById:soul.wonBy.id,
+        wonByName:soul.wonBy.name,
+        email:soul.wonBy.email,
+        lifecenterId:id
       })),
     };
   }
