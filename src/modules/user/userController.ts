@@ -827,6 +827,12 @@ export const getUser = async (req: Request, res: Response) => {
             },
           },
         },
+        department_positions: {
+          include: {
+            department: true,
+            position: true,
+          },
+        },
       },
     });
 
@@ -834,17 +840,23 @@ export const getUser = async (req: Request, res: Response) => {
       return res.status(404).json({ message: "User not found" });
     }
 
-    // Flatten user_info for main user
-    const { user_info, parent, children, ...rest } = response;
+    // Flatten user_info and others
+    const {
+      user_info,
+      parent,
+      children,
+      department_positions,
+      ...rest
+    } = response;
     const user = { ...rest, ...user_info };
 
-    // Flatten user_info for parent
+    // Flatten parent user_info
     if (parent?.user_info) {
       user.parent = { ...parent, ...parent.user_info };
       delete user.parent.user_info;
     }
 
-    // Flatten user_info for each child
+    // Flatten each child’s user_info
     if (children && Array.isArray(children)) {
       user.children = children.map((child) => {
         if (child.user_info) {
@@ -853,6 +865,14 @@ export const getUser = async (req: Request, res: Response) => {
         }
         return child;
       });
+    }
+
+    // Flatten department_positions
+    if (department_positions && Array.isArray(department_positions)) {
+      user.department_positions = department_positions.map((dp) => ({
+        department_name: dp.department?.name ?? null,
+        position_name: dp.position?.name ?? null,
+      }));
     }
 
     res.status(200).json({

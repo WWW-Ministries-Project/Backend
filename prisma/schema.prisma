@@ -47,6 +47,7 @@ model user {
   notes                 note[]
   life_center_member    life_center_member[]
   soul_won              soul_won[]           @relation("user_soul_winner")
+  department_positions department_positions[]
 
   spouse_id             Int?                 @unique
   spouse                user?                @relation("SpouseRelation", fields: [spouse_id], references: [id])
@@ -129,6 +130,7 @@ model department {
   user_departments     user_departments[]
   is_sync              Boolean?           @default(false)
   sync_id              Int?
+  department_positions department_positions[]
 
   @@index([department_head], map: "department_department_head_fkey")
 }
@@ -156,6 +158,7 @@ model position {
   user          user[]
   is_sync       Boolean?    @default(false)
   sync_id       Int?
+  department_positions department_positions[]
 
   @@index([department_id], map: "position_department_id_fkey")
 }
@@ -636,4 +639,20 @@ model devices {
   ip_address     String
   port           String
   location       String 
+}
+
+model department_positions {
+  id            Int        @id @default(autoincrement())
+  user_id       Int
+  department_id Int
+  position_id   Int?
+
+  user          user       @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  department    department @relation(fields: [department_id], references: [id])
+  position      position?  @relation(fields: [position_id], references: [id])
+
+  @@unique([user_id, department_id]) // Prevent duplicate entries
+  @@index([user_id])
+  @@index([department_id])
+  @@index([position_id])
 }
