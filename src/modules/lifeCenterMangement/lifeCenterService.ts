@@ -88,7 +88,7 @@ export class LifeCenterService {
             other_name:true,
             contact_number:true,
             wonBy: {
-              select: { id: true, name: true, email: true },
+              select: { id: true, name: true },
             },
           },
         },
@@ -127,8 +127,7 @@ export class LifeCenterService {
         date_won: soul.date_won ? soul.date_won.toISOString().split("T")[0] : "",
         wonById:soul.wonBy.id,
         wonByName:soul.wonBy.name,
-        email:soul.wonBy.email,
-        lifecenterId:id
+        lifeCenterId:id
       })),
     };
   }
