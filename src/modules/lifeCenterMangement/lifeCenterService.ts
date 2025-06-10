@@ -304,7 +304,18 @@ export class LifeCenterService {
   ) {
     return await prisma.soul_won.update({
       where: { id },
-      data,
+      data:{
+        first_name: data.first_name,
+      last_name: data.last_name,
+      other_name: data.other_name,
+      contact_number: data.contact_number,
+      contact_email: data.contact_email,
+      country: data.country,
+      city: data.city,
+      date_won: data.date_won,
+      wonById: data.wonById,
+      lifeCenterId: data.lifeCenterId
+      },
     });
   }
 }
