@@ -271,7 +271,7 @@ export class LifeCenterController {
   }
   async updateSoulWon(req: Request, res: Response) {
     try {
-      const { id } = req.params;
+      const { id } = req.query;
 
       const {
         first_name,
