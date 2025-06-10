@@ -290,14 +290,14 @@ export class LifeCenterService {
   async updateSoulWon(
     id: number,
     data: {
-      firstName?: string;
-      lastName?: string;
-      otherName?: string;
-      contactNumber?: string;
-      contactEmail?: string;
+      first_name?: string;
+      last_name?: string;
+      other_name?: string;
+      contact_number?: string;
+      contact_email?: string;
       country?: string;
       city?: string;
-      dateWon?: Date;
+      date_won?: Date;
       wonById?: number;
       lifeCenterId?: number;
     },

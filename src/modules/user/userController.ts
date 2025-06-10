@@ -15,6 +15,7 @@ import { CourseService } from "../programs/courseService";
 import { forgetPasswordTemplate } from "../../utils/mail_templates/forgotPasswordTemplate";
 import { userActivatedTemplate } from "../../utils/mail_templates/userActivatedTemplate";
 import { activateUserTemplate } from "../../utils/mail_templates/activateUserTemplate";
+import { userInfo } from "os";
 
 dotenv.config();
 
@@ -143,6 +144,7 @@ export const updateUser = async (req: Request, res: Response) => {
         gender,
         marital_status,
         nationality,
+        has_children,
       } = {},
       picture = {},
       contact_info: {
@@ -152,7 +154,12 @@ export const updateUser = async (req: Request, res: Response) => {
         city,
         phone: { country_code, number: primary_number } = {},
       } = {},
-      work_info: { work_name, work_industry, work_position } = {},
+      work_info: {
+        work_name,
+        work_industry,
+        work_position,
+        school_name,
+      } = {},
       emergency_contact: {
         name: emergency_contact_name,
         relation: emergency_contact_relation,
@@ -166,14 +173,23 @@ export const updateUser = async (req: Request, res: Response) => {
         position_id,
         department_id,
         member_since,
+        department_positions,
       } = {},
+      children = [],
       status,
       is_user,
     } = req.body;
 
     const userExists = await prisma.user.findUnique({
       where: { id: Number(user_id) },
-      select: selectQuery,
+      include: {
+        user_info: {
+          include: {
+            work_info: true,
+            emergency_contact: true,
+          },
+        },
+      },
     });
 
     if (!userExists) {
@@ -187,66 +203,69 @@ export const updateUser = async (req: Request, res: Response) => {
           other_name || userExists?.user_info?.other_name || ""
         } ${last_name || userExists?.user_info?.last_name}`.trim(),
         email: email || userExists?.email,
+        is_user: typeof is_user === "boolean" ? is_user : userExists?.is_user,
+        status: status || userExists?.status,
         position_id: Number(position_id) || userExists?.position_id,
         department_id: Number(department_id) || userExists?.department_id,
-        is_user,
-        status,
         membership_type: membership_type || userExists?.membership_type,
         user_info: {
           update: {
-            title: title || userExists?.user_info?.title,
-            first_name: first_name || userExists?.user_info?.first_name,
-            last_name: last_name || userExists?.user_info?.last_name,
-            other_name: other_name || userExists?.user_info?.other_name,
+            title,
+            first_name,
+            last_name,
+            other_name,
             date_of_birth: date_of_birth
               ? new Date(date_of_birth)
-              : userExists?.user_info?.date_of_birth,
-            gender: gender || userExists?.user_info?.gender,
-            marital_status:
-              marital_status || userExists?.user_info?.marital_status,
-            nationality: nationality || userExists?.user_info?.nationality,
-            state_region: state_region || userExists?.user_info?.state_region,
-            city: city || userExists?.user_info?.state_region,
-            country_code: country_code || userExists?.user_info?.country_code,
-            primary_number:
-              primary_number || userExists?.user_info?.primary_number,
-            member_since:
-              new Date(member_since) || userExists?.user_info?.member_since,
+              : undefined,
+            gender,
+            marital_status,
+            nationality,
+            photo: picture.src,
             email,
-            country: resident_country || userExists?.user_info?.country,
-            photo: picture.src || userExists?.user_info?.photo,
-            work_info: {
-              update: {
-                name_of_institution:
-                  work_name ||
-                  userExists?.user_info?.work_info?.name_of_institution,
-                industry:
-                  work_industry || userExists?.user_info?.work_info?.industry,
-                position:
-                  work_position || userExists?.user_info?.work_info?.position,
-              },
-            },
+            country: resident_country,
+            state_region,
+            city,
+            country_code,
+            primary_number,
+            member_since: member_since ? new Date(member_since) : undefined,
             emergency_contact: {
               update: {
-                name:
-                  emergency_contact_name ||
-                  userExists?.user_info?.emergency_contact?.name,
-                relation:
-                  emergency_contact_relation ||
-                  userExists?.user_info?.emergency_contact?.relation,
-                country_code:
-                  emergency_country_code ||
-                  userExists?.user_info?.emergency_contact?.country_code,
-                phone_number:
-                  emergency_phone_number ||
-                  userExists?.user_info?.emergency_contact?.phone_number,
+                name: emergency_contact_name,
+                relation: emergency_contact_relation,
+                country_code: emergency_country_code,
+                phone_number: emergency_phone_number,
+              },
+            },
+            work_info: {
+              update: {
+                name_of_institution: work_name,
+                industry: work_industry,
+                position: work_position,
+                school_name,
               },
             },
           },
         },
       },
-      select: selectQuery,
+      include: {
+        user_info: {
+          select: {
+            photo: true,
+          },
+        },
+      },
     });
+
+    // Handle department_positions update
+    if (Array.isArray(department_positions) && department_positions.length) {
+      await updateDepartmentPositions(Number(user_id), department_positions);
+    }
+
+    // Optional: handle children (currently stubbed)
+    if (has_children && children.length > 0) {
+      console.log("Stub: handle child updates here");
+      await updateChildren(children, updatedUser, membership_type,Number(user_id))
+    }
 
     return res
       .status(200)
@@ -258,6 +277,33 @@ export const updateUser = async (req: Request, res: Response) => {
       .json({ message: "Internal Server Error", data: error?.message });
   }
 };
+
+// Helper to update department_positions
+async function updateDepartmentPositions(
+  userId: number,
+  departmentPositions: { department_id: number; position_id: number }[],
+) {
+  await prisma.department_positions.deleteMany({
+    where: { user_id: userId },
+  });
+
+  await prisma.department_positions.createMany({
+    data: departmentPositions.map((dp) => ({
+      user_id: userId,
+      department_id: Number(dp.department_id),
+      position_id: Number(dp.position_id),
+    })),
+    skipDuplicates: true,
+  });
+}
+
+async function updateChildren(children:any[],parentObj:any, membership_type:string,userId:number){
+   await prisma.user.deleteMany({
+    where: { parent_id: userId },
+  });
+  await userService.registerChildren(children,parentObj,membership_type)
+}
+
 
 export const updateUserSatus = async (req: Request, res: Response) => {
   const { id, is_active, status } = req.body;
