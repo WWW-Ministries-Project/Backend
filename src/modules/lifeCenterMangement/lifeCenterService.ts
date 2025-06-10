@@ -297,7 +297,7 @@ export class LifeCenterService {
       contact_email?: string;
       country?: string;
       city?: string;
-      date_won?: string;
+      date_won?: Date;
       wonById?: number;
       lifeCenterId?: number;
     },
