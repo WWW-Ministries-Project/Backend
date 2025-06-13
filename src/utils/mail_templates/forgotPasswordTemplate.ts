@@ -1,8 +1,5 @@
-
-
 export const forgetPasswordTemplate = (mailDetails: any) => {
-
-return `
+  return `
     <!DOCTYPE html>
     <html>
 
@@ -39,5 +36,5 @@ return `
     </body>
 
     </html>
-`
-}
+`;
+};

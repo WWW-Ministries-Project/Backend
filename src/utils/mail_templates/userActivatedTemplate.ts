@@ -1,5 +1,5 @@
-export const userActivatedTemplate = (mailDetails:any) => {
-return `<!DOCTYPE html>
+export const userActivatedTemplate = (mailDetails: any) => {
+  return `<!DOCTYPE html>
 <html>
 
 <head>
@@ -37,6 +37,5 @@ return `<!DOCTYPE html>
     </table>
 </body>
 
-</html>`
-
-}
+</html>`;
+};
