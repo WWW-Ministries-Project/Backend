@@ -6,8 +6,8 @@ const roleService = new LifeCenterRoleService();
 export class LifeCenterRoleController {
   async createLifeCenterRole(req: Request, res: Response) {
     try {
-      const { name } = req.body.name;
-      const newRole = await roleService.createLifeCenterRole(name);
+      const { name } = req.body;
+      const newRole:any = await roleService.createLifeCenterRole(name);
       return res.status(201).json({ message: "New Role Added", data: newRole });
     } catch (error: any) {
       return res
