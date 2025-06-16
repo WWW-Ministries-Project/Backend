@@ -620,6 +620,7 @@ model soul_won {
   other_name     String?
   contact_number String
   contact_email  String?
+  country_code   String?
   country        String
   city           String
   date_won       DateTime
