@@ -213,7 +213,15 @@ export class LifeCenterController {
 
       const soul = await lifeCenterService.getSoul(Number(id));
 
-      res.status(200).json({ message: "Operation successful", data: soul });
+      const returningSoul = {
+        ...soul,
+        phone:{
+          number: soul.contact_number,
+          country_code:soul.country_code
+        }
+      }
+
+      res.status(200).json({ message: "Operation successful", data: returningSoul });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -237,7 +245,7 @@ export class LifeCenterController {
         first_name,
         last_name,
         other_name,
-        contact_number,
+        phone,
         contact_email,
         country,
         city,
@@ -250,7 +258,8 @@ export class LifeCenterController {
         first_name,
         last_name,
         other_name,
-        contact_number,
+        contact_number:phone.number,
+        country_code:phone.country_code,
         contact_email,
         country,
         city,
@@ -259,9 +268,26 @@ export class LifeCenterController {
         lifeCenterId: Number(lifeCenterId),
       });
 
+      const returningSoul = {
+        id: newSoul.id,
+        first_name: newSoul.first_name,
+        last_name: newSoul.last_name,
+        other_name: newSoul.other_name,
+        phone :{
+          number: newSoul.contact_number,
+          country_code : newSoul.country_code,
+        },
+        contact_email: newSoul.contact_email,
+        country: newSoul.country,
+        city: newSoul.city,
+        date_won: newSoul.date_won,
+        wonById: newSoul.wonById,
+        lifeCenterId: newSoul.lifeCenterId,
+      };
+
       return res
         .status(201)
-        .json({ message: "Soul won record created", data: newSoul });
+        .json({ message: "Soul won record created", data: returningSoul });
     } catch (error: any) {
       return res.status(500).json({
         message: "Error creating soul won record",
@@ -269,15 +295,16 @@ export class LifeCenterController {
       });
     }
   }
-  async updateSoulWon(req: Request, res: Response) {
+ async updateSoulWon(req: Request, res: Response) {
     try {
       const { id } = req.query;
+      if (!id) return res.status(400).json({ message: "Missing soul ID" });
 
       const {
         first_name,
         last_name,
         other_name,
-        contact_number,
+        phone,
         contact_email,
         country,
         city,
@@ -286,27 +313,42 @@ export class LifeCenterController {
         lifeCenterId,
       } = req.body;
 
-      const data = {
+
+      const updated = await lifeCenterService.updateSoulWon(Number(id), {
         first_name,
         last_name,
         other_name,
-        contact_number,
+        contact_number:phone.number,
+        country_code:phone.country_code,
         contact_email,
         country,
         city,
         date_won: new Date(date_won),
         wonById: Number(wonById),
         lifeCenterId: Number(lifeCenterId),
+      });
+
+      const updatedSoul = {
+        id: updated.id,
+        first_name: updated.first_name,
+        last_name: updated.last_name,
+        other_name: updated.other_name,
+        phone :{
+          number: updated.contact_number,
+          country_code : updated.country_code,
+        },
+        contact_email: updated.contact_email,
+        country: updated.country,
+        city: updated.city,
+        date_won: updated.date_won,
+        wonById: updated.wonById,
+        lifeCenterId: updated.lifeCenterId,
       };
 
-      const updatedSoul = await lifeCenterService.updateSoulWon(
-        Number(id),
-        data,
-      );
-
-      return res
-        .status(200)
-        .json({ message: "Soul won record updated", data: updatedSoul });
+      return res.status(200).json({
+        message: "Soul won record updated",
+        data: updatedSoul,
+      });
     } catch (error: any) {
       return res.status(500).json({
         message: "Error updating soul won record",
