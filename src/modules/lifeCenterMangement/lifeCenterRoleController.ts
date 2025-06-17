@@ -64,10 +64,9 @@ export class LifeCenterRoleController {
         Number(id),
         name,
       );
-      if (role?.error !== "") {
-        return res.status(404).json({ message: "", error: role?.error });
-      }
-
+      if (role?.error) {
+      return res.status(400).json({ message:"", error: role.error });
+    }
       return res.status(200).json({ data: role });
     } catch (error: any) {
       return res
