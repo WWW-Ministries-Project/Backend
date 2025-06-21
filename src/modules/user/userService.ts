@@ -138,7 +138,10 @@ export class UserService {
       console.error("Error generating user ID:", err),
     );
 
-    await this.savedDepartments(user.id,department_positions)
+    if (Array.isArray(department_positions) && department_positions.length > 0) {
+      await this.savedDepartments(user.id,department_positions)
+    }
+    
     const savedUser = await prisma.user.findUnique({
       where: { id: user.id },
       include: {
