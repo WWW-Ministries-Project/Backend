@@ -320,4 +320,37 @@ export class LifeCenterService {
       },
     });
   }
+
+  async getLifeCenterStats(){
+    const souls = await prisma.soul_won.findMany({
+  include: {
+    lifeCenter: {
+      select: {
+        name: true,
+        life_center_member: {
+          where: {
+            role: {
+              name: { equals: 'LEADER', }
+            }
+          },
+          select: {
+            user: {
+              select: {
+                name: true,
+              }
+            }
+          }
+        }
+      }
+    },
+    wonBy: {
+      select: {
+        name: true,
+      }
+    }
+  }
+});
+return souls
+
+  }
 }

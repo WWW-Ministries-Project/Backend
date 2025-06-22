@@ -7,7 +7,7 @@
     "dev": "ts-node-dev --transpile-only --ignore-watch node_modules --respawn src/index.ts",
     "transpile": "npx tsc",
     "rimraf": "rm -rf dist",
-    "start": "npm run rimraf && npm run build && npm run copy:libs && node dist/index.js",
+    "start": "npm run rimraf && npm run build && node dist/index.js",
     "migrate": "npx prisma migrate deploy && npx prisma generate",
     "migrate:2": "npx prisma generate",
     "prod": "npx tsc && npm run copy:libs && node -r newrelic dist/index.js",
