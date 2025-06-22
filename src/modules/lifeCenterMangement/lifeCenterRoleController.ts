@@ -62,7 +62,7 @@ export class LifeCenterRoleController {
 
       const role: any = await roleService.updateLifeCenterRole(
         Number(id),
-        name,
+        name.toUpperCase(),
       );
       if (role?.error) {
       return res.status(400).json({ message:"", error: role.error });

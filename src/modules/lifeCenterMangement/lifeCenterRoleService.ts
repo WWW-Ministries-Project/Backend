@@ -44,7 +44,7 @@ export class LifeCenterRoleService {
       return await prisma.life_center_role.update({
         where: { id },
         data: {
-          name,
+          name
         },
       });
     }
