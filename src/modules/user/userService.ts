@@ -1,4 +1,3 @@
-import { error } from "console";
 import { prisma } from "../../Models/context";
 import { toCapitalizeEachWord, hashPassword } from "../../utils";
 import axios from "axios";
@@ -178,7 +177,7 @@ export class UserService {
       children: savedChildren,
     };
   }
-  private async savedDepartments(userId: number, department_positions: { department_id: number; position_id: number }[]) {
+  private async savedDepartments(userId: number, department_positions: { department_id: any; position_id: any }[]) {
   return await prisma.department_positions.createMany({
     data: department_positions.map((dp) => ({
       user_id: userId,

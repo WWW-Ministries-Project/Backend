@@ -135,6 +135,9 @@ export const listDepartments = async (req: Request, res: Response) => {
             id: true,
             name: true,
           },
+          include:{
+            position: true,
+          }
         },
       },
     });
