@@ -351,14 +351,14 @@ export class LifeCenterService {
   }
 });
 const formatted_output = souls.map((soul) => ({
-  lifeCenterName: soul.lifeCenter?.name,
-  leaderName: soul.lifeCenter?.life_center_member?.[0]
+  life_center_name: soul.lifeCenter?.name,
+  leader_name: soul.lifeCenter?.life_center_member?.[0]
     ? soul.lifeCenter.life_center_member[0].user.name
     : "N/A",
-  soulName: `${soul.first_name} ${soul.last_name}`,
+  soul_name: `${soul.first_name} ${soul.last_name}`,
   contact: soul.contact_number,
   location: soul.city,
-  dateWon: soul.date_won.toDateString(),
+  date_won: soul.date_won,
   wonBy: soul.wonBy.name
 }));
 
