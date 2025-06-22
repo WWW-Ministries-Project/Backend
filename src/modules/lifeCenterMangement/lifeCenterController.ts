@@ -356,4 +356,22 @@ export class LifeCenterController {
       });
     }
   }
+
+  async getStats(req:Request, res: Response) {
+    try {
+      
+       const response = await lifeCenterService.getLifeCenterStats()
+    
+
+      return res.status(200).json({
+        message: "Operation sucessfull",
+        data: response,
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        message: "Error updating soul won record",
+        error: error.message,
+      });
+    }
+  }
 }
