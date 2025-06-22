@@ -58,7 +58,7 @@ export class LifeCenterRoleController {
   async updateLifeCenterRole(req: Request, res: Response) {
     try {
       const { id } = req.query;
-      const { name } = req.body.name;
+      const { name } = req.body;
 
       const role: any = await roleService.updateLifeCenterRole(
         Number(id),
