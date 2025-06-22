@@ -359,7 +359,7 @@ const formatted_output = souls.map((soul) => ({
   contact: soul.contact_number,
   location: soul.city,
   date_won: soul.date_won,
-  wonBy: soul.wonBy.name
+  won_by: soul.wonBy.name
 }));
 
 return formatted_output
