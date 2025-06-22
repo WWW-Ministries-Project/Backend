@@ -135,10 +135,13 @@ export const listDepartments = async (req: Request, res: Response) => {
             id: true,
             name: true,
           },
-          include:{
-            position: true,
-          }
         },
+        position:{
+          select:{
+            id: true,
+            name: true,
+          }
+        }
       },
     });
     res.status(200).json({ message: "Success", data: response });
