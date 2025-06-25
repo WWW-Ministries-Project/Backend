@@ -212,9 +212,10 @@ model asset_history {
 
 model event_act {
   id           Int           @id @default(autoincrement())
-  name         String
+  event_name         String? @default("event_name")
   event_status event_status?
   event_type   event_type?
+  event_description String? @default("event_description")
 
   event_mgt event_mgt[]
 }

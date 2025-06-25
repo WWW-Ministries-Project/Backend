@@ -25,6 +25,9 @@ export class eventManagement {
   createEvent = async (req: Request, res: Response) => {
     try {
       let data = req.body;
+      if (!data.event_type_id){
+        return res.status(404).json({ message: "Event Type Id not found" });
+      }
       let { start_date, end_date, day_event, repetitive, recurring } = req.body;
       if (day_event === "multi" && repetitive === "no") {
         end_date = addDays(start_date, recurring.daysOfWeek);
@@ -523,19 +526,13 @@ export class eventManagement {
   private async createEventController(data: any): Promise<void> {
     const { start_date, end_date } = data;
     try {
-      const event_act_response = await prisma.event_act.create({
-        data: {
-          name: data.name,
-          event_status: data.event_status,
-          event_type: data.event_type,
-        },
-      });
+    
       const response = await prisma.event_mgt.create({
         data: {
           name: data.name,
           start_date: start_date ? new Date(data.start_date) : null,
           end_date: end_date ? new Date(data.end_date) : null,
-          event_act_id: event_act_response?.id,
+          event_act_id: data.event_type_id,
           start_time: data.start_time,
           end_time: data.end_time,
           location: data.location,
@@ -665,4 +662,136 @@ export class eventManagement {
       return error;
     }
   }
+
+  createEventType = async (req:Request, res:Response) => {
+    try {
+      const { event_name, event_type, event_description } = req.body
+
+      if (!event_name || !event_type || !event_description) {
+      return res.status(400).json({
+        message: "All fields (event_name, event_type, event_description) are required",
+      });
+    }
+
+      const response = await prisma.event_act.create({
+        data:{
+          event_name:event_name,
+          event_status:"TENTATIVE",
+          event_type: event_type,
+          event_description:event_description
+        }
+      })
+
+
+      res.status(200).json({
+        message: "Event Type Created Succesfully",
+        data: response,
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        message: "Failed to create event type",
+        data: error.message,
+      });
+    }
+  };
+
+ updateEventType = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { event_name, event_type, event_description } = req.body;
+
+    if (!event_name || !event_type || !event_description) {
+      return res.status(400).json({
+        message: "All fields (event_name, event_type, event_description) are required",
+      });
+    }
+
+    const existing = await prisma.event_act.findUnique({ where: { id: Number(id) } });
+    if (!existing) {
+      return res.status(404).json({ message: "Event Type not found" });
+    }
+
+    const response = await prisma.event_act.update({
+      where: { id: Number(id) },
+      data: {
+        event_name: event_name,
+        event_type: event_type,
+        event_description: event_description,
+      },
+    });
+
+    return res.status(200).json({
+      message: "Event Type Updated Successfully",
+      data: response,
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      message: "Failed to update event type",
+      error: error.message,
+    });
+  }
+};
+
+
+getEventType = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.query;
+
+    const eventType = await prisma.event_act.findUnique({
+      where: { id: Number(id) },
+    });
+
+    if (!eventType) {
+      return res.status(404).json({ message: "Event Type not found" });
+    }
+
+    return res.status(200).json({
+      message: "Event Type Fetched",
+      data: eventType,
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      message: "Failed to fetch event type",
+      error: error.message,
+    });
+  }
+};
+
+ getEventTypes = async (req: Request, res: Response) => {
+  try {
+    const eventTypes = await prisma.event_act.findMany({
+      orderBy: { event_name: "desc" },
+    });
+
+    return res.status(200).json({
+      message: "All Event Types Fetched",
+      data: eventTypes,
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      message: "Failed to fetch event types",
+      error: error.message,
+    });
+  }
+};
+
+ deleteEventType = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.query;
+
+    const existing = await prisma.event_act.findUnique({ where: { id: Number(id) } });
+    if (!existing) {
+      return res.status(404).json({ message: "Event Type not found" });
+    }
+
+    await prisma.event_act.delete({ where: { id: Number(id) } });
+
+    return res.status(200).json({ message: "Event Type Deleted Successfully" });
+  } catch (error: any) {
+    return res.status(500).json({
+      message: "Failed to delete event type",
+      error: error.message,
+    });
+  }
+};
 }
