@@ -158,12 +158,12 @@ export class LifeCenterController {
 
   async removeMemberFromLifeCenter(req: Request, res: Response) {
   try {
-    const userId = Number(req.query.user_id);
-    const lifeCenterId = Number(req.query.life_center_id);
+    const userId = Number(req.query.userId);
+    const lifeCenterId = Number(req.query.lifeCenterId);
 
     if (isNaN(userId) || isNaN(lifeCenterId)) {
       return res.status(400).json({
-        message: "user_id and life_center_id are required and must be valid numbers",
+        message: "userId and lifeCenterId are required and must be valid numbers",
       });
     }
 
