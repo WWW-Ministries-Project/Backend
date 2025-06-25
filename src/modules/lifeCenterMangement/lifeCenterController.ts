@@ -157,21 +157,31 @@ export class LifeCenterController {
   }
 
   async removeMemberFromLifeCenter(req: Request, res: Response) {
-    try {
-      const { userId, lifeCenterId } = req.body;
+  try {
+    const userId = Number(req.query.user_id);
+    const lifeCenterId = Number(req.query.life_center_id);
 
-      const data = {
-        userId: Number(userId),
-        lifeCenterId: Number(lifeCenterId),
-      };
-
-      const member = await lifeCenterService.removeMemberFromLifeCenter(data);
-
-      res.status(201).json({ message: "Operation successfull", data: member });
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
+    if (isNaN(userId) || isNaN(lifeCenterId)) {
+      return res.status(400).json({
+        message: "user_id and life_center_id are required and must be valid numbers",
+      });
     }
+
+    const data = { userId, lifeCenterId };
+
+    const member = await lifeCenterService.removeMemberFromLifeCenter(data);
+
+    return res.status(200).json({
+      message: "Operation successful",
+      data: member,
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      message: "Internal server error",
+      error: error.message,
+    });
   }
+}
 
   async getAllLifeCenterMembers(req: Request, res: Response) {
     try {
