@@ -697,7 +697,7 @@ export class eventManagement {
 
  updateEventType = async (req: Request, res: Response) => {
   try {
-    const { id } = req.params;
+    const { id } = req.query;
     const { event_name, event_type, event_description } = req.body;
 
     if (!event_name || !event_type || !event_description) {
