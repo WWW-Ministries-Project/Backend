@@ -48,3 +48,9 @@ eventRouter.delete(
 
 eventRouter.post("/sign-attendance", eventContoller.eventAttendance);
 eventRouter.get("/search-user", eventContoller.searchUser1);
+
+eventRouter.post("/create-event-type", eventContoller.createEventType)
+eventRouter.put("/update-event-type", eventContoller.updateEventType)
+eventRouter.get("/get-event-type", eventContoller.getEventType)
+eventRouter.get("/get-event-types", eventContoller.getEventTypes)
+eventRouter.delete("/delete-event-types", eventContoller.deleteEventType)
