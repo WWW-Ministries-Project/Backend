@@ -252,6 +252,7 @@ export class LifeCenterController {
   async createSoulWon(req: Request, res: Response) {
     try {
       const {
+        title,
         first_name,
         last_name,
         other_name,
@@ -265,6 +266,7 @@ export class LifeCenterController {
       } = req.body;
 
       const newSoul = await lifeCenterService.createSoulWon({
+        title,
         first_name,
         last_name,
         other_name,
@@ -280,6 +282,7 @@ export class LifeCenterController {
 
       const returningSoul = {
         id: newSoul.id,
+        title:newSoul.title,
         first_name: newSoul.first_name,
         last_name: newSoul.last_name,
         other_name: newSoul.other_name,

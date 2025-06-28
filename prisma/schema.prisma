@@ -616,6 +616,7 @@ model life_center_member {
 
 model soul_won {
   id             Int      @id @default(autoincrement())
+  title          String?
   first_name     String
   last_name      String
   other_name     String?

@@ -63,7 +63,7 @@ export class LifeCenterService {
   }
 
   async getLifeCenterById(id: number) {
-    const raw = await prisma.life_center.findUnique({
+    const raw:any = await prisma.life_center.findUnique({
       where: { id },
       include: {
         life_center_member: {
@@ -79,6 +79,7 @@ export class LifeCenterService {
         soul_won: {
           select: {
             id: true,
+            title:true,
             first_name: true,
             last_name: true,
             contact_email: true,
@@ -87,6 +88,7 @@ export class LifeCenterService {
             country: true,
             other_name:true,
             contact_number:true,
+            country_code:true,
             wonBy: {
               select: { id: true, name: true },
             },
@@ -105,7 +107,7 @@ export class LifeCenterService {
       location: raw.meetingLocation,
       meeting_dates: raw.meetingDays.split(",").map((day) => day.trim()),
 
-      members: raw.life_center_member.map((member) => ({
+      members: raw.life_center_member.map((member:any) => ({
         id: member.user.id,
         name: member.user.name,
         email: member.user.email,
@@ -115,8 +117,9 @@ export class LifeCenterService {
         },
       })),
 
-      soulsWon: raw.soul_won.map((soul) => ({
+      soulsWon: raw.soul_won.map((soul:any) => ({
         id: soul.id,
+        title: soul.title,
         first_name: soul.first_name,
         last_name: soul.last_name,
         other_name:soul.other_name,
@@ -270,6 +273,7 @@ export class LifeCenterService {
   }
 
   async createSoulWon(data: {
+    title: string,
     first_name: string;
     last_name: string;
     other_name?: string;
