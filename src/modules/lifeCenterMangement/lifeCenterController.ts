@@ -314,6 +314,7 @@ export class LifeCenterController {
       if (!id) return res.status(400).json({ message: "Missing soul ID" });
 
       const {
+        title,
         first_name,
         last_name,
         other_name,
@@ -328,6 +329,7 @@ export class LifeCenterController {
 
 
       const updated = await lifeCenterService.updateSoulWon(Number(id), {
+        title,
         first_name,
         last_name,
         other_name,

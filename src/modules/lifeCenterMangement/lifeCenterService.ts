@@ -68,6 +68,7 @@ export class LifeCenterService {
       include: {
         life_center_member: {
           select: {
+            id:true,
             role: {
               select: { id: true, name: true },
             },
@@ -108,7 +109,8 @@ export class LifeCenterService {
       meeting_dates: raw.meetingDays.split(",").map((day:any) => day.trim()),
 
       members: raw.life_center_member.map((member:any) => ({
-        id: member.user.id,
+        id:member.id,
+        userId: member.user.id,
         name: member.user.name,
         email: member.user.email,
         role: {
@@ -294,6 +296,7 @@ export class LifeCenterService {
   async updateSoulWon(
     id: number,
     data: {
+      title?:string,
       first_name?: string;
       last_name?: string;
       other_name?: string;
@@ -310,6 +313,7 @@ export class LifeCenterService {
     return await prisma.soul_won.update({
       where: { id },
       data:{
+        title:data.title,
         first_name: data.first_name,
       last_name: data.last_name,
       other_name: data.other_name,
