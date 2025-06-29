@@ -5,8 +5,11 @@ import cors from "cors";
 import { appRouter } from "./src/routes/appRouter";
 import logger from "./src/utils/logger-config";
 import { setupSwagger } from "./src/swagger";
+import client from "prom-client";
 dotenv.config();
 // import { startUserSyncing } from "./src/cron-jobs/userCron";
+const collectDefaultMetrics = client.collectDefaultMetrics;
+collectDefaultMetrics();
 
 const port = process.env.PORT;
 const app = express();
@@ -18,9 +21,12 @@ app.use(appRouter);
 
 // startUserSyncing();
 
-// mongoose//   .connect(MONGO_URI, {})
-//   .then(() => {
-// console.log("Connected to MongoDB");
+// Expose metrics
+app.get("/metrics", async (req, res) => {
+  res.set("Content-Type", client.register.contentType);
+  res.end(await client.register.metrics());
+});
+
 app.listen(port, () => {
   logger.info(`Server running on port ${port}`);
 });
