@@ -1,4 +1,3 @@
-import { error } from "console";
 import { prisma } from "../../Models/context";
 import { toCapitalizeEachWord, hashPassword } from "../../utils";
 import axios from "axios";
@@ -51,6 +50,7 @@ export class UserService {
         department_id,
         position_id,
         member_since,
+        department_positions
       } = {},
 
       children = [],
@@ -73,8 +73,8 @@ export class UserService {
       isNaN(parseInt(department_id)) || parseInt(department_id) === 0
         ? null
         : parseInt(department_id);
-        
-      const positionId =
+
+    const positionId =
       isNaN(parseInt(position_id)) || parseInt(position_id) === 0
         ? null
         : parseInt(position_id);
@@ -136,6 +136,11 @@ export class UserService {
     await this.generateUserId(user).catch((err) =>
       console.error("Error generating user ID:", err),
     );
+
+    if (Array.isArray(department_positions) && department_positions.length > 0) {
+      await this.savedDepartments(user.id,department_positions)
+    }
+    
     const savedUser = await prisma.user.findUnique({
       where: { id: user.id },
       include: {
@@ -172,6 +177,16 @@ export class UserService {
       children: savedChildren,
     };
   }
+  private async savedDepartments(userId: number, department_positions: { department_id: any; position_id: any }[]) {
+  return await prisma.department_positions.createMany({
+    data: department_positions.map((dp) => ({
+      user_id: userId,
+      department_id: Number(dp.department_id),
+      position_id: Number(dp.position_id),
+    })),
+    skipDuplicates: true,
+  });
+}
 
   async registerChildren(
     children: any[],
@@ -242,7 +257,7 @@ export class UserService {
     password: string,
   ) {
     // this is to save the user to the biometric device
-    const result = await this.saveUserToZTeco(
+    const result: any = await this.saveUserToZTeco(
       id,
       generatedUserId,
       name,
@@ -285,12 +300,12 @@ export class UserService {
     if (!process.env.ZTECO_SERVICE) return false;
 
     const URL = process.env.ZTECO_SERVICE;
-    console.log(`${URL}`)
+    console.log(`${URL}`);
 
     const userId = member_id.slice(-8);
 
     try {
-      console.log(`attempting to save user to ${URL}/zteco`)
+      console.log(`attempting to save user to ${URL}/zteco`);
       await axios
         .post(`${URL}/zteco`, {
           id,
@@ -305,7 +320,7 @@ export class UserService {
         });
     } catch (error: any) {
       console.error("❌ Failed to call ZKTeco service:", error.message);
-      return false
+      return false;
     }
   }
 
@@ -320,7 +335,9 @@ export class UserService {
       return this.updateMemberToConfirmedMember(id);
     }
 
-    const programIds = allRequiredMemberPrograms.map((program:program) => program.id);
+    const programIds = allRequiredMemberPrograms.map(
+      (program: program) => program.id,
+    );
     const completionResults = await this.checkMultipleProgramCompletion(
       id,
       programIds,
@@ -336,8 +353,8 @@ export class UserService {
 
     const getProgramTitles = (ids: number[]) =>
       allRequiredMemberPrograms
-        .filter((p:program) => ids.includes(p.id))
-        .map((p:any) => p.title);
+        .filter((p: program) => ids.includes(p.id))
+        .map((p: any) => p.title);
 
     if (notEnrolledPrograms.length > 0 || incompletePrograms.length > 0) {
       const notEnrolledTitles = getProgramTitles(notEnrolledPrograms);
@@ -412,7 +429,7 @@ export class UserService {
           where: { programId },
           select: { id: true },
         });
-        const topicIds = topics.map((t:any) => t.id);
+        const topicIds = topics.map((t: any) => t.id);
 
         // 3. Check progress
         const passedCount = await prisma.progress.count({
@@ -430,5 +447,100 @@ export class UserService {
     );
 
     return results;
+  }
+
+  async linkSpouses(userId1: number, userId2: number) {
+    const [user1, user2] = await Promise.all([
+      prisma.user.findUnique({ where: { id: userId1 } }),
+      prisma.user.findUnique({ where: { id: userId2 } }),
+    ]);
+
+    if (!user1 || !user2) {
+      return {
+        message: "",
+        error: "One or both users not found.",
+      };
+    }
+
+    // Avoid circular linking or overwriting existing links unless intentional
+    if (user1.spouse_id || user2.spouse_id) {
+      return {
+        message: "",
+        error: "One or both users already have a spouse linked.",
+      };
+    }
+
+    await Promise.all([
+      prisma.user.update({
+        where: { id: userId1 },
+        data: { spouse_id: userId2 },
+      }),
+      prisma.user.update({
+        where: { id: userId2 },
+        data: { spouse_id: userId1 },
+      }),
+    ]);
+
+    return { message: "Spouses linked successfully.", error: "" };
+  }
+
+  async getUserFamily(userId: number) {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      include: {
+        spouse: {
+          include: {
+            user_info: true,
+          },
+        },
+        user_info: true,
+      },
+    });
+
+    if (!user) {
+      throw new Error("User not found");
+    }
+
+    const spouse = user.spouse;
+
+    const children = await prisma.user.findMany({
+      where: {
+        OR: [
+          { parent_id: user.id },
+          ...(spouse?.id ? [{ parent_id: spouse.id }] : []),
+        ],
+      },
+      include: {
+        user_info: true,
+      },
+    });
+
+    return {
+      user,
+      spouse,
+      children,
+    };
+  }
+
+  async linkChildren(childrenIds: number[], parentId: number) {
+    if (!childrenIds || childrenIds.length === 0) return;
+
+    try {
+      const result = await prisma.user.updateMany({
+        where: {
+          id: { in: childrenIds },
+        },
+        data: {
+          parent_id: parentId,
+        },
+      });
+
+      if (result) {
+        return result;
+      }
+    } catch (error) {
+      console.error("Error linking children:", error);
+      throw error;
+    }
   }
 }

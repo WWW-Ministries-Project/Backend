@@ -14,7 +14,8 @@ import {
 import programRouter from "../modules/programs/programRoute";
 import visitorRouter from "../modules/visitorManagement/visitorRoute";
 import attendanceRouter from "../modules/attendance/attendanceRoute";
-
+import lifeCenterRouter from "../modules/lifeCenterMangement/lifeCenterRoute";
+import deviceRouter from "../modules/devices/devicesRoute";
 dotenv.config();
 // router
 export const appRouter = Router();
@@ -31,3 +32,5 @@ appRouter.use("/requisitions", requisitionRouter);
 appRouter.use("/program", programRouter);
 appRouter.use("/visitor", visitorRouter);
 appRouter.use("/attendance", attendanceRouter);
+appRouter.use("/lifecenter", lifeCenterRouter);
+appRouter.use("/device", deviceRouter);

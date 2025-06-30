@@ -20,7 +20,8 @@ export const createAsset = async (req: any, res: any) => {
     assetSchema.validate(req.body);
 
     const departmentId =
-      isNaN(parseInt(department_assigned)) || parseInt(department_assigned) === 0
+      isNaN(parseInt(department_assigned)) ||
+      parseInt(department_assigned) === 0
         ? null
         : parseInt(department_assigned);
 

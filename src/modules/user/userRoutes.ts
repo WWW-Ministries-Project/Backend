@@ -17,6 +17,9 @@ import {
   activateUser,
   getUserByEmailPhone,
   convertMemeberToConfirmedMember,
+  linkSpouses,
+  getUserFamily,
+  linkChildren,
 } from "../user/userController";
 import { Permissions } from "../../middleWare/authorization";
 const permissions = new Permissions();
@@ -71,4 +74,22 @@ userRouter.put(
   "/update-member-status",
   [protect, permissions.can_Manage_Members],
   convertMemeberToConfirmedMember,
+);
+
+userRouter.put(
+  "/link-spouses",
+  [protect, permissions.can_Manage_Members],
+  linkSpouses,
+);
+
+userRouter.get(
+  "/get-user-family",
+  [protect, permissions.can_Manage_Members],
+  getUserFamily,
+);
+
+userRouter.put(
+  "/link-children",
+  [protect, permissions.can_Manage_Members],
+  linkChildren,
 );

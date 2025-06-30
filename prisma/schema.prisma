@@ -9,17 +9,17 @@ datasource db {
 }
 
 model user {
-  id                    Int                 @id @default(autoincrement())
+  id                    Int                  @id @default(autoincrement())
   name                  String
-  email                 String?             @unique
-  is_active             Boolean?            @default(true)
-  partner               Boolean?            @default(false)
-  is_user               Boolean?            @default(false)
+  email                 String?              @unique
+  is_active             Boolean?             @default(true)
+  partner               Boolean?             @default(false)
+  is_user               Boolean?             @default(false)
   password              String?
   member_id             String?
   position_id           Int?
   department_id         Int?
-  created_at            DateTime            @default(now())
+  created_at            DateTime             @default(now())
   updated_at            DateTime?
   access_level_id       Int?
   membership_type       membership_type?
@@ -27,25 +27,31 @@ model user {
   department_head       department[]
   event_attendance      event_attendance[]
   request               request[]
-  access                access_level?       @relation(fields: [access_level_id], references: [id])
-  position              position?           @relation(fields: [position_id], references: [id])
+  access                access_level?        @relation(fields: [access_level_id], references: [id])
+  position              position?            @relation(fields: [position_id], references: [id])
   department            user_departments?
   user_info             user_info?
-  hod_user              request_approvals[] @relation("hod_user")
-  ps_user               request_approvals[] @relation("ps_user")
+  hod_user              request_approvals[]  @relation("hod_user")
+  ps_user               request_approvals[]  @relation("ps_user")
   user_request_comments request_comments[]
   enrollments           enrollment[]
   parent_id             Int?
-  parent                user?               @relation("UserParent", fields: [parent_id], references: [id])
-  children              user[]              @relation("UserParent")
+  parent                user?                @relation("UserParent", fields: [parent_id], references: [id])
+  children              user[]               @relation("UserParent")
   status                status_type?
-  is_sync               Boolean?            @default(false)
+  is_sync               Boolean?             @default(false)
   sync_id               Int?
   mode                  classFormat?
   followUps             follow_up[]
   prayerRequests        prayer_request[]
   notes                 note[]
+  life_center_member    life_center_member[]
+  soul_won              soul_won[]           @relation("user_soul_winner")
+  department_positions department_positions[]
 
+  spouse_id             Int?                 @unique
+  spouse                user?                @relation("SpouseRelation", fields: [spouse_id], references: [id])
+  spouse_of             user?                @relation("SpouseRelation")
   @@index([access_level_id], map: "user_access_level_id_fkey")
   @@index([position_id], map: "user_position_id_fkey")
 }
@@ -124,6 +130,7 @@ model department {
   user_departments     user_departments[]
   is_sync              Boolean?           @default(false)
   sync_id              Int?
+  department_positions department_positions[]
 
   @@index([department_head], map: "department_department_head_fkey")
 }
@@ -151,6 +158,7 @@ model position {
   user          user[]
   is_sync       Boolean?    @default(false)
   sync_id       Int?
+  department_positions department_positions[]
 
   @@index([department_id], map: "position_department_id_fkey")
 }
@@ -204,9 +212,10 @@ model asset_history {
 
 model event_act {
   id           Int           @id @default(autoincrement())
-  name         String
+  event_name         String? @default("event_name")
   event_status event_status?
-  event_type       event_type?
+  event_type   event_type?
+  event_description String? @default("event_description")
 
   event_mgt event_mgt[]
 }
@@ -220,7 +229,7 @@ model event_mgt {
   description      String?
   poster           String?
   qr_code          String?
-  event_act_id     Int                
+  event_act_id     Int
   event            event_act          @relation(fields: [event_act_id], references: [id])
   created_by       Int
   created_at       DateTime           @default(now())
@@ -574,4 +583,79 @@ model note {
   content   String
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model life_center_role {
+  id                 Int                  @id @default(autoincrement())
+  name               String
+  life_center_member life_center_member[]
+}
+
+model life_center {
+  id                 Int                  @id @default(autoincrement())
+  name               String
+  description        String
+  meetingLocation    String
+  meetingDays        String
+  life_center_member life_center_member[]
+
+  soul_won soul_won[] @relation("life_center_soul_won")
+}
+
+model life_center_member {
+  id           Int              @id @default(autoincrement())
+  user         user             @relation(fields: [userId], references: [id])
+  userId       Int
+  lifeCenter   life_center      @relation(fields: [lifeCenterId], references: [id])
+  lifeCenterId Int
+  role         life_center_role @relation(fields: [roleId], references: [id])
+  roleId       Int
+
+  @@unique([userId, lifeCenterId])
+}
+
+model soul_won {
+  id             Int      @id @default(autoincrement())
+  title          String?
+  first_name     String
+  last_name      String
+  other_name     String?
+  contact_number String
+  contact_email  String?
+  country_code   String?
+  country        String
+  city           String
+  date_won       DateTime
+
+  wonBy   user @relation("user_soul_winner", fields: [wonById], references: [id], map: "soulwon_wonby_fkey")
+  wonById Int
+
+  lifeCenter   life_center @relation("life_center_soul_won", fields: [lifeCenterId], references: [id], map: "soulwon_lifecenter_fkey")
+  lifeCenterId Int
+
+  @@unique(id)
+}
+
+model devices {
+  id             Int      @id @default(autoincrement())
+  device_name    String
+  ip_address     String
+  port           String
+  location       String 
+}
+
+model department_positions {
+  id            Int        @id @default(autoincrement())
+  user_id       Int
+  department_id Int
+  position_id   Int?
+
+  user          user       @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  department    department @relation(fields: [department_id], references: [id])
+  position      position?  @relation(fields: [position_id], references: [id])
+
+  @@unique([user_id, department_id]) // Prevent duplicate entries
+  @@index([user_id])
+  @@index([department_id])
+  @@index([position_id])
 }

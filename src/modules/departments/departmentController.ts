@@ -56,9 +56,9 @@ export const updateDepartment = async (req: Request, res: Response) => {
         updated_at: new Date(),
         is_sync: false, //setting to to out of sync for cron job to sync to device
       },
-      select:{
+      select: {
         id: true,
-        name:true,
+        name: true,
         description: true,
         department_head_info: {
           select: {
@@ -66,16 +66,15 @@ export const updateDepartment = async (req: Request, res: Response) => {
             name: true,
           },
         },
-      }
-      
+      },
     });
     const result = {
       id: response.id,
-    name: response.name,
-    description: response.description,
-    department_head_id: response.department_head_info?.id ?? null,
-    department_head_name: response.department_head_info?.name ?? null,
-  };
+      name: response.name,
+      description: response.description,
+      department_head_id: response.department_head_info?.id ?? null,
+      department_head_name: response.department_head_info?.name ?? null,
+    };
     res
       .status(200)
       .json({ message: "Department Updated Succesfully", data: response });
@@ -137,6 +136,12 @@ export const listDepartments = async (req: Request, res: Response) => {
             name: true,
           },
         },
+        position:{
+          select:{
+            id: true,
+            name: true,
+          }
+        }
       },
     });
     res.status(200).json({ message: "Success", data: response });
