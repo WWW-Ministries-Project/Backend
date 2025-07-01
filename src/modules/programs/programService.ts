@@ -2,29 +2,30 @@ import { prisma } from "../../Models/context";
 
 export class ProgramService {
   async createProgram(data: any) {
-    const existingPrerequisites = await prisma.program.findMany({
-      where: {
-        id: { in: data.prerequisites }, // Fetch all prerequisites that exist
-      },
-      select: { id: true },
-    });
+   return await prisma.$transaction(async (prisma) => {
+    // Step 1: Validate prerequisites
+    if (data.prerequisites && data.prerequisites.length > 0) {
+      const existingPrerequisites = await prisma.program.findMany({
+        where: {
+          id: { in: data.prerequisites.map((p:any) => Number(p)) },
+        },
+        select: { id: true },
+      });
 
-    // Extract the found IDs
-    const foundIds = existingPrerequisites.map((p) => p.id);
+      const foundIds = existingPrerequisites.map((p) => p.id);
 
-    // Find missing prerequisites
-    if (data.prerequisites) {
-      const missingPrerequisites = data.prerequisites.filter(
+      const missingPrerequisites = data.prerequisites.map((p:number | string) => Number(p)).filter(
         (id: number) => !foundIds.includes(id),
       );
 
       if (missingPrerequisites.length > 0) {
         throw new Error(
-          `Missing prerequisites: ${missingPrerequisites.join(", ")}`,
+          `Missing prerequisites: ${missingPrerequisites.join(', ')}`
         );
       }
     }
 
+    // Step 2: Create the program
     const createdProgram = await prisma.program.create({
       data: {
         title: data.title,
@@ -40,18 +41,18 @@ export class ProgramService {
       include: { topics: true },
     });
 
-    // Step 2: If there are prerequisites, add them separately
+    // Step 3: Add prerequisites
     if (data.prerequisites && data.prerequisites.length > 0) {
       await prisma.program_prerequisites.createMany({
-        data: data.prerequisites.map((prerequisiteId: number) => ({
+        data: data.prerequisites.map((prerequisiteId: number | string) => ({
           programId: createdProgram.id,
-          prerequisiteId,
+          prerequisiteId: Number(prerequisiteId),
         })),
       });
     }
 
-    // Step 3: Fetch the program with prerequisites
-    const updatedProgram = await prisma.program.findUnique({
+    // Step 4: Return the full program with prerequisites
+    return await prisma.program.findUnique({
       where: { id: createdProgram.id },
       include: {
         prerequisitePrograms: {
@@ -59,8 +60,7 @@ export class ProgramService {
         },
       },
     });
-
-    return updatedProgram;
+  });
   }
 
   async getAllPrograms() {
