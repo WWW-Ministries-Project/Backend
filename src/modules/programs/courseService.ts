@@ -58,7 +58,6 @@ export class CourseService {
         if (!course) return null;
         return {
           ...course,
-          eligibility: course.cohort?.program?.eligibility || null,
         };
       });
   }
