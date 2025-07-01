@@ -348,7 +348,6 @@ model program {
   id                Int         @id @default(autoincrement())
   title             String
   description       String
-  eligibility       Eligibility
   member_required   Boolean     @default(false)
   leader_required   Boolean     @default(false)
   ministry_required Boolean     @default(false)
@@ -429,12 +428,6 @@ model enrollment {
 
   @@unique([user_id, course_id])
   @@unique([email, course_id])
-}
-
-enum Eligibility {
-  Both
-  Members
-  Non_Members
 }
 
 enum classFormat {
