@@ -30,7 +30,6 @@ export class ProgramService {
       data: {
         title: data.title,
         description: data.description,
-        eligibility: data.eligibility,
         member_required: data.member_required,
         leader_required: data.leader_required,
         ministry_required: data.ministry_required,
@@ -106,7 +105,6 @@ export class ProgramService {
         data: {
           title: data.title,
           description: data.description,
-          eligibility: data.eligibility,
           member_required: data.member_required,
           leader_required: data.leader_required,
           ministry_required: data.ministry_required,
