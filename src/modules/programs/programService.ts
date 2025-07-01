@@ -114,14 +114,14 @@ export class ProgramService {
 
       if (data.prerequisites) {
         await prisma.program_prerequisites.deleteMany({
-          where: { programId: id },
+          where: { programId: Number(id) },
         });
 
         if (data.prerequisites.length > 0) {
           await prisma.program_prerequisites.createMany({
-            data: data.prerequisites.map((prerequisiteId: number) => ({
+            data: data.prerequisites.map((prerequisiteId: number | string) => ({
               programId: id,
-              prerequisiteId,
+              prerequisiteId: Number(prerequisiteId),
             })),
           });
         }
