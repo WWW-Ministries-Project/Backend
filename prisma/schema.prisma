@@ -9,17 +9,17 @@ datasource db {
 }
 
 model user {
-  id                    Int                  @id @default(autoincrement())
+  id                    Int                    @id @default(autoincrement())
   name                  String
-  email                 String?              @unique
-  is_active             Boolean?             @default(true)
-  partner               Boolean?             @default(false)
-  is_user               Boolean?             @default(false)
+  email                 String?                @unique
+  is_active             Boolean?               @default(true)
+  partner               Boolean?               @default(false)
+  is_user               Boolean?               @default(false)
   password              String?
   member_id             String?
   position_id           Int?
   department_id         Int?
-  created_at            DateTime             @default(now())
+  created_at            DateTime               @default(now())
   updated_at            DateTime?
   access_level_id       Int?
   membership_type       membership_type?
@@ -27,31 +27,33 @@ model user {
   department_head       department[]
   event_attendance      event_attendance[]
   request               request[]
-  access                access_level?        @relation(fields: [access_level_id], references: [id])
-  position              position?            @relation(fields: [position_id], references: [id])
+  access                access_level?          @relation(fields: [access_level_id], references: [id])
+  position              position?              @relation(fields: [position_id], references: [id])
   department            user_departments?
   user_info             user_info?
-  hod_user              request_approvals[]  @relation("hod_user")
-  ps_user               request_approvals[]  @relation("ps_user")
+  hod_user              request_approvals[]    @relation("hod_user")
+  ps_user               request_approvals[]    @relation("ps_user")
   user_request_comments request_comments[]
   enrollments           enrollment[]
   parent_id             Int?
-  parent                user?                @relation("UserParent", fields: [parent_id], references: [id])
-  children              user[]               @relation("UserParent")
+  parent                user?                  @relation("UserParent", fields: [parent_id], references: [id])
+  children              user[]                 @relation("UserParent")
   status                status_type?
-  is_sync               Boolean?             @default(false)
+  is_sync               Boolean?               @default(false)
   sync_id               Int?
   mode                  classFormat?
   followUps             follow_up[]
   prayerRequests        prayer_request[]
   notes                 note[]
   life_center_member    life_center_member[]
-  soul_won              soul_won[]           @relation("user_soul_winner")
-  department_positions department_positions[]
+  soul_won              soul_won[]             @relation("user_soul_winner")
+  department_positions  department_positions[]
 
-  spouse_id             Int?                 @unique
-  spouse                user?                @relation("SpouseRelation", fields: [spouse_id], references: [id])
-  spouse_of             user?                @relation("SpouseRelation")
+  spouse_id Int?     @unique
+  spouse    user?    @relation("SpouseRelation", fields: [spouse_id], references: [id])
+  spouse_of user?    @relation("SpouseRelation")
+  course    course[]
+
   @@index([access_level_id], map: "user_access_level_id_fkey")
   @@index([position_id], map: "user_position_id_fkey")
 }
@@ -115,20 +117,20 @@ model user_emergency_contact {
 }
 
 model department {
-  id                   Int                @id @default(autoincrement())
+  id                   Int                    @id @default(autoincrement())
   name                 String
   department_head      Int?
   description          String?
   created_by           Int
-  created_at           DateTime           @default(now())
+  created_at           DateTime               @default(now())
   updated_by           Int?
   updated_at           DateTime?
   assets               assets[]
-  department_head_info user?              @relation(fields: [department_head], references: [id])
+  department_head_info user?                  @relation(fields: [department_head], references: [id])
   position             position[]
   request              request[]
   user_departments     user_departments[]
-  is_sync              Boolean?           @default(false)
+  is_sync              Boolean?               @default(false)
   sync_id              Int?
   department_positions department_positions[]
 
@@ -146,18 +148,18 @@ model user_departments {
 }
 
 model position {
-  id            Int         @id @default(autoincrement())
-  name          String
-  department_id Int?
-  description   String?
-  created_by    Int
-  created_at    DateTime    @default(now())
-  updated_by    Int?
-  updated_at    DateTime?
-  department    department? @relation(fields: [department_id], references: [id])
-  user          user[]
-  is_sync       Boolean?    @default(false)
-  sync_id       Int?
+  id                   Int                    @id @default(autoincrement())
+  name                 String
+  department_id        Int?
+  description          String?
+  created_by           Int
+  created_at           DateTime               @default(now())
+  updated_by           Int?
+  updated_at           DateTime?
+  department           department?            @relation(fields: [department_id], references: [id])
+  user                 user[]
+  is_sync              Boolean?               @default(false)
+  sync_id              Int?
   department_positions department_positions[]
 
   @@index([department_id], map: "position_department_id_fkey")
@@ -211,11 +213,11 @@ model asset_history {
 }
 
 model event_act {
-  id           Int           @id @default(autoincrement())
-  event_name         String? @default("event_name")
-  event_status event_status?
-  event_type   event_type?
-  event_description String? @default("event_description")
+  id                Int           @id @default(autoincrement())
+  event_name        String?       @default("event_name")
+  event_status      event_status?
+  event_type        event_type?
+  event_description String?       @default("event_description")
 
   event_mgt event_mgt[]
 }
@@ -345,17 +347,17 @@ model request_approvals {
 }
 
 model program {
-  id                Int         @id @default(autoincrement())
+  id                Int      @id @default(autoincrement())
   title             String
   description       String
-  member_required   Boolean     @default(false)
-  leader_required   Boolean     @default(false)
-  ministry_required Boolean     @default(false)
+  member_required   Boolean  @default(false)
+  leader_required   Boolean  @default(false)
+  ministry_required Boolean  @default(false)
   topics            topic[]
   cohorts           cohort[]
-  completed         Boolean     @default(false)
-  createdAt         DateTime    @default(now())
-  updatedAt         DateTime    @updatedAt
+  completed         Boolean  @default(false)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
   // Define relation for prerequisites
   prerequisitePrograms program_prerequisites[] @relation("ProgramToPrerequisite")
@@ -397,20 +399,21 @@ model cohort {
 }
 
 model course {
-  id          Int          @id @default(autoincrement())
-  name        String
-  instructor  String
-  capacity    Int
-  enrolled    Int          @default(0)
-  schedule    String
-  cohortId    Int
-  classFormat classFormat?
-  location    String?
-  meetingLink String?
-  cohort      cohort       @relation(fields: [cohortId], references: [id], onDelete: Cascade)
-  enrollments enrollment[]
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
+  id            Int          @id @default(autoincrement())
+  name          String
+  instructorId Int
+  capacity      Int
+  enrolled      Int          @default(0)
+  schedule      String
+  cohortId      Int
+  classFormat   classFormat?
+  location      String?
+  meetingLink   String?
+  cohort        cohort       @relation(fields: [cohortId], references: [id], onDelete: Cascade)
+  instructor          user?        @relation(fields: [instructorId], references: [id], onDelete: Cascade)
+  enrollments   enrollment[]
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
 }
 
 model enrollment {
@@ -630,22 +633,22 @@ model soul_won {
 }
 
 model devices {
-  id             Int      @id @default(autoincrement())
-  device_name    String
-  ip_address     String
-  port           String
-  location       String 
+  id          Int    @id @default(autoincrement())
+  device_name String
+  ip_address  String
+  port        String
+  location    String
 }
 
 model department_positions {
-  id            Int        @id @default(autoincrement())
+  id            Int  @id @default(autoincrement())
   user_id       Int
   department_id Int
   position_id   Int?
 
-  user          user       @relation(fields: [user_id], references: [id], onDelete: Cascade)
-  department    department @relation(fields: [department_id], references: [id])
-  position      position?  @relation(fields: [position_id], references: [id])
+  user       user       @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  department department @relation(fields: [department_id], references: [id])
+  position   position?  @relation(fields: [position_id], references: [id])
 
   @@unique([user_id, department_id]) // Prevent duplicate entries
   @@index([user_id])

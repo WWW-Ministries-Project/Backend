@@ -24,7 +24,7 @@ export class CourseService {
     return await prisma.course.create({
       data: {
         name: data.name,
-        instructor: data.instructor,
+        instructorId: data.instructorId,
         capacity: data.capacity,
         schedule: data.schedule,
         classFormat: data.classFormat,
@@ -38,6 +38,13 @@ export class CourseService {
   async getAllCourses(cohortId: number) {
     return await prisma.course.findMany({
       where: { cohortId },
+      include : {
+        instructor: {
+          select: {
+            name : true
+          }
+        } 
+      }
     });
   }
 
