@@ -225,4 +225,22 @@ export class Permissions {
     "admin",
     "Not authorized to delete programs",
   );
+  // Life Center
+  can_view_life_center = this.checkPermission(
+    "Life Center",
+    "view",
+    "Not authorized to view programs",
+  );
+
+  can_manage_life_center = this.checkPermission(
+   "Life Center",
+    "manage",
+    "Not authorized to edit programs",
+  );
+
+  can_delete_life_center = this.checkPermission(
+    "Life Center",
+    "admin",
+    "Not authorized to delete programs",
+  );
 }

@@ -399,21 +399,21 @@ model cohort {
 }
 
 model course {
-  id            Int          @id @default(autoincrement())
-  name          String
-  instructorId Int
-  capacity      Int
-  enrolled      Int          @default(0)
-  schedule      String
-  cohortId      Int
-  classFormat   classFormat?
-  location      String?
-  meetingLink   String?
-  cohort        cohort       @relation(fields: [cohortId], references: [id], onDelete: Cascade)
-  instructor          user?        @relation(fields: [instructorId], references: [id], onDelete: Cascade)
-  enrollments   enrollment[]
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
+  id           Int          @id @default(autoincrement())
+  name         String
+  instructorId Int?
+  capacity     Int
+  enrolled     Int          @default(0)
+  schedule     String
+  cohortId     Int
+  classFormat  classFormat?
+  location     String?
+  meetingLink  String?
+  cohort       cohort       @relation(fields: [cohortId], references: [id], onDelete: Cascade)
+  instructor   user?        @relation(fields: [instructorId], references: [id], onDelete: Cascade)
+  enrollments  enrollment[]
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
 }
 
 model enrollment {

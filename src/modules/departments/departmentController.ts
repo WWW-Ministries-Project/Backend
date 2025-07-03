@@ -124,7 +124,7 @@ export const listDepartments = async (req: Request, res: Response) => {
   try {
     const response = await prisma.department.findMany({
       orderBy: {
-        id: "desc",
+        name: "asc",
       },
       select: {
         id: true,
@@ -137,6 +137,9 @@ export const listDepartments = async (req: Request, res: Response) => {
           },
         },
         position:{
+           orderBy: {
+            name: 'asc',
+          },
           select:{
             id: true,
             name: true,
