@@ -20,14 +20,14 @@ programRouter.put("/program", programController.updateProgram);
 programRouter.delete("/program", programController.deleteProgram);
 
 //cohort enpoint
-programRouter.post("/cohorts", cohortController.createCohort);
+programRouter.post("/cohort", cohortController.createCohort);
 programRouter.get("/cohorts", cohortController.getAllCohorts);
 programRouter.get(
-  "/program-cohorts/:id",
+  "/program-cohort",
   cohortController.getAllCohortsByProgramID,
 );
-programRouter.get("/cohorts/:id", cohortController.getCohortsById);
-programRouter.put("/cohorts/:id", cohortController.updateChorts);
+programRouter.get("/cohort", cohortController.getCohortsById);
+programRouter.put("/cohort", cohortController.updateChort);
 programRouter.delete("/cohort", cohortController.deleteCohort);
 
 //course enpoint
