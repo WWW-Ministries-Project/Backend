@@ -31,10 +31,10 @@ programRouter.put("/cohort", cohortController.updateChort);
 programRouter.delete("/cohort", cohortController.deleteCohort);
 
 //course enpoint
-programRouter.post("/courses", courseController.createCourse);
-programRouter.get("/cohort-courses/:id", courseController.getAllCourses);
-programRouter.get("/courses/:id", courseController.getCourseById);
-programRouter.put("/courses/:id", courseController.updateCourse);
+programRouter.post("/course", courseController.createCourse);
+programRouter.get("/cohort-courses", courseController.getAllCourses);
+programRouter.get("/course", courseController.getCourseById);
+programRouter.put("/course", courseController.updateCourse);
 programRouter.delete("/course", courseController.deleteCourse);
 programRouter.get("/users", courseController.getAllUsers);
 
@@ -62,6 +62,6 @@ programRouter.put(
 //topics enpoint
 programRouter.post("/topic", programController.createTopic);
 programRouter.put("/topic", programController.updateTopic);
-programRouter.delete("/topic/:id", programController.deleteTopic);
+programRouter.delete("/topic", programController.deleteTopic);
 
 export default programRouter;
