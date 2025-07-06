@@ -84,8 +84,9 @@ export class ProgramController {
   }
   async updateTopic(req: Request, res: Response) {
     try {
-      const { id } = req.params;
-      await programService.updateTopic(Number(id), req.body.name);
+      const { id } = req.query;
+      const { name } = req.body
+      await programService.updateTopic(Number(id), name);
       return res.status(200).json({ message: "Topic update successfully" });
     } catch (error: any) {
       return res
@@ -96,7 +97,7 @@ export class ProgramController {
 
   async deleteTopic(req: Request, res: Response) {
     try {
-      const { id } = req.params;
+      const { id } = req.query;
       await programService.deleteTopic(Number(id));
       return res.status(200).json({ message: "Topic deleted successfully" });
     } catch (error: any) {
