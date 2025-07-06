@@ -20,17 +20,17 @@ export class CourseService {
     });
   }
 
-  async createCourse(cohortId: number, data: any) {
+  async createCourse(data: any) {
     return await prisma.course.create({
       data: {
         name: data.name,
-        instructorId: data.instructorId,
+        instructorId: Number(data.instructorId),
         capacity: data.capacity,
         schedule: data.schedule,
         classFormat: data.classFormat,
         location: data.location,
         meetingLink: data.meetingLink,
-        cohortId,
+        cohortId: Number(data.cohortId),
       },
     });
   }

@@ -14,9 +14,7 @@ export class CourseController {
 
   async createCourse(req: Request, res: Response) {
     try {
-      const { cohortId } = req.query
       const newCourse = await courseService.createCourse(
-        Number(cohortId),
         req.body,
       );
       return res
