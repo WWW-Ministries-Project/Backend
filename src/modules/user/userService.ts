@@ -49,14 +49,14 @@ export class UserService {
         membership_type,
         department_id,
         position_id,
-        member_since,
-        department_positions
+        member_since
       } = {},
 
       children = [],
       status,
       password,
       is_user,
+      department_positions
     } = userData;
 
     // Generate email if not provided
@@ -138,6 +138,7 @@ export class UserService {
     );
 
     if (Array.isArray(department_positions) && department_positions.length > 0) {
+      console.log("Stub: handle department updates here");
       await this.savedDepartments(user.id,department_positions)
     }
     
@@ -178,7 +179,12 @@ export class UserService {
     };
   }
   private async savedDepartments(userId: number, department_positions: { department_id: any; position_id: any }[]) {
-  return await prisma.department_positions.createMany({
+  console.log("Department positions to create:", department_positions.map((dp:any) => ({
+    user_id: userId,
+    department_id: parseInt(dp.department_id),
+    position_id: parseInt(dp.position_id),
+})));
+    return await prisma.department_positions.createMany({
     data: department_positions.map((dp) => ({
       user_id: userId,
       department_id: Number(dp.department_id),

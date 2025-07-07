@@ -172,12 +172,12 @@ export const updateUser = async (req: Request, res: Response) => {
         membership_type,
         position_id,
         department_id,
-        member_since,
-        department_positions,
+        member_since
       } = {},
       children = [],
       status,
       is_user,
+      department_positions,
     } = req.body;
 
     const userExists = await prisma.user.findUnique({
@@ -256,20 +256,31 @@ export const updateUser = async (req: Request, res: Response) => {
       },
     });
 
+    let dep_posts,kids;
+
     // Handle department_positions update
-    if (Array.isArray(department_positions) && department_positions.length) {
-      await updateDepartmentPositions(Number(user_id), department_positions);
+    if (Array.isArray(department_positions) && department_positions.length > 0 ) {
+      console.log("Stub: handle department updates here");
+      dep_posts = await updateDepartmentPositions(Number(user_id), department_positions);
     }
 
     // Optional: handle children (currently stubbed)
     if (has_children && children.length > 0) {
       console.log("Stub: handle child updates here");
-      await updateChildren(children, updatedUser, membership_type,Number(user_id))
+      kids = await updateChildren(children, updatedUser, membership_type,Number(user_id))
+    }
+
+    const { password, ...rest} = updatedUser
+
+    const data = {
+      parent : rest,
+      department_positions : dep_posts,
+      children:kids
     }
 
     return res
       .status(200)
-      .json({ message: "User updated successfully", data: updatedUser });
+      .json({ message: "User updated successfully", data: data });
   } catch (error: any) {
     console.error(error);
     return res
@@ -281,20 +292,29 @@ export const updateUser = async (req: Request, res: Response) => {
 // Helper to update department_positions
 async function updateDepartmentPositions(
   userId: number,
-  departmentPositions: { department_id: number; position_id: number }[],
+  department_positions: { department_id: any; position_id: any }[],
 ) {
   await prisma.department_positions.deleteMany({
     where: { user_id: userId },
   });
-
-  await prisma.department_positions.createMany({
-    data: departmentPositions.map((dp) => ({
-      user_id: userId,
-      department_id: Number(dp.department_id),
-      position_id: Number(dp.position_id),
-    })),
-    skipDuplicates: true,
-  });
+  console.log("Department positions to create:", department_positions.map(dp => ({
+    user_id: userId,
+    department_id: parseInt(dp.department_id),
+    position_id: parseInt(dp.position_id),
+})));
+  const created = await Promise.all(
+    department_positions.map(dp =>
+      prisma.department_positions.create({
+        data: {
+          user_id: userId,
+          department_id: parseInt(dp.department_id),
+          position_id: parseInt(dp.position_id),
+        },
+      })
+    )
+  );
+  console.log("Inserted department positions:", created);
+  return created;
 }
 
 async function updateChildren(children:any[],parentObj:any, membership_type:string,userId:number){
