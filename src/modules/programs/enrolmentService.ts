@@ -2,17 +2,8 @@ import { progress_status } from "@prisma/client";
 import { prisma } from "../../Models/context";
 
 export class EnrollmentService {
-  async enrollUser(payload: {
-    first_name: string;
-    last_name: string;
-    email: string;
-    primary_number: string;
-    course_id: number;
-    isMember: boolean;
-    user_id?: number;
-  }) {
-    const { first_name, last_name, email, primary_number, course_id, user_id } =
-      payload;
+  async enrollUser(payload: { course_id: number, user_id?: number }) {
+    const {  course_id, user_id } = payload;
 
     const course = await prisma.course.findUnique({
       where: { id: course_id },
@@ -27,11 +18,18 @@ export class EnrollmentService {
       throw new Error("Course is full.");
     }
 
+    const userExist = await prisma.user.findFirst({
+      where:{id:user_id}
+    })
+    if (!userExist) {
+      throw new Error("Course is full.");
+    }
+
     // Check for duplicate enrollment
     const existingEnrollment = await prisma.enrollment.findFirst({
-      where: user_id
-        ? { user_id, course_id } // Check by userId for registered users
-        : { email, course_id }, // Check by email for non-users
+      where: {
+        user_id, course_id
+      }
     });
 
     if (existingEnrollment) {
@@ -44,10 +42,6 @@ export class EnrollmentService {
         data: {
           user_id,
           course_id,
-          first_name,
-          last_name,
-          primary_number,
-          email,
         },
       }),
       prisma.course.update({

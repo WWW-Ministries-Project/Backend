@@ -6,38 +6,19 @@ const enrollment = new EnrollmentService();
 export class EnrollmentController {
   async enrollUser(req: Request, res: Response) {
     try {
-      const {
-        first_name,
-        last_name,
-        email,
-        primary_number,
-        course_id,
-        user_id,
-        isMember,
-      } = req.body;
+      const { user_id, course_id } = req.body;
 
       // Validate required fields
-      if (
-        !first_name ||
-        !last_name ||
-        !email ||
-        !primary_number ||
-        !course_id
-      ) {
+      if (!user_id || !course_id ) {
         return res.status(400).json({
           message:
-            "Missing required fields first_name, last_name, email, primary_number, course_id",
+            "Missing required fields user_id,course_id",
         });
       }
 
       const newEnrollment = await enrollment.enrollUser({
-        first_name,
-        last_name,
-        email,
-        primary_number,
         course_id: parseInt(course_id as string),
-        isMember,
-        user_id: parseInt(user_id as string),
+        user_id: parseInt(user_id as string)
       });
 
       return res.status(201).json({
