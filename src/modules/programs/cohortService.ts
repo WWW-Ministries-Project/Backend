@@ -39,6 +39,7 @@ export class CohortService {
         program: true, 
         courses: {
           select:{
+            id:true,
             name:true,
             capacity:true,
             enrolled:true,
