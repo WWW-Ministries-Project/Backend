@@ -41,7 +41,8 @@ export class CourseService {
       include : {
         instructor: {
           select: {
-            name : true
+            name : true,
+            id : true
           }
         } 
       }
@@ -59,6 +60,12 @@ export class CourseService {
             },
           },
           enrollments: true,
+          instructor:{
+            select:{
+              id : true,
+              name : true
+            }
+          }
         },
       })
       .then((course) => {
