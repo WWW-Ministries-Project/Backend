@@ -50,6 +50,7 @@ export class CohortService {
             instructor:{
               select:{
                 name:true,
+                id:true,
               }
             }
           }
