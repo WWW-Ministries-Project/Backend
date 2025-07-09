@@ -49,7 +49,7 @@ programRouter.get(
   "/user-enrollment/:id",
   enrollmentController.getEnrollmentByUser,
 );
-programRouter.get("/progress/:id", enrollmentController.getProgressReport);
+programRouter.get("/progress", enrollmentController.getProgressReport);
 programRouter.put(
   "/progress-update",
   enrollmentController.updateProgressReport,

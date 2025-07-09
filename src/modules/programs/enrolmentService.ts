@@ -118,7 +118,7 @@ export class EnrollmentService {
               include: {
                 program: {
                   include: {
-                    topics: true, // Do NOT include progress here
+                    topics: true,
                   },
                 },
               },
