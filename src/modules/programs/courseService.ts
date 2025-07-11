@@ -59,7 +59,15 @@ export class CourseService {
               program: true,
             },
           },
-          enrollments: true,
+          enrollments: {
+            include:{
+              user:{
+                include:{
+                  user_info : true
+                }
+              }
+            }
+          },
           instructor:{
             select:{
               id : true,
@@ -70,9 +78,25 @@ export class CourseService {
       })
       .then((course) => {
         if (!course) return null;
-        return {
-          ...course,
-        };
+
+const flattenedEnrollments = course.enrollments.map((enrollment) => {
+  const userInfo = enrollment.user?.user_info;
+  return {
+    id:enrollment.id,
+    user_id:enrollment.user_id,
+    course_id:enrollment.course_id,
+    enrolled_at:enrollment.enrolledAt,
+    first_name: userInfo?.first_name,
+    last_name: userInfo?.last_name,
+    primary_number: userInfo?.primary_number,
+    email: userInfo?.email,
+  };
+});
+
+return {
+  ...course,
+  enrollments: flattenedEnrollments,
+};
       });
   }
 

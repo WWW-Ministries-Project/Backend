@@ -81,9 +81,9 @@ export class EnrollmentController {
 
   async getProgressReport(req: Request, res: Response) {
     try {
-      const enrollmentId = req.params.id;
+      const { id } = req.query;
       const progressDetails = await enrollment.getProgressDetails(
-        Number(enrollmentId),
+        Number(id),
       );
       return res
         .status(200)
