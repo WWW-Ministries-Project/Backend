@@ -85,7 +85,7 @@ export class MarketController {
         }
     }
 
-    async getMarketCount (req: Request, res:Response){
+    async getMarketCount(req: Request, res: Response) {
         try {
             const {filters} = req.body;
             const markets = await marketService.getMarketCount(filters);
@@ -97,12 +97,24 @@ export class MarketController {
         }
     }
 
-    async getActiveMarkets (req: Request, res:Response){
+    async getActiveMarkets(req: Request, res: Response) {
         try {
             const markets = await marketService.getActiveMarkets();
             return res
                 .status(200)
                 .json({data: markets})
+        } catch (error: any) {
+            return res.status(500).json({message: "Failed to get markets: " + error.message})
+        }
+    }
+
+    async getMarketById(req: Request, res: Response) {
+        try {
+            const {market_id} = req.body;
+            const market = await marketService.getMarketById(market_id);
+            return res
+                .status(200)
+                .json({data: market})
         } catch (error: any) {
             return res.status(500).json({message: "Failed to get markets: " + error.message})
         }
