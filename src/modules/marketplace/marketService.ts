@@ -7,12 +7,14 @@ export class MarketService {
      */
     async createMarket(input: CreateMarketDto) {
         try {
+            const event = this.determineEventId(input);
             return await prisma.markets.create({
                 data: {
-                    ...input,
+                    name: input.name.trim(),
+                    description: input.description ?? undefined,
                     start_date: input.start_date ? new Date(input.start_date) : undefined,
                     end_date: input.end_date ? new Date(input?.end_date) : undefined,
-                    event_act_id: input.event_id
+                    event
                 },
                 include: {
                     event: true,
@@ -21,6 +23,14 @@ export class MarketService {
         } catch (error: any) {
             throw new Error(`Failed to create market: ${error.message}`);
         }
+    }
+
+    private determineEventId(input: CreateMarketDto | UpdateMarketDto) {
+        return input.event_id ? {
+            connect: {
+                id: input.event_id
+            }
+        } : undefined;
     }
 
     /**
@@ -116,8 +126,9 @@ export class MarketService {
             return await prisma.markets.update({
                 where: {id},
                 data: {
-                    ...data,
-                    event_act_id: data.event_id || undefined,
+                    name: data.name?.trim(),
+                    description: data.description?.trim(),
+                    event: this.determineEventId(data),
                     start_date: data.start_date ? new Date(data.start_date) : undefined,
                     end_date: data.end_date ? new Date(data.end_date) : undefined,
                     updated_at: new Date(),
