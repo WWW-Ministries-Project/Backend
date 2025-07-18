@@ -76,7 +76,7 @@ export class MarketController {
     async listMarketsByEventId(req: Request, res: Response) {
         try {
             const {event_id} = req.body;
-            const markets = marketService.getMarketsByEvent(event_id);
+            const markets = await marketService.getMarketsByEvent(event_id);
             return res
                 .status(200)
                 .json({data: markets})
@@ -88,7 +88,7 @@ export class MarketController {
     async getMarketCount (req: Request, res:Response){
         try {
             const {filters} = req.body;
-            const markets = marketService.getMarketCount(filters);
+            const markets = await marketService.getMarketCount(filters);
             return res
                 .status(200)
                 .json({data: markets})
@@ -99,7 +99,7 @@ export class MarketController {
 
     async getActiveMarkets (req: Request, res:Response){
         try {
-            const markets = marketService.getActiveMarkets();
+            const markets = await marketService.getActiveMarkets();
             return res
                 .status(200)
                 .json({data: markets})
