@@ -1,7 +1,7 @@
 export interface CreateMarketDto {
     name: string;
     description?: string;
-    event_act_id?: number;
+    event_id?: number;
     start_date?: Date;
     end_date?: Date;
     created_by_id?: number;
@@ -10,7 +10,7 @@ export interface CreateMarketDto {
 export interface UpdateMarketDto {
     name?: string;
     description?: string;
-    event_act_id?: number;
+    event_id?: number;
     start_date?: Date;
     end_date?: Date;
     updated_at_id?: number;
@@ -18,8 +18,10 @@ export interface UpdateMarketDto {
 
 export interface MarketFilters {
     name?: string;
-    event_act_id?: number;
+    event_id?: number;
     deleted?: boolean;
     start_date?: Date;
     end_date?: Date;
+    take?: number;
+    skip?: number;
 }

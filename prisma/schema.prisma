@@ -669,7 +669,7 @@ model product_category {
 
 model markets {
   id            Int        @id @default(autoincrement())
-  name          String
+  name          String     @unique
   description   String?
   deleted       Boolean    @default(false)
   event         event_act? @relation(fields: [event_act_id], references: [id])

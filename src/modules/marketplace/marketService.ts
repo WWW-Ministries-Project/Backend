@@ -5,15 +5,20 @@ export class MarketService {
     /**
      * Create a new market
      */
-    async createMarket(data: CreateMarketDto) {
+    async createMarket(input: CreateMarketDto) {
         try {
             return await prisma.markets.create({
-                data,
+                data: {
+                    ...input,
+                    start_date: input.start_date ? new Date(input.start_date) : undefined,
+                    end_date: input.end_date ? new Date(input?.end_date) : undefined,
+                    event_act_id: input.event_id
+                },
                 include: {
                     event: true,
                 },
             });
-        } catch (error:any) {
+        } catch (error: any) {
             throw new Error(`Failed to create market: ${error.message}`);
         }
     }
@@ -34,8 +39,8 @@ export class MarketService {
                 };
             }
 
-            if (filters?.event_act_id) {
-                where.event_act_id = filters.event_act_id;
+            if (filters?.event_id) {
+                where.event_act_id = filters.event_id;
             }
 
             if (filters?.start_date) {
@@ -55,11 +60,13 @@ export class MarketService {
                 include: {
                     event: true,
                 },
+                take: filters?.take || undefined,
+                skip: filters?.skip || undefined,
                 orderBy: {
                     created_at: 'desc',
                 },
             });
-        } catch (error:any) {
+        } catch (error: any) {
             throw new Error(`Failed to fetch markets: ${error.message}`);
         }
     }
@@ -84,7 +91,7 @@ export class MarketService {
             }
 
             return market;
-        } catch (error:any) {
+        } catch (error: any) {
             throw new Error(`Failed to fetch market: ${error.message}`);
         }
     }
@@ -110,13 +117,16 @@ export class MarketService {
                 where: {id},
                 data: {
                     ...data,
+                    event_act_id: data.event_id || undefined,
+                    start_date: data.start_date ? new Date(data.start_date) : undefined,
+                    end_date: data.end_date ? new Date(data.end_date) : undefined,
                     updated_at: new Date(),
                 },
                 include: {
                     event: true,
                 },
             });
-        } catch (error:any) {
+        } catch (error: any) {
             throw new Error(`Failed to update market: ${error.message}`);
         }
     }
@@ -145,7 +155,7 @@ export class MarketService {
                     updated_at_id: deleted_by_id,
                 },
             });
-        } catch (error:any) {
+        } catch (error: any) {
             throw new Error(`Failed to delete market: ${error.message}`);
         }
     }
@@ -177,7 +187,7 @@ export class MarketService {
                     event: true,
                 },
             });
-        } catch (error:any) {
+        } catch (error: any) {
             throw new Error(`Failed to restore market: ${error.message}`);
         }
     }
@@ -199,7 +209,7 @@ export class MarketService {
                     created_at: 'desc',
                 },
             });
-        } catch (error:any) {
+        } catch (error: any) {
             throw new Error(`Failed to fetch markets by event: ${error.message}`);
         }
     }
@@ -242,7 +252,7 @@ export class MarketService {
                     created_at: 'desc',
                 },
             });
-        } catch (error:any) {
+        } catch (error: any) {
             throw new Error(`Failed to fetch active markets: ${error.message}`);
         }
     }
@@ -263,8 +273,8 @@ export class MarketService {
                 };
             }
 
-            if (filters?.event_act_id) {
-                where.event_act_id = filters.event_act_id;
+            if (filters?.event_id) {
+                where.event_act_id = filters.event_id;
             }
 
             return await prisma.markets.count({
