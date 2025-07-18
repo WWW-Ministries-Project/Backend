@@ -1,7 +1,7 @@
 export interface CreateMarketDto {
     name: string;
     description?: string;
-    event_act_id?: number;
+    event_id?: number;
     start_date?: Date;
     end_date?: Date;
     created_by_id?: number;
@@ -22,4 +22,6 @@ export interface MarketFilters {
     deleted?: boolean;
     start_date?: Date;
     end_date?: Date;
+    pageSize?: number;
+    pageNumber?: number;
 }
