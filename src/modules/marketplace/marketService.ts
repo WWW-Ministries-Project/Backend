@@ -39,8 +39,8 @@ export class MarketService {
                 };
             }
 
-            if (filters?.event_act_id) {
-                where.event_act_id = filters.event_act_id;
+            if (filters?.event_id) {
+                where.event_act_id = filters.event_id;
             }
 
             if (filters?.start_date) {
@@ -60,6 +60,8 @@ export class MarketService {
                 include: {
                     event: true,
                 },
+                take: filters?.take || undefined,
+                skip: filters?.skip || undefined,
                 orderBy: {
                     created_at: 'desc',
                 },
@@ -115,6 +117,9 @@ export class MarketService {
                 where: {id},
                 data: {
                     ...data,
+                    event_act_id: data.event_id || undefined,
+                    start_date: data.start_date ? new Date(data.start_date) : undefined,
+                    end_date: data.end_date ? new Date(data.end_date) : undefined,
                     updated_at: new Date(),
                 },
                 include: {
@@ -268,8 +273,8 @@ export class MarketService {
                 };
             }
 
-            if (filters?.event_act_id) {
-                where.event_act_id = filters.event_act_id;
+            if (filters?.event_id) {
+                where.event_act_id = filters.event_id;
             }
 
             return await prisma.markets.count({
