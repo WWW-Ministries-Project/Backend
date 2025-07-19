@@ -226,7 +226,6 @@ model event_act {
 
 model event_mgt {
   id               Int                @id @default(autoincrement())
-  name             String
   start_time       String?
   end_time         String?
   location         String?
@@ -241,8 +240,8 @@ model event_mgt {
   updated_at       DateTime?
   end_date         DateTime?
   start_date       DateTime?
-  event_status     event_status?
   event_type       event_type?
+  event_status     event_status?
   event_attendance event_attendance[]
   request          request[]
   visit            visit[]

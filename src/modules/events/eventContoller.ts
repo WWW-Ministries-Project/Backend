@@ -7,7 +7,6 @@ dotenv.config();
 
 const selectQuery = {
   id: true,
-  name: true,
   start_time: true,
   description: true,
   end_date: true,
@@ -69,7 +68,6 @@ export class eventManagement {
     try {
       const {
         id,
-        name,
         start_date,
         end_date,
         start_time,
@@ -99,7 +97,6 @@ export class eventManagement {
           id,
         },
         data: {
-          name: name ? name : existance.name,
           start_date: start_date ? new Date(start_date) : existance.start_date,
           end_date: end_date ? new Date(end_date) : existance.end_date,
           start_time: start_time ? start_date : existance.start_date,
@@ -172,7 +169,6 @@ export class eventManagement {
         },
         select: {
           id: true,
-          name: true,
           poster: true,
           start_date: true,
           end_date: true,
@@ -246,7 +242,6 @@ export class eventManagement {
         },
         select: {
           id: true,
-          name: true,
           poster: true,
           start_date: true,
           end_date: true,
@@ -309,7 +304,6 @@ export class eventManagement {
         },
         select: {
           id: true,
-          name: true,
           start_date: true,
           end_date: true,
           event_attendance: {
@@ -367,7 +361,6 @@ export class eventManagement {
         },
         select: {
           id: true,
-          name: true,
           poster: true,
           start_date: true,
           end_date: true,
@@ -529,7 +522,6 @@ export class eventManagement {
     
       const response = await prisma.event_mgt.create({
         data: {
-          name: data.name,
           start_date: start_date ? new Date(data.start_date) : null,
           end_date: end_date ? new Date(data.end_date) : null,
           event_act_id: data.event_type_id,
@@ -538,15 +530,13 @@ export class eventManagement {
           location: data.location,
           description: data.description,
           poster: data.poster,
-          event_type: data.event_type,
-          event_status: data.event_status,
           created_by: data.created_by,
         },
         select: selectQuery,
       });
 
       const qr_code = await generateQR(
-        `${process.env.Frontend_URL}/events/register-event?event_id=${response.id}&event_name=${response.name}`,
+        `${process.env.Frontend_URL}/events/register-event?event_id=${response.id}`,
       );
 
       await prisma.event_mgt.update({
@@ -639,7 +629,6 @@ export class eventManagement {
         },
         select: {
           id: true,
-          name: true,
           start_date: true,
           end_date: true,
           location: true,
