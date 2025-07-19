@@ -4,15 +4,15 @@ import {ProductController} from './productController';
 const productRouter = Router();
 const productController = new ProductController();
 //sizes
-productRouter.post("/size", productController.createSize);
-productRouter.put("/size", productController.updateSize);
-productRouter.get("/sizes", productController.listSizes);
+productRouter.post("/create-size", productController.createSize);
+productRouter.put("/update-size", productController.updateSize);
+productRouter.get("/list-sizes", productController.listSizes);
 //products
-productRouter.post("/", productController.createProduct);
-productRouter.put("/", productController.updateProduct);
-productRouter.delete("/:productId", productController.deleteProduct);
-productRouter.put("/restore/:productId", productController.restoreProduct);
-productRouter.get("/list", productController.listProducts);
-productRouter.get("/:productId", productController.getProductById);
+productRouter.post("/create-product", productController.createProduct);
+productRouter.put("/update-product", productController.updateProduct);
+productRouter.delete("/delete-product", productController.deleteProduct);
+productRouter.put("/restore-product", productController.restoreProduct);
+productRouter.get("/list-products", productController.listProducts);
+productRouter.get("/get-product-by-id", productController.getProductById);
 
 export default productRouter;
