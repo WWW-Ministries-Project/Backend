@@ -365,7 +365,7 @@ export const getRequisition = async (id: any) => {
         attachmentsList: true,
         products: true,
         department: { select: { id: true, name: true } },
-        event: { select: { id: true, name: true } },
+        event: { select: { id: true } },
         request_approvals: {
           include: {
             hod_user: {

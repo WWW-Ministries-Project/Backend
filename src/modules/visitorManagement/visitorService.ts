@@ -59,7 +59,6 @@ export class VisitorService {
             event: {
               select: {
                 id: true,
-                name: true,
                 event_type: true,
               },
             },
@@ -92,13 +91,12 @@ export class VisitorService {
 
     return {
       ...visitor,
-      visits: visitor.visits.map(({ event, ...v }) => ({
+      visits: visitor.visits.map(({event, ...v }) => ({
         ...v,
         eventId: event?.id || null,
-        eventName: event?.name || null,
         eventType: event?.event_type || null,
       })),
-      followUps: visitor.followUps.map((f) => ({
+      followUps: visitor.followUps.map((f:any) => ({
         ...f,
         assignedTo: f.assignedTo ? userMap[f.assignedTo] || null : null,
       })),
