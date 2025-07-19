@@ -26,8 +26,9 @@ export class MarketController {
 
     async updateMarket(req: Request, res: Response) {
         try {
-            const {id, name, description, event_id, start_date, end_date} = req.body;
-            const market = await marketService.updateMarket(id, {
+            const {name, description, event_id, start_date, end_date} = req.body;
+            const {id} = req.params
+            const market = await marketService.updateMarket(parseInt(id), {
                 name, description, event_id, start_date, end_date
             });
             return res
@@ -40,8 +41,8 @@ export class MarketController {
 
     async deleteMarket(req: Request, res: Response) {
         try {
-            const {id} = req.body;
-            const market = await marketService.deleteMarket(id);
+            const {id} = req.params;
+            const market = await marketService.deleteMarket(parseInt(id));
             return res
                 .status(200)
                 .json({message: "Market Deleted Successfully", data: market})
@@ -52,8 +53,8 @@ export class MarketController {
 
     async restoreMarket(req: Request, res: Response) {
         try {
-            const {id} = req.body;
-            const market = await marketService.restoreMarket(id);
+            const {id} = req.params;
+            const market = await marketService.restoreMarket(parseInt(id));
             return res
                 .status(200)
                 .json({message: "Market Restored Successfully", data: market})
@@ -75,8 +76,8 @@ export class MarketController {
 
     async listMarketsByEventId(req: Request, res: Response) {
         try {
-            const {event_id} = req.body;
-            const markets = await marketService.getMarketsByEvent(event_id);
+            const {eventId} = req.params;
+            const markets = await marketService.getMarketsByEvent(parseInt(eventId));
             return res
                 .status(200)
                 .json({data: markets})
@@ -110,8 +111,8 @@ export class MarketController {
 
     async getMarketById(req: Request, res: Response) {
         try {
-            const {market_id} = req.body;
-            const market = await marketService.getMarketById(market_id);
+            const {marketId} = req.body;
+            const market = await marketService.getMarketById(marketId);
             return res
                 .status(200)
                 .json({data: market})
