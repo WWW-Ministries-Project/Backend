@@ -232,8 +232,8 @@ model event_mgt {
   description      String?
   poster           String?
   qr_code          String?
-  event_act_id     Int
-  event            event_act          @relation(fields: [event_act_id], references: [id])
+  event_name_id    Int
+  event            event_act          @relation(fields: [event_name_id], references: [id])
   created_by       Int
   created_at       DateTime           @default(now())
   updated_by       Int?
@@ -671,8 +671,8 @@ model markets {
   name          String     @unique
   description   String?
   deleted       Boolean    @default(false)
-  event         event_act? @relation(fields: [event_act_id], references: [id])
-  event_act_id  Int?
+  event         event_act? @relation(fields: [event_name_id], references: [id])
+  event_name_id Int?
   start_date    DateTime?
   end_date      DateTime?
   created_at    DateTime   @default(now())
