@@ -12,12 +12,17 @@ const selectQuery = {
   end_date: true,
   end_time: true,
   event_status: true,
-  event_act_id: true,
+  event_name_id: true,
   event_type: true,
   location: true,
   poster: true,
   qr_code: true,
   start_date: true,
+  event:{
+    select:{
+      event_name: true,
+    }
+  },
 };
 
 export class eventManagement {
@@ -180,7 +185,11 @@ export class eventManagement {
           created_by: true,
           event_type: true,
           event_status: true,
-          event_act_id: true,
+          event:{
+            select:{
+              event_name: true,
+            }
+          },
           event_attendance: {
             select: {
               created_at: true,
@@ -372,6 +381,11 @@ export class eventManagement {
           created_by: true,
           event_type: true,
           event_status: true,
+          event:{
+            select:{
+              event_name: true,
+            }
+          },
           event_attendance: {
             select: {
               created_at: true,
@@ -524,7 +538,7 @@ export class eventManagement {
         data: {
           start_date: start_date ? new Date(data.start_date) : null,
           end_date: end_date ? new Date(data.end_date) : null,
-          event_act_id: data.event_type_id,
+          event_name_id: data.event_type_id,
           start_time: data.start_time,
           end_time: data.end_time,
           location: data.location,
@@ -639,6 +653,11 @@ export class eventManagement {
           event_type: true,
           start_time: true,
           end_time: true,
+          event:{
+            select:{
+              event_name: true,
+            }
+          },
           event_attendance: {
             select: {
               id: true,
