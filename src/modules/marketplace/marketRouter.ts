@@ -8,14 +8,14 @@ const protect = permissions.protect;
 const marketRouter = Router();
 const marketController = new MarketController();
 
-marketRouter.post("/", marketController.createMarket);
-marketRouter.put("/:id", marketController.updateMarket);
-marketRouter.delete("/:id", marketController.deleteMarket);
-marketRouter.put("/restore/:id", marketController.restoreMarket);
-marketRouter.get("/list", marketController.listMarkets);
-marketRouter.get("/list-by-event/:eventId", marketController.listMarketsByEventId);
-marketRouter.get("/count", marketController.getMarketCount);
-marketRouter.get("/active", marketController.getActiveMarkets);
-marketRouter.get("/:marketId", marketController.getMarketById);
+marketRouter.post("/create-market", marketController.createMarket);
+marketRouter.put("/update-market", marketController.updateMarket);
+marketRouter.delete("/delete-market", marketController.deleteMarket);
+marketRouter.put("/restore-market", marketController.restoreMarket);
+marketRouter.get("/list-markets", marketController.listMarkets);
+marketRouter.get("/list-markets-by-event", marketController.listMarketsByEventId);
+marketRouter.get("/get-market-count", marketController.getMarketCount);
+marketRouter.get("/list-active-markets", marketController.getActiveMarkets);
+marketRouter.get("/get-market-by-id", marketController.getMarketById);
 
 export default marketRouter;
