@@ -228,7 +228,7 @@ export class eventManagement {
 
             res.status(200).json({
                 message: "Operation successful",
-                flat_data,
+                data:flat_data,
             });
         } catch (error: any) {
             console.log(error);
