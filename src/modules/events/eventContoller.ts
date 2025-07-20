@@ -30,7 +30,7 @@ export class eventManagement {
     createEvent = async (req: Request, res: Response) => {
         try {
             let data = req.body;
-            if (!data.event_type_id) {
+            if (!data.event_name_id) {
                 return res.status(400).json({message: "Event Name Id not found"});
             }
             let {start_date, end_date, day_event, repetitive, recurring} = req.body;
@@ -422,7 +422,12 @@ export class eventManagement {
                     },
                 },
             });
-            res.status(200).json({message: "Operation successful", data: response});
+            const flat_data = {
+                ...response,
+                event_name : response?.event.event_name,
+                event : null
+            }
+            res.status(200).json({message: "Operation successful", data: flat_data});
         } catch (error: any) {
             return res.status(500).json({
                 message: "Event failed to load",
