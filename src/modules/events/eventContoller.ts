@@ -31,7 +31,7 @@ export class eventManagement {
         try {
             let data = req.body;
             if (!data.event_type_id) {
-                return res.status(404).json({message: "Event Type Id not found"});
+                return res.status(400).json({message: "Event Name Id not found"});
             }
             let {start_date, end_date, day_event, repetitive, recurring} = req.body;
             if (day_event === "multi" && repetitive === "no") {
@@ -549,7 +549,7 @@ export class eventManagement {
                 data: {
                     start_date: start_date ? new Date(data.start_date) : null,
                     end_date: end_date ? new Date(data.end_date) : null,
-                    event_name_id: data.event_type_id,
+                    event_name_id: Number(data.event_name_id),
                     start_time: data.start_time,
                     end_time: data.end_time,
                     location: data.location,
