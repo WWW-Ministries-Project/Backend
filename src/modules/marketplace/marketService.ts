@@ -1,5 +1,5 @@
 import {prisma} from "../../Models/context";
-import {CreateMarketDto, MarketFilters, UpdateMarketDto} from "./marketInterface";
+import {CreateMarketDto, MarketDto, MarketFilters, MarketWithEvent, UpdateMarketDto} from "./marketInterface";
 
 export class MarketService {
     /**
@@ -8,7 +8,7 @@ export class MarketService {
     async createMarket(input: CreateMarketDto) {
         try {
             const event = this.determineEventId(input);
-            return await prisma.markets.create({
+            return this.convertToDto(await prisma.markets.create({
                 data: {
                     name: input.name.trim(),
                     description: input.description ?? undefined,
@@ -19,18 +19,18 @@ export class MarketService {
                 include: {
                     event: true,
                 },
-            });
+            }));
         } catch (error: any) {
             throw new Error(`Failed to create market: ${error.message}`);
         }
     }
 
     private determineEventId(input: CreateMarketDto | UpdateMarketDto) {
-        return input.event_id ? {
+        return (input.event_id ? {
             connect: {
                 id: input.event_id
             }
-        } : undefined;
+        } : undefined);
     }
 
     /**
@@ -65,7 +65,7 @@ export class MarketService {
                 };
             }
 
-            return await prisma.markets.findMany({
+            return (await prisma.markets.findMany({
                 where,
                 include: {
                     event: true,
@@ -75,7 +75,7 @@ export class MarketService {
                 orderBy: {
                     created_at: 'desc',
                 },
-            });
+            })).map(m => this.convertToDto(m));
         } catch (error: any) {
             throw new Error(`Failed to fetch markets: ${error.message}`);
         }
@@ -100,7 +100,7 @@ export class MarketService {
                 throw new Error(`Market with ID ${id} not found`);
             }
 
-            return market;
+            return this.convertToDto(market);
         } catch (error: any) {
             throw new Error(`Failed to fetch market: ${error.message}`);
         }
@@ -123,7 +123,7 @@ export class MarketService {
                 throw new Error(`Market with ID ${id} not found`);
             }
 
-            return await prisma.markets.update({
+            return this.convertToDto(await prisma.markets.update({
                 where: {id},
                 data: {
                     name: data.name?.trim(),
@@ -136,7 +136,7 @@ export class MarketService {
                 include: {
                     event: true,
                 },
-            });
+            }));
         } catch (error: any) {
             throw new Error(`Failed to update market: ${error.message}`);
         }
@@ -158,14 +158,15 @@ export class MarketService {
                 throw new Error(`Market with ID ${id} not found`);
             }
 
-            return await prisma.markets.update({
+            return this.convertToDto(await prisma.markets.update({
                 where: {id},
                 data: {
                     deleted: true,
                     updated_at: new Date(),
                     updated_at_id: deleted_by_id,
                 },
-            });
+                include: {event: true}
+            }));
         } catch (error: any) {
             throw new Error(`Failed to delete market: ${error.message}`);
         }
@@ -187,7 +188,7 @@ export class MarketService {
                 throw new Error(`Deleted market with ID ${id} not found`);
             }
 
-            return await prisma.markets.update({
+            return this.convertToDto(await prisma.markets.update({
                 where: {id},
                 data: {
                     deleted: false,
@@ -197,7 +198,7 @@ export class MarketService {
                 include: {
                     event: true,
                 },
-            });
+            }));
         } catch (error: any) {
             throw new Error(`Failed to restore market: ${error.message}`);
         }
@@ -208,7 +209,7 @@ export class MarketService {
      */
     async getMarketsByEvent(event_name_id: number) {
         try {
-            return await prisma.markets.findMany({
+            return (await prisma.markets.findMany({
                 where: {
                     event_name_id,
                     deleted: false,
@@ -219,7 +220,7 @@ export class MarketService {
                 orderBy: {
                     created_at: 'desc',
                 },
-            });
+            })).map(this.convertToDto);
         } catch (error: any) {
             throw new Error(`Failed to fetch markets by event: ${error.message}`);
         }
@@ -232,7 +233,7 @@ export class MarketService {
         try {
             const now = new Date();
 
-            return await prisma.markets.findMany({
+            return (await prisma.markets.findMany({
                 where: {
                     deleted: false,
                     OR: [
@@ -262,7 +263,7 @@ export class MarketService {
                 orderBy: {
                     created_at: 'desc',
                 },
-            });
+            })).map(this.convertToDto);
         } catch (error: any) {
             throw new Error(`Failed to fetch active markets: ${error.message}`);
         }
@@ -294,6 +295,19 @@ export class MarketService {
         } catch (error: any) {
             const {message} = error;
             throw new Error(`Failed to count markets: ${message}`);
+        }
+    }
+
+    convertToDto(data: MarketWithEvent): MarketDto {
+        const {name, description, id, start_date, end_date, event} = data;
+        return {
+            name,
+            description,
+            id,
+            start_date: start_date ? new Date(start_date).toDateString() : undefined,
+            end_date: end_date ? new Date(end_date).toDateString() : undefined,
+            event_id: event?.id,
+            event_name: event?.event_name
         }
     }
 }
