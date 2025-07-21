@@ -1,3 +1,5 @@
+import {Prisma} from '@prisma/client';
+
 export interface CreateMarketDto {
     name: string;
     description?: string;
@@ -25,3 +27,19 @@ export interface MarketFilters {
     take?: number;
     skip?: number;
 }
+
+export interface MarketDto {
+    name: string;
+    description?: string | null;
+    id: number;
+    start_date?: string;
+    end_date?: string;
+    event_name?: string | null;
+    event_id?: number | null;
+}
+
+const marketWithEvent = Prisma.validator<Prisma.marketsDefaultArgs>()({
+    include: {event: true}
+});
+
+export type MarketWithEvent = Prisma.marketsGetPayload<typeof marketWithEvent>
