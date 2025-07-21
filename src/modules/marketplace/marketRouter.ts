@@ -10,7 +10,7 @@ const marketController = new MarketController();
 
 marketRouter.post("/create-market", marketController.createMarket);
 marketRouter.put("/update-market", marketController.updateMarket);
-marketRouter.delete("/delete-market/id=:id", marketController.deleteMarket);
+marketRouter.delete("/delete-market", marketController.deleteMarket);
 marketRouter.put("/restore-market", marketController.restoreMarket);
 marketRouter.get("/list-markets", marketController.listMarkets);
 marketRouter.get("/list-markets-by-event", marketController.listMarketsByEventId);
