@@ -207,11 +207,11 @@ export class MarketService {
     /**
      * Get markets by event
      */
-    async getMarketsByEvent(event_name_id: number) {
+    async getMarketsByEvent(event_act_id: number) {
         try {
             return (await prisma.markets.findMany({
                 where: {
-                    event_name_id,
+                    event_act_id,
                     deleted: false,
                 },
                 include: {
