@@ -304,8 +304,8 @@ export class MarketService {
             name,
             description,
             id,
-            start_date: start_date ? new Date(start_date).toDateString() : undefined,
-            end_date: end_date ? new Date(end_date).toDateString() : undefined,
+            start_date: start_date ? new Date(start_date).toISOString().split('T')[0] : undefined,
+            end_date: end_date ? new Date(end_date).toISOString().split('T')[0] : undefined,
             event_id: event?.id,
             event_name: event?.event_name
         }
