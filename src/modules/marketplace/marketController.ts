@@ -40,8 +40,8 @@ export class MarketController {
 
     async deleteMarket(req: Request, res: Response) {
         try {
-            const {id} = req.params;
-            const market = await marketService.deleteMarket(parseInt(id));
+            const {id} = req.query;
+            const market = await marketService.deleteMarket(Number(id));
             return res
                 .status(200)
                 .json({message: "Market Deleted Successfully", data: market})
