@@ -110,8 +110,8 @@ export class MarketController {
 
     async getMarketById(req: Request, res: Response) {
         try {
-            const {market_id} = req.body;
-            const market = await marketService.getMarketById(market_id);
+            const {id} = req.query;
+            const market = await marketService.getMarketById(Number(id));
             return res
                 .status(200)
                 .json({data: market})
