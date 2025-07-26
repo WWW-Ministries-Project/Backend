@@ -10,6 +10,7 @@ export interface CreateProductInput {
     price_amount?: number;
     size_ids?: number[];
     stock?: number;
+    market_id?: number;
 }
 
 export interface UpdateProductInput extends CreateProductInput {
@@ -26,4 +27,11 @@ export interface ProductFilters {
     size_ids?: string[];
     take?: number;
     skip?: number;
+}
+
+export interface CreateStockData {
+    product_id: number;
+    size_ids: number[];
+    colour?: string;
+    stock?: number;
 }

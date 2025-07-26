@@ -1,5 +1,5 @@
 import {prisma} from "../../Models/context";
-import {CreateProductInput, ProductFilters, UpdateProductInput} from "./productInterface";
+import {CreateProductInput, CreateStockData, ProductFilters, UpdateProductInput} from "./productInterface";
 
 export class ProductService {
     private readonly _include = {
@@ -10,9 +10,25 @@ export class ProductService {
     };
 
     async createProduct(input: CreateProductInput) {
-        return await prisma.products.create({
-            data: this.generateProductData(input),
+        if (!(await this.marketCheck(input.market_id))) {
+            throw new Error("Market with given id does not exist");
+        }
+        const product = await prisma.products.create({
+            data: {
+                name: input.name.trim(),
+                description: input.description?.trim(),
+                image: input.image?.trim(),
+                published: input.published,
+                product_type: this.connectProductType(input),
+                product_category: this.connectProductCategory(input),
+                price_currency: input.price_currency,
+                price_amount: input.price_amount
+            },
             include: this._include
+        });
+        const stock = await this.createProductStock({
+            product_id: product.id,
+            size_ids: input.size_ids || [],
         })
     }
 
@@ -20,13 +36,13 @@ export class ProductService {
         if (!(await prisma.products.findFirst({where: {id: data.product_id}}))) {
             throw new Error("Product with given id not found");
         }
-        return await prisma.products.update({
+        return prisma.products.update({
             where: {
                 id: data.product_id
             },
             data: this.generateProductData(data),
             include: this._include
-        })
+        });
     }
 
     async softDeleteProduct(product_id: number) {
@@ -47,6 +63,19 @@ export class ProductService {
         })
     }
 
+    async getProductsByMarketId(marketId: number) {
+        return prisma.products.findFirst({
+            where: {
+                market_id: marketId,
+                deleted: false
+            },
+            include: {
+                product_category: true,
+                product_type: true
+            }
+        })
+    }
+
     async listProducts(filters: ProductFilters) {
         const where = {
             name: filters.name ? {
@@ -60,14 +89,14 @@ export class ProductService {
     }
 
     private async updateDeletedOnProduct(product_id: number, deleted: boolean) {
-        return await prisma.products.update({
+        return prisma.products.update({
             where: {
                 id: product_id
             },
             data: {
                 deleted
             }
-        })
+        });
     }
 
     private generateProductData(input: CreateProductInput) {
@@ -78,12 +107,19 @@ export class ProductService {
             published: input.published,
             product_type: this.connectProductType(input),
             product_category: this.connectProductCategory(input),
-            colours: input.colours?.join(','),
             price_currency: input.price_currency,
-            price_amount: input.price_amount,
-            sizes: this.connectSizes(input.size_ids),
-            stock: input.stock
+            price_amount: input.price_amount
         };
+    }
+
+    private async createProductStock(input: CreateStockData) {
+        const data = input.size_ids.map(i => ({
+            product_id: input.product_id,
+            size_id: i,
+            colour: input.colour,
+            stock: input.stock
+        }));
+        return prisma.product_stock.createMany({data})
     }
 
     private connectProductType(input: CreateProductInput | UpdateProductInput) {
@@ -125,5 +161,72 @@ export class ProductService {
 
     async listSizes() {
         return prisma.sizes.findMany();
+    }
+
+    async marketCheck(id?: number) {
+        return prisma.markets.findFirst({where: {id}})
+    }
+
+    async createProductType(name: string) {
+        const check = await this.getProductTypeByExistingName(name);
+        if (check) {
+            if (!check.deleted) {
+                throw new Error("Product type exists with given name");
+            }
+            return prisma.product_type.update({
+                where: {
+                    id: check.id
+                },
+                data: {
+                    deleted: false,
+                    name
+                }
+            })
+        }
+        return prisma.product_type.create({
+            data: {
+                name: name.trim()
+            }
+        })
+    }
+
+    async getProductTypeByExistingName(name: string) {
+        return prisma.product_type.findFirst({
+            where: {
+                name
+            }
+        });
+    }
+
+    async updateProductType(id: number, name: string) {
+        const check = await this.getProductTypeByExistingName(name);
+        if (check) {
+            if (!check.deleted) {
+                throw new Error("Product type exists with given name");
+            }
+            await prisma.product_type.update({
+                where: {
+                    id: check.id
+                },
+                data: {
+                    name: ""
+                }
+            })
+        }
+        return prisma.product_type.update({where: {id}, data: {name}})
+    }
+
+    async deleteProductType(id: number) {
+        return prisma.product_type.update({where: {id}, data: {deleted: true}});
+    }
+
+    async restoreProductType(id: number) {
+        return prisma.product_type.update({where: {id}, data: {deleted: false}});
+    }
+
+    async listProductTypes() {
+        return prisma.product_type.findMany(({
+            where: {deleted: false}
+        }))
     }
 }

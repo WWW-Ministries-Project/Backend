@@ -14,5 +14,11 @@ productRouter.delete("/delete-product", productController.deleteProduct);
 productRouter.put("/restore-product", productController.restoreProduct);
 productRouter.get("/list-products", productController.listProducts);
 productRouter.get("/get-product-by-id", productController.getProductById);
+//product type
+productRouter.post("/create-product-type", productController.createProductType);
+productRouter.put("/update-product-type", productController.updateProductType);
+productRouter.delete("/delete-product-type", productController.deleteProductType);
+productRouter.put("/restore-product-type", productController.restoreProductType);
+productRouter.get("/list-product-type", productController.listProductTypes);
 
 export default productRouter;

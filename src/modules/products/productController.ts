@@ -59,6 +59,18 @@ export class ProductController {
         }
     }
 
+    async getProductByMarketId(req: Request, res: Response) {
+        try {
+            const {market_id} = req.query;
+            const product = await productService.getProductById(Number(market_id));
+            return res
+                .status(200)
+                .json({data: product});
+        } catch (error: any) {
+            return res.status(500).json({message: "Failed to fetch product: " + error.message})
+        }
+    }
+
     async listProducts(req: Request, res: Response) {
         try {
             const product = await productService.listProducts(req.body.filters);
@@ -93,6 +105,7 @@ export class ProductController {
             return res.status(500).json({message: "Failed to create size: " + error.message})
         }
     }
+
     async listSizes(req: Request, res: Response) {
         try {
             const sizes = await productService.listSizes();
@@ -101,6 +114,65 @@ export class ProductController {
                 .json({data: sizes});
         } catch (error: any) {
             return res.status(500).json({message: "Failed to create size: " + error.message})
+        }
+    }
+
+    async createProductType(req: Request, res: Response) {
+        try {
+            const {name} = req.body;
+            const productType = await productService.createProductType(name);
+            return res
+                .status(200)
+                .json({data: productType});
+        } catch (error: any) {
+            return res.status(500).json({message: "Failed to create product type: " + error.message})
+        }
+    }
+
+    async updateProductType(req: Request, res: Response) {
+        try {
+            const {id, name} = req.body;
+            const productType = await productService.updateProductType(id, name);
+            return res
+                .status(200)
+                .json({data: productType});
+        } catch (error: any) {
+            return res.status(500).json({message: "Failed to update product type: " + error.message})
+        }
+    }
+
+    async deleteProductType(req: Request, res: Response) {
+        try {
+            const {id} = req.body;
+            const productType = await productService.deleteProductType(id);
+            return res
+                .status(200)
+                .json({data: productType});
+        } catch (error: any) {
+            return res.status(500).json({message: "Failed to delete product type: " + error.message})
+        }
+    }
+
+    async restoreProductType(req: Request, res: Response) {
+        try {
+            const {id} = req.body;
+            const productType = await productService.restoreProductType(id);
+            return res
+                .status(200)
+                .json({data: productType});
+        } catch (error: any) {
+            return res.status(500).json({message: "Failed to restore product type: " + error.message})
+        }
+    }
+
+    async listProductTypes(req: Request, res: Response) {
+        try {
+            const productTypes = await productService.listProductTypes();
+            return res
+                .status(200)
+                .json({data: productTypes});
+        } catch (error: any) {
+            return res.status(500).json({message: "Failed to get product types: " + error.message})
         }
     }
 }
