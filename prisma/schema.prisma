@@ -672,7 +672,8 @@ model markets {
   description   String?
   deleted       Boolean    @default(false)
   event         event_act? @relation(fields: [event_act_id], references: [id])
-  event_act_id Int?
+  event_act_id  Int?
+  products      products[]
   start_date    DateTime?
   end_date      DateTime?
   created_at    DateTime   @default(now())
@@ -686,42 +687,41 @@ model products {
   name                String
   description         String?
   image               String?
+  colours             String?
   deleted             Boolean           @default(false)
   published           Boolean           @default(false)
   product_type        product_type?     @relation(fields: [product_type_id], references: [id])
   product_category    product_category? @relation(fields: [product_category_id], references: [id])
   product_type_id     Int?
   product_category_id Int?
-  colours             String?
   price_currency      String?
   price_amount        Float?
-  sizes               sizes[]
-  stock               Int               @default(0)
   created_at          DateTime          @default(now())
   updated_at          DateTime          @updatedAt
   created_by_id       Int?
   updated_at_id       Int?
-  products_sizes      products_sizes[]
+  product_stock       product_stock[]
+  market              markets?          @relation(fields: [market_id], references: [id])
+  market_id           Int?
 }
 
 model sizes {
-  id             Int              @id @default(autoincrement())
-  name           String           @unique
-  sort_order     Int?
-  created_at     DateTime         @default(now())
-  updated_at     DateTime         @updatedAt
-  created_by_id  Int?
-  updated_at_id  Int?
-  products       products[]
-  products_sizes products_sizes[]
+  id            Int             @id @default(autoincrement())
+  name          String          @unique
+  sort_order    Int?
+  created_at    DateTime        @default(now())
+  updated_at    DateTime        @updatedAt
+  created_by_id Int?
+  updated_at_id Int?
+  product_stock product_stock[]
 }
 
-model products_sizes {
-  product    products @relation(fields: [product_id], references: [id])
-  size       sizes    @relation(fields: [size_id], references: [id])
-  stock      Int?
+model product_stock {
+  id         Int      @id @default(autoincrement())
   product_id Int
   size_id    Int
-
-  @@id([product_id, size_id])
+  colour     String?
+  stock      Int      @default(0)
+  product    products @relation(fields: [product_id], references: [id])
+  size       sizes    @relation(fields: [size_id], references: [id])
 }
