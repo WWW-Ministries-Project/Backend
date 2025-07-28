@@ -20,6 +20,7 @@ import {
   linkSpouses,
   getUserFamily,
   linkChildren,
+  currentuser,
 } from "../user/userController";
 import { Permissions } from "../../middleWare/authorization";
 const permissions = new Permissions();
@@ -93,3 +94,9 @@ userRouter.put(
   [protect, permissions.can_Manage_Members],
   linkChildren,
 );
+
+userRouter.get(
+  "/current-user",
+  currentuser,
+);
+
