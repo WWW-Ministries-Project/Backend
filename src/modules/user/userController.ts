@@ -1237,3 +1237,47 @@ export const linkChildren = async (req: Request, res: Response) => {
     throw error;
   }
 };
+
+export const currentuser = async (req: Request, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ message: "Authorization header missing or invalid." });
+    }
+
+    const token = authHeader.split(" ")[1];
+    const decoded: any = JWT.verify(token, JWT_SECRET);
+
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.id },
+      include: {
+        user_info: true,
+        department_positions: {
+          include: {
+            department: true,
+          },
+        },
+      }, 
+     
+    });
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found." });
+    }
+
+    const department:string[] = user.department_positions.map((dept) => dept.department.name)
+
+    const data = {
+      name: user.name,
+      email: user.email,
+      phone: user.user_info?.primary_number || null,
+      member_since: user.user_info?.member_since || null,
+      department,
+      membership_type: user.membership_type || null,
+    }
+
+    return res.json({message: "Operation sucessful", data: data})
+  } catch (error) {
+    return res.status(401).json({ message: "Unauthorized", error });
+  }
+};
