@@ -10,39 +10,39 @@ export class ProductService {
     };
 
     async createProduct(input: CreateProductInput) {
-        if (!(await this.marketCheck(input.market_id))) {
-            throw new Error("Market with given id does not exist");
-        }
-        const product = await prisma.products.create({
-            data: {
-                name: input.name.trim(),
-                description: input.description?.trim(),
-                image: input.image?.trim(),
-                published: input.published,
-                product_type: this.connectProductType(input),
-                product_category: this.connectProductCategory(input),
-                price_currency: input.price_currency,
-                price_amount: input.price_amount
-            },
-            include: this._include
-        });
-        const stock = await this.createProductStock({
-            product_id: product.id,
-            size_ids: input.size_ids || [],
-        })
+        // if (!(await this.marketCheck(input.market_id))) {
+        //     throw new Error("Market with given id does not exist");
+        // }
+        // const product = await prisma.products.create({
+        //     data: {
+        //         name: input.name.trim(),
+        //         description: input.description?.trim(),
+        //         image: input.image?.trim(),
+        //         published: input.published,
+        //         product_type: this.connectProductType(input),
+        //         product_category: this.connectProductCategory(input),
+        //         price_currency: input.price_currency,
+        //         price_amount: input.price_amount
+        //     },
+        //     include: this._include
+        // });
+        // const stock = await this.createProductStock({
+        //     product_id: product.id,
+        //     size_ids: input.size_ids || [],
+        // })
     }
 
     async updateProduct(data: UpdateProductInput) {
-        if (!(await prisma.products.findFirst({where: {id: data.product_id}}))) {
-            throw new Error("Product with given id not found");
-        }
-        return prisma.products.update({
-            where: {
-                id: data.product_id
-            },
-            data: this.generateProductData(data),
-            include: this._include
-        });
+        // if (!(await prisma.products.findFirst({where: {id: data.product_id}}))) {
+        //     throw new Error("Product with given id not found");
+        // }
+        // return prisma.products.update({
+        //     where: {
+        //         id: data.product_id
+        //     },
+        //     data: this.generateProductData(data),
+        //     include: this._include
+        // });
     }
 
     async softDeleteProduct(product_id: number) {
@@ -190,14 +190,6 @@ export class ProductService {
         })
     }
 
-    async getProductTypeByExistingName(name: string) {
-        return prisma.product_type.findFirst({
-            where: {
-                name
-            }
-        });
-    }
-
     async updateProductType(id: number, name: string) {
         const check = await this.getProductTypeByExistingName(name);
         if (check) {
@@ -228,5 +220,76 @@ export class ProductService {
         return prisma.product_type.findMany(({
             where: {deleted: false}
         }))
+    }
+
+    async createProductCategory(name: string) {
+        const check = await this.getProductCategoryByExistingName(name);
+        if (check) {
+            if (!check.deleted) {
+                throw new Error("Product category exists with given name");
+            }
+            return prisma.product_category.update({
+                where: {
+                    id: check.id
+                },
+                data: {
+                    deleted: false,
+                    name
+                }
+            })
+        }
+        return prisma.product_category.create({
+            data: {
+                name: name.trim()
+            }
+        })
+    }
+
+    async updateProductCategory(id: number, name: string) {
+        const check = await this.getProductCategoryByExistingName(name);
+        if (check) {
+            if (!check.deleted) {
+                throw new Error("Product category exists with given name");
+            }
+            await prisma.product_category.update({
+                where: {
+                    id: check.id
+                },
+                data: {
+                    name: ""
+                }
+            })
+        }
+        return prisma.product_category.update({where: {id}, data: {name}})
+    }
+
+    async deleteProductCategory(id: number) {
+        return prisma.product_category.update({where: {id}, data: {deleted: true}});
+    }
+
+    async restoreProductCategory(id: number) {
+        return prisma.product_category.update({where: {id}, data: {deleted: false}});
+    }
+
+    async listProductCategories() {
+        return prisma.product_category.findMany(({
+            where: {deleted: false}
+        }))
+    }
+
+    async getProductTypeByExistingName(name: string) {
+        return prisma.product_type.findFirst({
+            where: {
+                name
+            }
+        });
+    }
+
+    async getProductCategoryByExistingName(name: string) {
+        return prisma.product_category.findFirst({
+            where: {
+                name
+            }
+        });
     }
 }

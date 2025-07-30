@@ -1,5 +1,5 @@
 import Router from "express";
-import {ProductController} from './productController';
+import {ProductController} from "./productController";
 
 const productRouter = Router();
 const productController = new ProductController();
@@ -20,5 +20,11 @@ productRouter.put("/update-product-type", productController.updateProductType);
 productRouter.delete("/delete-product-type", productController.deleteProductType);
 productRouter.put("/restore-product-type", productController.restoreProductType);
 productRouter.get("/list-product-type", productController.listProductTypes);
+//product category
+productRouter.post("/create-product-category", productController.createProductCategory);
+productRouter.put("/update-product-category", productController.updateProductCategory);
+productRouter.delete("/delete-product-category", productController.deleteProductCategory);
+productRouter.put("/restore-product-category", productController.restoreProductCategory);
+productRouter.get("/list-product-category", productController.listProductCategories);
 
 export default productRouter;
