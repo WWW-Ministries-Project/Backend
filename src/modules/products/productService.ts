@@ -13,6 +13,7 @@ export class ProductService {
         // if (!(await this.marketCheck(input.market_id))) {
         //     throw new Error("Market with given id does not exist");
         // }
+        // const {} =
         // const product = await prisma.products.create({
         //     data: {
         //         name: input.name.trim(),
@@ -27,22 +28,21 @@ export class ProductService {
         //     include: this._include
         // });
         // const stock = await this.createProductStock({
-        //     product_id: product.id,
-        //     size_ids: input.size_ids || [],
+        //
         // })
     }
 
     async updateProduct(data: UpdateProductInput) {
-        // if (!(await prisma.products.findFirst({where: {id: data.product_id}}))) {
-        //     throw new Error("Product with given id not found");
-        // }
-        // return prisma.products.update({
-        //     where: {
-        //         id: data.product_id
-        //     },
-        //     data: this.generateProductData(data),
-        //     include: this._include
-        // });
+        if (!(await prisma.products.findFirst({where: {id: data.product_id}}))) {
+            throw new Error("Product with given id not found");
+        }
+        return prisma.products.update({
+            where: {
+                id: data.product_id
+            },
+            data: this.generateProductData(data),
+            include: this._include
+        });
     }
 
     async softDeleteProduct(product_id: number) {

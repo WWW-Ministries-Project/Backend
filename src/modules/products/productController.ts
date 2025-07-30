@@ -143,8 +143,8 @@ export class ProductController {
 
     async deleteProductType(req: Request, res: Response) {
         try {
-            const {id} = req.body;
-            const productType = await productService.deleteProductType(id);
+            const {id} = req.query;
+            const productType = await productService.deleteProductType(Number(id));
             return res
                 .status(200)
                 .json({data: productType});
@@ -155,8 +155,8 @@ export class ProductController {
 
     async restoreProductType(req: Request, res: Response) {
         try {
-            const {id} = req.body;
-            const productType = await productService.restoreProductType(id);
+            const {id} = req.query;
+            const productType = await productService.restoreProductType(Number(id));
             return res
                 .status(200)
                 .json({data: productType});
@@ -202,8 +202,8 @@ export class ProductController {
 
     async deleteProductCategory(req: Request, res: Response) {
         try {
-            const {id} = req.body;
-            const productType = await productService.deleteProductCategory(id);
+            const {id} = req.query;
+            const productType = await productService.deleteProductCategory(Number(id));
             return res
                 .status(200)
                 .json({data: productType});

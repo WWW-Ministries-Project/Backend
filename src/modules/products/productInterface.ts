@@ -5,12 +5,21 @@ export interface CreateProductInput {
     published?: boolean;
     product_type_id?: number;
     product_category_id?: number;
-    colours?: string[];
+    product_image: ProductImage[];
     price_currency?: string;
     price_amount?: number;
-    size_ids?: number[];
-    stock?: number;
+    product_stock: CreateProductStockInput
     market_id?: number;
+}
+
+export interface CreateProductStockInput {
+    size_id: number;
+    stock: number;
+}
+
+export interface ProductImage {
+    colour: string;
+    image_url: string;
 }
 
 export interface UpdateProductInput extends CreateProductInput {
