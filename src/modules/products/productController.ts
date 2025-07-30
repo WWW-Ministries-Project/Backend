@@ -143,8 +143,8 @@ export class ProductController {
 
     async deleteProductType(req: Request, res: Response) {
         try {
-            const {id} = req.body;
-            const productType = await productService.deleteProductType(id);
+            const {id} = req.query;
+            const productType = await productService.deleteProductType(Number(id));
             return res
                 .status(200)
                 .json({data: productType});
@@ -155,8 +155,8 @@ export class ProductController {
 
     async restoreProductType(req: Request, res: Response) {
         try {
-            const {id} = req.body;
-            const productType = await productService.restoreProductType(id);
+            const {id} = req.query;
+            const productType = await productService.restoreProductType(Number(id));
             return res
                 .status(200)
                 .json({data: productType});
@@ -173,6 +173,65 @@ export class ProductController {
                 .json({data: productTypes});
         } catch (error: any) {
             return res.status(500).json({message: "Failed to get product types: " + error.message})
+        }
+    }
+
+    async createProductCategory(req: Request, res: Response) {
+        try {
+            const {name} = req.body;
+            const productType = await productService.createProductCategory(name);
+            return res
+                .status(200)
+                .json({data: productType});
+        } catch (error: any) {
+            return res.status(500).json({message: "Failed to create product category: " + error.message})
+        }
+    }
+
+    async updateProductCategory(req: Request, res: Response) {
+        try {
+            const {id, name} = req.body;
+            const productType = await productService.updateProductCategory(id, name);
+            return res
+                .status(200)
+                .json({data: productType});
+        } catch (error: any) {
+            return res.status(500).json({message: "Failed to update product category: " + error.message})
+        }
+    }
+
+    async deleteProductCategory(req: Request, res: Response) {
+        try {
+            const {id} = req.query;
+            const productType = await productService.deleteProductCategory(Number(id));
+            return res
+                .status(200)
+                .json({data: productType});
+        } catch (error: any) {
+            return res.status(500).json({message: "Failed to delete product category: " + error.message})
+        }
+    }
+
+    async restoreProductCategory(req: Request, res: Response) {
+        try {
+            const {id} = req.body;
+            const productType = await productService.restoreProductCategory(id);
+            return res
+                .status(200)
+                .json({data: productType});
+        } catch (error: any) {
+            return res.status(500).json({message: "Failed to restore product category: " + error.message})
+        }
+    }
+
+    async listProductCategories(req: Request, res: Response) {
+        try {
+            const productCategories = await productService.listProductCategories();
+            return res
+                .status(200)
+                .json({data: productCategories});
+        } catch (error: any) {
+            return res.status(500).json({message: "Failed to get product categories: " + error.message})
         }
     }
 }
