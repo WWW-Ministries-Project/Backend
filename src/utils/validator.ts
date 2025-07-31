@@ -26,7 +26,7 @@ export const assetSchema = Joi.object({
 export const departmentSchema = Joi.object({
   name: Joi.string()
       .trim()
-      .pattern(/^[A-Za-z\s0-9]+$/) // only alphabets + spaces
+      .pattern(/^[A-Za-z0-9\s]+$/) // only alphabets + spaces
       .min(2)
       .max(100)
       .required()
@@ -39,7 +39,7 @@ export const departmentSchema = Joi.object({
 
   description: Joi.string()
       .trim()
-      .pattern(/^[A-Za-z\s0-9]+$/) // only alphabets + spaces
+      .pattern(/^[A-Za-z0-9\s]+$/) // only alphabets + spaces
       .max(250)
       .required()
       .messages({
