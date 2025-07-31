@@ -1,48 +1,120 @@
 import {prisma} from "../../Models/context";
-import {CreateProductInput, CreateStockData, ProductFilters, UpdateProductInput} from "./productInterface";
+import {
+    CreateProductInput,
+    CreateStockData,
+    ProductExtended,
+    ProductFilters, ProductImage,
+    SizeStock,
+    UpdateProductInput
+} from "./productInterface";
+import {product_image, product_stock} from "@prisma/client";
 
 export class ProductService {
     private readonly _include = {
         product_category: true,
         product_type: true,
-        products_sizes: true,
-        sizes: true
+        sizes: true,
+        product_image: true,
+        product_stock: true
     };
 
-    async createProduct(input: CreateProductInput) {
-        // if (!(await this.marketCheck(input.market_id))) {
-        //     throw new Error("Market with given id does not exist");
-        // }
-        // const {} =
-        // const product = await prisma.products.create({
-        //     data: {
-        //         name: input.name.trim(),
-        //         description: input.description?.trim(),
-        //         image: input.image?.trim(),
-        //         published: input.published,
-        //         product_type: this.connectProductType(input),
-        //         product_category: this.connectProductCategory(input),
-        //         price_currency: input.price_currency,
-        //         price_amount: input.price_amount
-        //     },
-        //     include: this._include
-        // });
-        // const stock = await this.createProductStock({
-        //
-        // })
+    constructProductData(input: CreateProductInput) {
+        return {
+            data: {
+                name: input.name.trim(),
+                description: input.description?.trim(),
+                published: input.published,
+                product_type: this.connectProductType(input),
+                product_category: this.connectProductCategory(input),
+                price_currency: input.price_currency,
+                price_amount: input.price_amount,
+                market: {
+                    connect: {
+                        id: input.market_id
+                    }
+                }
+            },
+            include: {
+                product_category: true,
+                product_type: true,
+                product_stock: true,
+                market: true
+            }
+        }
     }
 
-    async updateProduct(data: UpdateProductInput) {
-        if (!(await prisma.products.findFirst({where: {id: data.product_id}}))) {
+    async createProduct(input: CreateProductInput) {
+        if (!(await this.marketCheck(input.market_id))) {
+            throw new Error("Market with given id does not exist");
+        }
+        const product = await prisma.products.create({...(this.constructProductData(input))});
+        await this.createProductStock({
+            product_id: product.id,
+            size_stock: input.product_stock
+        });
+        const count = await this.createProductImage(product.id, input.product_image);
+        console.log(count);
+        const stock = await prisma.product_stock.findMany({
+            where: {
+                product_id: product.id
+            }
+        });
+        const images = await prisma.product_image.findMany({
+            where: {
+                product_id: product.id
+            }
+        })
+
+        return this.transformToProductDto(product, stock, images);
+    }
+
+    async updateProduct(input: UpdateProductInput) {
+        if (!(await prisma.products.findFirst({where: {id: input.product_id}}))) {
             throw new Error("Product with given id not found");
         }
-        return prisma.products.update({
-            where: {
-                id: data.product_id
-            },
-            data: this.generateProductData(data),
-            include: this._include
+        const product = await prisma.products.update({
+            where: {id: input.product_id},
+            ...(this.constructProductData(input))
         });
+
+        const stock = await prisma.product_stock.findMany({
+            where: {
+                product_id: product.id
+            }
+        });
+        const images = await prisma.product_image.findMany({
+            where: {
+                product_id: product.id
+            }
+        })
+        return this.transformToProductDto(product, stock, images);
+    }
+
+    transformToProductDto(product: ProductExtended, stock: product_stock[], productImage: product_image[]) {
+        return {
+            id: product.id,
+            name: product.name,
+            description: product.description,
+            product_category: product.product_category,
+            product_type: product.product_type,
+            price_currency: product.price_currency,
+            price_amount: product.price_amount,
+            market: product.market,
+            market_id: product.market_id,
+            published: product.published,
+            product_stock: stock,
+            product_image: productImage
+        }
+    }
+
+    async createProductImage(product_id: number, productImages: ProductImage[]) {
+        const data = productImages.map(s => ({
+            product_id,
+            colour: s.colour,
+            image_url: s.image_url
+
+        }));
+        return prisma.product_image.createMany({data})
     }
 
     async softDeleteProduct(product_id: number) {
@@ -103,7 +175,6 @@ export class ProductService {
         return {
             name: input.name.trim(),
             description: input.description?.trim(),
-            image: input.image?.trim(),
             published: input.published,
             product_type: this.connectProductType(input),
             product_category: this.connectProductCategory(input),
@@ -113,11 +184,10 @@ export class ProductService {
     }
 
     private async createProductStock(input: CreateStockData) {
-        const data = input.size_ids.map(i => ({
+        const data = input.size_stock.map(i => ({
             product_id: input.product_id,
-            size_id: i,
-            colour: input.colour,
-            stock: input.stock
+            size_id: i.size_id,
+            stock: i.stock
         }));
         return prisma.product_stock.createMany({data})
     }

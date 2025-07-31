@@ -686,8 +686,8 @@ model products {
   id                  Int               @id @default(autoincrement())
   name                String
   description         String?
-  image               String?
   colours             String?
+  image_url           String?
   deleted             Boolean           @default(false)
   published           Boolean           @default(false)
   product_type        product_type?     @relation(fields: [product_type_id], references: [id])
@@ -703,6 +703,7 @@ model products {
   product_stock       product_stock[]
   market              markets?          @relation(fields: [market_id], references: [id])
   market_id           Int?
+  product_image       product_image[]
 }
 
 model sizes {
@@ -720,8 +721,15 @@ model product_stock {
   id         Int      @id @default(autoincrement())
   product_id Int
   size_id    Int
-  colour     String?
   stock      Int      @default(0)
   product    products @relation(fields: [product_id], references: [id])
   size       sizes    @relation(fields: [size_id], references: [id])
+}
+
+model product_image {
+  id         Int      @id @default(autoincrement())
+  colour     String?
+  image_url  String?
+  product_id Int
+  product    products @relation(fields: [product_id], references: [id])
 }
