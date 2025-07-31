@@ -354,7 +354,7 @@ export const updateUserSatus = async (req: Request, res: Response) => {
             },
             secret,
             {
-                expiresIn: "15m",
+                expiresIn: "7d",
             },
         );
 
@@ -363,7 +363,7 @@ export const updateUserSatus = async (req: Request, res: Response) => {
         const mailDetails = {
             user_name: response.name,
             link,
-            expiration: "15mins",
+            expiration: "7days",
         };
 
         if (is_active) {
