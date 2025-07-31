@@ -8,7 +8,7 @@ export const createDepartment = async (req: Request, res: Response) => {
     try {
         if (!name || name.trim() === "") {
             return res.status(400).json({
-                message: "We cannot have an empty department name, you get it?",
+                message: "Empty Department Name",
                 data: null,
             });
         }
@@ -20,7 +20,7 @@ export const createDepartment = async (req: Request, res: Response) => {
         )
         if (existing) {
             return res.status(400).json({
-                message: "We cannot have duplicate department name, you get it?",
+                message: "Department Name already exist",
                 data: null,
             });
         }
