@@ -34,6 +34,9 @@ export class eventManagement {
                 return res.status(400).json({message: "Event Name Id not found"});
             }
             let {start_date, end_date, day_event, repetitive, recurring} = req.body;
+            if (new Date(start_date) < new Date()){
+                return res.status(400).json({message: "Event start date cannot be in the past"});
+            }
             if (day_event === "multi" && repetitive === "no") {
                 end_date = addDays(start_date, recurring.daysOfWeek);
                 const data2 = generateRecurringDates(start_date, end_date, recurring);
