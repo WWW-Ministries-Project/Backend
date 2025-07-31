@@ -579,7 +579,7 @@ export const resetPassword = async (req: Request, res: Response) => {
                 .json({message: "Password Successfully changed", data: null});
         }
     } catch (error) {
-        return res.status(500).json({message: "Link Expired", data: null});
+        return res.status(500).json({message: "Link Expired" + error, data: null});
     }
 };
 
@@ -604,12 +604,14 @@ export const activateUser = async (req: Request, res: Response) => {
             },
         });
 
-        // Send Mail
-        sendEmail(
-            activateUserTemplate({user_name: existingUser.name}),
-            existingUser.email || "",
-            "User Activation",
-        );
+        if (response.is_user){
+            sendEmail(
+                activateUserTemplate({user_name: existingUser.name}),
+                existingUser.email || "",
+                "User Activation",
+            );
+        }
+
 
         return res
             .status(200)
