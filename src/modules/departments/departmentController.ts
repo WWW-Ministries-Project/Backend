@@ -5,6 +5,12 @@ import { toCapitalizeEachWord } from "../../utils";
 export const createDepartment = async (req: Request, res: Response) => {
   const { name, department_head, description, created_by } = req.body;
   try {
+    if (!name || name.trim() === "") {
+    return res.status(400).json({
+      message: "We cannot have an empty department name, you get it?",
+      data: null,
+    });
+}
     const response = await prisma.department.create({
       data: {
         name: toCapitalizeEachWord(name),
@@ -44,6 +50,14 @@ export const updateDepartment = async (req: Request, res: Response) => {
   const { id, name, department_head, description, updated_by } = req.body;
 
   try {
+
+    if (!name || name.trim() === "") {
+    return res.status(400).json({
+      message: "We cannot have an empty department name, you get it?",
+      data: null,
+    });
+  }
+
     const response = await prisma.department.update({
       where: {
         id,
