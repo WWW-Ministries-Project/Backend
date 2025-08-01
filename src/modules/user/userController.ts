@@ -426,6 +426,7 @@ export const login = async (req: Request, res: Response) => {
                 name: true,
                 password: true,
                 is_active: true,
+                department_positions: true,
                 user_info: {
                     select: {
                         photo: true,
@@ -452,6 +453,8 @@ export const login = async (req: Request, res: Response) => {
             });
         }
 
+        const department: string[] = existance.department_positions.map((dept:any) => dept.department.name)
+
         if (await comparePassword(password, existance?.password)) {
             const token = JWT.sign(
                 {
@@ -460,6 +463,8 @@ export const login = async (req: Request, res: Response) => {
                     email: existance.email,
                     permissions: existance.access?.permissions,
                     profile_img: existance.user_info?.photo,
+                    membership_type: existance.membership_type || null,
+                    department,
                 },
                 JWT_SECRET,
                 {
