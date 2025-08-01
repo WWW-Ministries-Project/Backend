@@ -73,7 +73,9 @@ export class ProductController {
 
     async listProducts(req: Request, res: Response) {
         try {
+            console.log(req.body.filters)
             const product = await productService.listProducts(req.body.filters);
+            console.log(product)
             return res
                 .status(200)
                 .json({data: product});

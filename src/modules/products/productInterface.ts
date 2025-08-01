@@ -13,11 +13,6 @@ export interface CreateProductInput {
     market_id?: number;
 }
 
-export interface CreateProductStockInput {
-    size_id: number;
-    stock: number;
-}
-
 export interface ProductImage {
     colour: string;
     image_url: string;
@@ -33,8 +28,6 @@ export interface ProductFilters {
     published?: boolean;
     product_type?: number;
     product_category?: number;
-    colours?: string[];
-    size_ids?: string[];
     take?: number;
     skip?: number;
 }
