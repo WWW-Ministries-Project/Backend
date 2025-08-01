@@ -427,7 +427,11 @@ export const login = async (req: Request, res: Response) => {
                 password: true,
                 is_active: true,
                 membership_type: true,
-                department_positions: true,
+                department_positions: {
+                    include:{
+                         department: true,
+                    },
+                },
                 user_info: {
                     select: {
                         photo: true,
@@ -456,7 +460,7 @@ export const login = async (req: Request, res: Response) => {
             });
         }
 
-        const department: string[] = existance.department_positions.map((dept:any) => console.log(dept))
+        const department: string[] = existance.department_positions.map((dept:any) => dept.department.name)
 
         if (await comparePassword(password, existance?.password)) {
             const token = JWT.sign(
@@ -467,7 +471,7 @@ export const login = async (req: Request, res: Response) => {
                     permissions: existance.access?.permissions,
                     profile_img: existance.user_info?.photo,
                     membership_type: existance.membership_type || null,
-                    // department,
+                    department,
                     phone: existance.user_info?.primary_number || null,
                     member_since: existance.user_info?.member_since || null,
                 },
