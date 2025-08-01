@@ -430,6 +430,8 @@ export const login = async (req: Request, res: Response) => {
                 user_info: {
                     select: {
                         photo: true,
+                        member_since: true,
+                        primary_number: true,
                     },
                 },
                 access: {
@@ -465,6 +467,8 @@ export const login = async (req: Request, res: Response) => {
                     profile_img: existance.user_info?.photo,
                     membership_type: existance.membership_type || null,
                     department,
+                    phone: existance.primary_number || null,
+                    member_since: existance.member_since || null,
                 },
                 JWT_SECRET,
                 {
