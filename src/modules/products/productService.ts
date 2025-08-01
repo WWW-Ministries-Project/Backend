@@ -148,16 +148,21 @@ export class ProductService {
         })
     }
 
-    async listProducts(filters: ProductFilters) {
+    async listProducts(filters?: ProductFilters) {
         const where = {
-            name: filters.name ? {
+            name: filters?.name ? {
                 contains: filters.name
             } : undefined,
-            deleted: filters.deleted || undefined,
-            published: filters.published || undefined,
-            product_type_id: filters.product_type || undefined,
-            product_category_id: filters.product_category || undefined,
+            deleted: filters?.deleted || undefined,
+            published: filters?.published || undefined,
+            product_type_id: filters?.product_type ?? undefined,
+            product_category_id: filters?.product_category ?? undefined
         }
+        return prisma.products.findMany({
+            where,
+            take: filters?.take,
+            skip: filters?.skip
+        })
     }
 
     private async updateDeletedOnProduct(product_id: number, deleted: boolean) {
