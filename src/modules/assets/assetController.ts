@@ -130,12 +130,28 @@ export const updateAsset = async (req: any, res: Response) => {
 };
 export const listAssets = async (req: Request, res: Response) => {
     try {
+        const { page = 1, limit = 10 }: any = req.query;
+        const total = await prisma.assets.count();
+        
+        const pageNum = parseInt(page, 10) || 1;
+        const pageSize = parseInt(limit, 10) || 10;
+        const skip = (pageNum - 1) * pageSize;
+
         const assetsList = await prisma.assets.findMany({
             orderBy: {
-                id: "desc",
+                name: "asc",
             },
+            skip,
+            take:pageSize,
         });
-        res.status(200).json({message: "Operation Succesful", data: assetsList});
+
+        res.status(200).json({
+            message: "Operation Succesful", 
+            current_page:pageNum,
+            page_size:pageSize,
+            total,
+            totalPages: Math.ceil(total / pageSize),
+            data: assetsList});
     } catch (error: any) {
         return res
             .status(500)
