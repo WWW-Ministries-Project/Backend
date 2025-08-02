@@ -31,7 +31,7 @@ export const createAccessLevel = async (req: Request, res: Response) => {
 
     const data = await prisma.access_level.findMany({
       orderBy: {
-        id: "desc",
+        name: "asc",
       },
       select: {
         id: true,

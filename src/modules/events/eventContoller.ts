@@ -810,7 +810,7 @@ export class eventManagement {
     getEventTypes = async (req: Request, res: Response) => {
         try {
             const eventTypes = await prisma.event_act.findMany({
-                orderBy: {event_name: "desc"},
+                orderBy: {event_name: "asc"},
             });
 
             return res.status(200).json({
