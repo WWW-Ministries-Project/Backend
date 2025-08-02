@@ -663,9 +663,9 @@ export const ListUsers = async (req: Request, res: Response) => {
     const {is_user, department_id, page = "1", limit = "10", is_active, name} = req.query;
     const isUser = is_user === "true";
 
-    const currentPage = parseInt(page as string, 10);
+    const pageNum = parseInt(page as string, 10);
     const pageSize = parseInt(limit as string, 10);
-    const skip = (currentPage - 1) * pageSize;
+    const skip = (pageNum - 1) * pageSize;
 
     try {
         const departments = await prisma.department.findMany({
@@ -749,8 +749,8 @@ export const ListUsers = async (req: Request, res: Response) => {
 
         res.status(200).json({
             message: "Operation Successful",
-            currentPage,
-            pageSize,
+            current_page:pageNum,
+            page_size:pageSize,
             total,
             totalPages: Math.ceil(total / pageSize),
             data: destructure(usersWithDeptName),

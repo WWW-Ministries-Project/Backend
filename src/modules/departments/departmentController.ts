@@ -143,10 +143,19 @@ export const deleteDepartment = async (req: Request, res: Response) => {
 
 export const listDepartments = async (req: Request, res: Response) => {
     try {
+        const { page = 1, limit = 10 }: any = req.query;
+        const total = await prisma.department.count();
+        
+        const pageNum = parseInt(page, 10) || 1;
+        const pageSize = parseInt(limit, 10) || 10;
+        const skip = (pageNum - 1) * pageSize;
+
         const response = await prisma.department.findMany({
             orderBy: {
                 name: "asc",
             },
+            skip,
+            take: pageSize,
             select: {
                 id: true,
                 name: true,
@@ -168,7 +177,15 @@ export const listDepartments = async (req: Request, res: Response) => {
                 }
             },
         });
-        res.status(200).json({message: "Success", data: response});
+        
+    
+        res.status(200).json({
+            message: "Success", 
+            current_page:pageNum,
+            page_size:pageSize,
+            total,
+            totalPages: Math.ceil(total / pageSize),
+            data: response});
     } catch (error) {
         return res
             .status(503)
