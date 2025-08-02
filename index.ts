@@ -5,6 +5,7 @@ import cors from "cors";
 import { appRouter } from "./src/routes/appRouter";
 import logger from "./src/utils/logger-config";
 import client from "prom-client";
+import { logRequests } from "./src/middleWare/requestLogger";
 dotenv.config();
 const collectDefaultMetrics = client.collectDefaultMetrics;
 collectDefaultMetrics();
@@ -19,6 +20,7 @@ app.use(bodyParser.json());
 app.use(cors());
 app.use(express.json());
 app.use(appRouter);
+app.use(logRequests);
 
 const specs = swaggerJsdoc(swaggerOptions);
 
