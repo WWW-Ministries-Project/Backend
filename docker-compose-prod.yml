@@ -14,3 +14,5 @@ services:
     restart: on-failure
     ports:
       - 8001:8000
+    volumes:
+      - ./logs:/app/www_project/logs
