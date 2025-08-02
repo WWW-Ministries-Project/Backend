@@ -1,7 +1,6 @@
 import {Request, Response} from "express";
 import {assetSchema, toCapitalizeEachWord} from "../../utils";
 import {prisma} from "../../Models/context";
-import {number} from "joi";
 
 export const createAsset = async (req: any, res: any) => {
     try {
