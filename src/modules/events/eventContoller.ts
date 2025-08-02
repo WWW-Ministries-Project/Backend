@@ -717,9 +717,9 @@ export class eventManagement {
         try {
             const {event_name, event_type, event_description} = req.body
 
-            if (!event_name || !event_type || !event_description) {
+            if (!event_name || !event_type) {
                 return res.status(400).json({
-                    message: "All fields (event_name, event_type, event_description) are required",
+                    message: "Fields event_name, event_type are required",
                 });
             }
 
