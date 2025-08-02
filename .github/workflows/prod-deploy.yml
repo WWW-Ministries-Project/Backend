@@ -36,6 +36,7 @@ jobs:
           host: ${{ secrets.PROD_HOST_IP_ADDRESS }}
           username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.PROD_SSH_KEY }}
+          timeout: 30m
           script: |
             cd /home/ubuntu/scripts && \
             if [ "${{ github.ref }}" = "refs/heads/production" ]; then
