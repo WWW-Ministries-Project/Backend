@@ -893,6 +893,8 @@ export const getUser = async (req: Request, res: Response) => {
                                 date_of_birth: true,
                                 gender: true,
                                 nationality: true,
+                                marital_status:true,
+                                title: true,
                             },
                         },
                     },
