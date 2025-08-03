@@ -142,16 +142,6 @@ async getProgressDetails(enrollmentId: number) {
 
   if (!enrollmentData) return null;
 
-  // Flatten user_info into the user object
-  if (enrollmentData.user && enrollmentData.user.user_info) {
-  enrollmentData.user = {
-    ...enrollmentData.user,
-    primary_number: enrollmentData.user.user_info.primary_number ?? null,
-  } as typeof enrollmentData.user & { primary_number: string | null };
-
-  delete (enrollmentData.user as any).user_info; 
-}
-
   const progressData = await prisma.progress.findMany({
     where: { enrollmentId },
     select: {
@@ -181,7 +171,14 @@ async getProgressDetails(enrollmentId: number) {
       }));
   }
 
-  return enrollmentData;
+  const response_data = {
+    ...enrollmentData,
+    name:enrollmentData.user?.name,
+    email:enrollmentData.user?.email,
+    number: enrollmentData.user?.user_info?.primary_number
+  }
+
+  return response_data;
 }
 
   async updateProgressScore(

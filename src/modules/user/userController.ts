@@ -471,7 +471,7 @@ export const login = async (req: Request, res: Response) => {
                     id: existance.id,
                     name: existance.name,
                     email: existance.email,
-                    ministry_worker,
+                    ministry_worker:ministry_worker,
                     permissions: existance.access?.permissions,
                     profile_img: existance.user_info?.photo,
                     membership_type: existance.membership_type || null,
