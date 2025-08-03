@@ -418,9 +418,9 @@ export const login = async (req: Request, res: Response) => {
         const existance: any = await prisma.user.findUnique({
             where: {
                 email,
-                AND: {
-                    is_user: true,
-                },
+                // AND: {
+                //     is_user: true, taking this one out because everyone can log in
+                // },
             },
             select: {
                 id: true,
@@ -428,6 +428,7 @@ export const login = async (req: Request, res: Response) => {
                 name: true,
                 password: true,
                 is_active: true,
+                is_user : true,
                 membership_type: true,
                 department_positions: {
                     include:{
