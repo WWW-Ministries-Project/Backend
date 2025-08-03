@@ -683,53 +683,55 @@ model markets {
 }
 
 model products {
-  id                  Int               @id @default(autoincrement())
+  id                  Int                    @id @default(autoincrement())
   name                String
   description         String?
   colours             String?
   image_url           String?
-  deleted             Boolean           @default(false)
-  published           Boolean           @default(false)
-  product_type        product_type?     @relation(fields: [product_type_id], references: [id])
-  product_category    product_category? @relation(fields: [product_category_id], references: [id])
+  deleted             Boolean                @default(false)
+  stock_managed       Boolean                @default(false)
+  published           Boolean                @default(false)
+  product_type        product_type?          @relation(fields: [product_type_id], references: [id])
+  product_category    product_category?      @relation(fields: [product_category_id], references: [id])
   product_type_id     Int?
   product_category_id Int?
   price_currency      String?
   price_amount        Float?
-  created_at          DateTime          @default(now())
-  updated_at          DateTime          @updatedAt
+  created_at          DateTime               @default(now())
+  updated_at          DateTime               @updatedAt
   created_by_id       Int?
   updated_at_id       Int?
-  product_stock       product_stock[]
-  market              markets?          @relation(fields: [market_id], references: [id])
+  market              markets?               @relation(fields: [market_id], references: [id])
   market_id           Int?
-  product_image       product_image[]
+  product_colours     product_colour[]
 }
 
 model sizes {
-  id            Int             @id @default(autoincrement())
-  name          String          @unique
-  sort_order    Int?
-  created_at    DateTime        @default(now())
-  updated_at    DateTime        @updatedAt
-  created_by_id Int?
-  updated_at_id Int?
-  product_stock product_stock[]
+  id                   Int                   @id @default(autoincrement())
+  name                 String                @unique
+  sort_order           Int?
+  created_at           DateTime              @default(now())
+  updated_at           DateTime              @updatedAt
+  created_by_id        Int?
+  updated_at_id        Int?
+  product_colour_stock product_stock[]
 }
 
-model product_stock {
-  id         Int      @id @default(autoincrement())
-  product_id Int
-  size_id    Int
-  stock      Int      @default(0)
-  product    products @relation(fields: [product_id], references: [id])
-  size       sizes    @relation(fields: [size_id], references: [id])
-}
-
-model product_image {
-  id         Int      @id @default(autoincrement())
+model product_colour {
+  id         Int                   @id @default(autoincrement())
   colour     String?
   image_url  String?
   product_id Int
-  product    products @relation(fields: [product_id], references: [id])
+  product    products              @relation(fields: [product_id], references: [id])
+  sizes      product_stock[]
+}
+
+model product_stock {
+  product_colour_id Int
+  product_colour    product_colour @relation(fields: [product_colour_id], references: [id])
+  size_id           Int
+  stock             Int                  @default(0)
+  size              sizes                @relation(fields: [size_id], references: [id])
+
+  @@id([size_id, product_colour_id])
 }

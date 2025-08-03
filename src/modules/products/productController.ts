@@ -22,13 +22,25 @@ export class ProductController {
                 .status(200)
                 .json({message: "Product Updated Successfully", data: product});
         } catch (error: any) {
+            console.log(error);
             return res.status(500).json({message: "Failed to update product: " + error.message})
+        }
+    }
+
+    async updateProductColourStock(req: Request, res: Response) {
+        try {
+            const productColours = await productService.updateProductColours(req.body);
+            return res
+                .status(200)
+                .json({message: "Product colour stock Updated Successfully", data: productColours});
+        } catch (error: any) {
+            return res.status(500).json({message: "Failed to update product colour stock: " + error.message})
         }
     }
 
     async deleteProduct(req: Request, res: Response) {
         try {
-            const product = await productService.softDeleteProduct(req.body.product_id);
+            const product = await productService.softDeleteProduct(Number(req.query.product_id));
             return res
                 .status(200)
                 .json({message: "Product Deleted Successfully", data: product});
@@ -39,7 +51,7 @@ export class ProductController {
 
     async restoreProduct(req: Request, res: Response) {
         try {
-            const product = await productService.restoreProduct(req.body.product_id);
+            const product = await productService.restoreProduct(Number(req.query.product_id));
             return res
                 .status(200)
                 .json({message: "Product Restored Successfully", data: product});
@@ -50,7 +62,7 @@ export class ProductController {
 
     async getProductById(req: Request, res: Response) {
         try {
-            const product = await productService.getProductById(req.body.product_id);
+            const product = await productService.getProductById(Number(req.query.product_id));
             return res
                 .status(200)
                 .json({data: product});
@@ -62,7 +74,7 @@ export class ProductController {
     async getProductByMarketId(req: Request, res: Response) {
         try {
             const {market_id} = req.query;
-            const product = await productService.getProductById(Number(market_id));
+            const product = await productService.getProductsByMarketId(Number(market_id));
             return res
                 .status(200)
                 .json({data: product});
@@ -74,6 +86,18 @@ export class ProductController {
     async listProducts(req: Request, res: Response) {
         try {
             const product = await productService.listProducts(req.body.filters);
+            return res
+                .status(200)
+                .json({data: product});
+        } catch (error: any) {
+            return res.status(500).json({message: "Failed to fetch product: " + error.message})
+        }
+    }
+
+    async listProductsByMarketId(req: Request, res: Response) {
+        try {
+            const {filters, market_id} = req.body;
+            const product = await productService.listProductsByMarketId(market_id, filters);
             return res
                 .status(200)
                 .json({data: product});
