@@ -120,6 +120,7 @@ async getProgressDetails(enrollmentId: number) {
           user_info: {
             select: {
               primary_number: true,
+              country_code: true,
             },
           },
         },
@@ -172,10 +173,11 @@ async getProgressDetails(enrollmentId: number) {
   }
 
   const response_data = {
-    ...enrollmentData,
     name:enrollmentData.user?.name,
     email:enrollmentData.user?.email,
-    number: enrollmentData.user?.user_info?.primary_number
+    number: enrollmentData.user?.user_info?.primary_number,
+    country_code:  enrollmentData.user?.user_info?.country_code,
+    ...enrollmentData,
   }
 
   return response_data;
