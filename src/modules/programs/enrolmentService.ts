@@ -109,57 +109,80 @@ export class EnrollmentService {
   }
 
   async getProgressDetails(enrollmentId: number) {
-    const enrollmentData = await prisma.enrollment.findUnique({
-      where: { id: enrollmentId },
-      include: {
-        course: {
-          include: {
-            cohort: {
-              include: {
-                program: {
-                  include: {
-                    topics: true,
-                  },
+  const enrollmentData = await prisma.enrollment.findUnique({
+    where: { id: enrollmentId },
+    include: {
+      user: {
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          user_info: {
+            select: {
+              primary_number: true,
+            },
+          },
+        },
+      },
+      course: {
+        include: {
+          cohort: {
+            include: {
+              program: {
+                include: {
+                  topics: true,
                 },
               },
             },
           },
         },
       },
-    });
+    },
+  });
 
-    // Fetch progress separately and map it to topics
-    const progressData = await prisma.progress.findMany({
-      where: { enrollmentId },
-      select: {
-        id: true,
-        topicId: true,
-        score: true,
-        status: true,
-        notes: true,
-        completedAt: true,
-      },
-    });
+  if (!enrollmentData) return null;
 
-    // Map progress data to topics
-    if (enrollmentData?.course?.cohort?.program?.topics) {
-      const progressMap = Object.fromEntries(
-        progressData.map((p) => [p.topicId, p]),
-      );
-
-      enrollmentData.course.cohort.program.topics =
-        enrollmentData.course.cohort.program.topics.map((topic) => ({
-          ...topic,
-          score: progressMap[topic.id]?.score ?? null,
-          progressId: progressMap[topic.id]?.id,
-          status: progressMap[topic.id]?.status ?? "PENDING",
-          completedAt: progressMap[topic.id]?.completedAt ?? null,
-          notes: progressMap[topic.id]?.notes ?? null,
-        }));
-    }
-
-    return enrollmentData;
+  // Flatten user_info into the user object
+  if (enrollmentData.user && enrollmentData.user.user_info) {
+    enrollmentData.user = {
+      ...enrollmentData.user,
+      ...enrollmentData.user.user_info, // Merge fields from user_info
+    };
+    delete (enrollmentData.user as any).user_info; // Remove nested object
   }
+
+  // Fetch progress separately and map it to topics
+  const progressData = await prisma.progress.findMany({
+    where: { enrollmentId },
+    select: {
+      id: true,
+      topicId: true,
+      score: true,
+      status: true,
+      notes: true,
+      completedAt: true,
+    },
+  });
+
+  // Map progress data to topics
+  if (enrollmentData?.course?.cohort?.program?.topics) {
+    const progressMap = Object.fromEntries(
+      progressData.map((p) => [p.topicId, p])
+    );
+
+    enrollmentData.course.cohort.program.topics =
+      enrollmentData.course.cohort.program.topics.map((topic) => ({
+        ...topic,
+        score: progressMap[topic.id]?.score ?? null,
+        progressId: progressMap[topic.id]?.id,
+        status: progressMap[topic.id]?.status ?? "PENDING",
+        completedAt: progressMap[topic.id]?.completedAt ?? null,
+        notes: progressMap[topic.id]?.notes ?? null,
+      }));
+  }
+
+  return enrollmentData;
+}
   async updateProgressScore(
     progressId: number,
     score: number,
