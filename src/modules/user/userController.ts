@@ -6,7 +6,6 @@ import {
     sendEmail,
     comparePassword,
     hashPassword,
-    confirmTemplate,
 } from "../../utils";
 import {UserService} from "./userService";
 import {CourseService} from "../programs/courseService";
@@ -15,7 +14,7 @@ import {CourseService} from "../programs/courseService";
 import {forgetPasswordTemplate} from "../../utils/mail_templates/forgotPasswordTemplate";
 import {userActivatedTemplate} from "../../utils/mail_templates/userActivatedTemplate";
 import {activateUserTemplate} from "../../utils/mail_templates/activateUserTemplate";
-import {userInfo} from "os";
+
 
 dotenv.config();
 
@@ -343,10 +342,11 @@ export const updateUserSatus = async (req: Request, res: Response) => {
                 status: true,
                 name: true,
                 email: true,
+                password: true
             },
         });
         const email: any = response.email;
-        const secret = JWT_SECRET;
+        const secret = JWT_SECRET + response.password;
         const token = JWT.sign(
             {
                 id: response.id,
@@ -370,9 +370,11 @@ export const updateUserSatus = async (req: Request, res: Response) => {
             sendEmail(userActivatedTemplate(mailDetails), email, "Reset Password");
         }
 
+        const { password,  ...rest} = response
+
         return res
             .status(200)
-            .json({message: "User Status Updated Succesfully", data: response});
+            .json({message: "User Status Updated Succesfully", data: rest});
     } catch (error) {
         return res
             .status(500)
@@ -468,6 +470,7 @@ export const login = async (req: Request, res: Response) => {
                     id: existance.id,
                     name: existance.name,
                     email: existance.email,
+                    is_admin: existance.is_user,
                     permissions: existance.access?.permissions,
                     profile_img: existance.user_info?.photo,
                     membership_type: existance.membership_type || null,
@@ -1301,3 +1304,50 @@ export const currentuser = async (req: Request, res: Response) => {
         return res.status(401).json({message: "Unauthorized", error});
     }
 };
+
+
+// export const generateAndSendRandomOTP = async (req: Request, res: Response) => {
+//   try {
+//     const {email} = req.query;
+
+//     // Validate email parameter
+//     if (!email || typeof email !== "string") {
+//       return res.status(400).json({ message: "Email is required in query params" });
+//     }
+
+//     const email_address = email.toLowerCase();
+
+//     const user = await prisma.user.findUnique({
+//       where: { email: email_address },
+//     });
+
+//     if (!user) {
+//       return res
+//         .status(404)
+//         .json({ message: `No user exists with email ${email}`, data: null });
+//     }
+
+//     // Generate OTP
+//     const OTP = generateRandomOTP();
+
+//     // Send OTP email
+//     await sendEmail({
+//       to: email,
+//       subject: "Your OTP Code",
+//       text: `Your OTP is: ${OTP}`,
+//     });
+
+//     // Optional: Save OTP in DB or cache for verification later
+//     // await prisma.otp.create({
+//     //   data: { email, code: OTP, expiresAt: new Date(Date.now() + 5 * 60 * 1000) }
+//     // });
+
+//     return res.status(200).json({
+//       message: "OTP sent successfully",
+//       data: { email, OTP },
+//     });
+//   } catch (error) {
+//     console.error("Error sending OTP:", error);
+//     return res.status(500).json({ message: "Unable to send OTP", error });
+//   }
+// };
