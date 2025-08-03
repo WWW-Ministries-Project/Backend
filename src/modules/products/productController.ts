@@ -40,7 +40,7 @@ export class ProductController {
 
     async deleteProduct(req: Request, res: Response) {
         try {
-            const product = await productService.softDeleteProduct(req.body.product_id);
+            const product = await productService.softDeleteProduct(Number(req.query.product_id));
             return res
                 .status(200)
                 .json({message: "Product Deleted Successfully", data: product});
@@ -51,7 +51,7 @@ export class ProductController {
 
     async restoreProduct(req: Request, res: Response) {
         try {
-            const product = await productService.restoreProduct(req.body.product_id);
+            const product = await productService.restoreProduct(Number(req.query.product_id));
             return res
                 .status(200)
                 .json({message: "Product Restored Successfully", data: product});
@@ -62,7 +62,7 @@ export class ProductController {
 
     async getProductById(req: Request, res: Response) {
         try {
-            const product = await productService.getProductById(req.body.product_id);
+            const product = await productService.getProductById(Number(req.query.product_id));
             return res
                 .status(200)
                 .json({data: product});
@@ -74,7 +74,7 @@ export class ProductController {
     async getProductByMarketId(req: Request, res: Response) {
         try {
             const {market_id} = req.query;
-            const product = await productService.getProductById(Number(market_id));
+            const product = await productService.getProductsByMarketId(Number(market_id));
             return res
                 .status(200)
                 .json({data: product});

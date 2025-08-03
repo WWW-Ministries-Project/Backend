@@ -46,9 +46,6 @@ export interface ProductColourStockInput {
     stock: SizeStock[];
 }
 
-export interface ProductColour {
-
-}
 
 const productWithTypeCategory = Prisma.validator<Prisma.productsDefaultArgs>()({
     include: {product_category: true, product_type: true, product_colours: true, market: true}
