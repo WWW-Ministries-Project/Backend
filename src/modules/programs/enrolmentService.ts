@@ -108,7 +108,7 @@ export class EnrollmentService {
     return enrollment;
   }
 
-  async getProgressDetails(enrollmentId: number) {
+async getProgressDetails(enrollmentId: number) {
   const enrollmentData = await prisma.enrollment.findUnique({
     where: { id: enrollmentId },
     include: {
@@ -144,14 +144,14 @@ export class EnrollmentService {
 
   // Flatten user_info into the user object
   if (enrollmentData.user && enrollmentData.user.user_info) {
-    enrollmentData.user = {
-      ...enrollmentData.user,
-      ...enrollmentData.user.user_info, // Merge fields from user_info
-    };
-    delete (enrollmentData.user as any).user_info; // Remove nested object
-  }
+  enrollmentData.user = {
+    ...enrollmentData.user,
+    primary_number: enrollmentData.user.user_info.primary_number ?? null,
+  } as typeof enrollmentData.user & { primary_number: string | null };
 
-  // Fetch progress separately and map it to topics
+  delete (enrollmentData.user as any).user_info; 
+}
+
   const progressData = await prisma.progress.findMany({
     where: { enrollmentId },
     select: {
@@ -183,6 +183,7 @@ export class EnrollmentService {
 
   return enrollmentData;
 }
+
   async updateProgressScore(
     progressId: number,
     score: number,

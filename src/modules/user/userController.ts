@@ -465,12 +465,13 @@ export const login = async (req: Request, res: Response) => {
         const department: string[] = existance.department_positions.map((dept:any) => dept.department.name)
 
         if (await comparePassword(password, existance?.password)) {
+            const ministry_worker:boolean = Boolean(existance.access) && existance.is_user
             const token = JWT.sign(
                 {
                     id: existance.id,
                     name: existance.name,
                     email: existance.email,
-                    is_admin: existance.is_user,
+                    ministry_worker,
                     permissions: existance.access?.permissions,
                     profile_img: existance.user_info?.photo,
                     membership_type: existance.membership_type || null,
