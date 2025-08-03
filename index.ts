@@ -20,6 +20,19 @@ setupSwagger(app);
 app.use(appRouter);
 
 // startUserSyncing();
+// Add this early in your main app file (before other imports)
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error);
+  console.error('Stack trace:', error.stack);
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  if (reason instanceof Error) {
+    console.error('Stack trace:', reason.stack);
+  }
+});
 
 // Expose metrics
 app.get("/metrics", async (req, res) => {

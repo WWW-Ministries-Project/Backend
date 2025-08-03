@@ -1,25 +1,31 @@
-import {markets, Prisma, product_category, product_type} from "@prisma/client";
+import {Prisma} from "@prisma/client";
 
 export interface CreateProductInput {
     name: string;
     description?: string;
     published?: boolean;
+    stock_managed?: boolean;
     product_type_id?: number;
     product_category_id?: number;
-    product_image: ProductImage[];
     price_currency?: string;
     price_amount?: number;
-    product_stock: SizeStock[]
+    product_colours?: ProductColourInput[]
     market_id?: number;
 }
 
-export interface ProductImage {
+export interface ProductColourInput {
     colour: string;
     image_url: string;
+    stock: SizeStock[];
+}
+
+export interface SizeStock {
+    size_id: number;
+    stock: number;
 }
 
 export interface UpdateProductInput extends CreateProductInput {
-    product_id: number;
+    id: number;
 }
 
 export interface ProductFilters {
@@ -32,39 +38,20 @@ export interface ProductFilters {
     skip?: number;
 }
 
-export interface CreateStockData {
+export interface ProductColourStockInput {
+    id: number;
     product_id: number;
-    size_stock: SizeStock[]
+    colour: string;
+    image_url: string;
+    stock: SizeStock[];
 }
 
-export interface SizeStock {
-    size_id: number;
-    stock: number;
-}
+export interface ProductColour {
 
-export interface ProductDto {
-    id: number;
-    name?: string;
-    description?: string | null;
-    published: boolean;
-    product_category: product_category | null;
-    product_type: product_type | null;
-    price_currency: string | null;
-    price_amount: number | null;
-    market: markets | null;
-    market_id: number | null;
-    product_stock: SizeStock[];
-    product_image: ProductImage[];
-}
-
-export interface ProductTypeCategoryDto {
-    id: number;
-    name: string;
-    deleted: false;
 }
 
 const productWithTypeCategory = Prisma.validator<Prisma.productsDefaultArgs>()({
-    include: {product_category: true, product_type: true, product_stock: true, market: true}
+    include: {product_category: true, product_type: true, product_colours: true, market: true}
 })
 
 export type ProductExtended = Prisma.productsGetPayload<typeof productWithTypeCategory>

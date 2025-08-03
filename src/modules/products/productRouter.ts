@@ -10,9 +10,11 @@ productRouter.get("/list-sizes", productController.listSizes);
 //products
 productRouter.post("/create-product", productController.createProduct);
 productRouter.put("/update-product", productController.updateProduct);
+productRouter.put("/update-product-colour-stock", productController.updateProductColourStock);
 productRouter.delete("/delete-product", productController.deleteProduct);
 productRouter.put("/restore-product", productController.restoreProduct);
 productRouter.get("/list-products", productController.listProducts);
+productRouter.get("/list-products-by-market", productController.listProductsByMarketId);
 productRouter.get("/get-product-by-id", productController.getProductById);
 //product type
 productRouter.post("/create-product-type", productController.createProductType);

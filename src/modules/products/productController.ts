@@ -22,7 +22,19 @@ export class ProductController {
                 .status(200)
                 .json({message: "Product Updated Successfully", data: product});
         } catch (error: any) {
+            console.log(error);
             return res.status(500).json({message: "Failed to update product: " + error.message})
+        }
+    }
+
+    async updateProductColourStock(req: Request, res: Response) {
+        try {
+            const productColours = await productService.updateProductColours(req.body);
+            return res
+                .status(200)
+                .json({message: "Product colour stock Updated Successfully", data: productColours});
+        } catch (error: any) {
+            return res.status(500).json({message: "Failed to update product colour stock: " + error.message})
         }
     }
 
@@ -74,6 +86,18 @@ export class ProductController {
     async listProducts(req: Request, res: Response) {
         try {
             const product = await productService.listProducts(req.body.filters);
+            return res
+                .status(200)
+                .json({data: product});
+        } catch (error: any) {
+            return res.status(500).json({message: "Failed to fetch product: " + error.message})
+        }
+    }
+
+    async listProductsByMarketId(req: Request, res: Response) {
+        try {
+            const {filters, market_id} = req.body;
+            const product = await productService.listProductsByMarketId(market_id, filters);
             return res
                 .status(200)
                 .json({data: product});
