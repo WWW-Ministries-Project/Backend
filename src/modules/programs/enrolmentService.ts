@@ -108,58 +108,81 @@ export class EnrollmentService {
     return enrollment;
   }
 
-  async getProgressDetails(enrollmentId: number) {
-    const enrollmentData = await prisma.enrollment.findUnique({
-      where: { id: enrollmentId },
-      include: {
-        course: {
-          include: {
-            cohort: {
-              include: {
-                program: {
-                  include: {
-                    topics: true,
-                  },
+async getProgressDetails(enrollmentId: number) {
+  const enrollmentData = await prisma.enrollment.findUnique({
+    where: { id: enrollmentId },
+    include: {
+      user: {
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          user_info: {
+            select: {
+              primary_number: true,
+              country_code: true,
+            },
+          },
+        },
+      },
+      course: {
+        include: {
+          cohort: {
+            include: {
+              program: {
+                include: {
+                  topics: true,
                 },
               },
             },
           },
         },
       },
-    });
+    },
+  });
 
-    // Fetch progress separately and map it to topics
-    const progressData = await prisma.progress.findMany({
-      where: { enrollmentId },
-      select: {
-        id: true,
-        topicId: true,
-        score: true,
-        status: true,
-        notes: true,
-        completedAt: true,
-      },
-    });
+  if (!enrollmentData) return null;
 
-    // Map progress data to topics
-    if (enrollmentData?.course?.cohort?.program?.topics) {
-      const progressMap = Object.fromEntries(
-        progressData.map((p) => [p.topicId, p]),
-      );
+  const progressData = await prisma.progress.findMany({
+    where: { enrollmentId },
+    select: {
+      id: true,
+      topicId: true,
+      score: true,
+      status: true,
+      notes: true,
+      completedAt: true,
+    },
+  });
 
-      enrollmentData.course.cohort.program.topics =
-        enrollmentData.course.cohort.program.topics.map((topic) => ({
-          ...topic,
-          score: progressMap[topic.id]?.score ?? null,
-          progressId: progressMap[topic.id]?.id,
-          status: progressMap[topic.id]?.status ?? "PENDING",
-          completedAt: progressMap[topic.id]?.completedAt ?? null,
-          notes: progressMap[topic.id]?.notes ?? null,
-        }));
-    }
+  // Map progress data to topics
+  if (enrollmentData?.course?.cohort?.program?.topics) {
+    const progressMap = Object.fromEntries(
+      progressData.map((p) => [p.topicId, p])
+    );
 
-    return enrollmentData;
+    enrollmentData.course.cohort.program.topics =
+      enrollmentData.course.cohort.program.topics.map((topic) => ({
+        ...topic,
+        score: progressMap[topic.id]?.score ?? null,
+        progressId: progressMap[topic.id]?.id,
+        status: progressMap[topic.id]?.status ?? "PENDING",
+        completedAt: progressMap[topic.id]?.completedAt ?? null,
+        notes: progressMap[topic.id]?.notes ?? null,
+      }));
   }
+
+  const response_data = {
+    name:enrollmentData.user?.name,
+    email:enrollmentData.user?.email,
+    number: enrollmentData.user?.user_info?.primary_number,
+    country_code:  enrollmentData.user?.user_info?.country_code,
+    ...enrollmentData,
+  }
+
+  return response_data;
+}
+
   async updateProgressScore(
     progressId: number,
     score: number,

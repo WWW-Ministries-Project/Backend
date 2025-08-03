@@ -18,7 +18,7 @@ import deviceRouter from "../modules/devices/devicesRoute";
 import marketRouter from "../modules/marketplace/marketRouter";
 import productRouter from "../modules/products/productRouter";
 dotenv.config();
-// router
+
 export const appRouter = Router();
 
 appRouter.get("/", landingPage);

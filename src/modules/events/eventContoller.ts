@@ -34,6 +34,9 @@ export class eventManagement {
                 return res.status(400).json({message: "Event Name Id not found"});
             }
             let {start_date, end_date, day_event, repetitive, recurring} = req.body;
+            if (new Date(start_date) < new Date()){
+                return res.status(400).json({message: "Event start date cannot be in the past"});
+            }
             if (day_event === "multi" && repetitive === "no") {
                 end_date = addDays(start_date, recurring.daysOfWeek);
                 const data2 = generateRecurringDates(start_date, end_date, recurring);
@@ -150,94 +153,106 @@ export class eventManagement {
     };
 
     listEvents = async (req: Request, res: Response) => {
-        try {
-            const {month, year, event_type, event_status}: any = req.query;
+    try {
+        const { month, year, event_type, event_status, page = 1, limit = 10 }: any = req.query;
 
-            let whereClause: any = {
-                event_type,
-                event_status,
-            };
+        const pageNum = parseInt(page, 10) || 1;
+        const pageSize = parseInt(limit, 10) || 10;
+        const skip = (pageNum - 1) * pageSize;
 
-            if (month && year) {
-                const startOfMonth = new Date(year, month - 1, 1);
-                const startOfNextMonth = new Date(year, month, 1);
+        let whereClause: any = {
+            event_type,
+            event_status,
+        };
 
-                whereClause.AND = [
-                    {start_date: {gte: startOfMonth}},
-                    {end_date: {lt: startOfNextMonth}},
-                ];
-            }
+        if (month && year) {
+            const startOfMonth = new Date(year, month - 1, 1);
+            const startOfNextMonth = new Date(year, month, 1);
 
-            const data = await prisma.event_mgt.findMany({
-                where: whereClause,
-                orderBy: {
-                    start_date: "asc",
+            whereClause.AND = [
+                { start_date: { gte: startOfMonth } },
+                { end_date: { lt: startOfNextMonth } },
+            ];
+        }
+
+        const totalCount = await prisma.event_mgt.count({ where: whereClause });
+
+        const data = await prisma.event_mgt.findMany({
+            where: whereClause,
+            orderBy: {
+                start_date: "asc",
+            },
+            skip,
+            take: pageSize,
+            select: {
+                id: true,
+                poster: true,
+                start_date: true,
+                end_date: true,
+                start_time: true,
+                end_time: true,
+                qr_code: true,
+                location: true,
+                description: true,
+                created_by: true,
+                event_type: true,
+                event_status: true,
+                event: {
+                    select: {
+                        event_name: true,
+                        id: true
+                    }
                 },
-                select: {
-                    id: true,
-                    poster: true,
-                    start_date: true,
-                    end_date: true,
-                    start_time: true,
-                    end_time: true,
-                    qr_code: true,
-                    location: true,
-                    description: true,
-                    created_by: true,
-                    event_type: true,
-                    event_status: true,
-                    event: {
-                        select: {
-                            event_name: true,
-                            id: true
-                        }
-                    },
-                    event_attendance: {
-                        select: {
-                            created_at: true,
-                            user: {
-                                select: {
-                                    user_info: {
-                                        select: {
-                                            user: {
-                                                select: {
-                                                    name: true,
-                                                    membership_type: true,
-                                                },
+                event_attendance: {
+                    select: {
+                        created_at: true,
+                        user: {
+                            select: {
+                                user_info: {
+                                    select: {
+                                        user: {
+                                            select: {
+                                                name: true,
+                                                membership_type: true,
                                             },
-                                            first_name: true,
-                                            last_name: true,
-                                            other_name: true,
-                                            primary_number: true,
                                         },
+                                        first_name: true,
+                                        last_name: true,
+                                        other_name: true,
+                                        primary_number: true,
                                     },
                                 },
                             },
                         },
                     },
                 },
-            });
+            },
+        });
 
-            const flat_data = data.map((event) =>
-                ({
-                    ...event,
-                    event_name_id: event?.event.id,
-                    event_name: event?.event.event_name,
-                    event: null
-                }))
+        const flat_data = data.map((event) => ({
+            ...event,
+            event_name_id: event?.event.id,
+            event_name: event?.event.event_name,
+            event: null
+        }));
 
-            res.status(200).json({
-                message: "Operation successful",
-                data:flat_data,
-            });
-        } catch (error: any) {
-            console.log(error);
-            return res.status(500).json({
-                message: "Event failed to load",
-                data: error.message,
-            });
-        }
-    };
+        res.status(200).json({
+            message: "Operation successful",
+            total: totalCount,
+            current_page: pageNum,
+            page_size:pageSize,
+            totalPages: Math.ceil(totalCount / pageSize),
+            data: flat_data,
+        });
+
+    } catch (error: any) {
+        console.log(error);
+        return res.status(500).json({
+            message: "Event failed to load",
+            data: error.message,
+        });
+    }
+};
 
     listUpcomingEvents = async (req: Request, res: Response) => {
         try {
@@ -702,9 +717,9 @@ export class eventManagement {
         try {
             const {event_name, event_type, event_description} = req.body
 
-            if (!event_name || !event_type || !event_description) {
+            if (!event_name || !event_type) {
                 return res.status(400).json({
-                    message: "All fields (event_name, event_type, event_description) are required",
+                    message: "Fields event_name, event_type are required",
                 });
             }
 
@@ -795,7 +810,7 @@ export class eventManagement {
     getEventTypes = async (req: Request, res: Response) => {
         try {
             const eventTypes = await prisma.event_act.findMany({
-                orderBy: {event_name: "desc"},
+                orderBy: {event_name: "asc"},
             });
 
             return res.status(200).json({

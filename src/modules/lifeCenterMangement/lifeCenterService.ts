@@ -37,7 +37,7 @@ export class LifeCenterService {
   async getAllLifeCenters() {
     const results = await prisma.life_center.findMany({
       orderBy: {
-        name: "desc",
+        name: "asc",
       },
       include: {
         _count: {

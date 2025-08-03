@@ -4,35 +4,27 @@ import * as dotenv from "dotenv";
 import cors from "cors";
 import { appRouter } from "./src/routes/appRouter";
 import logger from "./src/utils/logger-config";
-import { setupSwagger } from "./src/swagger";
 import client from "prom-client";
+import { logRequests } from "./src/middleWare/requestLogger";
 dotenv.config();
-// import { startUserSyncing } from "./src/cron-jobs/userCron";
 const collectDefaultMetrics = client.collectDefaultMetrics;
 collectDefaultMetrics();
+
+const swaggerJsdoc = require('swagger-jsdoc');
+const swaggerUi = require('swagger-ui-express');
+const swaggerOptions = require('./src/swagger');
 
 const port = process.env.PORT;
 const app = express();
 app.use(bodyParser.json());
 app.use(cors());
 app.use(express.json());
-setupSwagger(app);
 app.use(appRouter);
+app.use(logRequests);
 
-// startUserSyncing();
-// Add this early in your main app file (before other imports)
-process.on('uncaughtException', (error) => {
-  console.error('Uncaught Exception:', error);
-  console.error('Stack trace:', error.stack);
-  process.exit(1);
-});
+const specs = swaggerJsdoc(swaggerOptions);
 
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
-  if (reason instanceof Error) {
-    console.error('Stack trace:', reason.stack);
-  }
-});
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(specs, { explorer: true }));
 
 // Expose metrics
 app.get("/metrics", async (req, res) => {

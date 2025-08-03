@@ -215,6 +215,7 @@ export class UserService {
               status: parentObj.status,
               user_info: {
                 create: {
+                  title: child.title,
                   first_name: child.first_name,
                   last_name: child.last_name,
                   other_name: child.other_name || null,

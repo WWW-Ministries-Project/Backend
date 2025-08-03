@@ -28,7 +28,11 @@ export class LifeCenterRoleService {
 }
 
   async getLifeCenterRoles() {
-    return await prisma.life_center_role.findMany({});
+    return await prisma.life_center_role.findMany({
+      orderBy:{
+        name:"asc"
+      }
+    });
   }
 
   async getLifeCenterRoleById(id: number) {
