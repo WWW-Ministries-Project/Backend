@@ -11,13 +11,12 @@ export class ProductService {
     private readonly _include = {
         product_category: true,
         product_type: true,
-        sizes: {
+        market: true,
+        product_colours: {
             include: {
-                size: true
+                sizes: true
             }
-        },
-        product_image: true,
-        product_stock: true
+        }
     };
     private readonly _where = (filters: ProductFilters) => ({
         name: filters?.name ? {
@@ -94,13 +93,32 @@ export class ProductService {
                     product_colour_id: productColour.id
                 }
             });
+
+            // Get size IDs for all the size names in the stock array
+            const sizeNames = stock.map(s => s.size);
+            const sizes = await prisma.sizes.findMany({
+                where: {
+                    name: {
+                        in: sizeNames
+                    }
+                },
+                select: {
+                    id: true,
+                    name: true
+                }
+            });
+
+            // Create a map for quick lookup
+            const sizeNameToIdMap = new Map(sizes.map(size => [size.name, size.id]));
+
             await prisma.product_stock.createMany({
                 data: stock.map(s => ({
                     product_colour_id: productColour.id,
-                    size_id: s.size_id,
+                    size_id: sizeNameToIdMap.get(s.size)!, // Using the size name to get the ID
                     stock: s.stock
                 }))
-            })
+            });
+
             results.push(await prisma.product_colour.findMany({where: {product_id}}))
         }
         return results;
@@ -108,17 +126,38 @@ export class ProductService {
 
 
     async createProductColours(product_id: number, colourInputs: ProductColourInput[]) {
+        // Get all unique size names across all colour inputs
+        const allSizeNames = [...new Set(colourInputs.flatMap(input => input.stock.map(s => s.size)))];
+
+        // Fetch all sizes once
+        const sizes = await prisma.sizes.findMany({
+            where: {
+                name: {
+                    in: allSizeNames
+                }
+            },
+            select: {
+                id: true,
+                name: true
+            }
+        });
+
+        // Create a map for quick lookup
+        const sizeNameToIdMap = new Map(sizes.map(size => [size.name, size.id]));
+
         const colourStocks = [];
         for (let input of colourInputs) {
             const {colour, image_url} = input;
+
             const colourStock = await prisma.product_colour.create({
                 data: {
-                    colour, image_url,
+                    colour,
+                    image_url,
                     product: {connect: {id: product_id}},
                     sizes: {
                         createMany: {
                             data: input.stock.map(s => ({
-                                size_id: s.size_id,
+                                size_id: sizeNameToIdMap.get(s.size)!,
                                 stock: s.stock
                             }))
                         }
