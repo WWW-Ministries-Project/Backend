@@ -11,13 +11,13 @@ const productController = new ProductController();
  *     SizeStock:
  *       type: object
  *       required:
- *         - size_id
+ *         - size
  *         - stock
  *       properties:
- *         size_id:
- *           type: integer
- *           description: The ID of the size
- *           example: 1
+ *         size:
+ *           type: string
+ *           description: The name of the size
+ *           example: "XL"
  *         stock:
  *           type: integer
  *           minimum: 0
@@ -247,16 +247,16 @@ const productController = new ProductController();
  *                   - colour: "Red"
  *                     image_url: "https://example.com/images/red-shirt.jpg"
  *                     stock:
- *                       - size_id: 1
+ *                       - size: "L"
  *                         stock: 25
- *                       - size_id: 2
+ *                       - size: "XL"
  *                         stock: 30
  *                   - colour: "Blue"
  *                     image_url: "https://example.com/images/blue-shirt.jpg"
  *                     stock:
- *                       - size_id: 1
+ *                       - size: "S"
  *                         stock: 20
- *                       - size_id: 2
+ *                       - size: "M"
  *                         stock: 35
  *     responses:
  *       201:
@@ -413,16 +413,16 @@ productRouter.post("/create-product", productController.createProduct);
  *                   - colour: "Green"
  *                     image_url: "https://example.com/images/green-shirt.jpg"
  *                     stock:
- *                       - size_id: 1
+ *                       - size: "S"
  *                         stock: 15
- *                       - size_id: 2
+ *                       - size: "M"
  *                         stock: 20
  *                   - colour: "Black"
  *                     image_url: "https://example.com/images/black-shirt.jpg"
  *                     stock:
- *                       - size_id: 1
+ *                       - size: "L"
  *                         stock: 30
- *                       - size_id: 2
+ *                       - size_id: "XL"
  *                         stock: 25
  *             partial_update:
  *               summary: Partial update (only specific fields)
@@ -608,11 +608,11 @@ productRouter.put("/update-product", productController.updateProduct);
  *                   colour: "Red"
  *                   image_url: "https://example.com/images/red-shirt.jpg"
  *                   stock:
- *                     - size_id: 1
+ *                     - size: "S"
  *                       stock: 45
- *                     - size_id: 2
+ *                     - size: "M"
  *                       stock: 30
- *                     - size_id: 3
+ *                     - size: "L"
  *                       stock: 25
  *             multiple_colours_update:
  *               summary: Update stock for multiple colours
@@ -622,18 +622,18 @@ productRouter.put("/update-product", productController.updateProduct);
  *                   colour: "Red"
  *                   image_url: "https://example.com/images/red-shirt.jpg"
  *                   stock:
- *                     - size_id: 1
+ *                     - size: "XL"
  *                       stock: 35
- *                     - size_id: 2
+ *                     - size: "2XL"
  *                       stock: 40
  *                 - id: 457
  *                   product_id: 123
  *                   colour: "Blue"
  *                   image_url: "https://example.com/images/blue-shirt.jpg"
  *                   stock:
- *                     - size_id: 1
+ *                     - size: "3XL"
  *                       stock: 20
- *                     - size_id: 2
+ *                     - size: "4XL"
  *                       stock: 15
  *             stock_replenishment:
  *               summary: Stock replenishment update
@@ -643,11 +643,11 @@ productRouter.put("/update-product", productController.updateProduct);
  *                   colour: "Green"
  *                   image_url: "https://example.com/images/green-shirt.jpg"
  *                   stock:
- *                     - size_id: 1
+ *                     - size: "M"
  *                       stock: 100
- *                     - size_id: 2
+ *                     - size: "L"
  *                       stock: 150
- *                     - size_id: 3
+ *                     - size: "XL"
  *                       stock: 75
  *     responses:
  *       200:
