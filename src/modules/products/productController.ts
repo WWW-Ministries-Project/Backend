@@ -62,7 +62,7 @@ export class ProductController {
 
     async getProductById(req: Request, res: Response) {
         try {
-            const product = await productService.getProductById(Number(req.query.product_id));
+            const product = await productService.getProductById(Number(req.query.id));
             return res
                 .status(200)
                 .json({data: product});

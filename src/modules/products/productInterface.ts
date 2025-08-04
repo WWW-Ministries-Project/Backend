@@ -20,7 +20,7 @@ export interface ProductColourInput {
 }
 
 export interface SizeStock {
-    size_id: number;
+    size: string;
     stock: number;
 }
 
