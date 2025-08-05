@@ -4,6 +4,20 @@ import { LifeCenterService } from "./lifeCenterService";
 const lifeCenterService = new LifeCenterService();
 
 export class LifeCenterController {
+  async mylifecenter(req: Request, res: Response) {
+    try {
+      const { id } = req.query;
+      const lifeCenter = await lifeCenterService.getMyLifeCenter(Number(id));
+      return res
+        .status(200)
+        .json({ message: "Operation sucessful", data: lifeCenter });
+    } catch (error: any) {
+      return res
+        .status(500)
+        .json({ message: "Error fetching my life center", error: error.message });
+    }
+  }
+  
   async createLifeCenter(req: Request, res: Response) {
     try {
       const { name, description, location, meeting_dates } = req.body;

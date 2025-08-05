@@ -73,4 +73,7 @@ lifeCenterRouter.get("/soulwon", lifeCenterController.getSoul);
 //lifecenter stats
 lifeCenterRouter.get("/stats", lifeCenterController.getStats)
 
+//mylifecenter
+lifeCenterRouter.get("/my-lifecenter", lifeCenterController.mylifecenter)
+
 export default lifeCenterRouter;
