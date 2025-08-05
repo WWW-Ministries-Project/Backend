@@ -5,18 +5,32 @@ const lifeCenterService = new LifeCenterService();
 
 export class LifeCenterController {
   async mylifecenter(req: Request, res: Response) {
-    try {
-      const { id } = req.query;
-      const lifeCenter = await lifeCenterService.getMyLifeCenter(Number(id));
-      return res
-        .status(200)
-        .json({ message: "Operation sucessful", data: lifeCenter });
-    } catch (error: any) {
-      return res
-        .status(500)
-        .json({ message: "Error fetching my life center", error: error.message });
+  try {
+    const { id } = req.query;
+
+    // Validate ID
+    if (!id || isNaN(parseInt(id as string))) {
+      return res.status(400).json({ message: "Invalid or missing user ID" });
     }
+
+    const lifeCenter = await lifeCenterService.getMyLifeCenter(Number(id));
+
+    if (!lifeCenter) {
+      return res.status(404).json({ message: "User is not assigned to any Life Center" });
+    }
+
+    return res.status(200).json({
+      message: "Operation successful",
+      data: lifeCenter,
+    });
+
+  } catch (error: any) {
+    return res.status(500).json({
+      message: "Error fetching my life center",
+      error: error.message,
+    });
   }
+}
   
   async createLifeCenter(req: Request, res: Response) {
     try {
