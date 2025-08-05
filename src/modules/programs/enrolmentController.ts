@@ -4,6 +4,32 @@ import { EnrollmentService } from "./enrolmentService";
 const enrollment = new EnrollmentService();
 
 export class EnrollmentController {
+  async myEnrollment(req: Request, res: Response) {
+    try {
+      const { user_id } = req.query;
+
+      if (!user_id ) {
+        return res.status(400).json({
+          message:
+            "Missing required fields user_id",
+        });
+      }
+
+      const myEnrollment = await enrollment.getUserProgramsCoursesTopics(
+         parseInt(user_id as string)
+      );
+
+      return res.status(201).json({
+        message: "Operation Successfully",
+        data: myEnrollment,
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        message: "Error enrolling user",
+        error: error.message,
+      });
+    }
+  }
   async enrollUser(req: Request, res: Response) {
     try {
       const { user_id, course_id } = req.body;
