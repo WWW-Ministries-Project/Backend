@@ -181,6 +181,19 @@ export class LifeCenterService {
     return member;
   }
 
+  async getMyLifeCenter(userId: number) {
+    const member = await prisma.life_center_member.findFirst({
+      where: {
+        userId
+      },
+      include:{
+        lifeCenter : true
+      }
+    });
+
+    return member?.lifeCenter
+  }
+
   async updateMemberRole(data: {
     userId: number;
     lifeCenterId: number;
