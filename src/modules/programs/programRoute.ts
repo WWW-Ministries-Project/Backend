@@ -59,6 +59,11 @@ programRouter.put(
   enrollmentController.updateProgressReports,
 );
 
+programRouter.get(
+  "/my-enrollment",
+  enrollmentController.myEnrollment
+)
+
 //topics enpoint
 programRouter.post("/topic", programController.createTopic);
 programRouter.put("/topic", programController.updateTopic);

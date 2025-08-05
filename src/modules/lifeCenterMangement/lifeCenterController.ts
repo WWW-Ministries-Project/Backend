@@ -6,14 +6,14 @@ const lifeCenterService = new LifeCenterService();
 export class LifeCenterController {
   async mylifecenter(req: Request, res: Response) {
   try {
-    const { id } = req.query;
+    const { user_id } = req.query;
 
     // Validate ID
-    if (!id || isNaN(parseInt(id as string))) {
-      return res.status(400).json({ message: "Invalid or missing user ID" });
+    if (!user_id || isNaN(parseInt(user_id as string))) {
+      return res.status(400).json({ message: "Invalid or missing user_id" });
     }
 
-    const lifeCenter = await lifeCenterService.getMyLifeCenter(Number(id));
+    const lifeCenter = await lifeCenterService.getMyLifeCenter(Number(user_id));
 
     if (!lifeCenter) {
       return res.status(404).json({ message: "User is not assigned to any Life Center" });
