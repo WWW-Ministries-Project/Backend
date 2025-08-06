@@ -22,7 +22,7 @@ export class ProductService {
         name: filters?.name ? {
             contains: filters.name
         } : undefined,
-        deleted: filters?.deleted ?? undefined,
+        deleted: filters?.deleted ?? false,
         published: filters?.published ?? undefined,
         product_type_id: filters?.product_type ?? undefined,
         product_category_id: filters?.product_category ?? undefined
@@ -202,13 +202,12 @@ export class ProductService {
             name: filters?.name ? {
                 contains: filters.name
             } : undefined,
-            deleted: filters?.deleted || undefined,
-            // to fixed later
-            // published: filters?.published === "published" || undefined,
+            deleted: filters?.deleted || false,
+            published: filters?.published ?? undefined,
             product_type_id: filters?.product_type ?? undefined,
             product_category_id: filters?.product_category ?? undefined
         }
-        return  await prisma.products.findMany({
+        const all_product =  await prisma.products.findMany({
             where,
             include:{
                 product_colours: true,
@@ -218,11 +217,22 @@ export class ProductService {
             take: filters?.take,
             skip: filters?.skip
         })
+
+        const filtered_products = all_product.filter(
+            (product) => product.product_category?.deleted != true
+        )
+
+        return filtered_products
     }
 
     async listProductsByMarketId(market_id: number, filters?: ProductFilters) {
         return prisma.products.findMany({
             where: {...this._where, market_id},
+            include:{
+                product_colours: true,
+                product_category : true,
+                product_type : true,
+            },
             take: filters?.take,
             skip: filters?.skip
         })

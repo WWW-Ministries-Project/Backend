@@ -192,10 +192,10 @@ export class LifeCenterService {
 
   if (!member) return null;
 
-  return {
-    ...member.lifeCenter,
-    role: member.role
-  };
+  const life_center_id = member.lifeCenterId
+
+  return this.getLifeCenterById(life_center_id)
+
 }
 
   async updateMemberRole(data: {
