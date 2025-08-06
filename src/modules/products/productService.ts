@@ -38,10 +38,10 @@ export class ProductService {
                 product_type: this.connectProductType(input),
                 product_category: this.connectProductCategory(input),
                 price_currency: input.price_currency,
-                price_amount: input.price_amount,
+                price_amount: Number(input.price_amount),
                 market: {
                     connect: {
-                        id: input.market_id
+                        id: Number(input.market_id)
                     }
                 }
             },
@@ -54,7 +54,7 @@ export class ProductService {
     }
 
     async createProduct(input: CreateProductInput) {
-        if (!(await this.marketCheck(input.market_id))) {
+        if (!(await this.marketCheck(Number(input.market_id)))) {
             throw new Error("Market with given id does not exist");
         }
         const product = await prisma.products.create({...(this.constructProductData(input))});
@@ -203,12 +203,18 @@ export class ProductService {
                 contains: filters.name
             } : undefined,
             deleted: filters?.deleted || undefined,
-            published: filters?.published || undefined,
+            // to fixed later
+            // published: filters?.published === "published" || undefined,
             product_type_id: filters?.product_type ?? undefined,
             product_category_id: filters?.product_category ?? undefined
         }
-        return prisma.products.findMany({
+        return  await prisma.products.findMany({
             where,
+            include:{
+                product_colours: true,
+                product_category : true,
+                product_type : true,
+            },
             take: filters?.take,
             skip: filters?.skip
         })
@@ -234,11 +240,11 @@ export class ProductService {
     }
 
     private connectProductType(input: CreateProductInput | UpdateProductInput) {
-        return input.product_type_id ? {connect: {id: input.product_type_id}} : undefined;
+        return input.product_type_id ? {connect: {id: Number(input.product_type_id)}} : undefined;
     }
 
     private connectProductCategory(input: CreateProductInput | UpdateProductInput) {
-        return input.product_category_id ? {connect: {id: input.product_category_id}} : undefined;
+        return input.product_category_id ? {connect: {id: Number(input.product_category_id)}} : undefined;
     }
 
     async createSize(name: string, sort_order: number) {

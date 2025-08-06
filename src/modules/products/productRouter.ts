@@ -974,7 +974,8 @@ productRouter.put("/update-product-colour-stock", productController.updateProduc
  *                   timestamp: "2023-12-01T17:00:00Z"
  */
 productRouter.delete("/delete-product", productController.deleteProduct);
-productRouter.put("/restore-product", productController.restoreProduct);productRouter.get("/list-products", productController.listProducts);
+productRouter.put("/restore-product", productController.restoreProduct);
+productRouter.get("/list-products", productController.listProducts);
 productRouter.get("/list-products-by-market", productController.listProductsByMarketId);
 productRouter.get("/get-product-by-id", productController.getProductById);
 //product type
