@@ -5,12 +5,12 @@ export interface CreateProductInput {
     description?: string;
     published?: boolean;
     stock_managed?: boolean;
-    product_type_id?: number;
-    product_category_id?: number;
+    product_type_id?: string;
+    product_category_id?: string;
     price_currency?: string;
-    price_amount?: number;
+    price_amount?: string;
     product_colours?: ProductColourInput[]
-    market_id?: number;
+    market_id?: string;
 }
 
 export interface ProductColourInput {
