@@ -203,7 +203,8 @@ export class ProductService {
                 contains: filters.name
             } : undefined,
             deleted: filters?.deleted || undefined,
-            published: filters?.published || undefined,
+            // to fixed later
+            // published: filters?.published === "published" || undefined,
             product_type_id: filters?.product_type ?? undefined,
             product_category_id: filters?.product_category ?? undefined
         }
