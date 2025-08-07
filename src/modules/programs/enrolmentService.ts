@@ -215,40 +215,17 @@ async getProgressDetails(enrollmentId: number) {
     return updates;
   }
   async getUserProgramsCoursesTopics(userId: number) {
-  return await prisma.enrollment.findMany({
+  const enrollment =  await prisma.enrollment.findFirst({
     where: {
       user_id: userId,
-    },
-    select: {
-      id: true,
-      enrolledAt: true,
-      course: {
-        select: {
-          id: true,
-          name: true,
-          cohort: {
-            select: {
-              id: true,
-              name: true,
-              program: {
-                select: {
-                  id: true,
-                  title: true,
-                  description: true,
-                  topics: {
-                    select: {
-                      id: true,
-                      name: true,
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-    },
+    }
   });
+
+  if (enrollment){
+    return this.getProgressDetails(enrollment?.id)
+  }else{
+    return null
+  }
 }
 
 }
