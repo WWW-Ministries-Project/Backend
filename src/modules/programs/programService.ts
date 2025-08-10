@@ -66,7 +66,15 @@ export class ProgramService {
     return await prisma.program.findMany({
       include: {
         topics: true,
-        cohorts: true,
+        cohorts: {
+          include :{
+            courses :{
+              include :{
+                enrollments: true
+              }
+            }
+          }
+        },
         prerequisitePrograms: {
           select: { prerequisiteId: true, prerequisite: true },
         },
