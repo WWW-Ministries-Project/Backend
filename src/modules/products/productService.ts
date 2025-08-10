@@ -207,36 +207,85 @@ export class ProductService {
             product_type_id: filters?.product_type ?? undefined,
             product_category_id: filters?.product_category ?? undefined
         }
-        const all_product =  await prisma.products.findMany({
-            where,
-            include:{
-                product_colours: true,
-                product_category : true,
-                product_type : true,
+        const all_products = await prisma.products.findMany({
+        where,
+        include: {
+            product_colours: {
+                include: {
+                    sizes: {
+                        include: {
+                            size: {
+                                select: { name: true }
+                            }
+                        }
+                    }
+                }
             },
-            take: filters?.take,
-            skip: filters?.skip
-        })
+            product_category: true,
+            product_type: true,
+        },
+        take: filters?.take,
+        skip: filters?.skip
+    });
 
-        const filtered_products = all_product.filter(
-            (product) => product.product_category?.deleted != true
-        )
+    // Transform for frontend
+    const transformed = all_products.filter(
+        (product) => product.product_category?.deleted!=true ).map(
+            product => ({
+        ...product,
+        product_colours: product.product_colours.map(colour => ({
+            colour: colour.colour,
+            image_url: colour.image_url,
+            stock: colour.sizes.map(s => ({
+                size: s.size.name,
+                stock: s.stock
+            }))
+        }))
+    }));
 
-        return filtered_products
+    
+        return transformed
     }
 
     async listProductsByMarketId(market_id: number, filters?: ProductFilters) {
         //to fix the filters later
-        return prisma.products.findMany({
+        const all_products = await prisma.products.findMany({
             where: {deleted:false, market_id},
             include:{
-                product_colours: true,
+                product_colours: {
+                include: {
+                    sizes: {
+                        include: {
+                            size: {
+                                select: { name: true }
+                            }
+                        }
+                    }
+                }
+            },
                 product_category : true,
                 product_type : true,
             },
             take: filters?.take,
             skip: filters?.skip
         })
+        
+    const transformed = all_products.filter(
+        (product) => product.product_category?.deleted!=true ).map(
+            product => ({
+        ...product,
+        product_colours: product.product_colours.map(colour => ({
+            colour: colour.colour,
+            image_url: colour.image_url,
+            stock: colour.sizes.map(s => ({
+                size: s.size.name,
+                stock: s.stock
+            }))
+        }))
+    }));
+
+    
+        return transformed
     }
 
     private async updateDeletedOnProduct(product_id: number, deleted: boolean) {
