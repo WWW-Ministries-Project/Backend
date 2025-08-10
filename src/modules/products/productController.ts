@@ -96,8 +96,9 @@ export class ProductController {
 
     async listProductsByMarketId(req: Request, res: Response) {
         try {
-            const {filters, market_id} = req.body;
-            const product = await productService.listProductsByMarketId(market_id, filters);
+            const { market_id } = req.query
+            const {filters} = req.body;
+            const product = await productService.listProductsByMarketId(Number(market_id), filters);
             return res
                 .status(200)
                 .json({data: product});

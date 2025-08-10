@@ -18,15 +18,15 @@ export class ProductService {
             }
         }
     };
-    private readonly _where = (filters: ProductFilters) => ({
-        name: filters?.name ? {
-            contains: filters.name
-        } : undefined,
-        deleted: filters?.deleted ?? false,
-        published: filters?.published ?? undefined,
-        product_type_id: filters?.product_type ?? undefined,
-        product_category_id: filters?.product_category ?? undefined
-    })
+    // private readonly _where = (filters: ProductFilters) => ({
+    //     name: filters?.name ? {
+    //         contains: filters.name
+    //     } : undefined,
+    //     deleted: filters?.deleted ?? false,
+    //     published: filters?.published ?? undefined,
+    //     product_type_id: filters?.product_type ?? undefined,
+    //     product_category_id: filters?.product_category ?? undefined
+    // })
 
     constructProductData(input: CreateProductInput) {
         return {
@@ -226,8 +226,9 @@ export class ProductService {
     }
 
     async listProductsByMarketId(market_id: number, filters?: ProductFilters) {
+        //to fix the filters later
         return prisma.products.findMany({
-            where: {...this._where, market_id},
+            where: {deleted:false, market_id},
             include:{
                 product_colours: true,
                 product_category : true,
