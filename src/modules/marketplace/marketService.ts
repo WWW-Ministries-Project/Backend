@@ -62,7 +62,7 @@ export class MarketService {
       }
 
       if (filters?.event_id) {
-        where.event_act_id = filters.event_id;
+        where.event_mgt_id = filters.event_id;
       }
 
       if (filters?.start_date) {
@@ -227,12 +227,12 @@ export class MarketService {
   /**
    * Get markets by event
    */
-  async getMarketsByEvent(event_act_id: number) {
+  async getMarketsByEvent(event_mgt_id: number) {
     try {
       return (
         await prisma.markets.findMany({
           where: {
-            event_act_id,
+            event_mgt_id,
             deleted: false,
           },
           include: {
@@ -322,8 +322,13 @@ export class MarketService {
     }
   }
 
-  convertToDto(data: MarketWithEvent): MarketDto {
+  async convertToDto(data: MarketWithEvent): Promise<MarketDto> {
     const { name, description, id, start_date, end_date, event } = data;
+    const event_things = await prisma.event_act.findFirst({
+      where: { id: event?.event_name_id},
+  })
+
+  const event_name = event_things?.event_name || "No Event"
     return {
       name,
       description,
@@ -335,7 +340,7 @@ export class MarketService {
         ? new Date(end_date).toISOString().split("T")[0]
         : undefined,
       event_id: event?.id,
-      event_name: event?.event_name,
+      event_name: event_name
     };
   }
 }
