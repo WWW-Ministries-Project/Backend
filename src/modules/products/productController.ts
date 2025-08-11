@@ -29,10 +29,11 @@ export class ProductController {
 
     async updateProductColourStock(req: Request, res: Response) {
         try {
-            const productColours = await productService.updateProductColours(req.body);
-            return res
-                .status(200)
-                .json({message: "Product colour stock Updated Successfully", data: productColours});
+            // const productColours = await productService.updateProductColours(req.body);
+            throw new Error("Method not implemented")
+            // return res
+            //     .status(200)
+            //     .json({message: "Product colour stock Updated Successfully", data: productColours});
         } catch (error: any) {
             return res.status(500).json({message: "Failed to update product colour stock: " + error.message})
         }

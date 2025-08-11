@@ -71,65 +71,81 @@ export class ProductService {
         return {product, product_colours}
     }
 
-    async updateProduct(input: UpdateProductInput) {
-        if (!(await prisma.products.findFirst({where: {id: input.id}}))) {
-            throw new Error("Product with given id not found");
-        }
-        const product = await prisma.products.update({
-            where: {id: input.id},
-            ...(this.constructProductData(input))
-        });
-        const product_colours = await prisma.product_colour.findMany({
-            where: {product_id: product.id},
-            include: {sizes: {include: {size: true}}}
-        });
-        return {product, product_colours}
+    async updateProduct(input: any) {
+  const existingProduct = await prisma.products.findFirst({
+    where: { id: input.id }
+  });
+  if (!existingProduct) {
+    throw new Error("Product with given id not found");
+  }
+
+  const product = await prisma.products.update({
+    where: { id: input.id },
+    data: {
+      name: input.name,
+      description: input.description,
+      colours: input.colours,
+      image_url: input.image_url,
+      deleted: input.deleted,
+      stock_managed: input.stock_managed,
+      published: input.published,
+      product_type_id: input.product_type_id,
+      product_category_id: input.product_category_id,
+      price_currency: input.price_currency,
+      price_amount: input.price_amount,
+      market_id: Number(input.market_id),
+      updated_at: new Date()
     }
+  });
 
-    async updateProductColours(input: ProductColourStockInput[]) {
-        const results = [];
-        for (let item of input) {
-            const {id, colour, image_url, stock, product_id} = item;
-            const productColour = await prisma.product_colour.update({
-                where: {id},
-                data: {colour, image_url}
-            });
-            await prisma.product_stock.deleteMany({
-                where: {
-                    product_colour_id: productColour.id
-                }
-            });
+  if (Array.isArray(input.product_colours)) {
+    for (let colourItem of input.product_colours) {
+      // Create or update product colour
+      let productColour;
+      if (colourItem.id) {
+        productColour = await prisma.product_colour.update({
+          where: { id: colourItem.id },
+          data: {
+            colour: colourItem.colour,
+            image_url: colourItem.image_url
+          }
+        });
+    
+        await prisma.product_stock.deleteMany({
+          where: { product_colour_id: productColour.id }
+        });
+      } else {
+        productColour = await prisma.product_colour.create({
+          data: {
+            colour: colourItem.colour,
+            image_url: colourItem.image_url,
+            product_id: product.id
+          }
+        });
+      }
 
-            // Get size IDs for all the size names in the stock array
-            const sizeNames = stock.map(s => s.size);
-            const sizes = await prisma.sizes.findMany({
-                where: {
-                    name: {
-                        in: sizeNames
-                    }
-                },
-                select: {
-                    id: true,
-                    name: true
-                }
-            });
+      // Get size IDs for stock items
+      const sizeNames = colourItem.stock.map((s: any) => s.size);
+      const sizes = await prisma.sizes.findMany({
+        where: { name: { in: sizeNames } },
+        select: { id: true, name: true }
+      });
+      const sizeMap = new Map(sizes.map(s => [s.name, s.id]));
 
-            // Create a map for quick lookup
-            const sizeNameToIdMap = new Map(sizes.map(size => [size.name, size.id]));
-
-            await prisma.product_stock.createMany({
-                data: stock.map(s => ({
-                    product_colour_id: productColour.id,
-                    size_id: sizeNameToIdMap.get(s.size)!, // Using the size name to get the ID
-                    stock: s.stock
-                }))
-            });
-
-            results.push(await prisma.product_colour.findMany({where: {product_id}}))
-        }
-        return results;
+      // Insert stock records
+      await prisma.product_stock.createMany({
+        data: colourItem.stock.map((s: any) => ({
+          product_colour_id: productColour.id,
+          size_id: sizeMap.get(s.size)!,
+          stock: Number(s.stock)
+        }))
+      });
     }
-
+  }
+  
+  return await this.getProductById(product.id)
+  
+}
 
     async createProductColours(product_id: number, colourInputs: ProductColourInput[]) {
         // Get all unique size names across all colour inputs
