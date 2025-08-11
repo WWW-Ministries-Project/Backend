@@ -106,4 +106,16 @@ export class ProgramController {
         .json({ message: "Error deleting topicc", error: error.message });
     }
   }
+
+  async getAllProgramForMember(req:Request, res: Response){
+   try {
+      
+      const programs = await programService.getAllProgramForMember();
+      return res.status(200).json({ message: "Program successfully" , data: programs});
+    } catch (error: any) {
+      return res
+        .status(500)
+        .json({ message: "Error deleting topicc", error: error.message });
+    }
+  }
 }

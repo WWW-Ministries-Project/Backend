@@ -18,6 +18,7 @@ programRouter.get("/programs", programController.getAllPrograms);
 programRouter.get("/program", programController.getProgramById);
 programRouter.put("/program", programController.updateProgram);
 programRouter.delete("/program", programController.deleteProgram);
+programRouter.get('/get-member-programs', programController.getAllProgramForMember)
 
 //cohort enpoint
 programRouter.post("/cohort", cohortController.createCohort);
