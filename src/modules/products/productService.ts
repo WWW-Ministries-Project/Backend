@@ -14,10 +14,16 @@ export class ProductService {
         market: true,
         product_colours: {
             include: {
-                sizes: true
-            }
+                    sizes: {
+                        include: {
+                            size: {
+                                select: { name: true }
+                            }
+                        },
+                    },
+                },
+            },
         }
-    };
     // private readonly _where = (filters: ProductFilters) => ({
     //     name: filters?.name ? {
     //         contains: filters.name
@@ -178,10 +184,27 @@ export class ProductService {
     }
 
     async getProductById(id: number) {
-        return prisma.products.findFirst({
-            where: {id, deleted: false},
-            include: this._include
+        const product = await prisma.products.findFirst({
+        where: { id, deleted: false },
+        include: this._include
         })
+
+    if (!product) {
+        return null;
+    }
+
+    const transformed = {
+        ...product,
+        product_colours: product.product_colours.map((colour: any) => ({
+            colour: colour.colour,
+            image_url: colour.image_url,
+            stock: colour.sizes.map((s: any) => ({
+                size: s.size.name,
+                stock: s.stock
+            }))
+        }))
+    };
+    return transformed;
     }
 
     async getProductsByMarketId(marketId: number) {

@@ -1,6 +1,80 @@
 import { prisma } from "../../Models/context";
 
 export class ProgramService {
+  async getAllProgramForMember() {
+  const programs = await prisma.program.findMany({
+    where: {
+      completed: false,
+      cohorts: {
+        some: {
+          status: { in: ["Ongoing", "Upcoming"] }
+        }
+      }
+    },
+    include: {
+      topics: true,
+      prerequisitePrograms: {
+        select: {
+          prerequisite: { select: { title: true } }
+        }
+      },
+      cohorts: {
+        where: {
+          status: { in: ["Ongoing", "Upcoming"] }
+        },
+        include: {
+          courses: {
+            include: {
+              instructor: true
+            }
+          }
+        },
+        orderBy: { startDate: "asc" }
+      }
+    }
+  });
+
+  return programs.map(program => {
+    // Pick preferred cohort: ongoing first, otherwise upcoming
+    const ongoingCohort = program.cohorts.find(c => c.status === "Ongoing");
+    const upcomingCohort = program.cohorts.find(c => c.status === "Upcoming");
+    const selectedCohort = ongoingCohort || upcomingCohort;
+
+    if (!selectedCohort) return null; // skip programs with no matching cohort
+
+    return {
+      id: program.id,
+      name: program.title,
+      upcomingCohort: selectedCohort.name,
+      topics: program.topics.map(t => t.name),
+      description: program.description,
+      prerequisites: program.prerequisitePrograms.map(p => p.prerequisite.title),
+      courses: selectedCohort.courses.map(course => ({
+        id: `p${program.id}-c${course.id}`,
+        name: course.name,
+        meetingDays: this.parseMeetingDays(course.schedule),
+        meetingTime: this.parseMeetingTime(course.schedule),
+        facilitator: course.instructor
+          ? course.instructor.name
+          : "TBA",
+        enrolled: course.enrolled,
+        capacity: course.capacity
+      }))
+    };
+  }).filter(Boolean); // remove nulls
+}
+
+// Helpers to parse schedule string into meetingDays/meetingTime
+private parseMeetingDays(schedule: string) {
+  // example: "Mon,Wed,Fri 6:00 PM – 8:30 PM"
+  return schedule.split(" ")[0].split(",");
+}
+
+private parseMeetingTime(schedule: string) {
+  return schedule.split(" ").slice(1).join(" ");
+}
+
+
   async createProgram(data: any) {
    return await prisma.$transaction(async (prisma) => {
     // Step 1: Validate prerequisites
@@ -66,15 +140,7 @@ export class ProgramService {
     return await prisma.program.findMany({
       include: {
         topics: true,
-        cohorts: {
-          include :{
-            courses :{
-              include :{
-                enrollments: true
-              }
-            }
-          }
-        },
+        cohorts: true,
         prerequisitePrograms: {
           select: { prerequisiteId: true, prerequisite: true },
         },
