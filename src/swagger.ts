@@ -25,7 +25,8 @@ const options: swaggerJSDoc.Options = {
           type: "http",
           scheme: "bearer",
           bearerFormat: "JWT",
-          description: "Enter your JWT token in the format **Bearer &lt;token>**",
+          description:
+            "Enter your JWT token in the format **Bearer &lt;token>**",
         },
       },
     },
@@ -35,7 +36,7 @@ const options: swaggerJSDoc.Options = {
       },
     ],
   },
-  apis: ["./src/modules/**/*.ts","./dist/modules/**/*.js"],
+  apis: ["./src/modules/**/*.ts", "./dist/modules/**/*.js"],
 };
 
 module.exports = options;

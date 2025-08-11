@@ -95,8 +95,4 @@ userRouter.put(
   linkChildren,
 );
 
-userRouter.get(
-  "/current-user",
-  currentuser,
-);
-
+userRouter.get("/current-user", currentuser);

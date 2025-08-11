@@ -34,5 +34,5 @@ appRouter.use("/program", programRouter);
 appRouter.use("/visitor", visitorRouter);
 appRouter.use("/lifecenter", lifeCenterRouter);
 appRouter.use("/device", deviceRouter);
-appRouter.use("/market",marketRouter);
+appRouter.use("/market", marketRouter);
 appRouter.use("/product", productRouter);

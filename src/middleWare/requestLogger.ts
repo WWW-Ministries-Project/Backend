@@ -2,7 +2,6 @@ import { Request, Response, NextFunction } from "express";
 import { requestLogger } from "../utils/loggers"; // Using your new request logger
 
 export function logRequests(req: Request, res: Response, next: NextFunction) {
-   
   const start = Date.now();
 
   const oldSend = res.send;
@@ -18,7 +17,10 @@ export function logRequests(req: Request, res: Response, next: NextFunction) {
 
     let parsedBody: any;
     try {
-      parsedBody = typeof responseBody === "string" ? JSON.parse(responseBody) : responseBody;
+      parsedBody =
+        typeof responseBody === "string"
+          ? JSON.parse(responseBody)
+          : responseBody;
     } catch {
       parsedBody = responseBody;
     }

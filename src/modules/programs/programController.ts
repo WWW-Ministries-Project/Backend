@@ -85,7 +85,7 @@ export class ProgramController {
   async updateTopic(req: Request, res: Response) {
     try {
       const { id } = req.query;
-      const { name } = req.body
+      const { name } = req.body;
       await programService.updateTopic(Number(id), name);
       return res.status(200).json({ message: "Topic update successfully" });
     } catch (error: any) {
@@ -107,11 +107,12 @@ export class ProgramController {
     }
   }
 
-  async getAllProgramForMember(req:Request, res: Response){
-   try {
-      
+  async getAllProgramForMember(req: Request, res: Response) {
+    try {
       const programs = await programService.getAllProgramForMember();
-      return res.status(200).json({ message: "Program successfully" , data: programs});
+      return res
+        .status(200)
+        .json({ message: "Program successfully", data: programs });
     } catch (error: any) {
       return res
         .status(500)

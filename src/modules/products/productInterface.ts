@@ -1,54 +1,60 @@
-import {Prisma} from "@prisma/client";
+import { Prisma } from "@prisma/client";
 
 export interface CreateProductInput {
-    name: string;
-    description?: string;
-    published?: string;
-    stock_managed?: string;
-    product_type_id?: string;
-    product_category_id?: string;
-    price_currency?: string;
-    price_amount?: string;
-    product_colours?: ProductColourInput[]
-    market_id?: string;
+  name: string;
+  description?: string;
+  published?: string;
+  stock_managed?: string;
+  product_type_id?: string;
+  product_category_id?: string;
+  price_currency?: string;
+  price_amount?: string;
+  product_colours?: ProductColourInput[];
+  market_id?: string;
 }
 
 export interface ProductColourInput {
-    colour: string;
-    image_url: string;
-    stock: SizeStock[];
+  colour: string;
+  image_url: string;
+  stock: SizeStock[];
 }
 
 export interface SizeStock {
-    size: string;
-    stock: number;
+  size: string;
+  stock: number;
 }
 
 export interface UpdateProductInput extends CreateProductInput {
-    id: number;
+  id: number;
 }
 
 export interface ProductFilters {
-    name?: string;
-    deleted?: boolean;
-    published?: string;
-    product_type?: number;
-    product_category?: number;
-    take?: number;
-    skip?: number;
+  name?: string;
+  deleted?: boolean;
+  published?: string;
+  product_type?: number;
+  product_category?: number;
+  take?: number;
+  skip?: number;
 }
 
 export interface ProductColourStockInput {
-    id: number;
-    product_id: number;
-    colour: string;
-    image_url: string;
-    stock: SizeStock[];
+  id: number;
+  product_id: number;
+  colour: string;
+  image_url: string;
+  stock: SizeStock[];
 }
 
-
 const productWithTypeCategory = Prisma.validator<Prisma.productsDefaultArgs>()({
-    include: {product_category: true, product_type: true, product_colours: true, market: true}
-})
+  include: {
+    product_category: true,
+    product_type: true,
+    product_colours: true,
+    market: true,
+  },
+});
 
-export type ProductExtended = Prisma.productsGetPayload<typeof productWithTypeCategory>
+export type ProductExtended = Prisma.productsGetPayload<
+  typeof productWithTypeCategory
+>;

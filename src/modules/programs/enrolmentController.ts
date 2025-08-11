@@ -8,15 +8,14 @@ export class EnrollmentController {
     try {
       const { user_id } = req.query;
 
-      if (!user_id ) {
+      if (!user_id) {
         return res.status(400).json({
-          message:
-            "Missing required fields user_id",
+          message: "Missing required fields user_id",
         });
       }
 
       const myEnrollment = await enrollment.getUserProgramsCoursesTopics(
-         parseInt(user_id as string)
+        parseInt(user_id as string),
       );
 
       return res.status(201).json({
@@ -35,16 +34,15 @@ export class EnrollmentController {
       const { user_id, course_id } = req.body;
 
       // Validate required fields
-      if (!user_id || !course_id ) {
+      if (!user_id || !course_id) {
         return res.status(400).json({
-          message:
-            "Missing required fields user_id,course_id",
+          message: "Missing required fields user_id,course_id",
         });
       }
 
       const newEnrollment = await enrollment.enrollUser({
         course_id: parseInt(course_id as string),
-        user_id: parseInt(user_id as string)
+        user_id: parseInt(user_id as string),
       });
 
       return res.status(201).json({
@@ -108,9 +106,7 @@ export class EnrollmentController {
   async getProgressReport(req: Request, res: Response) {
     try {
       const { id } = req.query;
-      const progressDetails = await enrollment.getProgressDetails(
-        Number(id),
-      );
+      const progressDetails = await enrollment.getProgressDetails(Number(id));
       return res
         .status(200)
         .json({ message: "Operation sucessfull", data: progressDetails });

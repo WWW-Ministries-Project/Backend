@@ -49,14 +49,14 @@ export class UserService {
         membership_type,
         department_id,
         position_id,
-        member_since
+        member_since,
       } = {},
 
       children = [],
       status,
       password,
       is_user,
-      department_positions
+      department_positions,
     } = userData;
 
     // Generate email if not provided
@@ -137,11 +137,14 @@ export class UserService {
       console.error("Error generating user ID:", err),
     );
 
-    if (Array.isArray(department_positions) && department_positions.length > 0) {
+    if (
+      Array.isArray(department_positions) &&
+      department_positions.length > 0
+    ) {
       console.log("Stub: handle department updates here");
-      await this.savedDepartments(user.id,department_positions)
+      await this.savedDepartments(user.id, department_positions);
     }
-    
+
     const savedUser = await prisma.user.findUnique({
       where: { id: user.id },
       include: {
@@ -178,21 +181,27 @@ export class UserService {
       children: savedChildren,
     };
   }
-  private async savedDepartments(userId: number, department_positions: { department_id: any; position_id: any }[]) {
-  console.log("Department positions to create:", department_positions.map((dp:any) => ({
-    user_id: userId,
-    department_id: parseInt(dp.department_id),
-    position_id: parseInt(dp.position_id),
-})));
+  private async savedDepartments(
+    userId: number,
+    department_positions: { department_id: any; position_id: any }[],
+  ) {
+    console.log(
+      "Department positions to create:",
+      department_positions.map((dp: any) => ({
+        user_id: userId,
+        department_id: parseInt(dp.department_id),
+        position_id: parseInt(dp.position_id),
+      })),
+    );
     return await prisma.department_positions.createMany({
-    data: department_positions.map((dp) => ({
-      user_id: userId,
-      department_id: Number(dp.department_id),
-      position_id: Number(dp.position_id),
-    })),
-    skipDuplicates: true,
-  });
-}
+      data: department_positions.map((dp) => ({
+        user_id: userId,
+        department_id: Number(dp.department_id),
+        position_id: Number(dp.position_id),
+      })),
+      skipDuplicates: true,
+    });
+  }
 
   async registerChildren(
     children: any[],

@@ -10,9 +10,9 @@ dotenv.config();
 const collectDefaultMetrics = client.collectDefaultMetrics;
 collectDefaultMetrics();
 
-const swaggerJsdoc = require('swagger-jsdoc');
-const swaggerUi = require('swagger-ui-express');
-const swaggerOptions = require('./src/swagger');
+const swaggerJsdoc = require("swagger-jsdoc");
+const swaggerUi = require("swagger-ui-express");
+const swaggerOptions = require("./src/swagger");
 
 const port = process.env.PORT;
 const app = express();
@@ -24,7 +24,11 @@ app.use(logRequests);
 
 const specs = swaggerJsdoc(swaggerOptions);
 
-app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(specs, { explorer: true }));
+app.use(
+  "/api-docs",
+  swaggerUi.serve,
+  swaggerUi.setup(specs, { explorer: true }),
+);
 
 // Expose metrics
 app.get("/metrics", async (req, res) => {

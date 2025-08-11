@@ -7,10 +7,11 @@ export class CohortController {
   async createCohort(req: Request, res: Response) {
     try {
       if (!req.body.name || req.body.name.trim() === "") {
-    return res.status(400).json({
-      message: "We cannot have an empty cohort name, you get it?",
-      data: null,
-    });}
+        return res.status(400).json({
+          message: "We cannot have an empty cohort name, you get it?",
+          data: null,
+        });
+      }
       const newCohort = await cohortService.createCohort(
         req.body.programId,
         req.body,
@@ -66,10 +67,11 @@ export class CohortController {
     try {
       const { id } = req.query;
       if (!req.body.name || req.body.name.trim() === "") {
-    return res.status(400).json({
-      message: "We cannot have an empty cohort name, you get it?",
-      data: null,
-    });}
+        return res.status(400).json({
+          message: "We cannot have an empty cohort name, you get it?",
+          data: null,
+        });
+      }
       const updatedProgram = await cohortService.updateCohort(
         Number(id),
         req.body,

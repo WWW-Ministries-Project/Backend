@@ -14,9 +14,7 @@ export class CourseController {
 
   async createCourse(req: Request, res: Response) {
     try {
-      const newCourse = await courseService.createCourse(
-        req.body,
-      );
+      const newCourse = await courseService.createCourse(req.body);
       return res
         .status(201)
         .json({ message: "Course created", data: newCourse });
@@ -29,7 +27,7 @@ export class CourseController {
 
   async getAllCourses(req: Request, res: Response) {
     try {
-      const { cohortId } = req.query
+      const { cohortId } = req.query;
       const courses = await courseService.getAllCourses(Number(cohortId));
       return res.status(200).json({ data: courses });
     } catch (error: any) {
@@ -43,8 +41,7 @@ export class CourseController {
     try {
       const { id } = req.query;
       const course = await courseService.getCourseById(Number(id));
-      if (!course)
-        return res.status(404).json({ message: "Course not found" });
+      if (!course) return res.status(404).json({ message: "Course not found" });
 
       return res.status(200).json({ data: course });
     } catch (error: any) {

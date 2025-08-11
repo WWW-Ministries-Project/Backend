@@ -190,11 +190,7 @@ assetRouter.get(
  *       200:
  *         description: Asset details
  */
-assetRouter.get(
-  "/get-asset",
-  [protect, permissions.can_view_asset],
-  getAsset,
-);
+assetRouter.get("/get-asset", [protect, permissions.can_view_asset], getAsset);
 
 /**
  * @swagger

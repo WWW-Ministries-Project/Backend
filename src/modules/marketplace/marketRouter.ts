@@ -1,5 +1,5 @@
-import {Router} from "express";
-import {MarketController} from "./marketController";
+import { Router } from "express";
+import { MarketController } from "./marketController";
 
 const marketRouter = Router();
 const marketController = new MarketController();
@@ -9,7 +9,10 @@ marketRouter.put("/update-market", marketController.updateMarket);
 marketRouter.delete("/delete-market", marketController.deleteMarket);
 marketRouter.put("/restore-market", marketController.restoreMarket);
 marketRouter.get("/list-markets", marketController.listMarkets);
-marketRouter.get("/list-markets-by-event", marketController.listMarketsByEventId);
+marketRouter.get(
+  "/list-markets-by-event",
+  marketController.listMarketsByEventId,
+);
 marketRouter.get("/get-market-count", marketController.getMarketCount);
 marketRouter.get("/list-active-markets", marketController.getActiveMarkets);
 marketRouter.get("/get-market-by-id", marketController.getMarketById);

@@ -1,5 +1,5 @@
 import Router from "express";
-import {ProductController} from "./productController";
+import { ProductController } from "./productController";
 
 const productRouter = Router();
 const productController = new ProductController();
@@ -757,7 +757,10 @@ productRouter.put("/update-product", productController.updateProduct);
  *                   code: "DATABASE_ERROR"
  *                   timestamp: "2023-12-01T16:20:00Z"
  */
-productRouter.put("/update-product-colour-stock", productController.updateProductColourStock);
+productRouter.put(
+  "/update-product-colour-stock",
+  productController.updateProductColourStock,
+);
 /**
  * @swagger
  * components:
@@ -976,19 +979,43 @@ productRouter.put("/update-product-colour-stock", productController.updateProduc
 productRouter.delete("/delete-product", productController.deleteProduct);
 productRouter.put("/restore-product", productController.restoreProduct);
 productRouter.get("/list-products", productController.listProducts);
-productRouter.get("/list-products-by-market", productController.listProductsByMarketId);
+productRouter.get(
+  "/list-products-by-market",
+  productController.listProductsByMarketId,
+);
 productRouter.get("/get-product-by-id", productController.getProductById);
 //product type
 productRouter.post("/create-product-type", productController.createProductType);
 productRouter.put("/update-product-type", productController.updateProductType);
-productRouter.delete("/delete-product-type", productController.deleteProductType);
-productRouter.put("/restore-product-type", productController.restoreProductType);
+productRouter.delete(
+  "/delete-product-type",
+  productController.deleteProductType,
+);
+productRouter.put(
+  "/restore-product-type",
+  productController.restoreProductType,
+);
 productRouter.get("/list-product-type", productController.listProductTypes);
 //product category
-productRouter.post("/create-product-category", productController.createProductCategory);
-productRouter.put("/update-product-category", productController.updateProductCategory);
-productRouter.delete("/delete-product-category", productController.deleteProductCategory);
-productRouter.put("/restore-product-category", productController.restoreProductCategory);
-productRouter.get("/list-product-category", productController.listProductCategories);
+productRouter.post(
+  "/create-product-category",
+  productController.createProductCategory,
+);
+productRouter.put(
+  "/update-product-category",
+  productController.updateProductCategory,
+);
+productRouter.delete(
+  "/delete-product-category",
+  productController.deleteProductCategory,
+);
+productRouter.put(
+  "/restore-product-category",
+  productController.restoreProductCategory,
+);
+productRouter.get(
+  "/list-product-category",
+  productController.listProductCategories,
+);
 
 export default productRouter;

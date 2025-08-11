@@ -91,12 +91,12 @@ export class VisitorService {
 
     return {
       ...visitor,
-      visits: visitor.visits.map(({event, ...v }) => ({
+      visits: visitor.visits.map(({ event, ...v }) => ({
         ...v,
         eventId: event?.id || null,
         eventType: event?.event_type || null,
       })),
-      followUps: visitor.followUps.map((f:any) => ({
+      followUps: visitor.followUps.map((f: any) => ({
         ...f,
         assignedTo: f.assignedTo ? userMap[f.assignedTo] || null : null,
       })),

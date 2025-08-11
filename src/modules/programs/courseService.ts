@@ -38,14 +38,14 @@ export class CourseService {
   async getAllCourses(cohortId: number) {
     return await prisma.course.findMany({
       where: { cohortId },
-      include : {
+      include: {
         instructor: {
           select: {
-            name : true,
-            id : true
-          }
-        } 
-      }
+            name: true,
+            id: true,
+          },
+        },
+      },
     });
   }
 
@@ -60,43 +60,43 @@ export class CourseService {
             },
           },
           enrollments: {
-            include:{
-              user:{
-                include:{
-                  user_info : true
-                }
-              }
-            }
+            include: {
+              user: {
+                include: {
+                  user_info: true,
+                },
+              },
+            },
           },
-          instructor:{
-            select:{
-              id : true,
-              name : true
-            }
-          }
+          instructor: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
         },
       })
       .then((course) => {
         if (!course) return null;
 
-const flattenedEnrollments = course.enrollments.map((enrollment) => {
-  const userInfo = enrollment.user?.user_info;
-  return {
-    id:enrollment.id,
-    user_id:enrollment.user_id,
-    course_id:enrollment.course_id,
-    enrolled_at:enrollment.enrolledAt,
-    first_name: userInfo?.first_name,
-    last_name: userInfo?.last_name,
-    primary_number: userInfo?.primary_number,
-    email: userInfo?.email,
-  };
-});
+        const flattenedEnrollments = course.enrollments.map((enrollment) => {
+          const userInfo = enrollment.user?.user_info;
+          return {
+            id: enrollment.id,
+            user_id: enrollment.user_id,
+            course_id: enrollment.course_id,
+            enrolled_at: enrollment.enrolledAt,
+            first_name: userInfo?.first_name,
+            last_name: userInfo?.last_name,
+            primary_number: userInfo?.primary_number,
+            email: userInfo?.email,
+          };
+        });
 
-return {
-  ...course,
-  enrollments: flattenedEnrollments,
-};
+        return {
+          ...course,
+          enrollments: flattenedEnrollments,
+        };
       });
   }
 

@@ -233,7 +233,7 @@ export class Permissions {
   );
 
   can_manage_life_center = this.checkPermission(
-   "Life Center",
+    "Life Center",
     "manage",
     "Not authorized to edit programs",
   );

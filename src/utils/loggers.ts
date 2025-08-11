@@ -28,7 +28,6 @@ export const logs = {
   },
 };
 
-
 export const warnOptions = {
   ...logs,
 };
