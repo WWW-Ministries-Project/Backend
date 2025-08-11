@@ -221,7 +221,6 @@ model event_act {
   event_description String?       @default("event_description")
 
   event_mgt event_mgt[]
-  markets   markets[]
 }
 
 model event_mgt {
@@ -245,6 +244,8 @@ model event_mgt {
   event_attendance event_attendance[]
   request          request[]
   visit            visit[]
+
+  markets   markets[]
 }
 
 model event_attendance {
@@ -671,8 +672,8 @@ model markets {
   name          String     @unique
   description   String?
   deleted       Boolean    @default(false)
-  event         event_act? @relation(fields: [event_act_id], references: [id])
-  event_act_id  Int?
+  event         event_mgt? @relation(fields: [event_mgt_id], references: [id])
+  event_mgt_id  Int?
   products      products[]
   start_date    DateTime?
   end_date      DateTime?
