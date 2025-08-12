@@ -33,7 +33,7 @@ export class ProductService {
   //         contains: filters.name
   //     } : undefined,
   //     deleted: filters?.deleted ?? false,
-  //     published: filters?.published ?? undefined,
+  //     status: filters?.status ?? undefined,
   //     product_type_id: filters?.product_type ?? undefined,
   //     product_category_id: filters?.product_category ?? undefined
   // })
@@ -43,7 +43,7 @@ export class ProductService {
       data: {
         name: input.name.trim(),
         description: input.description?.trim(),
-        published: input.published,
+        status: input.status,
         stock_managed: input.stock_managed,
         product_type: this.connectProductType(input),
         product_category: this.connectProductCategory(input),
@@ -99,7 +99,7 @@ export class ProductService {
       image_url: input.image_url,
       deleted: input.deleted,
       stock_managed: input.stock_managed,
-      published: input.published,
+      status: input.status,
       product_type_id: input.product_type_id,
       product_category_id: input.product_category_id,
       price_currency: input.price_currency,
@@ -256,7 +256,7 @@ export class ProductService {
           }
         : undefined,
       deleted: filters?.deleted || false,
-      published: filters?.published ?? undefined,
+      status: filters?.status ?? undefined,
       product_type_id: filters?.product_type ?? undefined,
       product_category_id: filters?.product_category ?? undefined,
     };

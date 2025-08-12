@@ -691,7 +691,7 @@ model products {
   image_url           String?
   deleted             Boolean                @default(false)
   stock_managed       String                 @default("no")
-  published           String?                @default("draft")
+  status           String?                @default("draft")
   product_type        product_type?          @relation(fields: [product_type_id], references: [id])
   product_category    product_category?      @relation(fields: [product_category_id], references: [id])
   product_type_id     Int?

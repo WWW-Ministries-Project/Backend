@@ -3,7 +3,7 @@ import { Prisma } from "@prisma/client";
 export interface CreateProductInput {
   name: string;
   description?: string;
-  published?: string;
+  status?: string;
   stock_managed?: string;
   product_type_id?: string;
   product_category_id?: string;
@@ -31,7 +31,7 @@ export interface UpdateProductInput extends CreateProductInput {
 export interface ProductFilters {
   name?: string;
   deleted?: boolean;
-  published?: string;
+  status?: string;
   product_type?: number;
   product_category?: number;
   take?: number;
