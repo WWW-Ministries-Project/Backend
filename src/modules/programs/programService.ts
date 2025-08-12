@@ -57,7 +57,7 @@ export class ProgramService {
             (p) => p.prerequisite.title,
           ),
           courses: selectedCohort.courses.map((course) => ({
-            id: `p${program.id}-c${course.id}`,
+            id: course.id,
             name: course.name,
             meetingDays: this.parseMeetingDays(course.schedule),
             meetingTime: this.parseMeetingTime(course.schedule),
