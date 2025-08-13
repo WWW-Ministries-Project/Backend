@@ -331,7 +331,7 @@ async function updateChildren(
 }
 
 export const updateUserSatus = async (req: Request, res: Response) => {
-  const { id, is_active, status } = req.body;
+  const { id, is_active } = req.body;
   try {
     const response = await prisma.user.update({
       where: {
@@ -339,7 +339,6 @@ export const updateUserSatus = async (req: Request, res: Response) => {
       },
       data: {
         is_active,
-        status,
       },
       select: {
         id: true,
@@ -612,7 +611,7 @@ export const resetPassword = async (req: Request, res: Response) => {
   }
 };
 
-export const activateUser = async (req: Request, res: Response) => {
+export const activateAccount = async (req: Request, res: Response) => {
   const { user_id } = req.query;
   try {
     const existingUser = await prisma.user.findUnique({

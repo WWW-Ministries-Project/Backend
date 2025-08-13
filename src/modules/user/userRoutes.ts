@@ -14,7 +14,6 @@ import {
   updateUser,
   updateUserSatus,
   statsUsers,
-  activateUser,
   getUserByEmailPhone,
   convertMemeberToConfirmedMember,
   linkSpouses,
@@ -22,6 +21,7 @@ import {
   linkChildren,
   currentuser,
   ListUsersLight,
+  activateAccount,
 } from "../user/userController";
 import { Permissions } from "../../middleWare/authorization";
 const permissions = new Permissions();
@@ -66,9 +66,9 @@ userRouter.delete(
   deleteUser,
 );
 userRouter.put(
-  "/activate-user",
+  "/activate-account",
   [protect, permissions.can_Manage_Members],
-  activateUser,
+  activateAccount,
 );
 userRouter.get("/get-user-email", getUserByEmailPhone);
 
