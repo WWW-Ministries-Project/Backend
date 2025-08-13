@@ -64,10 +64,8 @@ export class UserService {
       email?.trim().toLowerCase() ||
       `${first_name.toLowerCase()}${last_name.toLowerCase()}_${Date.now()}@temp.com`;
 
-    // Hash password if the user needs an account
-    const hashedPassword = is_user
-      ? await hashPassword(password || "123456")
-      : undefined;
+    // Hash password for all users
+    const hashedPassword = await hashPassword(password || "123456")
 
     const departmentId =
       isNaN(parseInt(department_id)) || parseInt(department_id) === 0
