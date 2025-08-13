@@ -261,6 +261,71 @@ export class eventManagement {
       });
     }
   };
+  listEventsLight = async (req: Request, res: Response) => {
+    try {
+      const { month, year, event_type, event_status }: any = req.query;
+
+      let whereClause: any = {
+        event_type,
+        event_status,
+      };
+
+      if (month && year) {
+        const startOfMonth = new Date(year, month - 1, 1);
+        const startOfNextMonth = new Date(year, month, 1);
+
+        whereClause.AND = [
+          { start_date: { gte: startOfMonth } },
+          { end_date: { lt: startOfNextMonth } },
+        ];
+      }
+
+      const data = await prisma.event_mgt.findMany({
+        where: whereClause,
+        orderBy: {
+          start_date: "asc",
+        },
+        select: {
+          id: true,
+          poster: true,
+          start_date: true,
+          end_date: true,
+          start_time: true,
+          end_time: true,
+          location: true,
+          description: true,
+          event_type: true,
+          event_status: true,
+          event: {
+            select: {
+              event_name: true,
+              id: true,
+            },
+          },
+        },
+      });
+
+      const flat_data = data.map((e) => {
+        const { event, ...rest } = e;
+        return {
+          ...event,
+          event_name_id: event.id,
+          event_name: event.event_name,
+        };
+      });
+
+      res.status(200).json({
+        message: "Operation successful",
+        data: flat_data,
+      });
+    } catch (error: any) {
+      console.log(error);
+      return res.status(500).json({
+        message: "Event failed to load",
+        data: error.message,
+      });
+    }
+  };
 
   listUpcomingEvents = async (req: Request, res: Response) => {
     try {

@@ -707,8 +707,6 @@ export const ListUsers = async (req: Request, res: Response) => {
       whereFilter.name = { contains: name.trim() };
     }
 
-    console.log(whereFilter);
-
     const total = await prisma.user.count({ where: whereFilter });
 
     const users = await prisma.user.findMany({
@@ -774,6 +772,86 @@ export const ListUsers = async (req: Request, res: Response) => {
       page_size: pageSize,
       total,
       totalPages: Math.ceil(total / pageSize),
+      data: destructure(usersWithDeptName),
+    });
+  } catch (error) {
+    return res.status(500).json({ message: "Something Went Wrong", error });
+  }
+};
+export const ListUsersLight = async (req: Request, res: Response) => {
+  const { is_user, department_id, is_active, name } = req.query;
+  const isUser = is_user === "true";
+
+  try {
+    const departments = await prisma.department.findMany({
+      select: {
+        id: true,
+        name: true,
+      },
+    });
+
+    const departmentMap = new Map(departments.map((d) => [d.id, d.name]));
+
+    const whereFilter: any = {};
+
+    if (is_active !== undefined) whereFilter.is_active = is_active;
+    if (is_user !== undefined) whereFilter.is_user = isUser;
+    if (department_id) whereFilter.department_id = Number(department_id);
+    if (typeof name === "string" && name.trim()) {
+      whereFilter.name = { contains: name.trim() };
+    }
+
+    const users = await prisma.user.findMany({
+      orderBy: {
+        name: "asc",
+      },
+      where: whereFilter,
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        department_id: true,
+        user_info: {
+          select: {
+            country_code: true,
+            primary_number: true,
+            title: true,
+            photo: true,
+          },
+        },
+        department: {
+          select: {
+            department_info: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+          },
+        },
+        position: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+    });
+
+    const usersWithDeptName = users.map((user: any) => ({
+      ...user,
+      department_name: departmentMap.get(user.department_id) || null,
+    }));
+
+    const destructure = (data: any[]) => {
+      return data.map(({ user_info, ...rest }) => ({
+        ...rest,
+        ...user_info,
+      }));
+    };
+
+    res.status(200).json({
+      message: "Operation Successful",
       data: destructure(usersWithDeptName),
     });
   } catch (error) {

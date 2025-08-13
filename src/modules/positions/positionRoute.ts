@@ -6,6 +6,7 @@ import {
   deletePosition,
   listPositions,
   getPosition,
+  listPositionsLight,
 } from "./positionController";
 import { Permissions } from "../../middleWare/authorization";
 
@@ -268,4 +269,10 @@ positionRouter.get(
   "/get-position",
   [protect, permissions.can_view_positions],
   getPosition,
+);
+
+positionRouter.get(
+  "/get-positions-light",
+  [protect, permissions.can_view_positions],
+  listPositionsLight,
 );

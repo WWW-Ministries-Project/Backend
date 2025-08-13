@@ -31,9 +31,7 @@ export class MarketService {
   }
 
   private determineEventId(input: CreateMarketDto | UpdateMarketDto) {
-    return input.event_id
-      ? { connect: { id: input.event_id } }
-      : undefined;
+    return input.event_id ? { connect: { id: input.event_id } } : undefined;
   }
 
   /**
@@ -148,7 +146,8 @@ export class MarketService {
       const existingMarket = await prisma.markets.findFirst({
         where: { id, deleted: true },
       });
-      if (!existingMarket) throw new Error(`Deleted market with ID ${id} not found`);
+      if (!existingMarket)
+        throw new Error(`Deleted market with ID ${id} not found`);
 
       const market = await prisma.markets.update({
         where: { id },
@@ -248,4 +247,3 @@ export class MarketService {
     };
   }
 }
-

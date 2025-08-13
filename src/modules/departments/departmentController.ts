@@ -191,6 +191,52 @@ export const listDepartments = async (req: Request, res: Response) => {
   }
 };
 
+export const listDepartmentsLight = async (req: Request, res: Response) => {
+  try {
+    const response = await prisma.department.findMany({
+      orderBy: {
+        name: "asc",
+      },
+      select: {
+        id: true,
+        name: true,
+        department_head_info: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+        position: {
+          orderBy: {
+            name: "asc",
+          },
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+    });
+    const data = response?.map((d) => {
+      const { department_head_info, position, ...rest } = d;
+      return {
+        ...rest,
+        department_head: department_head_info?.name || "No Department Head",
+        positions: position?.map((p) => p.name) || [],
+      };
+    });
+
+    res.status(200).json({
+      message: "Success",
+      data: data,
+    });
+  } catch (error) {
+    return res
+      .status(503)
+      .json({ message: "Department failed to fetch", data: error });
+  }
+};
+
 export const getDepartment = async (req: Request, res: Response) => {
   const { id } = req.body;
 
