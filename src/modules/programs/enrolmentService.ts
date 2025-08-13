@@ -37,6 +37,8 @@ export class EnrollmentService {
       throw new Error("User is already enrolled in this course.");
     }
 
+    // Step 2: Check if the user has completed the pre-requisite program
+
     // Enroll user & update enrolled count in a transaction
     const [enrollment] = await prisma.$transaction([
       prisma.enrollment.create({
