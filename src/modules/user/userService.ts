@@ -216,7 +216,7 @@ export class UserService {
               ),
               email: `${child.first_name.toLowerCase()}_${child.last_name.toLowerCase()}_${Date.now()}@temp.com`,
               is_user: false,
-              is_active: false,
+              is_active: true,
               parent_id: parentObj.id,
               membership_type,
               status: parentObj.status,
