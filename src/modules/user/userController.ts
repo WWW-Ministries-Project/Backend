@@ -629,7 +629,7 @@ export const activateUser = async (req: Request, res: Response) => {
         id: Number(user_id),
       },
       data: {
-        is_user: !existingUser.is_user,
+        is_active: !existingUser.is_active,
       },
     });
 
