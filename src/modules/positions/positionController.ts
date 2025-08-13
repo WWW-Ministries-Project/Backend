@@ -47,7 +47,7 @@ export const createPosition = async (req: Request, res: Response) => {
     });
     const data = await prisma.position.findMany({
       orderBy: {
-        id: "desc",
+        name: "asc",
       },
       select: {
         id: true,
@@ -184,6 +184,44 @@ export const listPositions = async (req: Request, res: Response) => {
       total,
       totalPages: Math.ceil(total / pageSize),
       data: response,
+    });
+  } catch (error) {
+    return res
+      .status(503)
+      .json({ message: "Positions failed to fetch", data: error });
+  }
+};
+export const listPositionsLight = async (req: Request, res: Response) => {
+  try {
+    const response = await prisma.position.findMany({
+      orderBy: {
+        name: "asc",
+      },
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        department: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+    });
+
+    const data = response?.map((p) => {
+      const { department, ...rest } = p; // destructure to remove department
+      return {
+        ...rest,
+        department: department?.name || "No Department",
+      };
+    });
+
+    res.status(200).json({
+      message: "Success",
+
+      data: data,
     });
   } catch (error) {
     return res

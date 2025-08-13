@@ -21,6 +21,7 @@ import {
   getUserFamily,
   linkChildren,
   currentuser,
+  ListUsersLight,
 } from "../user/userController";
 import { Permissions } from "../../middleWare/authorization";
 const permissions = new Permissions();
@@ -32,6 +33,8 @@ export const userRouter = Router();
 userRouter.get("/get-user", getUser);
 
 userRouter.get("/list-users", ListUsers);
+
+userRouter.get("/list-users-light", ListUsersLight);
 
 userRouter.get("/stats-users", [protect], statsUsers);
 

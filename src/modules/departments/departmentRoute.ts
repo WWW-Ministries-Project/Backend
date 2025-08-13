@@ -6,6 +6,7 @@ import {
   deleteDepartment,
   listDepartments,
   getDepartment,
+  listDepartmentsLight,
 } from "./departmentController";
 import { Permissions } from "../../middleWare/authorization";
 const permissions = new Permissions();
@@ -253,4 +254,10 @@ departmentRouter.get(
   "/get-department",
   [protect, permissions.can_view_department],
   getDepartment,
+);
+
+departmentRouter.get(
+  "/list-departments-light",
+  [protect, permissions.can_view_department],
+  listDepartmentsLight,
 );
