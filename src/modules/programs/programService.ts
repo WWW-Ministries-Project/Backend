@@ -1,4 +1,5 @@
 import { prisma } from "../../Models/context";
+import { toCapitalizeEachWord } from "../../utils";
 
 export class ProgramService {
   async getAllProgramForMember() {
@@ -104,10 +105,20 @@ export class ProgramService {
         }
       }
 
+      const existingProgram = await prisma.program.findFirst({
+        where: { title: toCapitalizeEachWord(data.title) },
+    });
+
+      // Step 2: Check for existing program with same title
+      if (existingProgram) {
+        throw new Error("Program with this title already exists.");
+      }
+      
+
       // Step 2: Create the program
       const createdProgram = await prisma.program.create({
         data: {
-          title: data.title,
+          title: toCapitalizeEachWord(data.title),
           description: data.description,
           member_required: data.member_required,
           leader_required: data.leader_required,
