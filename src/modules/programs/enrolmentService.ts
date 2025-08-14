@@ -72,13 +72,15 @@ export class EnrollmentService {
         },
       },
     },
-    select: { prerequisiteId: true },
+    select: { prerequisite: {
+      select: { title: true  },
+    } },
   });
 
   if (incompletePrereqs.length > 0) {
     throw new Error(
       `User must complete prerequisite programs: ${incompletePrereqs
-        .map((p) => p.prerequisiteId)
+        .map((p) => p.prerequisite.title)
         .join(", ")}`
     );
   }
