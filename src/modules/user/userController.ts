@@ -1,4 +1,4 @@
-import { Request, Response } from "express";
+import e, { Request, Response } from "express";
 import JWT from "jsonwebtoken";
 import * as dotenv from "dotenv";
 import { prisma } from "../../Models/context";
@@ -440,6 +440,7 @@ export const login = async (req: Request, res: Response) => {
             department: true,
           },
         },
+        life_center_member: true,
         user_info: {
           select: {
             photo: true,
@@ -484,6 +485,7 @@ export const login = async (req: Request, res: Response) => {
           profile_img: existance.user_info?.photo,
           membership_type: existance.membership_type || null,
           department,
+          life_center_leader: Boolean(existance.life_center_member) || false,
           phone: existance.user_info?.primary_number || null,
           member_since: existance.user_info?.member_since || null,
         },
@@ -1196,11 +1198,16 @@ export const convertMemeberToConfirmedMember = async (
   req: Request,
   res: Response,
 ) => {
-  const { user_id } = req.query;
+  const { user_id, status } = req.query;
+  let user_status: string | undefined = status as string;
+  if (!status){
+    user_status = "CONFIRMED";
+  }
 
   try {
     const result = await userService.convertMemeberToConfirmedMember(
       Number(user_id),
+      user_status
     );
     if (result.error == "") {
       return res.status(400).json({
@@ -1340,48 +1347,3 @@ export const currentuser = async (req: Request, res: Response) => {
   }
 };
 
-// export const generateAndSendRandomOTP = async (req: Request, res: Response) => {
-//   try {
-//     const {email} = req.query;
-
-//     // Validate email parameter
-//     if (!email || typeof email !== "string") {
-//       return res.status(400).json({ message: "Email is required in query params" });
-//     }
-
-//     const email_address = email.toLowerCase();
-
-//     const user = await prisma.user.findUnique({
-//       where: { email: email_address },
-//     });
-
-//     if (!user) {
-//       return res
-//         .status(404)
-//         .json({ message: `No user exists with email ${email}`, data: null });
-//     }
-
-//     // Generate OTP
-//     const OTP = generateRandomOTP();
-
-//     // Send OTP email
-//     await sendEmail({
-//       to: email,
-//       subject: "Your OTP Code",
-//       text: `Your OTP is: ${OTP}`,
-//     });
-
-//     // Optional: Save OTP in DB or cache for verification later
-//     // await prisma.otp.create({
-//     //   data: { email, code: OTP, expiresAt: new Date(Date.now() + 5 * 60 * 1000) }
-//     // });
-
-//     return res.status(200).json({
-//       message: "OTP sent successfully",
-//       data: { email, OTP },
-//     });
-//   } catch (error) {
-//     console.error("Error sending OTP:", error);
-//     return res.status(500).json({ message: "Unable to send OTP", error });
-//   }
-// };

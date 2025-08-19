@@ -338,7 +338,7 @@ export class UserService {
     }
   }
 
-  async convertMemeberToConfirmedMember(id: number) {
+  async convertMemeberToConfirmedMember(id: number, status: string) {
     const allRequiredMemberPrograms = await prisma.program.findMany({
       where: {
         member_required: true,
@@ -346,7 +346,7 @@ export class UserService {
     });
 
     if (allRequiredMemberPrograms.length === 0) {
-      return this.updateMemberToConfirmedMember(id);
+      return this.updateMemberToConfirmedMember(id, status);
     }
 
     const programIds = allRequiredMemberPrograms.map(
@@ -389,10 +389,10 @@ export class UserService {
       };
     }
 
-    return this.updateMemberToConfirmedMember(id);
+    return this.updateMemberToConfirmedMember(id, status);
   }
 
-  private async updateMemberToConfirmedMember(id: number) {
+  private async updateMemberToConfirmedMember(id: number, status: string) {
     const updatedMember = await prisma.user.update({
       where: {
         id,

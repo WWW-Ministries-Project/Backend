@@ -98,10 +98,4 @@ userRouter.put(
   linkChildren,
 );
 
-userRouter.put(
-  "/update-user-status",
-  [protect, permissions.can_Manage_Members],
-  linkChildren,
-);
-
 userRouter.get("/current-user", currentuser);
