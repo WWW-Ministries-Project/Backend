@@ -105,7 +105,19 @@ export class VisitorService {
   async getAllVisitors() {
     const visitors = await prisma.visitor.findMany({
       include: {
-        visits: true,
+        visits:{
+          include:{
+            event: {
+              include:{
+                event:{
+                  select:{
+                    event_name : true
+                  }
+                }
+              }
+            },
+          }
+        },
         followUps: true,
       },
     });
@@ -113,7 +125,7 @@ export class VisitorService {
     const visitorsWithVisitCount = visitors.map(
       ({ visits, followUps, ...visitor }) => ({
         ...visitor,
-        evendId: visits[0]?.eventId || null,
+        eventName: visits[0]?.event?.event.event_name|| null,
         visitCount: visits.length,
         followUp:
           followUps[followUps.length - 1]?.status || "No Follow Ups Yet",
