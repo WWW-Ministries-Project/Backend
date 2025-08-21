@@ -65,7 +65,7 @@ export class UserService {
       `${first_name.toLowerCase()}${last_name.toLowerCase()}_${Date.now()}@temp.com`;
 
     // Hash password for all users
-    const hashedPassword = await hashPassword(password || "123456")
+    const hashedPassword = await hashPassword(password || "123456");
 
     const departmentId =
       isNaN(parseInt(department_id)) || parseInt(department_id) === 0

@@ -53,6 +53,7 @@ model user {
   spouse    user?    @relation("SpouseRelation", fields: [spouse_id], references: [id])
   spouse_of user?    @relation("SpouseRelation")
   course    course[]
+  order     order[]
 
   @@index([access_level_id], map: "user_access_level_id_fkey")
   @@index([position_id], map: "user_position_id_fkey")
@@ -245,7 +246,7 @@ model event_mgt {
   request          request[]
   visit            visit[]
 
-  markets   markets[]
+  markets markets[]
 }
 
 model event_attendance {
@@ -681,49 +682,51 @@ model markets {
   updated_at    DateTime   @updatedAt
   created_by_id Int?
   updated_at_id Int?
+  order         order[]
 }
 
 model products {
-  id                  Int                    @id @default(autoincrement())
+  id                  Int               @id @default(autoincrement())
   name                String
   description         String?
   colours             String?
   image_url           String?
-  deleted             Boolean                @default(false)
-  stock_managed       String                 @default("no")
-  status           String?                @default("draft")
-  product_type        product_type?          @relation(fields: [product_type_id], references: [id])
-  product_category    product_category?      @relation(fields: [product_category_id], references: [id])
+  deleted             Boolean           @default(false)
+  stock_managed       String            @default("no")
+  status              String?           @default("draft")
+  product_type        product_type?     @relation(fields: [product_type_id], references: [id])
+  product_category    product_category? @relation(fields: [product_category_id], references: [id])
   product_type_id     Int?
   product_category_id Int?
   price_currency      String?
   price_amount        Float?
-  created_at          DateTime               @default(now())
-  updated_at          DateTime               @updatedAt
+  created_at          DateTime          @default(now())
+  updated_at          DateTime          @updatedAt
   created_by_id       Int?
   updated_at_id       Int?
-  market              markets?               @relation(fields: [market_id], references: [id])
+  market              markets?          @relation(fields: [market_id], references: [id])
   market_id           Int?
   product_colours     product_colour[]
+  order_item          order_item[]
 }
 
 model sizes {
-  id                   Int                   @id @default(autoincrement())
-  name                 String                @unique
+  id                   Int             @id @default(autoincrement())
+  name                 String          @unique
   sort_order           Int?
-  created_at           DateTime              @default(now())
-  updated_at           DateTime              @updatedAt
+  created_at           DateTime        @default(now())
+  updated_at           DateTime        @updatedAt
   created_by_id        Int?
   updated_at_id        Int?
   product_colour_stock product_stock[]
 }
 
 model product_colour {
-  id         Int                   @id @default(autoincrement())
+  id         Int             @id @default(autoincrement())
   colour     String?
   image_url  String?
   product_id Int
-  product    products              @relation(fields: [product_id], references: [id])
+  product    products        @relation(fields: [product_id], references: [id])
   sizes      product_stock[]
 }
 
@@ -731,8 +734,67 @@ model product_stock {
   product_colour_id Int
   product_colour    product_colour @relation(fields: [product_colour_id], references: [id])
   size_id           Int
-  stock             Int                  @default(0)
-  size              sizes                @relation(fields: [size_id], references: [id])
+  stock             Int            @default(0)
+  size              sizes          @relation(fields: [size_id], references: [id])
 
   @@id([size_id, product_colour_id])
+}
+
+enum payment_status {
+  pending
+  success
+  failed
+}
+
+enum delivery_status {
+  pending
+  shipped
+  delivered
+  cancelled
+}
+
+model order {
+  id              Int             @id @default(autoincrement())
+  order_number    String?         
+  total_amount    Float
+  market          markets         @relation(fields: [market_id], references: [id])
+  market_id       Int
+  user            user?           @relation(fields: [user_id], references: [id])
+  user_id         Int?
+  payment_status  payment_status  @default(pending)
+  delivery_status delivery_status @default(pending)
+  created_at      DateTime        @default(now())
+  updated_at      DateTime        @updatedAt
+
+  items          order_item[]
+  billing_details billing_details?
+}
+
+model order_item {
+  id               Int       @id @default(autoincrement())
+  order            order     @relation(fields: [order_id], references: [id], onDelete: Cascade)
+  order_id         Int
+  name             String
+  product          products? @relation(fields: [product_id], references: [id])
+  product_id       Int?
+  price_amount     Float
+  price_currency   String
+  quantity         Int
+  product_type     String
+  product_category String
+  image_url        String
+  color            String
+  size             String
+}
+
+model billing_details {
+  id           Int    @id @default(autoincrement())
+  order        order  @relation(fields: [order_id], references: [id], onDelete: Cascade)
+  order_id     Int    @unique
+  first_name   String
+  last_name    String
+  email        String
+  phone_number String
+  country      String
+  country_code String
 }

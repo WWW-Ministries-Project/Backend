@@ -107,13 +107,12 @@ export class ProgramService {
 
       const existingProgram = await prisma.program.findFirst({
         where: { title: toCapitalizeEachWord(data.title) },
-    });
+      });
 
       // Step 2: Check for existing program with same title
       if (existingProgram) {
         throw new Error("Program with this title already exists.");
       }
-      
 
       // Step 2: Create the program
       const createdProgram = await prisma.program.create({
