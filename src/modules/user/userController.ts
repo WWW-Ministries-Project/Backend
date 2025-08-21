@@ -781,7 +781,6 @@ export const ListUsers = async (req: Request, res: Response) => {
 };
 export const ListUsersLight = async (req: Request, res: Response) => {
   try {
-
     const users = await prisma.user.findMany({
       orderBy: {
         name: "asc",
@@ -795,7 +794,7 @@ export const ListUsersLight = async (req: Request, res: Response) => {
 
     res.status(200).json({
       message: "Operation Successful",
-      data: users
+      data: users,
     });
   } catch (error) {
     return res.status(500).json({ message: "Something Went Wrong", error });
@@ -1200,14 +1199,14 @@ export const convertMemeberToConfirmedMember = async (
 ) => {
   const { user_id, status } = req.query;
   let user_status: string | undefined = status as string;
-  if (!status){
+  if (!status) {
     user_status = "CONFIRMED";
   }
 
   try {
     const result = await userService.convertMemeberToConfirmedMember(
       Number(user_id),
-      user_status
+      user_status,
     );
     if (result.error == "") {
       return res.status(400).json({
@@ -1346,4 +1345,3 @@ export const currentuser = async (req: Request, res: Response) => {
     return res.status(401).json({ message: "Unauthorized", error });
   }
 };
-
