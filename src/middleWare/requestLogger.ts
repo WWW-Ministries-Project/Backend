@@ -1,7 +1,10 @@
 import { Request, Response, NextFunction } from "express";
-import { requestLogger } from "../utils/loggers"; // Using your new request logger
+import { requestLogger } from "../utils/loggers";
 
 export function logRequests(req: Request, res: Response, next: NextFunction) {
+  if (req.originalUrl.startsWith("/metrics")) {
+    return next();
+  }
   const start = Date.now();
 
   const oldSend = res.send;
