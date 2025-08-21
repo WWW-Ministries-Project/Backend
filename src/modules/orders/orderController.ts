@@ -9,7 +9,6 @@ export class OrderController {
     try {
       const order = await orderService.create(req.body);
       return res.status(201).json({
-        success: true,
         message: "Order created successfully",
         data: order,
       });
@@ -26,12 +25,11 @@ export class OrderController {
     try {
       const orders = await orderService.findAll();
       return res.status(200).json({
-        success: true,
+        message: "Orders retrieved successfully",
         data: orders,
       });
     } catch (error: any) {
       return res.status(500).json({
-        success: false,
         message: error.message || "Failed to fetch orders",
       });
     }
@@ -43,12 +41,11 @@ export class OrderController {
       const { id } = req.query;
       const order = await orderService.findOne(Number(id));
       return res.status(200).json({
-        success: true,
+        message: "Order retrieved successfully",
         data: order,
       });
     } catch (error: any) {
       return res.status(404).json({
-        success: false,
         message: error.message || "Order not found",
       });
     }
@@ -60,12 +57,11 @@ export class OrderController {
       const userId = parseInt(req.query.user_id as string);
       const orders = await orderService.findByUserId(userId);
       return res.status(200).json({
-        success: true,
+        message: "Orders retrieved successfully",
         data: orders,
       });
     } catch (error: any) {
       return res.status(404).json({
-        success: false,
         message: error.message || "No orders found for this user",
       });
     }
@@ -90,15 +86,14 @@ export class OrderController {
 
   async verifyPayment(req: Request, res: Response) {
     try {
-      const reference = req.query.reference as string;
-      const order = await orderService.verifyPayment(reference);
+      const order_number = req.query.order_number as string;
+      const order = await orderService.verifyPaymentStatus(order_number);
       return res.status(200).json({
-        success: true,
-        data: order,
+        message: order.message,
+        data: order.order,
       });
     } catch (error: any) {
       return res.status(400).json({
-        success: false,
         message: error.message || "Payment verification failed",
       });
     }

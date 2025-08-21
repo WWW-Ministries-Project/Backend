@@ -765,7 +765,7 @@ model order {
   delivery_status delivery_status @default(pending)
   created_at      DateTime        @default(now())
   updated_at      DateTime        @updatedAt
-
+  reference       String
   items          order_item[]
   billing_details billing_details?
 }
