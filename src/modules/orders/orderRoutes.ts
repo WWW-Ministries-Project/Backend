@@ -49,7 +49,7 @@ const orderController = new OrderController();
  *                   properties:
  *                     name: { type: string, example: "T-shirt" }
  *                     prduct_id: { type: string, example: "PRD123" }
- *                      market_id: { type: integer, example: 101}
+ *                     market_id: { type: integer, example: 101}
  *                     price_amount: { type: number, example: 2000 }
  *                     price_currency: { type: string, example: "NGN" }
  *                     quantity: { type: integer, example: 2 }
