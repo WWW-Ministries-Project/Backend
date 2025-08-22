@@ -53,7 +53,7 @@ model user {
   spouse    user?    @relation("SpouseRelation", fields: [spouse_id], references: [id])
   spouse_of user?    @relation("SpouseRelation")
   course    course[]
-  order     order[]
+  orders    orders[]
 
   @@index([access_level_id], map: "user_access_level_id_fkey")
   @@index([position_id], map: "user_position_id_fkey")
@@ -669,20 +669,20 @@ model product_category {
 }
 
 model markets {
-  id            Int        @id @default(autoincrement())
-  name          String     @unique
+  id            Int           @id @default(autoincrement())
+  name          String        @unique
   description   String?
-  deleted       Boolean    @default(false)
-  event         event_mgt? @relation(fields: [event_mgt_id], references: [id])
+  deleted       Boolean       @default(false)
+  event         event_mgt?    @relation(fields: [event_mgt_id], references: [id])
   event_mgt_id  Int?
   products      products[]
   start_date    DateTime?
   end_date      DateTime?
-  created_at    DateTime   @default(now())
-  updated_at    DateTime   @updatedAt
+  created_at    DateTime      @default(now())
+  updated_at    DateTime      @updatedAt
   created_by_id Int?
   updated_at_id Int?
-  order         order[]
+  order_items   order_items[]
 }
 
 model products {
@@ -707,7 +707,7 @@ model products {
   market              markets?          @relation(fields: [market_id], references: [id])
   market_id           Int?
   product_colours     product_colour[]
-  order_item          order_item[]
+  order_items         order_items[]
 }
 
 model sizes {
@@ -753,28 +753,28 @@ enum delivery_status {
   cancelled
 }
 
-model order {
-  id              Int             @id @default(autoincrement())
-  order_number    String?         
+model orders {
+  id              Int              @id @default(autoincrement())
+  order_number    String?
   total_amount    Float
-  market          markets         @relation(fields: [market_id], references: [id])
-  market_id       Int
-  user            user?           @relation(fields: [user_id], references: [id])
+  user            user?            @relation(fields: [user_id], references: [id])
   user_id         Int?
-  payment_status  payment_status  @default(pending)
-  delivery_status delivery_status @default(pending)
-  created_at      DateTime        @default(now())
-  updated_at      DateTime        @updatedAt
+  payment_status  payment_status   @default(pending)
+  delivery_status delivery_status  @default(pending)
+  created_at      DateTime         @default(now())
+  updated_at      DateTime         @updatedAt
   reference       String
-  items          order_item[]
+  items           order_items[]
   billing_details billing_details?
 }
 
-model order_item {
+model order_items {
   id               Int       @id @default(autoincrement())
-  order            order     @relation(fields: [order_id], references: [id], onDelete: Cascade)
+  order            orders    @relation(fields: [order_id], references: [id], onDelete: Cascade)
   order_id         Int
   name             String
+  market           markets   @relation(fields: [market_id], references: [id])
+  market_id        Int
   product          products? @relation(fields: [product_id], references: [id])
   product_id       Int?
   price_amount     Float
@@ -789,7 +789,7 @@ model order_item {
 
 model billing_details {
   id           Int    @id @default(autoincrement())
-  order        order  @relation(fields: [order_id], references: [id], onDelete: Cascade)
+  orders       orders @relation(fields: [order_id], references: [id], onDelete: Cascade)
   order_id     Int    @unique
   first_name   String
   last_name    String
