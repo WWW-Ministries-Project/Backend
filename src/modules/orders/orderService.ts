@@ -30,10 +30,9 @@ export class OrderService {
     }[];
   }) {
     // Step 1: Create order + items + billing info
-    const order = await prisma.order.create({
+    const order = await prisma.orders.create({
       data: {
         user_id: data.user_id ?? null,
-        market_id: data.market_id,
         total_amount: data.total_amount,
         reference: data.reference,
         items: { create: this.buildItems(data.items) },
@@ -48,20 +47,21 @@ export class OrderService {
 
     // Step 2: Verify payment
     const response = await this.verifyPayment(data.reference);
-    const status = response.status === 200 && response.data.data.status === "success"
-      ? "success"
-      : "failed";
+    const status =
+      response.status === 200 && response.data.data.status === "success"
+        ? "success"
+        : "failed";
 
     // Step 3: Update order
     return this.updateOrderPayment(order.id, orderNumber, status);
   }
 
   async findAll() {
-    return prisma.order.findMany({ include: { items: true } });
+    return prisma.orders.findMany({ include: { items: true } });
   }
 
   async findOne(id: number) {
-    const order = await prisma.order.findUnique({
+    const order = await prisma.orders.findUnique({
       where: { id },
       include: { items: true },
     });
@@ -71,15 +71,21 @@ export class OrderService {
   }
 
   async findByUserId(userId: number) {
-    return prisma.order.findMany({
+    return prisma.orders.findMany({
       where: { user_id: userId },
       include: { items: true },
     });
   }
 
   async findOneByMarketplaceId(marketplaceId: number) {
-    return prisma.order.findMany({
-      where: { market_id: marketplaceId },
+    return await prisma.orders.findMany({
+      where: {
+        items: {
+          some: {
+            market_id: marketplaceId,
+          },
+        },
+      },
       include: { items: true },
     });
   }
@@ -97,20 +103,26 @@ export class OrderService {
   }
 
   async verifyPaymentStatus(order_number: string) {
-    const order = await prisma.order.findFirst({
+    const order = await prisma.orders.findFirst({
       where: { order_number },
       select: { reference: true, id: true, payment_status: true },
     });
 
     if (!order) return { message: "Order not found", order: null };
-    if (!order.reference) return { message: "No payment reference found", order: null };
+    if (!order.reference)
+      return { message: "No payment reference found", order: null };
     if (order.payment_status === "success")
       return { message: "Payment already verified", order: null };
 
     const response = await this.verifyPayment(order.reference);
-    const status = response.data.data.status === "success" ? "success" : "failed";
+    const status =
+      response.data.data.status === "success" ? "success" : "failed";
 
-    const updatedOrder = await this.updateOrderPayment(order.id, order_number, status);
+    const updatedOrder = await this.updateOrderPayment(
+      order.id,
+      order_number,
+      status,
+    );
 
     return {
       message: `Payment verification ${status}`,
@@ -118,9 +130,12 @@ export class OrderService {
     };
   }
 
-
-  private async updateOrderPayment(orderId: number, orderNumber: string, status: "success" | "failed") {
-    return prisma.order.update({
+  private async updateOrderPayment(
+    orderId: number,
+    orderNumber: string,
+    status: "success" | "failed",
+  ) {
+    return prisma.orders.update({
       where: { id: orderId },
       data: { payment_status: status, order_number: orderNumber },
       include: { items: true, billing_details: true },
@@ -132,6 +147,7 @@ export class OrderService {
       name: item.name,
       prduct_id: item.prduct_id,
       price_amount: item.price_amount,
+      market_id: item.market_id,
       price_currency: item.price_currency,
       quantity: item.quantity,
       product_type: item.product_type,

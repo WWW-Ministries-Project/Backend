@@ -27,9 +27,6 @@ const orderController = new OrderController();
  *               user_id:
  *                 type: integer
  *                 example: 1
- *               market_id:
- *                 type: integer
- *                 example: 101
  *               total_amount:
  *                 type: number
  *                 example: 5000
@@ -52,6 +49,7 @@ const orderController = new OrderController();
  *                   properties:
  *                     name: { type: string, example: "T-shirt" }
  *                     prduct_id: { type: string, example: "PRD123" }
+ *                      market_id: { type: integer, example: 101}
  *                     price_amount: { type: number, example: 2000 }
  *                     price_currency: { type: string, example: "NGN" }
  *                     quantity: { type: integer, example: 2 }
