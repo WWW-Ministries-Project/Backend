@@ -112,6 +112,7 @@ export class VisitorService {
                 event: {
                   select: {
                     event_name: true,
+                    id: true,
                   },
                 },
               },
@@ -125,6 +126,7 @@ export class VisitorService {
     const visitorsWithVisitCount = visitors.map(
       ({ visits, followUps, ...visitor }) => ({
         ...visitor,
+        eventId: visits[0]?.event?.event.id || null,
         eventName: visits[0]?.event?.event.event_name || null,
         visitCount: visits.length,
         followUp:
