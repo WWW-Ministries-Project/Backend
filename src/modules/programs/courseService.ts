@@ -56,7 +56,11 @@ export class CourseService {
         include: {
           cohort: {
             include: {
-              program: true,
+              program: {
+                include: {
+                  topics: true,
+                },
+              },
             },
           },
           enrollments: {
@@ -64,6 +68,13 @@ export class CourseService {
               user: {
                 include: {
                   user_info: true,
+                },
+              },
+              progress: {
+                select: {
+                  topicId: true,
+                  status: true,
+                  score: true,
                 },
               },
             },
@@ -79,17 +90,37 @@ export class CourseService {
       .then((course) => {
         if (!course) return null;
 
-        const flattenedEnrollments = course.enrollments.map((enrollment) => {
-          const userInfo = enrollment.user?.user_info;
+        const programTopicIds =
+          course.cohort?.program?.topics?.map((t) => t.id) || [];
+        const totalTopics = programTopicIds.length;
+
+        const flattenedEnrollments = course.enrollments.map((e: any) => {
+          const userInfo = e.user?.user_info;
+
+          const completedCount = e.progress.filter(
+            (p: any) =>
+              p.status === "PASS" && programTopicIds.includes(p.topicId),
+          ).length;
+          const progressPercent =
+            totalTopics > 0
+              ? Math.round((completedCount / totalTopics) * 100)
+              : 0;
+
           return {
-            id: enrollment.id,
-            user_id: enrollment.user_id,
-            course_id: enrollment.course_id,
-            enrolled_at: enrollment.enrolledAt,
+            id: e.id,
+            user_id: e.user_id,
+            course_id: e.course_id,
+            enrolled_at: e.enrolledAt,
             first_name: userInfo?.first_name,
             last_name: userInfo?.last_name,
             primary_number: userInfo?.primary_number,
             email: userInfo?.email,
+
+            progress_completed: completedCount,
+            progress_total: totalTopics,
+            progress_percent: progressPercent,
+            progress_status:
+              progressPercent === 100 ? "COMPLETED" : "IN_PROGRESS",
           };
         });
 
