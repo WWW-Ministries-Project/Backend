@@ -49,11 +49,12 @@ model user {
   soul_won              soul_won[]             @relation("user_soul_winner")
   department_positions  department_positions[]
 
-  spouse_id Int?     @unique
-  spouse    user?    @relation("SpouseRelation", fields: [spouse_id], references: [id])
-  spouse_of user?    @relation("SpouseRelation")
-  course    course[]
-  orders    orders[]
+  spouse_id   Int?          @unique
+  spouse      user?         @relation("SpouseRelation", fields: [spouse_id], references: [id])
+  spouse_of   user?         @relation("SpouseRelation")
+  course      course[]
+  orders      orders[]
+  certificate certificate[]
 
   @@index([access_level_id], map: "user_access_level_id_fkey")
   @@index([position_id], map: "user_position_id_fkey")
@@ -365,6 +366,7 @@ model program {
   // Define relation for prerequisites
   prerequisitePrograms program_prerequisites[] @relation("ProgramToPrerequisite")
   requiredForPrograms  program_prerequisites[] @relation("ProgramToRequired")
+  certificate          certificate[]
 }
 
 model program_prerequisites {
@@ -797,4 +799,16 @@ model billing_details {
   phone_number String
   country      String
   country_code String
+}
+
+model certificate {
+  id                Int      @id @default(autoincrement())
+  userId            Int
+  programId         Int
+  issuedAt          DateTime @default(now())
+  certificateNumber String   @unique
+  user              user     @relation(fields: [userId], references: [id])
+  program           program  @relation(fields: [programId], references: [id])
+
+  @@unique([userId, programId])
 }

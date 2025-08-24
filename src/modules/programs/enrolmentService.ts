@@ -1,5 +1,7 @@
 import { progress_status } from "@prisma/client";
 import { prisma } from "../../Models/context";
+import { certificateTemplate } from "../../utils/mail_templates/certificateTemplate";
+import { sendEmail } from "../../utils";
 
 export class EnrollmentService {
   async enrollUser(payload: { course_id: number; user_id?: number }) {
@@ -266,16 +268,83 @@ export class EnrollmentService {
     return updates;
   }
   async getUserProgramsCoursesTopics(userId: number) {
-    const enrollment = await prisma.enrollment.findFirst({
+    const enrollment = await prisma.enrollment.findMany({
       where: {
         user_id: userId,
       },
     });
 
-    if (enrollment) {
-      return this.getProgressDetails(enrollment?.id);
+    if (enrollment && enrollment.length > 0) {
+      const progressDetails = await Promise.all(
+        enrollment.map((enr) => this.getProgressDetails(enr.id))
+      );
+      return progressDetails;
     } else {
       return null;
     }
+  }
+
+  async generateCertificate(programId: number, userId: number) {
+    const [program, user, topics] = await Promise.all([
+      prisma.program.findUnique({
+        where: { id: programId },
+        select: { id: true, title: true },
+      }),
+      prisma.user.findUnique({
+        where: { id: userId },
+        select: { id: true, name: true, email: true },
+      }),
+      prisma.topic.findMany({
+        where: { programId },
+        select: { id: true },
+      }),
+    ]);
+
+    if (!program) throw new Error("Program not found");
+    if (!user) throw new Error("User not found");
+    if (topics.length === 0) throw new Error("Program has no topics");
+
+    const topicIds = topics.map((t) => t.id);
+
+    const passedTopicsCount = await prisma.progress.count({
+      where: {
+        topicId: { in: topicIds },
+        enrollment: { user_id: userId },
+        status: "PASS",
+      },
+    });
+
+    if (passedTopicsCount !== topicIds.length) {
+      throw new Error("User has not completed all topics in the program");
+    }
+
+    const certificateNumber = `CERT-${programId}-${userId}-${Date.now()}`;
+
+    const certHtml = certificateTemplate(
+      user.name,
+      certificateNumber,
+      program.title,
+    );
+
+    const certificate = await prisma.certificate.create({
+      data: {
+        userId,
+        programId,
+        issuedAt: new Date(),
+        certificateNumber,
+      },
+    });
+
+    const attachementArray: string[] = [];
+    attachementArray.push(certHtml);
+
+    // sendEmailWithAttachmentAsString(
+    //   certHtml,
+    //   String(user?.email),
+    //   "Your Certificate of Completion",
+    //   attachementArray,
+    // );
+
+    return certificate;
   }
 }
