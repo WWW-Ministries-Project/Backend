@@ -30,6 +30,9 @@ const orderController = new OrderController();
  *               total_amount:
  *                 type: number
  *                 example: 5000
+ *               payment_type:
+ *                 type: string
+ *                 example: "paystack"
  *               reference:
  *                 type: string
  *                 example: "txn_ref_12345"
@@ -49,7 +52,6 @@ const orderController = new OrderController();
  *                   properties:
  *                     name: { type: string, example: "T-shirt" }
  *                     prduct_id: { type: string, example: "PRD123" }
- *                     market_id: { type: integer, example: 101}
  *                     price_amount: { type: number, example: 2000 }
  *                     price_currency: { type: string, example: "NGN" }
  *                     quantity: { type: integer, example: 2 }
@@ -144,47 +146,59 @@ orderRouter.get("/get-orders-by-market", orderController.findByMarketplaceId);
 /**
  * @swagger
  * /orders/verify-payment:
- *  get:
- *    summary: Verify a payment
- *    description: Verify an order payment using a payment reference.
- *    tags:
- *      - Orders
- *    parameters:
- *      - in: query
- *        name: reference
- *        required: true
- *        schema:
- *          type: string
- *        description: Payment reference provided by the payment gateway
- *    responses:
- *      "200":
- *        description: Payment verified successfully
- *        content:
- *          application/json:
- *            schema:
- *              type: object
- *              properties:
- *                success:
- *                  type: boolean
- *                  example: true
- *                data:
- *                  type: object
- *                  description: Order details with payment status
- *      "400":
- *        description: Payment verification failed
- *        content:
- *          application/json:
- *            schema:
- *              type: object
- *              properties:
- *                success:
- *                  type: boolean
- *                  example: false
- *                message:
- *                  type: string
- *                  example: "Payment verification failed"
+ *   get:
+ *     summary: Verify a payment
+ *     description: Verify an order payment using a payment reference.
+ *     tags: [Orders]
+ *     parameters:
+ *       - in: query
+ *         name: reference
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Payment reference provided by the payment gateway
+ *     responses:
+ *       200:
+ *         description: Payment verified successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   type: object
+ *                   description: Order details with payment status
+ *       400:
+ *         description: Payment verification failed, this is for paystack
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: false
+ *                 message:
+ *                   type: string
+ *                   example: "Payment verification failed"
  */
+orderRouter.get("/verify-payment", orderController.verifyPayment);
 
-orderRouter.put("/verify-payment", orderController.verifyPayment);
+/**
+ * @swagger
+ * /orders/hubtel-payment-webhook:
+ *   post:
+ *     summary: Hubtel payment webhook callback
+ *     tags: [Orders]
+ *     responses:
+ *       200:
+ *         description: Webhook processed successfully
+ */
+orderRouter.post("/hubtel-payment-webhook", orderController.hubtelWebhook);
+
+orderRouter.get("/confirm-transaction-status", orderController.confirmTrasaction);
 
 export default orderRouter;
