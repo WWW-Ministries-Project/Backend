@@ -8,6 +8,7 @@ export class OrderService {
     market_id: number;
     total_amount: number;
     reference: string;
+    payment_type: "paystack" | "hubtel" | null;
     billing: {
       first_name: string;
       last_name: string;
@@ -45,15 +46,19 @@ export class OrderService {
 
     const orderNumber = this.generateOrderNumber(order.id);
 
-    // Step 2: Verify payment
-    const response = await this.verifyPayment(data.reference);
-    const status =
-      response.status === 200 && response.data.data.status === "success"
-        ? "success"
-        : "failed";
+    if (data.payment_type === "paystack") {
+      const response = await this.verifyPayment(data.reference);
+      const status =
+        response.status === 200 && response.data.data.status === "success"
+          ? "success"
+          : "failed";
 
-    // Step 3: Update order
-    return this.updateOrderPayment(order.id, orderNumber, status);
+      return this.updateOrderPayment(order.id, status, orderNumber);
+    } else if (data.payment_type === "hubtel") {
+      return this.updateOrderPayment(order.id, "pending", orderNumber);
+    } else {
+      return this.updateOrderPayment(order.id, "pending", orderNumber);
+    }
   }
 
   async findAll() {
@@ -90,6 +95,28 @@ export class OrderService {
     });
   }
 
+  async updateOrderStatusByHubtel(clientReference: string, status: string) {
+    const order = await prisma.orders.findFirst({
+      where: { reference: clientReference },
+      select: { id: true, order_number: true, payment_status: true },
+    });
+
+    if (!order) throw new Error("Order not found");
+    if (order.payment_status === "success")
+      throw new Error("Payment already verified");
+
+    const updatedOrder = await this.updateOrderPayment(
+      order.id,
+      status as "success" | "failed",
+      order.order_number || undefined,
+    );
+
+    return {
+      message: `Payment status updated to ${status}`,
+      order: updatedOrder,
+    };
+  }
+
   private async verifyPayment(reference: string) {
     return axios.get(
       `https://api.paystack.co/transaction/verify/${reference}`,
@@ -120,8 +147,8 @@ export class OrderService {
 
     const updatedOrder = await this.updateOrderPayment(
       order.id,
-      order_number,
       status,
+      order_number,
     );
 
     return {
@@ -132,14 +159,31 @@ export class OrderService {
 
   private async updateOrderPayment(
     orderId: number,
-    orderNumber: string,
-    status: "success" | "failed",
+    status: "success" | "failed" | "pending",
+    orderNumber?: string,
   ) {
     return prisma.orders.update({
       where: { id: orderId },
       data: { payment_status: status, order_number: orderNumber },
       include: { items: true, billing_details: true },
     });
+  }
+
+  async checkHubtelTransactionStatus(clientReference: string) {
+    const posId = process.env.HUBTEL_POS_ID;
+    const url = `https://api-txnstatus.hubtel.com/transactions/${posId}/status?clientReference=${clientReference}`;
+
+    const response = await axios.get(url, {
+      headers: {
+        Authorization: `Basic ${process.env.HUBTEL_AUTH_KEY}`,
+        "Content-Type": "application/json",
+      },
+    });
+
+    const { status } = response.data.data;
+    const normalizedStatus = status === "Paid" ? "success" : "failed";
+
+    return this.updateOrderStatusByHubtel(clientReference, normalizedStatus);
   }
 
   private buildItems(items: any[]) {

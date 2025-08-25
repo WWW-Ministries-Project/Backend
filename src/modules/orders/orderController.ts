@@ -98,4 +98,37 @@ export class OrderController {
       });
     }
   }
+
+  async hubtelWebhook(req: Request, res: Response) {
+    try {
+      const { Data } = req.body;
+      const status = Data.Status === "Success" ? "success" : "failed";
+
+      const result = await orderService.updateOrderStatusByHubtel(
+        Data.ClientReference,
+        status,
+      );
+
+      res.status(200).json({ message: "Callback processed", result });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  }
+
+
+  async confirmTrasaction(req:Request, res:Response){
+    try {
+      const {reference} = req.query as {reference:string};
+      const response = await orderService.checkHubtelTransactionStatus(reference);
+      return res.status(200).json({
+        message: "Transaction confirmed",
+        data: response,
+      });
+      
+    } catch (error) {
+      
+    }
+  } 
 }
+
+

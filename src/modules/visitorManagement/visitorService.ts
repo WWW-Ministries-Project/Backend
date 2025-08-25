@@ -57,9 +57,14 @@ export class VisitorService {
         visits: {
           include: {
             event: {
-              select: {
-                id: true,
-                event_type: true,
+              include: {
+                event: {
+                  select: {
+                    event_name: true,
+                    id: true,
+                    event_type: true,
+                  },
+                },
               },
             },
           },
@@ -93,8 +98,9 @@ export class VisitorService {
       ...visitor,
       visits: visitor.visits.map(({ event, ...v }) => ({
         ...v,
-        eventId: event?.id || null,
-        eventType: event?.event_type || null,
+        eventId: event?.event.id,
+        eventName: event?.event.event_name,
+        eventType: event?.event.event_type || null,
       })),
       followUps: visitor.followUps.map((f: any) => ({
         ...f,

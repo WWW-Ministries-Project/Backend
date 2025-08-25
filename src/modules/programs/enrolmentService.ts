@@ -276,7 +276,7 @@ export class EnrollmentService {
 
     if (enrollment && enrollment.length > 0) {
       const progressDetails = await Promise.all(
-        enrollment.map((enr) => this.getProgressDetails(enr.id))
+        enrollment.map((enr) => this.getProgressDetails(enr.id)),
       );
       return progressDetails;
     } else {
