@@ -115,20 +115,15 @@ export class OrderController {
     }
   }
 
-
-  async confirmTrasaction(req:Request, res:Response){
+  async confirmTrasaction(req: Request, res: Response) {
     try {
-      const {reference} = req.query as {reference:string};
-      const response = await orderService.checkHubtelTransactionStatus(reference);
+      const { reference } = req.query as { reference: string };
+      const response =
+        await orderService.checkHubtelTransactionStatus(reference);
       return res.status(200).json({
         message: "Transaction confirmed",
         data: response,
       });
-      
-    } catch (error) {
-      
-    }
-  } 
+    } catch (error) {}
+  }
 }
-
-

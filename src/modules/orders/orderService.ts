@@ -4,10 +4,9 @@ import axios from "axios";
 export class OrderService {
   // Create a new order
   async create(data: {
-    user_id?: number | null;
-    market_id: number;
-    total_amount: number;
-    reference: string;
+    user_id?: number | null | string;
+    total_amount: number | string;
+    reference: string | null;
     payment_type: "paystack" | "hubtel" | null;
     billing: {
       first_name: string;
@@ -18,8 +17,9 @@ export class OrderService {
       country_code: string;
     };
     items: {
+      market_id?: number | string;
       name: string;
-      prduct_id: string;
+      id: string;
       price_amount: number;
       price_currency: string;
       quantity: number;
@@ -31,11 +31,12 @@ export class OrderService {
     }[];
   }) {
     // Step 1: Create order + items + billing info
+    const clientReference = this.generateReference();
     const order = await prisma.orders.create({
       data: {
-        user_id: data.user_id ?? null,
-        total_amount: data.total_amount,
-        reference: data.reference,
+        user_id: Number(data.user_id) ?? null,
+        total_amount: parseFloat(data.total_amount.toString()),
+        reference: clientReference,
         items: { create: this.buildItems(data.items) },
         billing_details: { create: this.buildBilling(data.billing) },
       },
@@ -47,17 +48,28 @@ export class OrderService {
     const orderNumber = this.generateOrderNumber(order.id);
 
     if (data.payment_type === "paystack") {
-      const response = await this.verifyPayment(data.reference);
+      const response = await this.verifyPayment(clientReference);
       const status =
         response.status === 200 && response.data.data.status === "success"
           ? "success"
           : "failed";
 
       return this.updateOrderPayment(order.id, status, orderNumber);
-    } else if (data.payment_type === "hubtel") {
-      return this.updateOrderPayment(order.id, "pending", orderNumber);
     } else {
-      return this.updateOrderPayment(order.id, "pending", orderNumber);
+      console.log("updating order to pending");
+      const updated_order = await this.updateOrderPayment(order.id, "pending", orderNumber);
+      console.log("initializing hubtel payment");
+      console.log(`order number: ${orderNumber}`);
+      const hubtelResponse = await this.initializeHubtelTransaction(order);
+
+      return {
+        message: "Hubtel payment initiated",
+        checkoutUrl: hubtelResponse.checkoutUrl,
+        checkoutDirectUrl: hubtelResponse.checkoutDirectUrl,
+        clientReference: hubtelResponse.clientReference,
+        checkoutId: hubtelResponse.checkoutId,
+        updated_order,
+      };
     }
   }
 
@@ -169,13 +181,47 @@ export class OrderService {
     });
   }
 
+  async initializeHubtelTransaction(order: any) {
+    console.log("initializing hubtel transaction");
+    const url =process.env.HUBTEL_INIT_URL || "https://api.hubtel.com/v1/merchantaccount/transactions/initiate";
+
+    const payload = {
+      totalAmount: order.total_amount,
+      description: `Order creation `,
+      callbackUrl: process.env.HUBTEL_CALLBACK_URL,
+      returnUrl: process.env.HUBTEL_RETURN_URL,
+      cancellationUrl: process.env.HUBTEL_CANCEL_URL,
+      merchantAccountNumber: process.env.HUBTEL_POS_ID,
+      clientReference: order.reference,
+      payeeName: `${order.billing_details.first_name} ${order.billing_details.last_name}`,
+      payeeMobileNumber: order.billing_details.phone_number,
+      payeeEmail: order.billing_details.email,
+    };
+    console.log(payload);
+
+    const response = await axios.post(url, payload, {
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Basic ${process.env.HUBTEL_AUTH}`,
+      },
+    });
+
+    console.log(response);
+
+    if (response.data.responseCode !== "0000") {
+      throw new Error(`Hubtel init failed: ${response.data.message}`);
+    }
+
+    return response.data.data;
+  }
+
   async checkHubtelTransactionStatus(clientReference: string) {
     const posId = process.env.HUBTEL_POS_ID;
     const url = `https://api-txnstatus.hubtel.com/transactions/${posId}/status?clientReference=${clientReference}`;
 
     const response = await axios.get(url, {
       headers: {
-        Authorization: `Basic ${process.env.HUBTEL_AUTH_KEY}`,
+        Authorization: `Basic ${process.env.HUBTEL_AUTH}`,
         "Content-Type": "application/json",
       },
     });
@@ -189,9 +235,9 @@ export class OrderService {
   private buildItems(items: any[]) {
     return items.map((item) => ({
       name: item.name,
-      prduct_id: item.prduct_id,
+      product_id: Number(item.id),
       price_amount: item.price_amount,
-      market_id: item.market_id,
+      market_id: Number(item.market_id),
       price_currency: item.price_currency,
       quantity: item.quantity,
       product_type: item.product_type,
@@ -220,6 +266,11 @@ export class OrderService {
     const dd = String(date.getDate()).padStart(2, "0");
     const paddedId = String(orderId).padStart(6, "0");
 
-    return `ORD-${yyyy}${mm}${dd}-${paddedId}`;
+    return `#WWM-${yyyy}${mm}${dd}-${paddedId}`;
+  }
+
+  private generateReference(): string {
+    const client_reference = crypto.randomUUID();
+    return client_reference.toString();
   }
 }

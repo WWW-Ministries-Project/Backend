@@ -775,8 +775,8 @@ model order_items {
   order            orders    @relation(fields: [order_id], references: [id], onDelete: Cascade)
   order_id         Int
   name             String
-  market           markets   @relation(fields: [market_id], references: [id])
-  market_id        Int
+  market           markets?  @relation(fields: [market_id], references: [id])
+  market_id        Int?
   product          products? @relation(fields: [product_id], references: [id])
   product_id       Int?
   price_amount     Float

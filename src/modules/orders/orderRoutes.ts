@@ -199,6 +199,9 @@ orderRouter.get("/verify-payment", orderController.verifyPayment);
  */
 orderRouter.post("/hubtel-payment-webhook", orderController.hubtelWebhook);
 
-orderRouter.get("/confirm-transaction-status", orderController.confirmTrasaction);
+orderRouter.get(
+  "/confirm-transaction-status",
+  orderController.confirmTrasaction,
+);
 
 export default orderRouter;
