@@ -1,5 +1,6 @@
 import { prisma } from "../../Models/context";
 import axios from "axios";
+import crypto from 'crypto';
 
 export class OrderService {
   // Create a new order
@@ -183,7 +184,7 @@ export class OrderService {
 
   async initializeHubtelTransaction(order: any) {
     console.log("initializing hubtel transaction");
-    const url =process.env.HUBTEL_INIT_URL || "https://api.hubtel.com/v1/merchantaccount/transactions/initiate";
+    const url =process.env.HUBTEL_INIT_PAYMENT_URL || "https://payproxyapi.hubtel.com/items/initiate";
 
     const payload = {
       totalAmount: order.total_amount,
