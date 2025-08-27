@@ -83,6 +83,22 @@ export class OrderController {
       });
     }
   }
+  async findByName(req: Request, res: Response) {
+    try {
+      const first_name = req.query.first_name as string;
+      const last_name = req.query.last_name as string;
+      const orders = await orderService.findOrderByName(first_name, last_name);
+      return res.status(200).json({
+        success: true,
+        data: orders,
+      });
+    } catch (error: any) {
+      return res.status(404).json({
+        success: false,
+        message: error.message || "No orders found for this marketplace",
+      });
+    }
+  }
 
   async verifyPayment(req: Request, res: Response) {
     try {

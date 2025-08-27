@@ -1,8 +1,20 @@
 import { prisma } from "../../Models/context";
 import axios from "axios";
 import crypto from 'crypto';
+import { toSentenceCase } from "../../utils";
 
 export class OrderService {
+  async findOrderByName(first_name?: string, last_name?: string) {
+
+    await prisma.billing_details.findMany({
+      where:{
+        OR:[
+          // last_name: last_name,
+          // first_name: first_name
+        ] 
+      }, include: { orders: true}
+    })
+  }
   // Create a new order
   async create(data: {
     user_id?: number | null | string;
@@ -251,8 +263,8 @@ export class OrderService {
 
   private buildBilling(billing: any) {
     return {
-      first_name: billing.first_name,
-      last_name: billing.last_name,
+      first_name: toSentenceCase(billing.first_name),
+      last_name: toSentenceCase(billing.last_name),
       email: billing.email,
       phone_number: billing.phone_number,
       country: billing.country,

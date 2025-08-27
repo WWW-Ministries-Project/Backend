@@ -360,6 +360,12 @@ export class eventManagement {
           created_by: true,
           event_type: true,
           event_status: true,
+          event: {
+            select: {
+              event_name: true,
+              id: true,
+            },
+          },
           event_attendance: {
             select: {
               created_at: true,
@@ -385,9 +391,15 @@ export class eventManagement {
           },
         },
       });
+      const flat_data = data.map((event) => ({
+        ...event,
+        event_name_id: event?.event.id,
+        event_name: event?.event.event_name,
+        event: null,
+      }));
       res.status(200).json({
         message: "Operation successful",
-        data,
+        flat_data,
       });
     } catch (error: any) {
       return res.status(500).json({
