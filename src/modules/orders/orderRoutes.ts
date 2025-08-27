@@ -198,10 +198,75 @@ orderRouter.get("/verify-payment", orderController.verifyPayment);
  *         description: Webhook processed successfully
  */
 orderRouter.post("/hubtel-payment-webhook", orderController.hubtelWebhook);
-
+/**
+ * @swagger
+ * /orders/hubtel-transaction-status:
+ *   get:
+ *     summary: Check transaction status from Hubtel
+ *     description: >
+ *       Checks the status of a transaction from Hubtel's Transaction Status API using only the client reference.
+ *       Requires whitelisted IP and valid Basic Auth credentials.
+ *     tags: [Orders]
+ *     parameters:
+ *       - in: query
+ *         name: clientReference
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Client reference you provided when initiating the transaction.
+ *     responses:
+ *       200:
+ *         description: Hubtel transaction status retrieved
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: string
+ *                   example: Successful
+ *                 responseCode:
+ *                   type: string
+ *                   example: "0000"
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     date:
+ *                       type: string
+ *                       example: "2024-04-25T21:45:48.4740964Z"
+ *                     status:
+ *                       type: string
+ *                       example: Paid
+ *                     transactionId:
+ *                       type: string
+ *                     externalTransactionId:
+ *                       type: string
+ *                     paymentMethod:
+ *                       type: string
+ *                     clientReference:
+ *                       type: string
+ *                     currencyCode:
+ *                       type: string
+ *                       nullable: true
+ *                     amount:
+ *                       type: number
+ *                     charges:
+ *                       type: number
+ *                     amountAfterCharges:
+ *                       type: number
+ *                     isFulfilled:
+ *                       type: boolean
+ *                       nullable: true
+ *       400:
+ *         description: Bad request (missing clientReference)
+ *       403:
+ *         description: Forbidden (IP not whitelisted)
+ *       500:
+ *         description: Hubtel API error
+ */
 orderRouter.get(
   "/confirm-transaction-status",
-  orderController.confirmTrasaction,
+  orderController.confirmTransaction,
 );
 
 export default orderRouter;

@@ -131,15 +131,24 @@ export class OrderController {
     }
   }
 
-  async confirmTrasaction(req: Request, res: Response) {
+  async confirmTransaction(req: Request, res: Response) {
     try {
-      const { reference } = req.query as { reference: string };
+      const { reference } = req.query as { reference?: string };
+
+      if (!reference) {
+        return res.status(400).json({ error: "Reference is required" });
+      }
+
       const response =
         await orderService.checkHubtelTransactionStatus(reference);
+
       return res.status(200).json({
         message: "Transaction confirmed",
         data: response,
       });
-    } catch (error) {}
+    } catch (error: any) {
+      console.error("Error confirming transaction:", error.message);
+      return res.status(500).json({ error: "Failed to confirm transaction" });
+    }
   }
 }

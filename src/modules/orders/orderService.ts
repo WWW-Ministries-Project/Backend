@@ -1,19 +1,19 @@
 import { prisma } from "../../Models/context";
 import axios from "axios";
-import crypto from 'crypto';
+import crypto from "crypto";
 import { toSentenceCase } from "../../utils";
 
 export class OrderService {
   async findOrderByName(first_name?: string, last_name?: string) {
-
     await prisma.billing_details.findMany({
-      where:{
-        OR:[
+      where: {
+        OR: [
           // last_name: last_name,
           // first_name: first_name
-        ] 
-      }, include: { orders: true}
-    })
+        ],
+      },
+      include: { orders: true },
+    });
   }
   // Create a new order
   async create(data: {
@@ -70,10 +70,17 @@ export class OrderService {
       return this.updateOrderPayment(order.id, status, orderNumber);
     } else {
       console.log("updating order to pending");
-      const updated_order = await this.updateOrderPayment(order.id, "pending", orderNumber);
+      const updated_order = await this.updateOrderPayment(
+        order.id,
+        "pending",
+        orderNumber,
+      );
       console.log("initializing hubtel payment");
       console.log(`order number: ${orderNumber}`);
-      const hubtelResponse = await this.initializeHubtelTransaction(order);
+      const hubtelResponse = await this.initializeHubtelTransaction(
+        order,
+        data.user_id,
+      );
 
       return {
         message: "Hubtel payment initiated",
@@ -194,15 +201,27 @@ export class OrderService {
     });
   }
 
-  async initializeHubtelTransaction(order: any) {
+  async initializeHubtelTransaction(
+    order: any,
+    user_id?: number | string | null,
+  ) {
     console.log("initializing hubtel transaction");
-    const url =process.env.HUBTEL_INIT_PAYMENT_URL || "https://payproxyapi.hubtel.com/items/initiate";
+    const url =
+      process.env.HUBTEL_INIT_PAYMENT_URL ||
+      "https://payproxyapi.hubtel.com/items/initiate";
+
+    let RETURN_URL;
+    if (user_id) {
+      RETURN_URL = `${process.env.FRONT_END_URL}${process.env.USER_ID_RETURN_URL}`;
+    } else {
+      RETURN_URL = `${process.env.FRONT_END_URL}${process.env.RETURN_URL}`;
+    }
 
     const payload = {
       totalAmount: order.total_amount,
       description: `Order creation `,
       callbackUrl: process.env.HUBTEL_CALLBACK_URL,
-      returnUrl: process.env.HUBTEL_RETURN_URL,
+      returnUrl: RETURN_URL,
       cancellationUrl: process.env.HUBTEL_CANCEL_URL,
       merchantAccountNumber: process.env.HUBTEL_POS_ID,
       clientReference: order.reference,
@@ -229,20 +248,30 @@ export class OrderService {
   }
 
   async checkHubtelTransactionStatus(clientReference: string) {
-    const posId = process.env.HUBTEL_POS_ID;
-    const url = `https://api-txnstatus.hubtel.com/transactions/${posId}/status?clientReference=${clientReference}`;
+    try {
+      const posId = process.env.HUBTEL_POS_ID;
+      if (!posId) throw new Error("HUBTEL_POS_ID is not configured");
 
-    const response = await axios.get(url, {
-      headers: {
-        Authorization: `Basic ${process.env.HUBTEL_AUTH}`,
-        "Content-Type": "application/json",
-      },
-    });
+      const url = `https://api-txnstatus.hubtel.com/transactions/${posId}/status?clientReference=${clientReference}`;
 
-    const { status } = response.data.data;
-    const normalizedStatus = status === "Paid" ? "success" : "failed";
+      const response = await axios.get(url, {
+        headers: {
+          Authorization: `Basic ${process.env.HUBTEL_AUTH}`,
+          "Content-Type": "application/json",
+        },
+      });
 
-    return this.updateOrderStatusByHubtel(clientReference, normalizedStatus);
+      const status = response.data?.data?.status;
+      if (!status) throw new Error("Invalid response from Hubtel");
+
+      const normalizedStatus =
+        status.toLowerCase() === "paid" ? "success" : "failed";
+
+      return this.updateOrderStatusByHubtel(clientReference, normalizedStatus);
+    } catch (error: any) {
+      console.error("Hubtel status check failed:", error.message);
+      throw new Error("Unable to check Hubtel transaction status");
+    }
   }
 
   private buildItems(items: any[]) {
