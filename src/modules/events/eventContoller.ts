@@ -395,7 +395,6 @@ export class eventManagement {
         ...event,
         event_name_id: event?.event.id,
         event_name: event?.event.event_name,
-        event: null,
       }));
       res.status(200).json({
         message: "Operation successful",
