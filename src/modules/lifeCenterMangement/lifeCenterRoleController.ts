@@ -5,28 +5,28 @@ const roleService = new LifeCenterRoleService();
 
 export class LifeCenterRoleController {
   async createLifeCenterRole(req: Request, res: Response) {
-  try {
-    const { name } = req.body;
+    try {
+      const { name } = req.body;
 
-    if (!name) {
-      return res.status(400).json({ message: "Name is required" });
+      if (!name) {
+        return res.status(400).json({ message: "Name is required" });
+      }
+
+      const upperName = name.toUpperCase();
+
+      const newRole: any = await roleService.createLifeCenterRole(upperName);
+
+      if (newRole?.error) {
+        return res.status(400).json({ message: newRole.error });
+      }
+
+      return res.status(201).json({ message: "New Role Added", data: newRole });
+    } catch (error: any) {
+      return res
+        .status(500)
+        .json({ message: "Error creating Role", error: error.message });
     }
-
-    const upperName = name.toUpperCase();
-
-    const newRole: any = await roleService.createLifeCenterRole(upperName);
-
-    if (newRole?.error) {
-      return res.status(400).json({ message: newRole.error });
-    }
-
-    return res.status(201).json({ message: "New Role Added", data: newRole });
-  } catch (error: any) {
-    return res
-      .status(500)
-      .json({ message: "Error creating Role", error: error.message });
   }
-}
 
   async getAllLifeCenterRoles(req: Request, res: Response) {
     try {
@@ -65,8 +65,8 @@ export class LifeCenterRoleController {
         name.toUpperCase(),
       );
       if (role?.error) {
-      return res.status(400).json({ message:"", error: role.error });
-    }
+        return res.status(400).json({ message: "", error: role.error });
+      }
       return res.status(200).json({ data: role });
     } catch (error: any) {
       return res

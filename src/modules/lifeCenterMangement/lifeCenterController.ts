@@ -4,6 +4,37 @@ import { LifeCenterService } from "./lifeCenterService";
 const lifeCenterService = new LifeCenterService();
 
 export class LifeCenterController {
+  async mylifecenter(req: Request, res: Response) {
+    try {
+      const { user_id } = req.query;
+
+      // Validate ID
+      if (!user_id || isNaN(parseInt(user_id as string))) {
+        return res.status(400).json({ message: "Invalid or missing user_id" });
+      }
+
+      const lifeCenter = await lifeCenterService.getMyLifeCenter(
+        Number(user_id),
+      );
+
+      if (!lifeCenter) {
+        return res
+          .status(404)
+          .json({ message: "User is not assigned to any Life Center" });
+      }
+
+      return res.status(200).json({
+        message: "Operation successful",
+        data: lifeCenter,
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        message: "Error fetching my life center",
+        error: error.message,
+      });
+    }
+  }
+
   async createLifeCenter(req: Request, res: Response) {
     try {
       const { name, description, location, meeting_dates } = req.body;
@@ -157,31 +188,32 @@ export class LifeCenterController {
   }
 
   async removeMemberFromLifeCenter(req: Request, res: Response) {
-  try {
-    const userId = Number(req.query.userId);
-    const lifeCenterId = Number(req.query.lifeCenterId);
+    try {
+      const userId = Number(req.query.userId);
+      const lifeCenterId = Number(req.query.lifeCenterId);
 
-    if (isNaN(userId) || isNaN(lifeCenterId)) {
-      return res.status(400).json({
-        message: "userId and lifeCenterId are required and must be valid numbers",
+      if (isNaN(userId) || isNaN(lifeCenterId)) {
+        return res.status(400).json({
+          message:
+            "userId and lifeCenterId are required and must be valid numbers",
+        });
+      }
+
+      const data = { userId, lifeCenterId };
+
+      const member = await lifeCenterService.removeMemberFromLifeCenter(data);
+
+      return res.status(200).json({
+        message: "Operation successful",
+        data: member,
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        message: "Internal server error",
+        error: error.message,
       });
     }
-
-    const data = { userId, lifeCenterId };
-
-    const member = await lifeCenterService.removeMemberFromLifeCenter(data);
-
-    return res.status(200).json({
-      message: "Operation successful",
-      data: member,
-    });
-  } catch (error: any) {
-    return res.status(500).json({
-      message: "Internal server error",
-      error: error.message,
-    });
   }
-}
 
   async getAllLifeCenterMembers(req: Request, res: Response) {
     try {
@@ -225,13 +257,15 @@ export class LifeCenterController {
 
       const returningSoul = {
         ...soul,
-        phone:{
+        phone: {
           number: soul.contact_number,
-          country_code:soul.country_code
-        }
-      }
+          country_code: soul.country_code,
+        },
+      };
 
-      res.status(200).json({ message: "Operation successful", data: returningSoul });
+      res
+        .status(200)
+        .json({ message: "Operation successful", data: returningSoul });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -270,8 +304,8 @@ export class LifeCenterController {
         first_name,
         last_name,
         other_name,
-        contact_number:phone.number,
-        country_code:phone.country_code,
+        contact_number: phone.number,
+        country_code: phone.country_code,
         contact_email,
         country,
         city,
@@ -282,13 +316,13 @@ export class LifeCenterController {
 
       const returningSoul = {
         id: newSoul.id,
-        title:newSoul.title,
+        title: newSoul.title,
         first_name: newSoul.first_name,
         last_name: newSoul.last_name,
         other_name: newSoul.other_name,
-        phone :{
+        phone: {
           number: newSoul.contact_number,
-          country_code : newSoul.country_code,
+          country_code: newSoul.country_code,
         },
         contact_email: newSoul.contact_email,
         country: newSoul.country,
@@ -308,7 +342,7 @@ export class LifeCenterController {
       });
     }
   }
- async updateSoulWon(req: Request, res: Response) {
+  async updateSoulWon(req: Request, res: Response) {
     try {
       const { id } = req.query;
       if (!id) return res.status(400).json({ message: "Missing soul ID" });
@@ -327,14 +361,13 @@ export class LifeCenterController {
         lifeCenterId,
       } = req.body;
 
-
       const updated = await lifeCenterService.updateSoulWon(Number(id), {
         title,
         first_name,
         last_name,
         other_name,
-        contact_number:phone.number,
-        country_code:phone.country_code,
+        contact_number: phone.number,
+        country_code: phone.country_code,
         contact_email,
         country,
         city,
@@ -348,9 +381,9 @@ export class LifeCenterController {
         first_name: updated.first_name,
         last_name: updated.last_name,
         other_name: updated.other_name,
-        phone :{
+        phone: {
           number: updated.contact_number,
-          country_code : updated.country_code,
+          country_code: updated.country_code,
         },
         contact_email: updated.contact_email,
         country: updated.country,
@@ -372,11 +405,9 @@ export class LifeCenterController {
     }
   }
 
-  async getStats(req:Request, res: Response) {
+  async getStats(req: Request, res: Response) {
     try {
-      
-       const response = await lifeCenterService.getLifeCenterStats()
-    
+      const response = await lifeCenterService.getLifeCenterStats();
 
       return res.status(200).json({
         message: "Operation sucessfull",

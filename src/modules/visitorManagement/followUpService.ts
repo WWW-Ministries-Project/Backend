@@ -8,7 +8,7 @@ export class FollowUpService {
       type: data.type,
       status: data.status || "pending",
       notes: data.notes,
-      assignedTo: data.assigned_to,
+      assignedTo: data.assignedTo,
     };
     return await prisma.follow_up.create({ data: followUpData });
   }
@@ -58,7 +58,7 @@ export class FollowUpService {
       type: data.type,
       status: data.status || "pending",
       notes: data.notes,
-      assignedTo: data.assigned_to,
+      assignedTo: data.assignedTo,
     };
     return await prisma.follow_up.update({ where: { id }, data: followUpData });
   }

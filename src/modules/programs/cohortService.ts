@@ -35,7 +35,27 @@ export class CohortService {
   async getCohortById(id: number) {
     const cohort = await prisma.cohort.findUnique({
       where: { id },
-      include: { program: true, courses: true },
+      include: {
+        program: true,
+        courses: {
+          select: {
+            id: true,
+            name: true,
+            capacity: true,
+            enrolled: true,
+            schedule: true,
+            classFormat: true,
+            location: true,
+            meetingLink: true,
+            instructor: {
+              select: {
+                name: true,
+                id: true,
+              },
+            },
+          },
+        },
+      },
     });
 
     return cohort ? addDeadlineFlag(cohort) : null;

@@ -4,39 +4,44 @@ import { EnrollmentService } from "./enrolmentService";
 const enrollment = new EnrollmentService();
 
 export class EnrollmentController {
+  async myEnrollment(req: Request, res: Response) {
+    try {
+      const { user_id } = req.query;
+
+      if (!user_id) {
+        return res.status(400).json({
+          message: "Missing required fields user_id",
+        });
+      }
+
+      const myEnrollment = await enrollment.getUserProgramsCoursesTopics(
+        parseInt(user_id as string),
+      );
+
+      return res.status(201).json({
+        message: "Operation Successfully",
+        data: myEnrollment,
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        message: "Error enrolling user",
+        error: error.message,
+      });
+    }
+  }
   async enrollUser(req: Request, res: Response) {
     try {
-      const {
-        first_name,
-        last_name,
-        email,
-        primary_number,
-        course_id,
-        user_id,
-        isMember,
-      } = req.body;
+      const { user_id, course_id } = req.body;
 
       // Validate required fields
-      if (
-        !first_name ||
-        !last_name ||
-        !email ||
-        !primary_number ||
-        !course_id
-      ) {
+      if (!user_id || !course_id) {
         return res.status(400).json({
-          message:
-            "Missing required fields first_name, last_name, email, primary_number, course_id",
+          message: "Missing required fields user_id,course_id",
         });
       }
 
       const newEnrollment = await enrollment.enrollUser({
-        first_name,
-        last_name,
-        email,
-        primary_number,
         course_id: parseInt(course_id as string),
-        isMember,
         user_id: parseInt(user_id as string),
       });
 
@@ -100,10 +105,8 @@ export class EnrollmentController {
 
   async getProgressReport(req: Request, res: Response) {
     try {
-      const enrollmentId = req.params.id;
-      const progressDetails = await enrollment.getProgressDetails(
-        Number(enrollmentId),
-      );
+      const { id } = req.query;
+      const progressDetails = await enrollment.getProgressDetails(Number(id));
       return res
         .status(200)
         .json({ message: "Operation sucessfull", data: progressDetails });

@@ -1,0 +1,60 @@
+import { Prisma } from "@prisma/client";
+
+export interface CreateProductInput {
+  name: string;
+  description?: string;
+  status?: string;
+  stock_managed?: string;
+  product_type_id?: string;
+  product_category_id?: string;
+  price_currency?: string;
+  price_amount?: string;
+  product_colours?: ProductColourInput[];
+  market_id?: string;
+}
+
+export interface ProductColourInput {
+  colour: string;
+  image_url: string;
+  stock: SizeStock[];
+}
+
+export interface SizeStock {
+  size: string;
+  stock: number;
+}
+
+export interface UpdateProductInput extends CreateProductInput {
+  id: number;
+}
+
+export interface ProductFilters {
+  name?: string;
+  deleted?: boolean;
+  status?: string;
+  product_type?: number;
+  product_category?: number;
+  take?: number;
+  skip?: number;
+}
+
+export interface ProductColourStockInput {
+  id: number;
+  product_id: number;
+  colour: string;
+  image_url: string;
+  stock: SizeStock[];
+}
+
+const productWithTypeCategory = Prisma.validator<Prisma.productsDefaultArgs>()({
+  include: {
+    product_category: true,
+    product_type: true,
+    product_colours: true,
+    market: true,
+  },
+});
+
+export type ProductExtended = Prisma.productsGetPayload<
+  typeof productWithTypeCategory
+>;

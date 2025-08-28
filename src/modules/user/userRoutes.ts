@@ -14,12 +14,14 @@ import {
   updateUser,
   updateUserSatus,
   statsUsers,
-  activateUser,
   getUserByEmailPhone,
   convertMemeberToConfirmedMember,
   linkSpouses,
   getUserFamily,
   linkChildren,
+  currentuser,
+  ListUsersLight,
+  activateAccount,
 } from "../user/userController";
 import { Permissions } from "../../middleWare/authorization";
 const permissions = new Permissions();
@@ -31,6 +33,8 @@ export const userRouter = Router();
 userRouter.get("/get-user", getUser);
 
 userRouter.get("/list-users", ListUsers);
+
+userRouter.get("/list-users-light", ListUsersLight);
 
 userRouter.get("/stats-users", [protect], statsUsers);
 
@@ -62,9 +66,9 @@ userRouter.delete(
   deleteUser,
 );
 userRouter.put(
-  "/activate-user",
+  "/activate-account",
   [protect, permissions.can_Manage_Members],
-  activateUser,
+  activateAccount,
 );
 userRouter.get("/get-user-email", getUserByEmailPhone);
 
@@ -93,3 +97,5 @@ userRouter.put(
   [protect, permissions.can_Manage_Members],
   linkChildren,
 );
+
+userRouter.get("/current-user", currentuser);

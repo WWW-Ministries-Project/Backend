@@ -50,13 +50,13 @@ export class UserService {
         department_id,
         position_id,
         member_since,
-        department_positions
       } = {},
 
       children = [],
       status,
       password,
       is_user,
+      department_positions,
     } = userData;
 
     // Generate email if not provided
@@ -64,10 +64,8 @@ export class UserService {
       email?.trim().toLowerCase() ||
       `${first_name.toLowerCase()}${last_name.toLowerCase()}_${Date.now()}@temp.com`;
 
-    // Hash password if the user needs an account
-    const hashedPassword = is_user
-      ? await hashPassword(password || "123456")
-      : undefined;
+    // Hash password for all users
+    const hashedPassword = await hashPassword(password || "123456");
 
     const departmentId =
       isNaN(parseInt(department_id)) || parseInt(department_id) === 0
@@ -137,10 +135,14 @@ export class UserService {
       console.error("Error generating user ID:", err),
     );
 
-    if (Array.isArray(department_positions) && department_positions.length > 0) {
-      await this.savedDepartments(user.id,department_positions)
+    if (
+      Array.isArray(department_positions) &&
+      department_positions.length > 0
+    ) {
+      console.log("Stub: handle department updates here");
+      await this.savedDepartments(user.id, department_positions);
     }
-    
+
     const savedUser = await prisma.user.findUnique({
       where: { id: user.id },
       include: {
@@ -177,16 +179,27 @@ export class UserService {
       children: savedChildren,
     };
   }
-  private async savedDepartments(userId: number, department_positions: { department_id: any; position_id: any }[]) {
-  return await prisma.department_positions.createMany({
-    data: department_positions.map((dp) => ({
-      user_id: userId,
-      department_id: Number(dp.department_id),
-      position_id: Number(dp.position_id),
-    })),
-    skipDuplicates: true,
-  });
-}
+  private async savedDepartments(
+    userId: number,
+    department_positions: { department_id: any; position_id: any }[],
+  ) {
+    console.log(
+      "Department positions to create:",
+      department_positions.map((dp: any) => ({
+        user_id: userId,
+        department_id: parseInt(dp.department_id),
+        position_id: parseInt(dp.position_id),
+      })),
+    );
+    return await prisma.department_positions.createMany({
+      data: department_positions.map((dp) => ({
+        user_id: userId,
+        department_id: Number(dp.department_id),
+        position_id: Number(dp.position_id),
+      })),
+      skipDuplicates: true,
+    });
+  }
 
   async registerChildren(
     children: any[],
@@ -203,12 +216,13 @@ export class UserService {
               ),
               email: `${child.first_name.toLowerCase()}_${child.last_name.toLowerCase()}_${Date.now()}@temp.com`,
               is_user: false,
-              is_active: false,
+              is_active: true,
               parent_id: parentObj.id,
               membership_type,
               status: parentObj.status,
               user_info: {
                 create: {
+                  title: child.title,
                   first_name: child.first_name,
                   last_name: child.last_name,
                   other_name: child.other_name || null,
@@ -324,7 +338,7 @@ export class UserService {
     }
   }
 
-  async convertMemeberToConfirmedMember(id: number) {
+  async convertMemeberToConfirmedMember(id: number, status: string) {
     const allRequiredMemberPrograms = await prisma.program.findMany({
       where: {
         member_required: true,
@@ -332,7 +346,7 @@ export class UserService {
     });
 
     if (allRequiredMemberPrograms.length === 0) {
-      return this.updateMemberToConfirmedMember(id);
+      return this.updateMemberToConfirmedMember(id, status);
     }
 
     const programIds = allRequiredMemberPrograms.map(
@@ -375,10 +389,10 @@ export class UserService {
       };
     }
 
-    return this.updateMemberToConfirmedMember(id);
+    return this.updateMemberToConfirmedMember(id, status);
   }
 
-  private async updateMemberToConfirmedMember(id: number) {
+  private async updateMemberToConfirmedMember(id: number, status: string) {
     const updatedMember = await prisma.user.update({
       where: {
         id,

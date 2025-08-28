@@ -8,27 +8,31 @@ export class LifeCenterRoleService {
   }
 
   async createLifeCenterRole(name: string) {
-  if (!name) {
-    return { error: "name is required" };
+    if (!name) {
+      return { error: "name is required" };
+    }
+
+    const existingRole = await prisma.life_center_role.findFirst({
+      where: {
+        name,
+      },
+    });
+
+    if (existingRole) {
+      return { error: "Role already exists" };
+    }
+
+    return await prisma.life_center_role.create({
+      data: { name },
+    });
   }
-
-  const existingRole = await prisma.life_center_role.findFirst({
-    where: {
-      name
-    },
-  });
-
-  if (existingRole) {
-    return { error: "Role already exists" };
-  }
-
-  return await prisma.life_center_role.create({
-    data: { name },
-  });
-}
 
   async getLifeCenterRoles() {
-    return await prisma.life_center_role.findMany({});
+    return await prisma.life_center_role.findMany({
+      orderBy: {
+        name: "asc",
+      },
+    });
   }
 
   async getLifeCenterRoleById(id: number) {
@@ -44,7 +48,7 @@ export class LifeCenterRoleService {
       return await prisma.life_center_role.update({
         where: { id },
         data: {
-          name
+          name,
         },
       });
     }

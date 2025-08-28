@@ -57,10 +57,14 @@ export class VisitorService {
         visits: {
           include: {
             event: {
-              select: {
-                id: true,
-                name: true,
-                event_type: true,
+              include: {
+                event: {
+                  select: {
+                    event_name: true,
+                    id: true,
+                    event_type: true,
+                  },
+                },
               },
             },
           },
@@ -94,11 +98,11 @@ export class VisitorService {
       ...visitor,
       visits: visitor.visits.map(({ event, ...v }) => ({
         ...v,
-        eventId: event?.id || null,
-        eventName: event?.name || null,
-        eventType: event?.event_type || null,
+        eventId: event?.event.id,
+        eventName: event?.event.event_name,
+        eventType: event?.event.event_type || null,
       })),
-      followUps: visitor.followUps.map((f) => ({
+      followUps: visitor.followUps.map((f: any) => ({
         ...f,
         assignedTo: f.assignedTo ? userMap[f.assignedTo] || null : null,
       })),
@@ -107,7 +111,20 @@ export class VisitorService {
   async getAllVisitors() {
     const visitors = await prisma.visitor.findMany({
       include: {
-        visits: true,
+        visits: {
+          include: {
+            event: {
+              include: {
+                event: {
+                  select: {
+                    event_name: true,
+                    id: true,
+                  },
+                },
+              },
+            },
+          },
+        },
         followUps: true,
       },
     });
@@ -115,7 +132,8 @@ export class VisitorService {
     const visitorsWithVisitCount = visitors.map(
       ({ visits, followUps, ...visitor }) => ({
         ...visitor,
-        evendId: visits[0]?.eventId || null,
+        eventId: visits[0]?.event?.event.id || null,
+        eventName: visits[0]?.event?.event.event_name || null,
         visitCount: visits.length,
         followUp:
           followUps[followUps.length - 1]?.status || "No Follow Ups Yet",

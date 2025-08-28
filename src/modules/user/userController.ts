@@ -1,13 +1,8 @@
-import { Request, Response } from "express";
+import e, { Request, Response } from "express";
 import JWT from "jsonwebtoken";
 import * as dotenv from "dotenv";
 import { prisma } from "../../Models/context";
-import {
-  sendEmail,
-  comparePassword,
-  hashPassword,
-  confirmTemplate,
-} from "../../utils";
+import { sendEmail, comparePassword, hashPassword } from "../../utils";
 import { UserService } from "./userService";
 import { CourseService } from "../programs/courseService";
 // import { forgetPasswordTemplate } from "../../utils/mail_templates/forgot-password";
@@ -15,7 +10,6 @@ import { CourseService } from "../programs/courseService";
 import { forgetPasswordTemplate } from "../../utils/mail_templates/forgotPasswordTemplate";
 import { userActivatedTemplate } from "../../utils/mail_templates/userActivatedTemplate";
 import { activateUserTemplate } from "../../utils/mail_templates/activateUserTemplate";
-import { userInfo } from "os";
 
 dotenv.config();
 
@@ -154,12 +148,7 @@ export const updateUser = async (req: Request, res: Response) => {
         city,
         phone: { country_code, number: primary_number } = {},
       } = {},
-      work_info: {
-        work_name,
-        work_industry,
-        work_position,
-        school_name,
-      } = {},
+      work_info: { work_name, work_industry, work_position, school_name } = {},
       emergency_contact: {
         name: emergency_contact_name,
         relation: emergency_contact_relation,
@@ -173,11 +162,11 @@ export const updateUser = async (req: Request, res: Response) => {
         position_id,
         department_id,
         member_since,
-        department_positions,
       } = {},
       children = [],
       status,
       is_user,
+      department_positions,
     } = req.body;
 
     const userExists = await prisma.user.findUnique({
@@ -214,9 +203,7 @@ export const updateUser = async (req: Request, res: Response) => {
             first_name,
             last_name,
             other_name,
-            date_of_birth: date_of_birth
-              ? new Date(date_of_birth)
-              : undefined,
+            date_of_birth: date_of_birth ? new Date(date_of_birth) : undefined,
             gender,
             marital_status,
             nationality,
@@ -256,20 +243,42 @@ export const updateUser = async (req: Request, res: Response) => {
       },
     });
 
+    let dep_posts, kids;
+
     // Handle department_positions update
-    if (Array.isArray(department_positions) && department_positions.length) {
-      await updateDepartmentPositions(Number(user_id), department_positions);
+    if (
+      Array.isArray(department_positions) &&
+      department_positions.length > 0
+    ) {
+      console.log("Stub: handle department updates here");
+      dep_posts = await updateDepartmentPositions(
+        Number(user_id),
+        department_positions,
+      );
     }
 
     // Optional: handle children (currently stubbed)
     if (has_children && children.length > 0) {
       console.log("Stub: handle child updates here");
-      await updateChildren(children, updatedUser, membership_type,Number(user_id))
+      kids = await updateChildren(
+        children,
+        updatedUser,
+        membership_type,
+        Number(user_id),
+      );
     }
+
+    const { password, ...rest } = updatedUser;
+
+    const data = {
+      parent: rest,
+      department_positions: dep_posts,
+      children: kids,
+    };
 
     return res
       .status(200)
-      .json({ message: "User updated successfully", data: updatedUser });
+      .json({ message: "User updated successfully", data: data });
   } catch (error: any) {
     console.error(error);
     return res
@@ -281,32 +290,48 @@ export const updateUser = async (req: Request, res: Response) => {
 // Helper to update department_positions
 async function updateDepartmentPositions(
   userId: number,
-  departmentPositions: { department_id: number; position_id: number }[],
+  department_positions: { department_id: any; position_id: any }[],
 ) {
   await prisma.department_positions.deleteMany({
     where: { user_id: userId },
   });
-
-  await prisma.department_positions.createMany({
-    data: departmentPositions.map((dp) => ({
+  console.log(
+    "Department positions to create:",
+    department_positions.map((dp) => ({
       user_id: userId,
-      department_id: Number(dp.department_id),
-      position_id: Number(dp.position_id),
+      department_id: parseInt(dp.department_id),
+      position_id: parseInt(dp.position_id),
     })),
-    skipDuplicates: true,
-  });
+  );
+  const created = await Promise.all(
+    department_positions.map((dp) =>
+      prisma.department_positions.create({
+        data: {
+          user_id: userId,
+          department_id: parseInt(dp.department_id),
+          position_id: parseInt(dp.position_id),
+        },
+      }),
+    ),
+  );
+  console.log("Inserted department positions:", created);
+  return created;
 }
 
-async function updateChildren(children:any[],parentObj:any, membership_type:string,userId:number){
-   await prisma.user.deleteMany({
+async function updateChildren(
+  children: any[],
+  parentObj: any,
+  membership_type: string,
+  userId: number,
+) {
+  await prisma.user.deleteMany({
     where: { parent_id: userId },
   });
-  await userService.registerChildren(children,parentObj,membership_type)
+  await userService.registerChildren(children, parentObj, membership_type);
 }
 
-
 export const updateUserSatus = async (req: Request, res: Response) => {
-  const { id, is_active, status } = req.body;
+  const { id, is_active } = req.body;
   try {
     const response = await prisma.user.update({
       where: {
@@ -314,7 +339,6 @@ export const updateUserSatus = async (req: Request, res: Response) => {
       },
       data: {
         is_active,
-        status,
       },
       select: {
         id: true,
@@ -323,10 +347,11 @@ export const updateUserSatus = async (req: Request, res: Response) => {
         status: true,
         name: true,
         email: true,
+        password: true,
       },
     });
     const email: any = response.email;
-    const secret = JWT_SECRET;
+    const secret = JWT_SECRET + response.password;
     const token = JWT.sign(
       {
         id: response.id,
@@ -334,7 +359,7 @@ export const updateUserSatus = async (req: Request, res: Response) => {
       },
       secret,
       {
-        expiresIn: "15m",
+        expiresIn: "7d",
       },
     );
 
@@ -343,16 +368,18 @@ export const updateUserSatus = async (req: Request, res: Response) => {
     const mailDetails = {
       user_name: response.name,
       link,
-      expiration: "15mins",
+      expiration: "7days",
     };
 
     if (is_active) {
       sendEmail(userActivatedTemplate(mailDetails), email, "Reset Password");
     }
 
+    const { password, ...rest } = response;
+
     return res
       .status(200)
-      .json({ message: "User Status Updated Succesfully", data: response });
+      .json({ message: "User Status Updated Succesfully", data: rest });
   } catch (error) {
     return res
       .status(500)
@@ -396,9 +423,9 @@ export const login = async (req: Request, res: Response) => {
     const existance: any = await prisma.user.findUnique({
       where: {
         email,
-        AND: {
-          is_user: true,
-        },
+        // AND: {
+        //     is_user: true, taking this one out because everyone can log in
+        // },
       },
       select: {
         id: true,
@@ -406,9 +433,19 @@ export const login = async (req: Request, res: Response) => {
         name: true,
         password: true,
         is_active: true,
+        is_user: true,
+        membership_type: true,
+        department_positions: {
+          include: {
+            department: true,
+          },
+        },
+        life_center_member: true,
         user_info: {
           select: {
             photo: true,
+            member_since: true,
+            primary_number: true,
           },
         },
         access: {
@@ -432,14 +469,25 @@ export const login = async (req: Request, res: Response) => {
       });
     }
 
+    const department: string[] = existance.department_positions.map(
+      (dept: any) => dept.department.name,
+    );
+    const ministry_worker: boolean =
+      Boolean(existance.access) && existance.is_user;
     if (await comparePassword(password, existance?.password)) {
       const token = JWT.sign(
         {
           id: existance.id,
           name: existance.name,
           email: existance.email,
+          ministry_worker: ministry_worker,
           permissions: existance.access?.permissions,
           profile_img: existance.user_info?.photo,
+          membership_type: existance.membership_type || null,
+          department,
+          life_center_leader: Boolean(existance.life_center_member) || false,
+          phone: existance.user_info?.primary_number || null,
+          member_since: existance.user_info?.member_since || null,
         },
         JWT_SECRET,
         {
@@ -559,11 +607,13 @@ export const resetPassword = async (req: Request, res: Response) => {
         .json({ message: "Password Successfully changed", data: null });
     }
   } catch (error) {
-    return res.status(500).json({ message: "Link Expired", data: null });
+    return res
+      .status(500)
+      .json({ message: "Link Expired" + error, data: null });
   }
 };
 
-export const activateUser = async (req: Request, res: Response) => {
+export const activateAccount = async (req: Request, res: Response) => {
   const { user_id } = req.query;
   try {
     const existingUser = await prisma.user.findUnique({
@@ -580,16 +630,17 @@ export const activateUser = async (req: Request, res: Response) => {
         id: Number(user_id),
       },
       data: {
-        is_user: !existingUser.is_user,
+        is_active: !existingUser.is_active,
       },
     });
 
-    // Send Mail
-    sendEmail(
-      activateUserTemplate({ user_name: existingUser.name }),
-      existingUser.email || "",
-      "User Activation",
-    );
+    if (response.is_user) {
+      sendEmail(
+        activateUserTemplate({ user_name: existingUser.name }),
+        existingUser.email || "",
+        "User Activation",
+      );
+    }
 
     return res
       .status(200)
@@ -623,11 +674,20 @@ export const seedUser = async (req: Request, res: Response) => {
       .json({ message: "Something went wrong", data: error });
   }
 };
-
 export const ListUsers = async (req: Request, res: Response) => {
-  const { is_active, is_visitor, name } = req.body;
-  const { is_user, department_id } = req.query;
+  const {
+    is_user,
+    department_id,
+    page = "1",
+    limit = "10",
+    is_active,
+    name,
+  } = req.query;
   const isUser = is_user === "true";
+
+  const pageNum = parseInt(page as string, 10);
+  const pageSize = parseInt(limit as string, 10);
+  const skip = (pageNum - 1) * pageSize;
 
   try {
     const departments = await prisma.department.findMany({
@@ -639,21 +699,24 @@ export const ListUsers = async (req: Request, res: Response) => {
 
     const departmentMap = new Map(departments.map((d) => [d.id, d.name]));
 
-    const response: any = await prisma.user.findMany({
+    const whereFilter: any = {};
+
+    if (is_active !== undefined) whereFilter.is_active = is_active;
+    if (is_user !== undefined) whereFilter.is_user = isUser;
+    if (department_id) whereFilter.department_id = Number(department_id);
+    if (typeof name === "string" && name.trim()) {
+      whereFilter.name = { contains: name.trim() };
+    }
+
+    const total = await prisma.user.count({ where: whereFilter });
+
+    const users = await prisma.user.findMany({
+      skip,
+      take: pageSize,
       orderBy: {
         name: "asc",
       },
-      where: {
-        AND: {
-          is_active,
-          is_user: is_user != undefined ? isUser : undefined,
-          department_id: department_id ? Number(department_id) : undefined,
-          name: {
-            contains: name ? name.trim() : undefined,
-            // mode: "insensitive",
-          },
-        },
-      },
+      where: whereFilter,
       select: {
         id: true,
         name: true,
@@ -689,39 +752,55 @@ export const ListUsers = async (req: Request, res: Response) => {
             name: true,
           },
         },
-        access: {
-          select: {
-            name: true,
-            permissions: true,
-          },
-        },
       },
     });
 
-    const usersWithDeptName = response.map((user: any) => ({
+    const usersWithDeptName = users.map((user: any) => ({
       ...user,
       department_name: departmentMap.get(user.department_id) || null,
     }));
 
-    const destructure = (data: []) => {
-      let newObg: any = [];
-      data.map((r1: any) => {
-        let { user_info, ...rest } = r1;
-        newObg.push({ ...rest, ...user_info });
-      });
-      return newObg;
+    const destructure = (data: any[]) => {
+      return data.map(({ user_info, ...rest }) => ({
+        ...rest,
+        ...user_info,
+      }));
     };
 
     res.status(200).json({
-      message: "Operation Succesful",
+      message: "Operation Successful",
+      current_page: pageNum,
+      page_size: pageSize,
+      total,
+      totalPages: Math.ceil(total / pageSize),
       data: destructure(usersWithDeptName),
     });
   } catch (error) {
-    return res
-      .status(500)
-      .json({ message: "Something Went Wrong", data: error });
+    return res.status(500).json({ message: "Something Went Wrong", error });
   }
 };
+export const ListUsersLight = async (req: Request, res: Response) => {
+  try {
+    const users = await prisma.user.findMany({
+      orderBy: {
+        name: "asc",
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+      },
+    });
+
+    res.status(200).json({
+      message: "Operation Successful",
+      data: users,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: "Something Went Wrong", error });
+  }
+};
+
 export const getUser = async (req: Request, res: Response) => {
   const { user_id } = req.query;
 
@@ -850,6 +929,8 @@ export const getUser = async (req: Request, res: Response) => {
                 date_of_birth: true,
                 gender: true,
                 nationality: true,
+                marital_status: true,
+                title: true,
               },
             },
           },
@@ -887,13 +968,8 @@ export const getUser = async (req: Request, res: Response) => {
     }
 
     // Flatten user_info and others
-    const {
-      user_info,
-      parent,
-      children,
-      department_positions,
-      ...rest
-    } = response;
+    const { user_info, parent, children, department_positions, ...rest } =
+      response;
     const user = { ...rest, ...user_info };
 
     // Flatten parent user_info
@@ -1121,11 +1197,16 @@ export const convertMemeberToConfirmedMember = async (
   req: Request,
   res: Response,
 ) => {
-  const { user_id } = req.query;
+  const { user_id, status } = req.query;
+  let user_status: string | undefined = status as string;
+  if (!status) {
+    user_status = "CONFIRMED";
+  }
 
   try {
     const result = await userService.convertMemeberToConfirmedMember(
       Number(user_id),
+      user_status,
     );
     if (result.error == "") {
       return res.status(400).json({
@@ -1215,5 +1296,52 @@ export const linkChildren = async (req: Request, res: Response) => {
   } catch (error) {
     console.error("Error linking children:", error);
     throw error;
+  }
+};
+
+export const currentuser = async (req: Request, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res
+        .status(401)
+        .json({ message: "Authorization header missing or invalid." });
+    }
+
+    const token = authHeader.split(" ")[1];
+    const decoded: any = JWT.verify(token, JWT_SECRET);
+
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.id },
+      include: {
+        user_info: true,
+        department_positions: {
+          include: {
+            department: true,
+          },
+        },
+      },
+    });
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found." });
+    }
+
+    const department: string[] = user.department_positions.map(
+      (dept) => dept.department.name,
+    );
+
+    const data = {
+      name: user.name,
+      email: user.email,
+      phone: user.user_info?.primary_number || null,
+      member_since: user.user_info?.member_since || null,
+      department,
+      membership_type: user.membership_type || null,
+    };
+
+    return res.json({ message: "Operation sucessful", data: data });
+  } catch (error) {
+    return res.status(401).json({ message: "Unauthorized", error });
   }
 };

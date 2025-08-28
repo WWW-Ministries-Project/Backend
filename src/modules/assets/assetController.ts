@@ -1,7 +1,7 @@
 import { Request, Response } from "express";
 import { assetSchema, toCapitalizeEachWord } from "../../utils";
 import { prisma } from "../../Models/context";
-import { number } from "joi";
+
 export const createAsset = async (req: any, res: any) => {
   try {
     const {
@@ -24,6 +24,16 @@ export const createAsset = async (req: any, res: any) => {
       parseInt(department_assigned) === 0
         ? null
         : parseInt(department_assigned);
+
+    if (
+      date_purchased != null &&
+      date_assigned != null &&
+      new Date(date_assigned) < new Date(date_purchased)
+    ) {
+      return res.status(400).send({
+        message: "An asset cannot be assigned before it is purchased",
+      });
+    }
 
     const asset = await prisma.assets.create({
       data: {
@@ -119,12 +129,29 @@ export const updateAsset = async (req: any, res: Response) => {
 };
 export const listAssets = async (req: Request, res: Response) => {
   try {
+    const { page = 1, limit = 10 }: any = req.query;
+    const total = await prisma.assets.count();
+
+    const pageNum = parseInt(page, 10) || 1;
+    const pageSize = parseInt(limit, 10) || 10;
+    const skip = (pageNum - 1) * pageSize;
+
     const assetsList = await prisma.assets.findMany({
       orderBy: {
-        id: "desc",
+        name: "asc",
       },
+      skip,
+      take: pageSize,
     });
-    res.status(200).json({ message: "Operation Succesful", data: assetsList });
+
+    res.status(200).json({
+      message: "Operation Succesful",
+      current_page: pageNum,
+      page_size: pageSize,
+      total,
+      totalPages: Math.ceil(total / pageSize),
+      data: assetsList,
+    });
   } catch (error: any) {
     return res
       .status(500)

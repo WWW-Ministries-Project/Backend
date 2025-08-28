@@ -1,66 +1,154 @@
 import { prisma } from "../../Models/context";
+import { toCapitalizeEachWord } from "../../utils";
 
 export class ProgramService {
-  async createProgram(data: any) {
-    const existingPrerequisites = await prisma.program.findMany({
+  async getAllProgramForMember() {
+    const programs = await prisma.program.findMany({
       where: {
-        id: { in: data.prerequisites }, // Fetch all prerequisites that exist
-      },
-      select: { id: true },
-    });
-
-    // Extract the found IDs
-    const foundIds = existingPrerequisites.map((p) => p.id);
-
-    // Find missing prerequisites
-    if (data.prerequisites) {
-      const missingPrerequisites = data.prerequisites.filter(
-        (id: number) => !foundIds.includes(id),
-      );
-
-      if (missingPrerequisites.length > 0) {
-        throw new Error(
-          `Missing prerequisites: ${missingPrerequisites.join(", ")}`,
-        );
-      }
-    }
-
-    const createdProgram = await prisma.program.create({
-      data: {
-        title: data.title,
-        description: data.description,
-        eligibility: data.eligibility,
-        member_required: data.member_required,
-        leader_required: data.leader_required,
-        ministry_required: data.ministry_required,
-        topics: {
-          create: data.topics.map((topic: string) => ({ name: topic })),
+        completed: false,
+        cohorts: {
+          some: {
+            status: { in: ["Ongoing", "Upcoming"] },
+          },
         },
       },
-      include: { topics: true },
-    });
-
-    // Step 2: If there are prerequisites, add them separately
-    if (data.prerequisites && data.prerequisites.length > 0) {
-      await prisma.program_prerequisites.createMany({
-        data: data.prerequisites.map((prerequisiteId: number) => ({
-          programId: createdProgram.id,
-          prerequisiteId,
-        })),
-      });
-    }
-
-    // Step 3: Fetch the program with prerequisites
-    const updatedProgram = await prisma.program.findUnique({
-      where: { id: createdProgram.id },
       include: {
+        topics: true,
         prerequisitePrograms: {
-          select: { prerequisiteId: true, prerequisite: true },
+          select: {
+            prerequisite: { select: { title: true } },
+          },
+        },
+        cohorts: {
+          where: {
+            status: { in: ["Ongoing", "Upcoming"] },
+          },
+          include: {
+            courses: {
+              include: {
+                instructor: true,
+              },
+            },
+          },
+          orderBy: { startDate: "asc" },
         },
       },
     });
 
-    return updatedProgram;
+    return programs
+      .map((program) => {
+        // Pick preferred cohort: ongoing first, otherwise upcoming
+        const ongoingCohort = program.cohorts.find(
+          (c) => c.status === "Ongoing",
+        );
+        const upcomingCohort = program.cohorts.find(
+          (c) => c.status === "Upcoming",
+        );
+        const selectedCohort = ongoingCohort || upcomingCohort;
+
+        if (!selectedCohort) return null; // skip programs with no matching cohort
+
+        return {
+          id: program.id,
+          name: program.title,
+          upcomingCohort: selectedCohort.name,
+          topics: program.topics.map((t) => t.name),
+          description: program.description,
+          prerequisites: program.prerequisitePrograms.map(
+            (p) => p.prerequisite.title,
+          ),
+          courses: selectedCohort.courses.map((course) => ({
+            id: course.id,
+            name: course.name,
+            meetingDays: this.parseMeetingDays(course.schedule),
+            meetingTime: this.parseMeetingTime(course.schedule),
+            facilitator: course.instructor ? course.instructor.name : "TBA",
+            enrolled: course.enrolled,
+            capacity: course.capacity,
+          })),
+        };
+      })
+      .filter(Boolean); // remove nulls
+  }
+
+  // Helpers to parse schedule string into meetingDays/meetingTime
+  private parseMeetingDays(schedule: string) {
+    // example: "Mon,Wed,Fri 6:00 PM – 8:30 PM"
+    return schedule.split(" ")[0].split(",");
+  }
+
+  private parseMeetingTime(schedule: string) {
+    return schedule.split(" ").slice(1).join(" ");
+  }
+
+  async createProgram(data: any) {
+    return await prisma.$transaction(async (prisma) => {
+      // Step 1: Validate prerequisites
+      if (data.prerequisites && data.prerequisites.length > 0) {
+        const existingPrerequisites = await prisma.program.findMany({
+          where: {
+            id: { in: data.prerequisites.map((p: any) => Number(p)) },
+          },
+          select: { id: true },
+        });
+
+        const foundIds = existingPrerequisites.map((p) => p.id);
+
+        const missingPrerequisites = data.prerequisites
+          .map((p: number | string) => Number(p))
+          .filter((id: number) => !foundIds.includes(id));
+
+        if (missingPrerequisites.length > 0) {
+          throw new Error(
+            `Missing prerequisites: ${missingPrerequisites.join(", ")}`,
+          );
+        }
+      }
+
+      const existingProgram = await prisma.program.findFirst({
+        where: { title: toCapitalizeEachWord(data.title) },
+      });
+
+      // Step 2: Check for existing program with same title
+      if (existingProgram) {
+        throw new Error("Program with this title already exists.");
+      }
+
+      // Step 2: Create the program
+      const createdProgram = await prisma.program.create({
+        data: {
+          title: toCapitalizeEachWord(data.title),
+          description: data.description,
+          member_required: data.member_required,
+          leader_required: data.leader_required,
+          ministry_required: data.ministry_required,
+          topics: {
+            create: data.topics.map((topic: string) => ({ name: topic })),
+          },
+        },
+        include: { topics: true },
+      });
+
+      // Step 3: Add prerequisites
+      if (data.prerequisites && data.prerequisites.length > 0) {
+        await prisma.program_prerequisites.createMany({
+          data: data.prerequisites.map((prerequisiteId: number | string) => ({
+            programId: createdProgram.id,
+            prerequisiteId: Number(prerequisiteId),
+          })),
+        });
+      }
+
+      // Step 4: Return the full program with prerequisites
+      return await prisma.program.findUnique({
+        where: { id: createdProgram.id },
+        include: {
+          prerequisitePrograms: {
+            select: { prerequisiteId: true, prerequisite: true },
+          },
+        },
+      });
+    });
   }
 
   async getAllPrograms() {
@@ -106,7 +194,6 @@ export class ProgramService {
         data: {
           title: data.title,
           description: data.description,
-          eligibility: data.eligibility,
           member_required: data.member_required,
           leader_required: data.leader_required,
           ministry_required: data.ministry_required,
@@ -116,14 +203,14 @@ export class ProgramService {
 
       if (data.prerequisites) {
         await prisma.program_prerequisites.deleteMany({
-          where: { programId: id },
+          where: { programId: Number(id) },
         });
 
         if (data.prerequisites.length > 0) {
           await prisma.program_prerequisites.createMany({
-            data: data.prerequisites.map((prerequisiteId: number) => ({
+            data: data.prerequisites.map((prerequisiteId: number | string) => ({
               programId: id,
-              prerequisiteId,
+              prerequisiteId: Number(prerequisiteId),
             })),
           });
         }

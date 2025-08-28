@@ -1,11 +1,30 @@
 import { prisma } from "../../Models/context";
 import { Request, Response } from "express";
-import { toCapitalizeEachWord } from "../../utils";
+import { departmentSchema, toCapitalizeEachWord } from "../../utils";
 
 export const createDepartment = async (req: Request, res: Response) => {
   const { name, department_head, description, created_by } = req.body;
+  departmentSchema.validate(req.body);
   try {
-    const response = await prisma.department.create({
+    if (!name || name.trim() === "") {
+      return res.status(400).json({
+        message: "Empty Department Name",
+        data: null,
+      });
+    }
+    const existing = await prisma.department.findFirst({
+      where: {
+        name: toCapitalizeEachWord(name),
+      },
+    });
+    if (existing) {
+      return res.status(400).json({
+        message: "Department Name already exist",
+        data: null,
+      });
+    }
+
+    await prisma.department.create({
       data: {
         name: toCapitalizeEachWord(name),
         department_head,
@@ -44,6 +63,13 @@ export const updateDepartment = async (req: Request, res: Response) => {
   const { id, name, department_head, description, updated_by } = req.body;
 
   try {
+    if (!name || name.trim() === "") {
+      return res.status(400).json({
+        message: "We cannot have an empty department name, you get it?",
+        data: null,
+      });
+    }
+
     const response = await prisma.department.update({
       where: {
         id,
@@ -68,13 +94,6 @@ export const updateDepartment = async (req: Request, res: Response) => {
         },
       },
     });
-    const result = {
-      id: response.id,
-      name: response.name,
-      description: response.description,
-      department_head_id: response.department_head_info?.id ?? null,
-      department_head_name: response.department_head_info?.name ?? null,
-    };
     res
       .status(200)
       .json({ message: "Department Updated Succesfully", data: response });
@@ -89,7 +108,7 @@ export const deleteDepartment = async (req: Request, res: Response) => {
   const { id } = req.query;
 
   try {
-    const response = await prisma.department.delete({
+    await prisma.department.delete({
       where: {
         id: Number(id),
       },
@@ -122,10 +141,19 @@ export const deleteDepartment = async (req: Request, res: Response) => {
 
 export const listDepartments = async (req: Request, res: Response) => {
   try {
+    const { page = 1, limit = 10 }: any = req.query;
+    const total = await prisma.department.count();
+
+    const pageNum = parseInt(page, 10) || 1;
+    const pageSize = parseInt(limit, 10) || 10;
+    const skip = (pageNum - 1) * pageSize;
+
     const response = await prisma.department.findMany({
       orderBy: {
-        id: "desc",
+        name: "asc",
       },
+      skip,
+      take: pageSize,
       select: {
         id: true,
         name: true,
@@ -136,15 +164,72 @@ export const listDepartments = async (req: Request, res: Response) => {
             name: true,
           },
         },
-        position:{
-          select:{
+        position: {
+          orderBy: {
+            name: "asc",
+          },
+          select: {
             id: true,
             name: true,
-          }
-        }
+          },
+        },
       },
     });
-    res.status(200).json({ message: "Success", data: response });
+
+    res.status(200).json({
+      message: "Success",
+      current_page: pageNum,
+      page_size: pageSize,
+      total,
+      totalPages: Math.ceil(total / pageSize),
+      data: response,
+    });
+  } catch (error) {
+    return res
+      .status(503)
+      .json({ message: "Department failed to fetch", data: error });
+  }
+};
+
+export const listDepartmentsLight = async (req: Request, res: Response) => {
+  try {
+    const response = await prisma.department.findMany({
+      orderBy: {
+        name: "asc",
+      },
+      select: {
+        id: true,
+        name: true,
+        department_head_info: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+        position: {
+          orderBy: {
+            name: "asc",
+          },
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+    });
+    const data = response?.map((d) => {
+      const { department_head_info, position, ...rest } = d;
+      return {
+        ...rest,
+        department_head: department_head_info?.name || "No Department Head",
+        positions: position?.map((p) => p.name) || [],
+      };
+    });
+
+    res.status(200).json({
+      message: "Success",
+      data: data,
+    });
   } catch (error) {
     return res
       .status(503)
@@ -172,7 +257,9 @@ export const getDepartment = async (req: Request, res: Response) => {
         },
       },
     });
-    if (!response) throw new Error("No Department Found");
+    if (!response) {
+      res.status(200).json({ message: "No department found", data: response });
+    }
 
     res.status(200).json({ message: "Success", data: response });
   } catch (error) {

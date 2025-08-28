@@ -1,30 +1,42 @@
 import swaggerJSDoc from "swagger-jsdoc";
-import swaggerUi from "swagger-ui-express";
-import { Express } from "express";
 
 // Swagger definition
 const options: swaggerJSDoc.Options = {
   definition: {
     openapi: "3.0.0",
     info: {
-      title: "Program API",
+      title: "World Wide Ministries API",
       version: "1.0.0",
-      description: "API documentation for managing programs and topics",
+      description: "API documentation for WWM application",
     },
     servers: [
       {
-        url: "http://localhost:8000",
-        description: "Local server",
+        url: "https://wwm-bk.supadealz.shop",
+        description: "Online Development server",
+      },
+      {
+        url: "http://localhost:8080",
+        description: "Local Development server",
+      },
+    ],
+    components: {
+      securitySchemes: {
+        bearerAuth: {
+          type: "http",
+          scheme: "bearer",
+          bearerFormat: "JWT",
+          description:
+            "Enter your JWT token in the format **Bearer &lt;token>**",
+        },
+      },
+    },
+    security: [
+      {
+        bearerAuth: [],
       },
     ],
   },
-  apis: ["./routes/*.ts"], // Location of API routes
+  apis: ["./src/modules/**/*.ts", "./dist/modules/**/*.js"],
 };
 
-// Initialize Swagger
-const swaggerSpec = swaggerJSDoc(options);
-
-// Function to setup Swagger
-export const setupSwagger = (app: Express) => {
-  app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
-};
+module.exports = options;

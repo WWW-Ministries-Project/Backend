@@ -20,6 +20,11 @@ eventRouter.get(
   [protect, permissions.can_view_events],
   eventContoller.listEvents,
 );
+eventRouter.get(
+  "/list-events-light",
+  [protect, permissions.can_view_events],
+  eventContoller.listEventsLight,
+);
 eventRouter.get("/events-stats", [protect], eventContoller.eventStats);
 
 eventRouter.get(
@@ -49,8 +54,8 @@ eventRouter.delete(
 eventRouter.post("/sign-attendance", eventContoller.eventAttendance);
 eventRouter.get("/search-user", eventContoller.searchUser1);
 
-eventRouter.post("/create-event-type", eventContoller.createEventType)
-eventRouter.put("/update-event-type", eventContoller.updateEventType)
-eventRouter.get("/get-event-type", eventContoller.getEventType)
-eventRouter.get("/get-event-types", eventContoller.getEventTypes)
-eventRouter.delete("/delete-event-type", eventContoller.deleteEventType)
+eventRouter.post("/create-event-type", eventContoller.createEventType);
+eventRouter.put("/update-event-type", eventContoller.updateEventType);
+eventRouter.get("/get-event-type", eventContoller.getEventType);
+eventRouter.get("/get-event-types", eventContoller.getEventTypes);
+eventRouter.delete("/delete-event-type", eventContoller.deleteEventType);

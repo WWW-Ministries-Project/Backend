@@ -1,6 +1,5 @@
 import { Request, Response } from "express";
 import { CourseService } from "./courseService";
-import { prisma } from "../../Models/context";
 
 const courseService = new CourseService();
 export class CourseController {
@@ -15,10 +14,7 @@ export class CourseController {
 
   async createCourse(req: Request, res: Response) {
     try {
-      const newCourse = await courseService.createCourse(
-        req.body.cohortId,
-        req.body,
-      );
+      const newCourse = await courseService.createCourse(req.body);
       return res
         .status(201)
         .json({ message: "Course created", data: newCourse });
@@ -31,7 +27,8 @@ export class CourseController {
 
   async getAllCourses(req: Request, res: Response) {
     try {
-      const courses = await courseService.getAllCourses(Number(req.params.id));
+      const { cohortId } = req.query;
+      const courses = await courseService.getAllCourses(Number(cohortId));
       return res.status(200).json({ data: courses });
     } catch (error: any) {
       return res
@@ -42,22 +39,21 @@ export class CourseController {
 
   async getCourseById(req: Request, res: Response) {
     try {
-      const { id } = req.params;
-      const program = await courseService.getCourseById(Number(id));
-      if (!program)
-        return res.status(404).json({ message: "Course not found" });
+      const { id } = req.query;
+      const course = await courseService.getCourseById(Number(id));
+      if (!course) return res.status(404).json({ message: "Course not found" });
 
-      return res.status(200).json({ data: program });
+      return res.status(200).json({ data: course });
     } catch (error: any) {
       return res
         .status(500)
-        .json({ message: "Error fetching program", error: error.message });
+        .json({ message: "Error fetching course", error: error.message });
     }
   }
 
   async updateCourse(req: Request, res: Response) {
     try {
-      const { id } = req.params;
+      const { id } = req.query;
       const updatedProgram = await courseService.updateCourse(
         Number(id),
         req.body,

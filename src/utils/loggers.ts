@@ -12,7 +12,7 @@ const commonOptions = {
   json: true,
   maxSize: "20m",
   colorize: true,
-  maxFiles: "21d",
+  maxFiles: "7d",
 };
 /**
  * @description This object contains the configurations for the logger
@@ -22,6 +22,10 @@ export const logs = {
     ...commonOptions,
     filename: "./logs/mails" + "/%DATE%.log",
   },
+  requests: {
+    ...commonOptions,
+    filename: "./logs/requests/%DATE%.log",
+  },
 };
 
 export const warnOptions = {
@@ -30,6 +34,7 @@ export const warnOptions = {
 
 export const loggers: Record<string, Logger> = {
   requisitionLogger: createCustomLogger(warnOptions.requisition),
+  requestLogger: createCustomLogger(logs.requests),
 };
 
-export const { requisitionLogger } = loggers;
+export const { requisitionLogger, requestLogger } = loggers;

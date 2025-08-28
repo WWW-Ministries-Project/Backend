@@ -18,23 +18,24 @@ programRouter.get("/programs", programController.getAllPrograms);
 programRouter.get("/program", programController.getProgramById);
 programRouter.put("/program", programController.updateProgram);
 programRouter.delete("/program", programController.deleteProgram);
+programRouter.get(
+  "/get-member-programs",
+  programController.getAllProgramForMember,
+);
 
 //cohort enpoint
-programRouter.post("/cohorts", cohortController.createCohort);
+programRouter.post("/cohort", cohortController.createCohort);
 programRouter.get("/cohorts", cohortController.getAllCohorts);
-programRouter.get(
-  "/program-cohorts/:id",
-  cohortController.getAllCohortsByProgramID,
-);
-programRouter.get("/cohorts/:id", cohortController.getCohortsById);
-programRouter.put("/cohorts/:id", cohortController.updateChorts);
+programRouter.get("/program-cohort", cohortController.getAllCohortsByProgramID);
+programRouter.get("/cohort", cohortController.getCohortsById);
+programRouter.put("/cohort", cohortController.updateChort);
 programRouter.delete("/cohort", cohortController.deleteCohort);
 
 //course enpoint
-programRouter.post("/courses", courseController.createCourse);
-programRouter.get("/cohort-courses/:id", courseController.getAllCourses);
-programRouter.get("/courses/:id", courseController.getCourseById);
-programRouter.put("/courses/:id", courseController.updateCourse);
+programRouter.post("/course", courseController.createCourse);
+programRouter.get("/cohort-courses", courseController.getAllCourses);
+programRouter.get("/course", courseController.getCourseById);
+programRouter.put("/course", courseController.updateCourse);
 programRouter.delete("/course", courseController.deleteCourse);
 programRouter.get("/users", courseController.getAllUsers);
 
@@ -49,7 +50,7 @@ programRouter.get(
   "/user-enrollment/:id",
   enrollmentController.getEnrollmentByUser,
 );
-programRouter.get("/progress/:id", enrollmentController.getProgressReport);
+programRouter.get("/progress", enrollmentController.getProgressReport);
 programRouter.put(
   "/progress-update",
   enrollmentController.updateProgressReport,
@@ -59,9 +60,11 @@ programRouter.put(
   enrollmentController.updateProgressReports,
 );
 
+programRouter.get("/my-enrollment", enrollmentController.myEnrollment);
+
 //topics enpoint
 programRouter.post("/topic", programController.createTopic);
 programRouter.put("/topic", programController.updateTopic);
-programRouter.delete("/topic/:id", programController.deleteTopic);
+programRouter.delete("/topic", programController.deleteTopic);
 
 export default programRouter;
