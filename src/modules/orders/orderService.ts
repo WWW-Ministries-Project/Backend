@@ -259,7 +259,7 @@ export class OrderService {
         },
       });
 
-      console.log(response)
+      const status = response.data?.data?.status;
       if (!status) throw new Error("Invalid response from Hubtel");
 
       const normalizedStatus =
