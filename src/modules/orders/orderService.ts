@@ -219,7 +219,7 @@ export class OrderService {
       totalAmount: order.total_amount,
       description: `Order creation `,
       callbackUrl: process.env.HUBTEL_CALLBACK_URL,
-      returnUrl: return_url,
+      returnUrl: `${return_url}?order_reference=${order.reference}`,
       cancellationUrl: cancellation_url,
       merchantAccountNumber: process.env.HUBTEL_POS_ID,
       clientReference: order.reference,
@@ -259,7 +259,7 @@ export class OrderService {
         },
       });
 
-      const status = response.data?.data?.status;
+      console.log(response)
       if (!status) throw new Error("Invalid response from Hubtel");
 
       const normalizedStatus =
