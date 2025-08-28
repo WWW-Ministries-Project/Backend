@@ -21,6 +21,8 @@ export class OrderService {
     total_amount: number | string;
     reference: string | null;
     payment_type: "paystack" | "hubtel" | null;
+    return_url: string | null;
+    cancellation_url: string | null;
     billing: {
       first_name: string;
       last_name: string;
@@ -79,7 +81,8 @@ export class OrderService {
       console.log(`order number: ${orderNumber}`);
       const hubtelResponse = await this.initializeHubtelTransaction(
         order,
-        data.user_id,
+        data.return_url,
+        data.cancellation_url,
       );
 
       return {
@@ -203,26 +206,21 @@ export class OrderService {
 
   async initializeHubtelTransaction(
     order: any,
-    user_id?: number | string | null,
+    return_url: string | null,
+    cancellation_url: string | null,
   ) {
     console.log("initializing hubtel transaction");
     const url =
       process.env.HUBTEL_INIT_PAYMENT_URL ||
       "https://payproxyapi.hubtel.com/items/initiate";
-
-    let RETURN_URL;
-    if (user_id) {
-      RETURN_URL = `${process.env.FRONT_END_URL}${process.env.USER_ID_RETURN_URL}`;
-    } else {
-      RETURN_URL = `${process.env.FRONT_END_URL}${process.env.RETURN_URL}`;
-    }
-
+  
+   
     const payload = {
       totalAmount: order.total_amount,
       description: `Order creation `,
       callbackUrl: process.env.HUBTEL_CALLBACK_URL,
-      returnUrl: RETURN_URL,
-      cancellationUrl: process.env.HUBTEL_CANCEL_URL,
+      returnUrl: return_url,
+      cancellationUrl: cancellation_url,
       merchantAccountNumber: process.env.HUBTEL_POS_ID,
       clientReference: order.reference,
       payeeName: `${order.billing_details.first_name} ${order.billing_details.last_name}`,

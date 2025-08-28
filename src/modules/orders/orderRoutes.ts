@@ -33,9 +33,12 @@ const orderController = new OrderController();
  *               payment_type:
  *                 type: string
  *                 example: "paystack"
- *               reference:
+ *               return_url:
  *                 type: string
- *                 example: "txn_ref_12345"
+ *                 example: "https://yourapp.com/return"
+ *               cancellation_url:
+ *                  type: string
+ *                  example: "https://yourapp.com/cancel"
  *               billing:
  *                 type: object
  *                 properties:
