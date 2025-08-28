@@ -217,7 +217,7 @@ export class OrderService {
    
     const payload = {
       totalAmount: order.total_amount,
-      description: `Order creation `,
+      description: `Payment for WWM Order`,
       callbackUrl: process.env.HUBTEL_CALLBACK_URL,
       returnUrl: `${return_url}?order_reference=${order.reference}`,
       cancellationUrl: cancellation_url,
