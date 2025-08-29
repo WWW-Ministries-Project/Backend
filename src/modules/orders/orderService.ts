@@ -5,15 +5,23 @@ import { toSentenceCase } from "../../utils";
 
 export class OrderService {
   async findOrderByName(first_name?: string, last_name?: string) {
-    await prisma.billing_details.findMany({
+    const orders = await prisma.orders.findMany({
       where: {
-        OR: [
-          // last_name: last_name,
-          // first_name: first_name
-        ],
+        billing_details: {
+          is: {
+            ...(first_name ? { first_name: { contains: first_name } } : {}),
+            ...(last_name ? { last_name: { contains: last_name } } : {}),
+          },
+        },
       },
-      include: { orders: true },
+      include: {
+        items: {
+          include: { product: true },
+        },
+        billing_details: true,
+      },
     });
+    return this.flattenOrders(orders);
   }
   // Create a new order
   async create(data: {
@@ -97,7 +105,18 @@ export class OrderService {
   }
 
   async findAll() {
-    return prisma.orders.findMany({ include: { items: true } });
+    const orders = await prisma.orders.findMany({
+      include: {
+        items: {
+          include: {
+            product: true,
+          },
+        },
+        billing_details: true,
+      },
+    });
+
+    return await this.flattenOrders(orders);
   }
 
   async findOne(id: number) {
@@ -118,7 +137,7 @@ export class OrderService {
   }
 
   async findOneByMarketplaceId(marketplaceId: number) {
-    return await prisma.orders.findMany({
+    const orders = await prisma.orders.findMany({
       where: {
         items: {
           some: {
@@ -126,8 +145,15 @@ export class OrderService {
           },
         },
       },
-      include: { items: true },
+      include: {
+        items: {
+          include: { product: true },
+        },
+        billing_details: true,
+      },
     });
+
+    return await this.flattenOrders(orders);
   }
 
   async updateOrderStatusByHubtel(clientReference: string, status: string) {
@@ -213,8 +239,7 @@ export class OrderService {
     const url =
       process.env.HUBTEL_INIT_PAYMENT_URL ||
       "https://payproxyapi.hubtel.com/items/initiate";
-  
-   
+
     const payload = {
       totalAmount: order.total_amount,
       description: `Payment for WWM Order`,
@@ -312,5 +337,53 @@ export class OrderService {
   private generateReference(): string {
     const client_reference = crypto.randomUUID();
     return client_reference.toString();
+  }
+
+  private async flattenOrders(orders: any[]) {
+    return orders.flatMap((order) => {
+      const billingDetails = order.billing_details;
+
+      return order.items.map((item: any) => ({
+        // Item fields
+        id: item.id,
+        order_id: item.order_id,
+        name: item.name,
+        market_id: item.market_id,
+        product_id: item.product_id,
+        price_amount: item.price_amount,
+        price_currency: item.price_currency,
+        quantity: item.quantity,
+        product_type: item.product_type,
+        product_category: item.product_category,
+        image_url: item.image_url,
+        color: item.color,
+        size: item.size,
+
+        // Order fields
+        order_number: order.order_number,
+        payment_status: order.payment_status,
+        reference: order.reference,
+
+        // Flattened product fields
+        product_name: item.product?.name,
+        product_description: item.product?.description,
+        product_colours: item.product?.colours,
+        product_status: item.product?.status,
+        product_price_amount: item.product?.price_amount,
+        product_price_currency: item.product?.price_currency,
+        product_market_id: item.product?.market_id,
+
+        // Flattened billing details
+        first_name: billingDetails?.first_name,
+        last_name: billingDetails?.last_name,
+        email: billingDetails?.email,
+        phone_number: billingDetails?.phone_number,
+        country: billingDetails?.country,
+        country_code: billingDetails?.country_code,
+
+        // Computed field
+        total_amount: item.price_amount * item.quantity,
+      }));
+    });
   }
 }
