@@ -130,10 +130,16 @@ export class OrderService {
   }
 
   async findByUserId(userId: number) {
-    return prisma.orders.findMany({
+    const orders = prisma.orders.findMany({
       where: { user_id: userId },
-      include: { items: true },
+      include: {
+        items: {
+          include: { product: true },
+        },
+        billing_details: true,
+      },
     });
+    return await this.flattenOrders(await orders);
   }
 
   async findOneByMarketplaceId(marketplaceId: number) {
