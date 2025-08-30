@@ -106,6 +106,9 @@ export class OrderService {
 
   async findAll() {
     const orders = await prisma.orders.findMany({
+      orderBy:{
+        id: 'desc'
+      },
       include: {
         items: {
           include: {
@@ -131,6 +134,9 @@ export class OrderService {
 
   async findByUserId(userId: number) {
     const orders = prisma.orders.findMany({
+      orderBy:{
+        id: 'desc'
+      },
       where: { user_id: userId },
       include: {
         items: {
@@ -144,6 +150,9 @@ export class OrderService {
 
   async findOneByMarketplaceId(marketplaceId: number) {
     const orders = await prisma.orders.findMany({
+      orderBy:{
+        id: 'desc'
+      },
       where: {
         items: {
           some: {
