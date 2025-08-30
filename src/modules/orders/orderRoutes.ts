@@ -203,7 +203,7 @@ orderRouter.get("/verify-payment", orderController.verifyPayment);
 orderRouter.post("/hubtel-payment-webhook", orderController.hubtelWebhook);
 /**
  * @swagger
- * /orders/hubtel-transaction-status:
+ * /orders/confirm-transaction-status:
  *   get:
  *     summary: Check transaction status from Hubtel
  *     description: >
@@ -212,7 +212,7 @@ orderRouter.post("/hubtel-payment-webhook", orderController.hubtelWebhook);
  *     tags: [Orders]
  *     parameters:
  *       - in: query
- *         name: clientReference
+ *         name: reference
  *         required: true
  *         schema:
  *           type: string

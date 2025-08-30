@@ -95,7 +95,7 @@ export class OrderController {
     } catch (error: any) {
       return res.status(404).json({
         success: false,
-        message: error.message || "No orders found for this marketplace",
+        message: error.message || "No orders found for this name",
       });
     }
   }

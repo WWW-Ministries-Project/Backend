@@ -679,7 +679,7 @@ export const ListUsers = async (req: Request, res: Response) => {
     is_user,
     department_id,
     page = "1",
-    limit = "10",
+    limit = "12",
     is_active,
     name,
   } = req.query;
