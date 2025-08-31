@@ -602,17 +602,17 @@ export class UserService {
     const itContact =
       process.env.IT_CONTACT_EMAIL || "+233 24 865 1322, jojo.abbiw@gmail.com";
     const loginLink =
-      process.env.PLATFORM_LOGIN_LINK || "https://app.wwmministries.org/login";
+      process.env.PLATFORM_LOGIN;
     const guestLink =
-      process.env.PLATFORM_GUEST_LINK || "https://app.wwmministries.org/guest";
+      process.env.GUEST_ORDER_LINK;
 
     const emailPromises = recipients
       .map(async (user: any) => {
         try {
            sendEmail(
             applicationLiveTemplate(
-              loginLink,
-              guestLink,
+              String(loginLink),
+              String(guestLink),
               itContact,
               user.name,
               user.email
