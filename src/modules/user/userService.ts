@@ -600,7 +600,7 @@ export class UserService {
     }
 
     const itContact =
-      process.env.IT_CONTACT_EMAIL || "+233 24 865 1322, jojo.abbiw@gmail.com";
+      process.env.IT_CONTACT_EMAIL || "+233 24 232 5818 Barimah";
     const loginLink =
       process.env.PLATFORM_LOGIN;
     const guestLink =
