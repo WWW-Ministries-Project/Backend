@@ -5,6 +5,7 @@ import { prisma } from "../../Models/context";
 import { sendEmail, comparePassword, hashPassword } from "../../utils";
 import { UserService } from "./userService";
 import { CourseService } from "../programs/courseService";
+import { LifeCenterService } from "../lifeCenterMangement/lifeCenterService";
 // import { forgetPasswordTemplate } from "../../utils/mail_templates/forgot-password";
 // import { forgetPasswordTemplate } from "../../utils/mail_templates/forgetPasswordTemplate";
 import { forgetPasswordTemplate } from "../../utils/mail_templates/forgotPasswordTemplate";
@@ -16,6 +17,7 @@ dotenv.config();
 const JWT_SECRET: any = process.env.JWT_SECRET;
 const userService = new UserService();
 const courseService = new CourseService();
+const lifeCenterService = new LifeCenterService();
 
 export const landingPage = async (req: Request, res: Response) => {
   res.send(
@@ -440,7 +442,6 @@ export const login = async (req: Request, res: Response) => {
             department: true,
           },
         },
-        life_center_member: true,
         user_info: {
           select: {
             photo: true,
@@ -474,6 +475,7 @@ export const login = async (req: Request, res: Response) => {
     );
     const ministry_worker: boolean =
       Boolean(existance.access) && existance.is_user;
+    const life_center_leader: boolean = await checkIfLifeCenterLeader(existance.id);
     if (await comparePassword(password, existance?.password)) {
       const token = JWT.sign(
         {
@@ -485,7 +487,7 @@ export const login = async (req: Request, res: Response) => {
           profile_img: existance.user_info?.photo,
           membership_type: existance.membership_type || null,
           department,
-          life_center_leader: Boolean(existance.life_center_member) || false,
+          life_center_leader,
           phone: existance.user_info?.primary_number || null,
           member_since: existance.user_info?.member_since || null,
         },
@@ -1345,3 +1347,21 @@ export const currentuser = async (req: Request, res: Response) => {
     return res.status(401).json({ message: "Unauthorized", error });
   }
 };
+
+export const updateUserPasswordToDefault = async (req: Request, res: Response) => {
+  try {
+   const data = await userService.updateUserPasswordToDefault();
+
+    return res.json({ message: "Operation sucessful", data: data });
+  } catch (error) {
+    return res.status(401).json({ message: "Unauthorized", error });
+  }
+};
+
+async function checkIfLifeCenterLeader(userId: number): Promise<boolean> {
+
+  const lifeCenterMember = await lifeCenterService.getMyLifeCenter(userId)
+
+  return Boolean(lifeCenterMember)
+
+}

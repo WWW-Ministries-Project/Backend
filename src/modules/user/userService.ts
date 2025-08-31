@@ -557,4 +557,16 @@ export class UserService {
       throw error;
     }
   }
+
+  async updateUserPasswordToDefault() {
+    const hashedPassword = await hashPassword("123456");
+    const result = await prisma.user.updateMany({
+      data: {
+        password: hashedPassword,
+        is_active: true,
+      },
+    });
+
+    return result;
+  }
 }
