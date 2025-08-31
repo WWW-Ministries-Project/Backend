@@ -475,7 +475,9 @@ export const login = async (req: Request, res: Response) => {
     );
     const ministry_worker: boolean =
       Boolean(existance.access) && existance.is_user;
-    const life_center_leader: boolean = await checkIfLifeCenterLeader(existance.id);
+    const life_center_leader: boolean = await checkIfLifeCenterLeader(
+      existance.id,
+    );
     if (await comparePassword(password, existance?.password)) {
       const token = JWT.sign(
         {
@@ -1348,9 +1350,12 @@ export const currentuser = async (req: Request, res: Response) => {
   }
 };
 
-export const updateUserPasswordToDefault = async (req: Request, res: Response) => {
+export const updateUserPasswordToDefault = async (
+  req: Request,
+  res: Response,
+) => {
   try {
-   const data = await userService.updateUserPasswordToDefault();
+    const data = await userService.updateUserPasswordToDefault();
 
     return res.json({ message: "Operation sucessful", data: data });
   } catch (error) {
@@ -1359,9 +1364,22 @@ export const updateUserPasswordToDefault = async (req: Request, res: Response) =
 };
 
 async function checkIfLifeCenterLeader(userId: number): Promise<boolean> {
+  const lifeCenterMember = await lifeCenterService.getMyLifeCenter(userId);
 
-  const lifeCenterMember = await lifeCenterService.getMyLifeCenter(userId)
+  return Boolean(lifeCenterMember);
+}
 
-  return Boolean(lifeCenterMember)
 
+export const sendEmailToAllUsers = async (req: Request, res: Response) => { 
+  try {
+    const { emails } = req.body;
+
+    const response = await userService.sendEmailToAllUsers(emails);
+    
+    return res.status(200).json({ message: "Emails sent successfully", data: response });
+
+  }
+  catch (error:any) {
+    return res.status(500).json({ message: "Failed to send emails", data: error?.message });
+  }
 }

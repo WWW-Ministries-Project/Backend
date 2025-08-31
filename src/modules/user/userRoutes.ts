@@ -23,6 +23,7 @@ import {
   ListUsersLight,
   activateAccount,
   updateUserPasswordToDefault,
+  sendEmailToAllUsers,
 } from "../user/userController";
 import { Permissions } from "../../middleWare/authorization";
 const permissions = new Permissions();
@@ -102,3 +103,5 @@ userRouter.put(
 userRouter.get("/current-user", currentuser);
 
 userRouter.get("/set-default-passwords", updateUserPasswordToDefault);
+
+userRouter.post("/send-emails-to-user", sendEmailToAllUsers);
