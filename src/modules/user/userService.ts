@@ -1,7 +1,8 @@
 import { prisma } from "../../Models/context";
-import { toCapitalizeEachWord, hashPassword } from "../../utils";
+import { toCapitalizeEachWord, hashPassword, sendEmail } from "../../utils";
 import axios from "axios";
-import { program, topic } from "@prisma/client/edge";
+import { program } from "@prisma/client/edge";
+import { applicationLiveTemplate } from "../../utils/mail_templates/applicationLiveTemplate";
 
 export class UserService {
   async registerUser(userData: any) {
@@ -568,5 +569,68 @@ export class UserService {
     });
 
     return result;
+  }
+
+  async sendEmailToAllUsers(emails?: string[]) {
+    const email_sent: Record<string, string> = {};
+    const email_failed: Record<string, string> = {};
+
+    let recipients: { email?: string | null; name?: string }[] = [];
+
+    if (emails && emails.length > 0) {
+      recipients = await prisma.user.findMany({
+        where: {
+          email: { in: emails },
+        },
+        select: {
+          email: true,
+          name: true,
+        },
+      });
+    } else {
+      recipients = await prisma.user.findMany({
+        where: {
+          email: { not: null },
+        },
+        select: {
+          email: true,
+          name: true,
+        },
+      });
+    }
+
+    const itContact =
+      process.env.IT_CONTACT_EMAIL || "+233 24 232 5818 Barimah";
+    const loginLink =
+      process.env.PLATFORM_LOGIN;
+    const guestLink =
+      process.env.GUEST_ORDER_LINK;
+
+    const emailPromises = recipients
+      .map(async (user: any) => {
+        try {
+           sendEmail(
+            applicationLiveTemplate(
+              String(loginLink),
+              String(guestLink),
+              itContact,
+              user.name,
+              user.email
+            ),
+            user.email,
+            "🎉 Our Application is Now Live!"
+          );
+
+          
+            email_sent[user.email] = "Email sent";
+
+        } catch (err: any) {
+          email_failed[user.email] = "Email error: " + err.message;
+        }
+      });
+
+    await Promise.all(emailPromises);
+
+    return { email_sent, email_failed };
   }
 }
