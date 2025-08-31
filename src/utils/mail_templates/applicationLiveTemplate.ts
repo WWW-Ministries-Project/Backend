@@ -68,12 +68,15 @@ export const applicationLiveTemplate = (
 
       <p>
         For first-time users:  
-        Please contact the <strong>IT Department</strong> at <a href="mailto:${itContact}">${itContact}</a>  
-        to obtain your <strong>default password</strong>.  
+        Please the default password <strong>123456</strong>
         Make sure to use the <strong>${email}</strong> you provided during registration.
       </p>
 
       <p>We look forward to serving you better with this new platform!</p>
+
+
+      <p>Please contact the <strong>IT Department</strong> at <a href="mailto:${itContact}">${itContact}</a>  
+        in case of any difficulties </p> 
 
       <div class="footer">
         Best regards,<br>
