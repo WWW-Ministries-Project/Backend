@@ -715,8 +715,8 @@ export const ListUsers = async (req: Request, res: Response) => {
     const total = await prisma.user.count({ where: whereFilter });
 
     const users = await prisma.user.findMany({
-      skip,
-      take: pageSize,
+      // skip,
+      // take: pageSize,
       orderBy: {
         name: "asc",
       },
