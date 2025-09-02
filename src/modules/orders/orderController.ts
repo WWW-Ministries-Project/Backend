@@ -151,4 +151,46 @@ export class OrderController {
       return res.status(500).json({ error: "Failed to confirm transaction" });
     }
   }
+
+  async confirmTransactionById(req: Request, res: Response) {
+    try {
+      const { id } = req.query as { id?: string };
+
+      if (!id) {
+        return res.status(400).json({ error: "Id is required" });
+      }
+
+      const response = await orderService.checkHubtelTransactionStatusById(
+        Number(id),
+      );
+
+      return res.status(200).json({
+        message: "Transaction confirmed",
+        data: response,
+      });
+    } catch (error: any) {
+      console.error("Error confirming transaction:", error.message);
+      return res.status(500).json({ error: "Failed to confirm transaction" });
+    }
+  }
+
+  async reinitiatePayment(req: Request, res: Response) {
+    try {
+      const { id, return_url, cancellation_url } = req.body;
+      const order = await orderService.reinitiatePayment(
+        id,
+        return_url,
+        cancellation_url,
+      );
+      return res.status(201).json({
+        message: "Order created successfully",
+        data: order,
+      });
+    } catch (error: any) {
+      return res.status(400).json({
+        success: false,
+        message: error.message || "Failed to create order",
+      });
+    }
+  }
 }

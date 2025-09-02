@@ -601,33 +601,28 @@ export class UserService {
 
     const itContact =
       process.env.IT_CONTACT_EMAIL || "+233 24 232 5818 Barimah";
-    const loginLink =
-      process.env.PLATFORM_LOGIN;
-    const guestLink =
-      process.env.GUEST_ORDER_LINK;
+    const loginLink = process.env.PLATFORM_LOGIN;
+    const guestLink = process.env.GUEST_ORDER_LINK;
 
-    const emailPromises = recipients
-      .map(async (user: any) => {
-        try {
-           sendEmail(
-            applicationLiveTemplate(
-              String(loginLink),
-              String(guestLink),
-              itContact,
-              user.name,
-              user.email
-            ),
+    const emailPromises = recipients.map(async (user: any) => {
+      try {
+        sendEmail(
+          applicationLiveTemplate(
+            String(loginLink),
+            String(guestLink),
+            itContact,
+            user.name,
             user.email,
-            "🎉 Our Application is Now Live!"
-          );
+          ),
+          user.email,
+          "🎉 Our Application is Now Live!",
+        );
 
-          
-            email_sent[user.email] = "Email sent";
-
-        } catch (err: any) {
-          email_failed[user.email] = "Email error: " + err.message;
-        }
-      });
+        email_sent[user.email] = "Email sent";
+      } catch (err: any) {
+        email_failed[user.email] = "Email error: " + err.message;
+      }
+    });
 
     await Promise.all(emailPromises);
 
