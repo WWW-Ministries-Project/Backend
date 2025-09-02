@@ -79,14 +79,11 @@ export class OrderService {
 
       return this.updateOrderPayment(order.id, status, orderNumber);
     } else {
-      console.log("updating order to pending");
       const updated_order = await this.updateOrderPayment(
         order.id,
         "pending",
         orderNumber,
       );
-      console.log("initializing hubtel payment");
-      console.log(`order number: ${orderNumber}`);
       const hubtelResponse = await this.initializeHubtelTransaction(
         order,
         data.return_url,
@@ -102,6 +99,45 @@ export class OrderService {
         updated_order,
       };
     }
+  }
+
+  async reinitiatePayment(
+    id: number,
+    return_url: string,
+    cancellation_url: string,
+  ) {
+    const clientReference = this.generateReference();
+
+    const order = await prisma.orders.findUnique({
+      where: { id },
+    });
+
+    if (!order) {
+    }
+
+    const updated_order = prisma.orders.update({
+      where: {
+        id,
+      },
+      data: {
+        reference: clientReference,
+      },
+    });
+
+    const hubtelResponse = await this.initializeHubtelTransaction(
+      order,
+      return_url,
+      cancellation_url,
+    );
+
+    return {
+      message: "Hubtel payment initiated",
+      checkoutUrl: hubtelResponse.checkoutUrl,
+      checkoutDirectUrl: hubtelResponse.checkoutDirectUrl,
+      clientReference: hubtelResponse.clientReference,
+      checkoutId: hubtelResponse.checkoutId,
+      updated_order,
+    };
   }
 
   async findAll() {
@@ -178,8 +214,12 @@ export class OrderService {
     });
 
     if (!order) throw new Error("Order not found");
-    if (order.payment_status === "success")
-      throw new Error("Payment already verified");
+    if (order.payment_status === "success") {
+      return {
+        message: `Payment status updated to ${order?.payment_status}`,
+        order,
+      };
+    }
 
     const updatedOrder = await this.updateOrderPayment(
       order.id,
@@ -303,12 +343,28 @@ export class OrderService {
       if (!status) throw new Error("Invalid response from Hubtel");
 
       const normalizedStatus =
-        status.toLowerCase() === "paid" ? "success" : "failed";
+        status.toLowerCase() === "paid" ? "success" : "pending";
 
       return this.updateOrderStatusByHubtel(clientReference, normalizedStatus);
     } catch (error: any) {
       console.error("Hubtel status check failed:", error.message);
       throw new Error("Unable to check Hubtel transaction status");
+    }
+  }
+
+  async checkHubtelTransactionStatusById(id: number) {
+    const order = await prisma.orders.findUnique({
+      where: { id },
+      select: {
+        reference: true,
+        payment_status: true,
+      },
+    });
+
+    if (order?.payment_status === "success") {
+      return { success: true };
+    } else {
+      return await this.checkHubtelTransactionStatus(String(order?.reference));
     }
   }
 

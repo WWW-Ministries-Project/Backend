@@ -1369,17 +1369,18 @@ async function checkIfLifeCenterLeader(userId: number): Promise<boolean> {
   return Boolean(lifeCenterMember);
 }
 
-
-export const sendEmailToAllUsers = async (req: Request, res: Response) => { 
+export const sendEmailToAllUsers = async (req: Request, res: Response) => {
   try {
     const { emails } = req.body;
 
     const response = await userService.sendEmailToAllUsers(emails);
-    
-    return res.status(200).json({ message: "Emails sent successfully", data: response });
 
+    return res
+      .status(200)
+      .json({ message: "Emails sent successfully", data: response });
+  } catch (error: any) {
+    return res
+      .status(500)
+      .json({ message: "Failed to send emails", data: error?.message });
   }
-  catch (error:any) {
-    return res.status(500).json({ message: "Failed to send emails", data: error?.message });
-  }
-}
+};

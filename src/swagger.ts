@@ -18,6 +18,10 @@ const options: swaggerJSDoc.Options = {
         url: "http://localhost:8080",
         description: "Local Development server",
       },
+      {
+        url: "https://dashboard.worldwidewordministries.org",
+        description: "Local Development server",
+      },
     ],
     components: {
       securitySchemes: {
