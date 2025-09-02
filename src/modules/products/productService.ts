@@ -153,18 +153,18 @@ export class ProductService {
   }
 
   async createProductColours(
-    product_id: number,
-    colourInputs: ProductColourInput[],
+      product_id: number,
+      colourInputs: ProductColourInput[],
   ) {
     // Get all unique size names across all colour inputs
     const allSizeNames = [
       ...new Set(
-        colourInputs.flatMap((input) => input.stock.map((s) => s.size)),
+          colourInputs.flatMap((input) => input.stock.map((s) => s.size)),
       ),
     ];
 
-    // Fetch all sizes once
-    const sizes = await prisma.sizes.findMany({
+    // Fetch existing sizes
+    const existingSizes = await prisma.sizes.findMany({
       where: {
         name: {
           in: allSizeNames,
@@ -176,8 +176,37 @@ export class ProductService {
       },
     });
 
+    // Find missing size names
+    const existingSizeNames = new Set(existingSizes.map(size => size.name));
+    const missingSizeNames = allSizeNames.filter(name => !existingSizeNames.has(name));
+
+    // Create missing sizes
+    let newSizes: { id: number; name: string; }[] = [];
+    if (missingSizeNames.length > 0) {
+      await prisma.sizes.createMany({
+        data: missingSizeNames.map(name => ({ name })),
+        skipDuplicates: true, // In case of race conditions
+      });
+
+      // Fetch the newly created sizes to get their IDs
+      newSizes = await prisma.sizes.findMany({
+        where: {
+          name: {
+            in: missingSizeNames,
+          },
+        },
+        select: {
+          id: true,
+          name: true,
+        },
+      });
+    }
+
+    // Combine existing and new sizes
+    const allSizes = [...existingSizes, ...newSizes];
+
     // Create a map for quick lookup
-    const sizeNameToIdMap = new Map(sizes.map((size) => [size.name, size.id]));
+    const sizeNameToIdMap = new Map(allSizes.map((size) => [size.name, size.id]));
 
     const colourStocks = [];
     for (let input of colourInputs) {
