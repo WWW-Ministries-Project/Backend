@@ -80,7 +80,7 @@ export class ProductService {
     return { product, product_colours };
   }
 
-  async updateProduct(input: any) {
+  async updateProduct(input: { id: number; name: any; description: any; colours: any; image_url: any; deleted: any; stock_managed: any; status: any; product_type_id: any; product_category_id: any; price_currency: any; price_amount: any; market_id: any; product_colours: any[]; }) {
     const existingProduct = await prisma.products.findUnique({
       where: { id: input.id },
     });
@@ -121,32 +121,71 @@ export class ProductService {
       where: { product_id: input.id },
     });
 
-    // STEP 3 — recreate product colours + stock
-    for (const colourItem of input.product_colours) {
-      const productColour = await prisma.product_colour.create({
-        data: {
-          colour: colourItem.colour,
-          image_url: colourItem.image_url,
-          product_id: input.id,
-        },
+    // STEP 3 — Ensure all required sizes exist before creating colours + stock
+    if (input.product_colours?.length) {
+      // Get all unique size names across all colour inputs
+      const allSizeNames = [
+        ...new Set(
+            input.product_colours.flatMap((colourItem: any) =>
+                colourItem.stock.map((s: any) => s.size)
+            )
+        ),
+      ];
+
+      // Fetch existing sizes
+      const existingSizes = await prisma.sizes.findMany({
+        where: {
+          name: {
+            in: allSizeNames,
+          },
+        }
       });
 
-      // Get size IDs
-      const sizeNames = colourItem.stock.map((s: any) => s.size);
-      const sizes = await prisma.sizes.findMany({
-        where: { name: { in: sizeNames } },
-        select: { id: true, name: true },
-      });
-      const sizeMap = new Map(sizes.map((s) => [s.name, s.id]));
+      // Find missing size names
+      const existingSizeNames = new Set(existingSizes.map(size => size.name));
+      const missingSizeNames = allSizeNames.filter(name => !existingSizeNames.has(name));
 
-      // Create stock records
-      await prisma.product_stock.createMany({
-        data: colourItem.stock.map((s: any) => ({
-          product_colour_id: productColour.id,
-          size_id: sizeMap.get(s.size)!,
-          stock: Number(s.stock),
-        })),
-      });
+      // Create missing sizes
+      let newSizes: { id: number; name: string; sort_order: number | null; created_at: Date; updated_at: Date; created_by_id: number | null; updated_at_id: number | null; }[] = [];
+      if (missingSizeNames.length > 0) {
+        await prisma.sizes.createMany({
+          data: missingSizeNames.map(name => ({ name })),
+          skipDuplicates: true, // In case of race conditions
+        });
+
+        // Fetch the newly created sizes to get their IDs
+        newSizes = await prisma.sizes.findMany({
+          where: {
+            name: {
+              in: missingSizeNames,
+            },
+          }
+        });
+      }
+
+      // Combine existing and new sizes
+      const allSizes = [...existingSizes, ...newSizes];
+      const sizeMap = new Map(allSizes.map((size) => [size.name, size.id]));
+
+      // STEP 4 — recreate product colours + stock
+      for (const colourItem of input.product_colours) {
+        const productColour = await prisma.product_colour.create({
+          data: {
+            colour: colourItem.colour,
+            image_url: colourItem.image_url,
+            product_id: input.id,
+          },
+        });
+
+        // Create stock records using the comprehensive size map
+        await prisma.product_stock.createMany({
+          data: colourItem.stock.map((s: any) => ({
+            product_colour_id: productColour.id,
+            size_id: sizeMap.get(s.size)!,
+            stock: Number(s.stock),
+          })),
+        });
+      }
     }
 
     return await this.getProductById(input.id);
