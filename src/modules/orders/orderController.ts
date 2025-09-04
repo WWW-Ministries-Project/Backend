@@ -119,7 +119,7 @@ export class OrderController {
     try {
       const { Data } = req.body;
       console.log(`Call Back ${Data}`)
-      console.log(JSON.stringify(Data.data, null, 2));
+      console.log(JSON.stringify(Data, null, 2));
       const status = Data.Status === "Success" ? "success" : "failed";
 
       const result = await orderService.updateOrderStatusByHubtel(
