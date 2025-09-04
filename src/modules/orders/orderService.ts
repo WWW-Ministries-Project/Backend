@@ -145,9 +145,6 @@ export class OrderService {
       orderBy: {
         id: "desc",
       },
-      where:{
-        payment_status: "success"
-      },
       include: {
         items: {
           include: {
