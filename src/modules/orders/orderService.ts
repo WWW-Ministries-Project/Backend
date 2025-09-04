@@ -316,7 +316,8 @@ export class OrderService {
       },
     });
 
-    console.log(response);
+    console.log(response.data);
+    console.log(JSON.stringify(response.data, null, 2));
 
     if (response.data.responseCode !== "0000") {
       throw new Error(`Hubtel init failed: ${response.data.message}`);
@@ -339,6 +340,7 @@ export class OrderService {
         },
       });
       console.log(`transactional check ${response}` )
+      console.log(JSON.stringify(response.data, null, 2));
 
       const status = response.data?.data?.status;
       if (!status) throw new Error("Invalid response from Hubtel");
