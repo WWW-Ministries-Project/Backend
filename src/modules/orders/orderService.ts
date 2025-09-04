@@ -316,7 +316,7 @@ export class OrderService {
       },
     });
 
-    console.log(response);
+    console.log(response.data);
 
     if (response.data.responseCode !== "0000") {
       throw new Error(`Hubtel init failed: ${response.data.message}`);
