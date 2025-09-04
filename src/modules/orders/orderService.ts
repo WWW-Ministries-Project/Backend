@@ -145,6 +145,9 @@ export class OrderService {
       orderBy: {
         id: "desc",
       },
+      where:{
+        payment_status: "success"
+      },
       include: {
         items: {
           include: {
@@ -338,6 +341,7 @@ export class OrderService {
           "Content-Type": "application/json",
         },
       });
+      console.log(`transactional check ${response}` )
 
       const status = response.data?.data?.status;
       if (!status) throw new Error("Invalid response from Hubtel");
