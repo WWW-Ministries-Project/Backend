@@ -129,11 +129,11 @@ export const updateAsset = async (req: any, res: Response) => {
 };
 export const listAssets = async (req: Request, res: Response) => {
   try {
-    const { page = 1, limit = 10 }: any = req.query;
+    const { page = 1, take = 10 }: any = req.query;
     const total = await prisma.assets.count();
 
     const pageNum = parseInt(page, 10) || 1;
-    const pageSize = parseInt(limit, 10) || 10;
+    const pageSize = parseInt(take, 10) || 10;
     const skip = (pageNum - 1) * pageSize;
 
     const assetsList = await prisma.assets.findMany({

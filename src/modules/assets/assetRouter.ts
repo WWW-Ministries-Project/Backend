@@ -158,7 +158,7 @@ assetRouter.post(
  *           type: integer
  *           default: 1
  *       - in: query
- *         name: limit
+ *         name: take
  *         schema:
  *           type: integer
  *           default: 10
