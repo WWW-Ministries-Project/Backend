@@ -80,7 +80,22 @@ export class ProductService {
     return { product, product_colours };
   }
 
-  async updateProduct(input: { id: number; name: any; description: any; colours: any; image_url: any; deleted: any; stock_managed: any; status: any; product_type_id: any; product_category_id: any; price_currency: any; price_amount: any; market_id: any; product_colours: any[]; }) {
+  async updateProduct(input: {
+    id: number;
+    name: any;
+    description: any;
+    colours: any;
+    image_url: any;
+    deleted: any;
+    stock_managed: any;
+    status: any;
+    product_type_id: any;
+    product_category_id: any;
+    price_currency: any;
+    price_amount: any;
+    market_id: any;
+    product_colours: any[];
+  }) {
     const existingProduct = await prisma.products.findUnique({
       where: { id: input.id },
     });
@@ -126,9 +141,9 @@ export class ProductService {
       // Get all unique size names across all colour inputs
       const allSizeNames = [
         ...new Set(
-            input.product_colours.flatMap((colourItem: any) =>
-                colourItem.stock.map((s: any) => s.size)
-            )
+          input.product_colours.flatMap((colourItem: any) =>
+            colourItem.stock.map((s: any) => s.size),
+          ),
         ),
       ];
 
@@ -138,18 +153,28 @@ export class ProductService {
           name: {
             in: allSizeNames,
           },
-        }
+        },
       });
 
       // Find missing size names
-      const existingSizeNames = new Set(existingSizes.map(size => size.name));
-      const missingSizeNames = allSizeNames.filter(name => !existingSizeNames.has(name));
+      const existingSizeNames = new Set(existingSizes.map((size) => size.name));
+      const missingSizeNames = allSizeNames.filter(
+        (name) => !existingSizeNames.has(name),
+      );
 
       // Create missing sizes
-      let newSizes: { id: number; name: string; sort_order: number | null; created_at: Date; updated_at: Date; created_by_id: number | null; updated_at_id: number | null; }[] = [];
+      let newSizes: {
+        id: number;
+        name: string;
+        sort_order: number | null;
+        created_at: Date;
+        updated_at: Date;
+        created_by_id: number | null;
+        updated_at_id: number | null;
+      }[] = [];
       if (missingSizeNames.length > 0) {
         await prisma.sizes.createMany({
-          data: missingSizeNames.map(name => ({ name })),
+          data: missingSizeNames.map((name) => ({ name })),
           skipDuplicates: true, // In case of race conditions
         });
 
@@ -159,7 +184,7 @@ export class ProductService {
             name: {
               in: missingSizeNames,
             },
-          }
+          },
         });
       }
 
@@ -192,13 +217,13 @@ export class ProductService {
   }
 
   async createProductColours(
-      product_id: number,
-      colourInputs: ProductColourInput[],
+    product_id: number,
+    colourInputs: ProductColourInput[],
   ) {
     // Get all unique size names across all colour inputs
     const allSizeNames = [
       ...new Set(
-          colourInputs.flatMap((input) => input.stock.map((s) => s.size)),
+        colourInputs.flatMap((input) => input.stock.map((s) => s.size)),
       ),
     ];
 
@@ -216,14 +241,16 @@ export class ProductService {
     });
 
     // Find missing size names
-    const existingSizeNames = new Set(existingSizes.map(size => size.name));
-    const missingSizeNames = allSizeNames.filter(name => !existingSizeNames.has(name));
+    const existingSizeNames = new Set(existingSizes.map((size) => size.name));
+    const missingSizeNames = allSizeNames.filter(
+      (name) => !existingSizeNames.has(name),
+    );
 
     // Create missing sizes
-    let newSizes: { id: number; name: string; }[] = [];
+    let newSizes: { id: number; name: string }[] = [];
     if (missingSizeNames.length > 0) {
       await prisma.sizes.createMany({
-        data: missingSizeNames.map(name => ({ name })),
+        data: missingSizeNames.map((name) => ({ name })),
         skipDuplicates: true, // In case of race conditions
       });
 
@@ -245,7 +272,9 @@ export class ProductService {
     const allSizes = [...existingSizes, ...newSizes];
 
     // Create a map for quick lookup
-    const sizeNameToIdMap = new Map(allSizes.map((size) => [size.name, size.id]));
+    const sizeNameToIdMap = new Map(
+      allSizes.map((size) => [size.name, size.id]),
+    );
 
     const colourStocks = [];
     for (let input of colourInputs) {
@@ -317,55 +346,69 @@ export class ProductService {
   }
 
   async listProducts(filters?: ProductFilters) {
-    const where = {
-      name: filters?.name
-        ? {
-            contains: filters.name,
-          }
-        : undefined,
-      deleted: filters?.deleted || false,
-      status: filters?.status ?? undefined,
-      product_type_id: filters?.product_type ?? undefined,
-      product_category_id: filters?.product_category ?? undefined,
-    };
-    const all_products = await prisma.products.findMany({
-      where,
-      include: {
-        product_colours: {
-          include: {
-            sizes: {
-              include: {
-                size: {
-                  select: { name: true },
-                },
+  const now = new Date();
+
+  const where = {
+    name: filters?.name
+      ? {
+          contains: filters.name,
+        }
+      : undefined,
+    deleted: filters?.deleted || false,
+    status: {
+      not: "draft",
+      equals: filters?.status,
+    },
+    product_type_id: filters?.product_type ?? undefined,
+    product_category_id: filters?.product_category ?? undefined,
+    market: {
+      deleted: false,
+      OR: [
+        { end_date: null }, 
+        { end_date: { gte: now } },
+      ],
+    },
+  };
+
+  const all_products = await prisma.products.findMany({
+    where,
+    include: {
+      product_colours: {
+        include: {
+          sizes: {
+            include: {
+              size: {
+                select: { name: true },
               },
             },
           },
         },
-        product_category: true,
-        product_type: true,
       },
-      take: filters?.take,
-      skip: filters?.skip,
-    });
+      product_category: true,
+      product_type: true,
+      market: true,
+    },
+    take: filters?.take,
+    skip: filters?.skip,
+  });
 
-    // Transform for frontend
-    const transformed = all_products
-      .filter((product) => product.product_category?.deleted != true)
-      .map((product) => ({
-        ...product,
-        product_colours: product.product_colours.map((colour) => ({
-          colour: colour.colour,
-          image_url: colour.image_url,
-          stock: colour.sizes.map((s) => ({
-            size: s.size.name,
-            stock: s.stock,
-          })),
+  // Transform for frontend
+  const transformed = all_products
+    .filter((product) => product.product_category?.deleted != true)
+    .map((product) => ({
+      ...product,
+      product_colours: product.product_colours.map((colour) => ({
+        colour: colour.colour,
+        image_url: colour.image_url,
+        stock: colour.sizes.map((s) => ({
+          size: s.size.name,
+          stock: s.stock,
         })),
-      }));
+      })),
+    }));
 
-    return transformed;
-  }
+  return transformed;
+}
 
   async listProductsByMarketId(market_id: number, filters?: ProductFilters) {
     //to fix the filters later

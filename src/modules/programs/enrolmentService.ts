@@ -4,18 +4,23 @@ import { certificateTemplate } from "../../utils/mail_templates/certificateTempl
 import { sendEmail } from "../../utils";
 
 export class EnrollmentService {
-  async enrollUser(payload: { course_id: number; user_id?: number }) {
+  async enrollUser(payload: { course_id: number; user_id: number }) {
+    // Step 1: Validate inputs
     const { course_id, user_id } = payload;
+    if (!course_id || !user_id || course_id <= 0 || user_id <= 0) {
+      throw new Error("Invalid course_id or user_id.");
+    }
 
-    // Step 1: Get course, cohort, and program
+    // Step 2: Fetch course details
     const course = await prisma.course.findUnique({
       where: { id: course_id },
       select: {
+        id: true,
         enrolled: true,
         capacity: true,
-        cohortId: true,
         cohort: {
           select: {
+            id: true,
             programId: true,
           },
         },
@@ -23,79 +28,86 @@ export class EnrollmentService {
     });
 
     if (!course) {
-      throw new Error("Course not found.");
+      throw new Error(`Course with ID ${course_id} not found.`);
     }
 
     if (course.enrolled >= course.capacity) {
-      throw new Error("Course is full.");
+      throw new Error(`Course with ID ${course_id} is full.`);
     }
 
-    const userExist = await prisma.user.findFirst({
+    // Step 3: Verify user exists
+    const user = await prisma.user.findUnique({
       where: { id: user_id },
     });
-    if (!userExist) {
-      throw new Error("User not found.");
+    if (!user) {
+      throw new Error(`User with ID ${user_id} not found.`);
     }
 
-    // Step 2: Check for duplicate enrollment
-    const existingEnrollment = await prisma.enrollment.findFirst({
+    // Step 4: Check for existing enrollment
+    const existingEnrollment = await prisma.enrollment.findUnique({
       where: {
-        user_id,
-        course_id,
+        user_id_course_id: { user_id, course_id },
       },
     });
-
     if (existingEnrollment) {
-      throw new Error("User is already enrolled in this course.");
+      throw new Error(
+        `User ${user_id} is already enrolled in course ${course_id}.`,
+      );
     }
 
-    // ✅ Step 3: Optimised prerequisite check
-    const incompletePrereqs = await prisma.program_prerequisites.findMany({
-      where: {
-        programId: course.cohort.programId,
-        NOT: {
-          prerequisite: {
-            cohorts: {
-              some: {
-                courses: {
-                  some: {
-                    enrollments: {
-                      some: {
-                        user_id: user_id,
-                        progress: {
-                          every: { status: "PASS" }, // completion condition
-                        },
-                      },
-                    },
+    // Step 5: Check prerequisites
+    const prerequisites = await prisma.program_prerequisites.findMany({
+      where: { programId: course.cohort.programId },
+      select: {
+        prerequisite: {
+          select: {
+            id: true,
+            title: true,
+            topics: {
+              select: {
+                id: true,
+                progress: {
+                  where: {
+                    enrollment: { user_id },
+                    status: "PASS",
                   },
+                  select: { id: true },
                 },
               },
             },
           },
         },
       },
-      select: {
-        prerequisite: {
-          select: { title: true },
-        },
-      },
     });
+
+    // Identify incomplete prerequisites
+    const incompletePrereqs = prerequisites
+      .map((p) => p.prerequisite)
+      .filter((prereq) => {
+        // A prerequisite is incomplete if it has topics but none have a PASS status for the user
+        return (
+          prereq.topics.length > 0 &&
+          !prereq.topics.some((topic) => topic.progress.length > 0)
+        );
+      });
 
     if (incompletePrereqs.length > 0) {
       throw new Error(
         `User must complete prerequisite programs: ${incompletePrereqs
-          .map((p) => p.prerequisite.title)
+          .map((p) => p.title)
           .join(", ")}`,
       );
     }
 
-    // Step 4: Enroll user & update enrolled count
-    const [enrollment] = await prisma.$transaction([
+    // Step 6: Create enrollment and update course enrollment count
+    const [enrollment, _courseUpdate] = await prisma.$transaction([
       prisma.enrollment.create({
         data: {
           user_id,
           course_id,
+          enrolledAt: new Date(),
         },
+        select: { id: true },
       }),
       prisma.course.update({
         where: { id: course_id },
@@ -103,12 +115,12 @@ export class EnrollmentService {
       }),
     ]);
 
-    // Step 5: Auto-generate progress records for topics
+    // Step 7: Create progress records for topics in the program
     const topics = await prisma.topic.findMany({
       where: {
         program: {
           cohorts: {
-            some: { id: course.cohortId },
+            some: { id: course.cohort.id },
           },
         },
       },
@@ -126,7 +138,14 @@ export class EnrollmentService {
       });
     }
 
-    return enrollment;
+    // Step 8: Return the created enrollment
+    return prisma.enrollment.findUnique({
+      where: { id: enrollment.id },
+      include: {
+        course: { select: { id: true, name: true } },
+        user: { select: { id: true } },
+      },
+    });
   }
 
   async getEnrollmentsByCourse(courseId: number) {
@@ -209,31 +228,29 @@ export class EnrollmentService {
     });
 
     // Map progress data to topics
+    let topics: any = [];
     if (enrollmentData?.course?.cohort?.program?.topics) {
       const progressMap = Object.fromEntries(
         progressData.map((p) => [p.topicId, p]),
       );
 
-      enrollmentData.course.cohort.program.topics =
-        enrollmentData.course.cohort.program.topics.map((topic) => ({
-          ...topic,
-          score: progressMap[topic.id]?.score ?? null,
-          progressId: progressMap[topic.id]?.id,
-          status: progressMap[topic.id]?.status ?? "PENDING",
-          completedAt: progressMap[topic.id]?.completedAt ?? null,
-          notes: progressMap[topic.id]?.notes ?? null,
-        }));
+      topics = enrollmentData.course.cohort.program.topics.map((topic) => ({
+        id: topic.id,
+        name: topic.name,
+        score: progressMap[topic.id]?.score ?? null,
+        progressId: progressMap[topic.id]?.id ?? null,
+        status: progressMap[topic.id]?.status ?? "PENDING",
+        completedAt: progressMap[topic.id]?.completedAt ?? null,
+        notes: progressMap[topic.id]?.notes ?? null,
+      }));
     }
 
-    const response_data = {
-      name: enrollmentData.user?.name,
-      email: enrollmentData.user?.email,
-      number: enrollmentData.user?.user_info?.primary_number,
-      country_code: enrollmentData.user?.user_info?.country_code,
-      ...enrollmentData,
+    return {
+      id: enrollmentData.course?.cohort?.program?.id,
+      name: enrollmentData.course?.cohort?.program?.title,
+      description: enrollmentData.course?.cohort?.program?.description,
+      topics,
     };
-
-    return response_data;
   }
 
   async updateProgressScore(

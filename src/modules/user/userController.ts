@@ -996,8 +996,10 @@ export const getUser = async (req: Request, res: Response) => {
     // Flatten department_positions
     if (department_positions && Array.isArray(department_positions)) {
       user.department_positions = department_positions.map((dp) => ({
+        department_id: dp.department?.id ?? null,
         department_name: dp.department?.name ?? null,
         position_name: dp.position?.name ?? null,
+        position_id: dp.position?.id ?? null,
       }));
     }
 
