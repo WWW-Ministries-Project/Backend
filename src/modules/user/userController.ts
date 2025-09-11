@@ -683,14 +683,14 @@ export const ListUsers = async (req: Request, res: Response) => {
     is_user,
     department_id,
     page = "1",
-    limit = "12",
+    take = "12",
     is_active,
     name,
   } = req.query;
   const isUser = is_user === "true";
 
   const pageNum = parseInt(page as string, 10);
-  const pageSize = parseInt(limit as string, 10);
+  const pageSize = parseInt(take as string, 10);
   const skip = (pageNum - 1) * pageSize;
 
   try {
@@ -715,8 +715,8 @@ export const ListUsers = async (req: Request, res: Response) => {
     const total = await prisma.user.count({ where: whereFilter });
 
     const users = await prisma.user.findMany({
-      // skip,
-      // take: pageSize,
+      skip,
+      take: pageSize,
       orderBy: {
         name: "asc",
       },
@@ -996,8 +996,10 @@ export const getUser = async (req: Request, res: Response) => {
     // Flatten department_positions
     if (department_positions && Array.isArray(department_positions)) {
       user.department_positions = department_positions.map((dp) => ({
+        department_id: dp.department?.id ?? null,
         department_name: dp.department?.name ?? null,
         position_name: dp.position?.name ?? null,
+        position_id: dp.position?.id ?? null,
       }));
     }
 

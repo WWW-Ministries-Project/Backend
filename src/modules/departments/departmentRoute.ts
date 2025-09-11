@@ -189,7 +189,7 @@ departmentRouter.delete(
  *           default: 1
  *         description: Page number
  *       - in: query
- *         name: limit
+ *         name: take
  *         schema:
  *           type: integer
  *           default: 10

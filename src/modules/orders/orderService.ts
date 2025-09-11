@@ -339,7 +339,7 @@ export class OrderService {
           "Content-Type": "application/json",
         },
       });
-      console.log(`transactional check ${response}` )
+      console.log(`transactional check ${response}`);
       console.log(JSON.stringify(response.data, null, 2));
 
       const status = response.data?.data?.status;

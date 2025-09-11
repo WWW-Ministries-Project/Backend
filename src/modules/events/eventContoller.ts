@@ -162,11 +162,11 @@ export class eventManagement {
         event_type,
         event_status,
         page = 1,
-        limit = 10,
+        take = 10,
       }: any = req.query;
 
       const pageNum = parseInt(page, 10) || 1;
-      const pageSize = parseInt(limit, 10) || 10;
+      const pageSize = parseInt(take, 10) || 10;
       const skip = (pageNum - 1) * pageSize;
 
       let whereClause: any = {

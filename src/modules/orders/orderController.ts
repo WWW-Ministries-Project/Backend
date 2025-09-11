@@ -118,7 +118,7 @@ export class OrderController {
   async hubtelWebhook(req: Request, res: Response) {
     try {
       const { Data } = req.body;
-      console.log(`Call Back ${Data}`)
+      console.log(`Call Back ${Data}`);
       console.log(JSON.stringify(Data, null, 2));
       const status = Data.Status === "Success" ? "success" : "failed";
 
