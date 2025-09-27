@@ -1060,7 +1060,7 @@ export class eventManagement {
 
   registeredMember = async (req: Request, res: Response) => {
   try {
-    const { event_id, user_id } = req.query;
+    const { event_id, user_id } = req.body;
 
     if (!event_id || !user_id) {
       return res.status(400).json({
