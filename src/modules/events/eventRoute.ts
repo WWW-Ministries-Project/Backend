@@ -59,3 +59,13 @@ eventRouter.put("/update-event-type", eventContoller.updateEventType);
 eventRouter.get("/get-event-type", eventContoller.getEventType);
 eventRouter.get("/get-event-types", eventContoller.getEventTypes);
 eventRouter.delete("/delete-event-type", eventContoller.deleteEventType);
+
+eventRouter.post("/register", eventContoller.register);
+eventRouter.get(
+  "/get-registered-event-members",
+  eventContoller.allRegisteredMembers,
+);
+eventRouter.get(
+  "/all-registered-event-member",
+  eventContoller.registeredMember,
+);

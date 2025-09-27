@@ -346,69 +346,66 @@ export class ProductService {
   }
 
   async listProducts(filters?: ProductFilters) {
-  const now = new Date();
+    const now = new Date();
 
-  const where = {
-    name: filters?.name
-      ? {
-          contains: filters.name,
-        }
-      : undefined,
-    deleted: filters?.deleted || false,
-    status: {
-      not: "draft",
-      equals: filters?.status,
-    },
-    product_type_id: filters?.product_type ?? undefined,
-    product_category_id: filters?.product_category ?? undefined,
-    market: {
-      deleted: false,
-      OR: [
-        { end_date: null }, 
-        { end_date: { gte: now } },
-      ],
-    },
-  };
+    const where = {
+      name: filters?.name
+        ? {
+            contains: filters.name,
+          }
+        : undefined,
+      deleted: filters?.deleted || false,
+      status: {
+        not: "draft",
+        equals: filters?.status,
+      },
+      product_type_id: filters?.product_type ?? undefined,
+      product_category_id: filters?.product_category ?? undefined,
+      market: {
+        deleted: false,
+        OR: [{ end_date: null }, { end_date: { gte: now } }],
+      },
+    };
 
-  const all_products = await prisma.products.findMany({
-    where,
-    include: {
-      product_colours: {
-        include: {
-          sizes: {
-            include: {
-              size: {
-                select: { name: true },
+    const all_products = await prisma.products.findMany({
+      where,
+      include: {
+        product_colours: {
+          include: {
+            sizes: {
+              include: {
+                size: {
+                  select: { name: true },
+                },
               },
             },
           },
         },
+        product_category: true,
+        product_type: true,
+        market: true,
       },
-      product_category: true,
-      product_type: true,
-      market: true,
-    },
-    take: filters?.take,
-    skip: filters?.skip,
-  });
+      take: filters?.take,
+      skip: filters?.skip,
+    });
 
-  // Transform for frontend
-  const transformed = all_products
-    .filter((product) => product.product_category?.deleted != true)
-    .map((product) => ({
-      ...product,
-      product_colours: product.product_colours.map((colour) => ({
-        colour: colour.colour,
-        image_url: colour.image_url,
-        stock: colour.sizes.map((s) => ({
-          size: s.size.name,
-          stock: s.stock,
+    // Transform for frontend
+    const transformed = all_products
+      .filter((product) => product.product_category?.deleted != true)
+      .map((product) => ({
+        ...product,
+        product_colours: product.product_colours.map((colour) => ({
+          colour: colour.colour,
+          image_url: colour.image_url,
+          stock: colour.sizes.map((s) => ({
+            size: s.size.name,
+            stock: s.stock,
+          })),
         })),
-      })),
-    }));
+      }));
 
-  return transformed;
-}
+    return transformed;
+  }
 
   async listProductsByMarketId(market_id: number, filters?: ProductFilters) {
     //to fix the filters later

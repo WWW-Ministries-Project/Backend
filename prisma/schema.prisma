@@ -49,12 +49,13 @@ model user {
   soul_won              soul_won[]             @relation("user_soul_winner")
   department_positions  department_positions[]
 
-  spouse_id   Int?          @unique
-  spouse      user?         @relation("SpouseRelation", fields: [spouse_id], references: [id])
-  spouse_of   user?         @relation("SpouseRelation")
-  course      course[]
-  orders      orders[]
-  certificate certificate[]
+  spouse_id       Int?              @unique
+  spouse          user?             @relation("SpouseRelation", fields: [spouse_id], references: [id])
+  spouse_of       user?             @relation("SpouseRelation")
+  course          course[]
+  orders          orders[]
+  certificate     certificate[]
+  event_registers event_registers[]
 
   @@index([access_level_id], map: "user_access_level_id_fkey")
   @@index([position_id], map: "user_position_id_fkey")
@@ -247,10 +248,23 @@ model event_mgt {
   request          request[]
   visit            visit[]
 
-  markets markets[]
+  markets         markets[]
+  event_registers event_registers[]
 }
 
 model event_attendance {
+  id         Int       @id @default(autoincrement())
+  event_id   Int
+  user_id    Int
+  created_at DateTime  @default(now())
+  event      event_mgt @relation(fields: [event_id], references: [id])
+  user       user      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([event_id], map: "event_attendance_event_id_fkey")
+  @@index([user_id], map: "event_attendance_user_id_fkey")
+}
+
+model event_registers {
   id         Int       @id @default(autoincrement())
   event_id   Int
   user_id    Int
