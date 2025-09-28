@@ -17,7 +17,6 @@ eventRouter.get(
 
 eventRouter.get(
   "/list-events",
-  [protect, permissions.can_view_events],
   eventContoller.listEvents,
 );
 eventRouter.get(
