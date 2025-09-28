@@ -36,13 +36,13 @@ export class eventManagement {
       }
       let { start_date, end_date, day_event, repetitive, recurring } = req.body;
       const now = new Date();
-const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+    const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
 
-if (new Date(start_date) < tomorrow) {
-  return res
-    .status(400)
-    .json({ message: "Event start date must be on or after tomorrow" });
-}
+    if (new Date(start_date) < yesterday) {
+      return res
+        .status(400)
+        .json({ message: "Event start date must be on or after tomorrow" });
+    }
       if (day_event === "multi" && repetitive === "no") {
         end_date = addDays(start_date, recurring.daysOfWeek);
         const data2 = generateRecurringDates(start_date, end_date, recurring);
