@@ -35,12 +35,20 @@ export class eventManagement {
         return res.status(400).json({ message: "Event Name Id not found" });
       }
       let { start_date, end_date, day_event, repetitive, recurring } = req.body;
-      if (new Date(start_date) < new Date()) {
-        return res
-          .status(400)
-          .json({ message: "Event start date cannot be in the past" });
-      }
-      if (day_event === "multi" && repetitive === "no") {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        const start = new Date(start_date);
+        start.setHours(0, 0, 0, 0);
+
+        if (start < today) {
+            return res
+                .status(400)
+                .json({ message: "Event start date cannot be in the past" });
+        }
+
+        if (day_event === "multi" && repetitive === "no") {
+          console.log("Generating dates")
         end_date = addDays(start_date, recurring.daysOfWeek);
         const data2 = generateRecurringDates(start_date, end_date, recurring);
         data2.map((new_date: string) => {
@@ -998,133 +1006,131 @@ export class eventManagement {
   };
 
   allRegisteredMembers = async (req: Request, res: Response) => {
-  try {
-    const { event_id } = req.query;
+    try {
+      const { event_id } = req.query;
 
-    if (!event_id) {
-      return res.status(400).json({
-        success: false,
-        message: "event_id is required",
-      });
-    }
+      if (!event_id) {
+        return res.status(400).json({
+          success: false,
+          message: "event_id is required",
+        });
+      }
 
-    const members = await prisma.event_registers.findMany({
-      where: {
-        event_id: Number(event_id),
-      },
-      include: {
-        user: {
-          select: {
-            id: true,
-            name: true,
-            user_info: {
-              select: {
-                first_name: true,
-                last_name: true,
-                other_name: true,
-                primary_number: true,
-                country_code: true,
-                country: true,
+      const members = await prisma.event_registers.findMany({
+        where: {
+          event_id: Number(event_id),
+        },
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              user_info: {
+                select: {
+                  first_name: true,
+                  last_name: true,
+                  other_name: true,
+                  primary_number: true,
+                  country_code: true,
+                  country: true,
+                },
               },
             },
           },
         },
-      },
-    });
+      });
 
-    const flattenedMembers = members.map((m) => ({
-      id: m.id,
-      event_id: m.event_id,
-      user_id: m.user_id,
-      created_at: m.created_at,
-      name: m.user.name,
-      number: m.user.user_info?.primary_number || null,
-      country_code: m.user.user_info?.country_code || null,
-      ...m.user.user_info,
-    }));
+      const flattenedMembers = members.map((m) => ({
+        id: m.id,
+        event_id: m.event_id,
+        user_id: m.user_id,
+        created_at: m.created_at,
+        name: m.user.name,
+        number: m.user.user_info?.primary_number || null,
+        country_code: m.user.user_info?.country_code || null,
+        ...m.user.user_info,
+      }));
 
-    return res.status(200).json({
-      success: true,
-      message: "All registered members fetched successfully",
-      members: flattenedMembers,
-    });
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({
-      success: false,
-      message: "Something went wrong",
-    });
-  }
-};
-
+      return res.status(200).json({
+        success: true,
+        message: "All registered members fetched successfully",
+        members: flattenedMembers,
+      });
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({
+        success: false,
+        message: "Something went wrong",
+      });
+    }
+  };
 
   registeredMember = async (req: Request, res: Response) => {
-  try {
-    const { event_id, user_id } = req.body;
+    try {
+      const { event_id, user_id } = req.body;
 
-    if (!event_id || !user_id) {
-      return res.status(400).json({
-        success: false,
-        message: "event_id and user_id are required",
-      });
-    }
+      if (!event_id || !user_id) {
+        return res.status(400).json({
+          success: false,
+          message: "event_id and user_id are required",
+        });
+      }
 
-    const member = await prisma.event_registers.findFirst({
-      where: {
-        event_id: Number(event_id),
-        user_id: Number(user_id),
-      },
-      include: {
-        user: {
-          select: {
-            id: true,
-            name: true,
-            user_info: {
-              select: {
-                first_name: true,
-                last_name: true,
-                other_name: true,
-                primary_number: true,
-                country_code: true,
-                country: true,
+      const member = await prisma.event_registers.findFirst({
+        where: {
+          event_id: Number(event_id),
+          user_id: Number(user_id),
+        },
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              user_info: {
+                select: {
+                  first_name: true,
+                  last_name: true,
+                  other_name: true,
+                  primary_number: true,
+                  country_code: true,
+                  country: true,
+                },
               },
             },
           },
         },
-      },
-    });
+      });
 
-    if (!member) {
-      return res.status(404).json({
+      if (!member) {
+        return res.status(404).json({
+          success: false,
+          message: "Member not found for this event",
+        });
+      }
+
+      // flatten
+      const flattened = {
+        id: member.id,
+        event_id: member.event_id,
+        user_id: member.user_id,
+        created_at: member.created_at,
+        name: member.user.name,
+        number: member.user.user_info?.primary_number || null,
+        country_code: member.user.user_info?.country_code || null,
+        ...member.user.user_info,
+      };
+
+      return res.status(200).json({
+        success: true,
+        message: "Registered member fetched successfully",
+        member: flattened,
+      });
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({
         success: false,
-        message: "Member not found for this event",
+        message: "Something went wrong",
       });
     }
-
-    // flatten
-    const flattened = {
-      id: member.id,
-      event_id: member.event_id,
-      user_id: member.user_id,
-      created_at: member.created_at,
-      name: member.user.name,
-      number:member.user.user_info?.primary_number || null,
-      country_code:member.user.user_info?.country_code || null,
-      ...member.user.user_info,
-    };
-
-    return res.status(200).json({
-      success: true,
-      message: "Registered member fetched successfully",
-      member: flattened,
-    });
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({
-      success: false,
-      message: "Something went wrong",
-    });
-  }
-};
-
+  };
 }
