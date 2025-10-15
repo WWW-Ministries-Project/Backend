@@ -805,6 +805,70 @@ export const ListUsersLight = async (req: Request, res: Response) => {
   }
 };
 
+export const filterUsersInfo = async (req: Request, res: Response) => {
+  const { name, membership_type, ministry_worker, page = "1", take = "10" } = req.query;
+
+  try {
+    // Convert pagination params to numbers
+    const pageNum = parseInt(page as string, 10) || 1;
+    const limitNum = parseInt(take as string, 10) || 10;
+    const skip = (pageNum - 1) * limitNum;
+
+    const filters: any = {};
+
+    if (name) {
+      filters.name = {
+        contains: String(name),
+        mode: "insensitive",
+      };
+    }
+
+    if (membership_type) {
+      filters.membership_type = String(membership_type);
+    }
+
+    if (ministry_worker !== undefined) {
+      filters.is_user = ministry_worker === "true";
+    }
+
+    // Fetch total count for pagination info
+    const total = await prisma.user.count({ where: filters });
+
+    // Fetch paginated users
+    const users = await prisma.user.findMany({
+      where: filters,
+      include: {
+        user_info: true,
+      },
+      orderBy: {
+        created_at: "asc",
+      },
+      skip,
+      take: limitNum,
+    });
+
+    const totalPages = Math.ceil(total / limitNum);
+
+    return res.status(200).json({
+      message: "Users fetched successfully",
+      page: pageNum,
+      limit: limitNum,
+      total,
+      totalPages,
+      count: users.length,
+      data: users,
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({
+      message: "Something Went Wrong",
+      error: error instanceof Error ? error.message : error,
+    });
+  }
+};
+
+
+
 export const getUser = async (req: Request, res: Response) => {
   const { user_id } = req.query;
 
