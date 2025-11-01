@@ -152,8 +152,8 @@ export const listDepartments = async (req: Request, res: Response) => {
       orderBy: {
         name: "asc",
       },
-      skip,
-      take: pageSize,
+      // skip,
+      // take: pageSize,
       select: {
         id: true,
         name: true,
@@ -178,10 +178,10 @@ export const listDepartments = async (req: Request, res: Response) => {
 
     res.status(200).json({
       message: "Success",
-      current_page: pageNum,
-      page_size: pageSize,
-      total,
-      totalPages: Math.ceil(total / pageSize),
+      // current_page: pageNum,
+      // page_size: pageSize,
+      // total,
+      // totalPages: Math.ceil(total / pageSize),
       data: response,
     });
   } catch (error) {
