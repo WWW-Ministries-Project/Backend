@@ -53,6 +53,9 @@ export class ProgramService {
           name: program.title,
           upcomingCohort: selectedCohort.name,
           topics: program.topics.map((t) => t.name),
+          member_required: program.member_required,
+          leader_required: program.leader_required,
+          ministry_required: program.ministry_required,
           description: program.description,
           prerequisites: program.prerequisitePrograms.map(
             (p) => p.prerequisite.title,
@@ -235,14 +238,36 @@ export class ProgramService {
   }
 
   //create topic programId, name
-  async createTopic(programId: number, name: string) {
-    // Step 1: Create the new topic
-    const topic = await prisma.topic.create({
-      data: { name, programId },
+  async createTopic(
+  programId: number,
+  name: string,
+  description: string,
+  learningUnit: any,
+
+) {
+  this.validateLearningUnit(learningUnit);
+
+  return prisma.$transaction(async (tx) => {
+    // 1️⃣ Create topic
+    const topic = await tx.topic.create({
+      data: {
+        name: name,
+        description: description,
+        programId,
+      },
     });
 
-    // Step 2: Find all enrolled students in this program
-    const enrollments = await prisma.enrollment.findMany({
+    // 2️⃣ Create learning unit
+    await tx.learningUnit.create({
+      data: {
+        topicId: topic.id,
+        type: learningUnit.type,
+        data: learningUnit.data,
+      },
+    });
+
+    // 3️⃣ Find enrolled students
+    const enrollments = await tx.enrollment.findMany({
       where: {
         course: {
           cohort: {
@@ -253,28 +278,59 @@ export class ProgramService {
       select: { id: true },
     });
 
-    // Step 3: Create missing progress records
+    // 4️⃣ Create progress records
     if (enrollments.length > 0) {
-      const progressEntries = enrollments.map((enrollment) => ({
-        enrollmentId: enrollment.id,
-        topicId: topic.id,
-        score: 0,
-      }));
-
-      await prisma.progress.createMany({ data: progressEntries });
+      await tx.progress.createMany({
+        data: enrollments.map((e) => ({
+          enrollmentId: e.id,
+          topicId: topic.id,
+          score: 0,
+        })),
+      });
     }
 
     return topic;
-  }
+  });
+}
 
-  //update topic id, name
-  async updateTopic(id: number, name: string) {
-    const updatedTopic = await prisma.topic.update({
+  async updateTopic(
+  id: number,
+    name: string,
+    description: string,
+    learningUnit: any,
+  
+) {
+  this.validateLearningUnit(learningUnit);
+
+  return prisma.$transaction(async (tx) => {
+    // 1️⃣ Update topic
+    const topic = await tx.topic.update({
       where: { id },
-      data: { name },
+      data: {
+        name: name,
+        description: description,
+      },
     });
-    return updatedTopic;
-  }
+
+    // 2️⃣ Replace learning unit
+    await tx.learningUnit.upsert({
+      where: { topicId: id },
+      update: {
+        type: learningUnit.type,
+        data: learningUnit.data,
+        version: { increment: 1 },
+      },
+      create: {
+        topicId: id,
+        type: learningUnit.type,
+        data: learningUnit.data,
+      },
+    });
+
+    return topic;
+  });
+}
+
   //delete topic
   async deleteTopic(topicId: number) {
     await prisma.$transaction([
@@ -285,5 +341,62 @@ export class ProgramService {
         where: { id: topicId }, // Then delete the topic
       }),
     ]);
+  }
+
+  private validateLearningUnit(learningUnit: any) {
+  if (!learningUnit?.type || !learningUnit?.data) {
+    throw new Error("Invalid learning unit payload");
+  }
+
+  switch (learningUnit.type) {
+    case "video":
+      if (!learningUnit.data.url) throw new Error("Video URL required");
+      break;
+
+    case "live":
+      if (!learningUnit.data.meetingLink) throw new Error("Meeting link required");
+      break;
+
+    case "in-person":
+      if (!learningUnit.data.venue) throw new Error("Venue required");
+      break;
+
+    case "pdf":
+    case "ppt":
+      if (!learningUnit.data.link) throw new Error("Document link required");
+      break;
+
+    case "lesson-note":
+      if (!learningUnit.data.content) throw new Error("Lesson content required");
+      break;
+
+    case "assignment":
+      this.validateMCQAssignment(learningUnit.data);
+      break;
+
+    case "assignment-essay":
+      if (!learningUnit.data.question) throw new Error("Essay question required");
+      break;
+
+    default:
+      throw new Error(`Unsupported learning unit type: ${learningUnit.type}`);
+  }
+}
+
+  private validateMCQAssignment(data: any) {
+  if (!Array.isArray(data.questions) || data.questions.length === 0) {
+    throw new Error("Assignment must have questions");
+  }
+
+  for (const q of data.questions) {
+    if (q.options.length < 2) {
+      throw new Error("Each question must have at least 2 options");
+    }
+
+    const optionIds = q.options.map((o:any) => o.id);
+    if (!optionIds.includes(q.correctOptionId)) {
+      throw new Error("correctOptionId must match an option");
+    }
+  }
   }
 }

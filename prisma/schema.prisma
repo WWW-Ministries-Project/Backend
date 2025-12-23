@@ -395,11 +395,23 @@ model program_prerequisites {
 }
 
 model topic {
-  id        Int        @id @default(autoincrement())
-  name      String
-  programId Int
-  program   program    @relation(fields: [programId], references: [id], onDelete: Cascade)
-  progress  progress[]
+  id           Int           @id @default(autoincrement())
+  name         String
+  programId    Int
+  description  String?
+  program      program       @relation(fields: [programId], references: [id], onDelete: Cascade)
+  progress     progress[]
+  LearningUnit LearningUnit?
+}
+
+model LearningUnit {
+  id      Int    @id @default(autoincrement())
+  topicId Int    @unique
+  type    String
+  data    Json // stores type-specific payload
+  version Int    @default(1)
+
+  topic topic @relation(fields: [topicId], references: [id], onDelete: Cascade)
 }
 
 model cohort {

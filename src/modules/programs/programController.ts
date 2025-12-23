@@ -73,8 +73,8 @@ export class ProgramController {
 
   async createTopic(req: Request, res: Response) {
     try {
-      const { programId, name } = req.body;
-      await programService.createTopic(programId, name);
+      const { programId, name, description, learningUnit } = req.body;
+      await programService.createTopic(programId, name, description, learningUnit);
       return res.status(200).json({ message: "Topic created successfully" });
     } catch (error: any) {
       return res
@@ -85,8 +85,8 @@ export class ProgramController {
   async updateTopic(req: Request, res: Response) {
     try {
       const { id } = req.query;
-      const { name } = req.body;
-      await programService.updateTopic(Number(id), name);
+      const { name, description, learningUnit } = req.body;
+      await programService.updateTopic(Number(id), name, description, learningUnit);
       return res.status(200).json({ message: "Topic update successfully" });
     } catch (error: any) {
       return res
