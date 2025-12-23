@@ -686,8 +686,10 @@ export const ListUsers = async (req: Request, res: Response) => {
     take = "12",
     is_active,
     name,
+    ministry_worker,
+    membership_type,
   } = req.query;
-  const isUser = is_user === "true";
+  const isUser = is_user === "true" || ministry_worker === "true" ? true : false;
 
   const pageNum = parseInt(page as string, 10);
   const pageSize = parseInt(take as string, 10);
@@ -708,6 +710,7 @@ export const ListUsers = async (req: Request, res: Response) => {
     if (is_active !== undefined) whereFilter.is_active = is_active;
     if (is_user !== undefined) whereFilter.is_user = isUser;
     if (department_id) whereFilter.department_id = Number(department_id);
+    if (membership_type) whereFilter.membership_type = membership_type;
     if (typeof name === "string" && name.trim()) {
       whereFilter.name = { contains: name.trim() };
     }
