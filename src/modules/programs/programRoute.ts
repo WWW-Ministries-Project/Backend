@@ -60,11 +60,17 @@ programRouter.put(
   enrollmentController.updateProgressReports,
 );
 
+// programRouter.put(
+//   "/complete-course",
+//   enrollmentController.markCourseAsComplete,
+// );
+
 programRouter.get("/my-enrollment", enrollmentController.myEnrollment);
 
 //topics enpoint
 programRouter.post("/topic", programController.createTopic);
 programRouter.put("/topic", programController.updateTopic);
 programRouter.delete("/topic", programController.deleteTopic);
+programRouter.get("/topic",programController.getTopic)
 
 export default programRouter;

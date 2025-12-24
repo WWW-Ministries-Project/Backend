@@ -119,4 +119,19 @@ export class ProgramController {
         .json({ message: "Error deleting topicc", error: error.message });
     }
   }
+
+  async getTopic(req: Request, res: Response) {
+    try {
+      const { id } = req.query;
+      const topic = await programService.getTopic(Number(id));
+      return res
+        .status(200)
+        .json({ message: "Program successfully", data: topic });
+    } catch (error: any) {
+      return res
+        .status(500)
+        .json({ message: "Error deleting topicc", error: error.message });
+    }
+
+  }
 }

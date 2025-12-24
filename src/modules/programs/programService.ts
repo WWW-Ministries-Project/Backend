@@ -343,6 +343,16 @@ export class ProgramService {
     ]);
   }
 
+  //get topic
+  async getTopic(topicId:number){
+    return await prisma.topic.findUnique({
+      where:{id:topicId},
+      include:{
+        LearningUnit:true,
+      }
+    });
+  }
+
   private validateLearningUnit(learningUnit: any) {
   if (!learningUnit?.type || !learningUnit?.data) {
     throw new Error("Invalid learning unit payload");

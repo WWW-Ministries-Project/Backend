@@ -364,4 +364,17 @@ export class EnrollmentService {
 
     return certificate;
   }
+
+  async completeEnrollment(topicId: number) {
+    // const progressStatus = await prisma.progress.update({
+    //   where: { id: topicId },
+    // })
+    // const enrollment = await prisma.enrollment.update({
+    //   where: { id: enrollmentId },
+    //   data: { completedAt: new Date(), completed: true },
+    // });
+
+    
+    // return enrollment;
+}
 }
