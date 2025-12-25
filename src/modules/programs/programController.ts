@@ -74,8 +74,8 @@ export class ProgramController {
   async createTopic(req: Request, res: Response) {
     try {
       const { programId, name, description, learningUnit } = req.body;
-      await programService.createTopic(programId, name, description, learningUnit);
-      return res.status(200).json({ message: "Topic created successfully" });
+      const topic = await programService.createTopic(programId, name, description, learningUnit);
+      return res.status(200).json({ message: "Topic created successfully", data: topic });
     } catch (error: any) {
       return res
         .status(500)

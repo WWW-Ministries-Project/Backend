@@ -455,7 +455,7 @@ model enrollment {
   course     course     @relation(fields: [course_id], references: [id], onDelete: Cascade)
   enrolledAt DateTime   @default(now())
   progress   progress[]
-  completed  Boolean @default(false)
+  completed  Boolean? @default(false)
   completedAt  DateTime?
 
   @@unique([user_id, course_id])
@@ -475,7 +475,7 @@ model progress {
   status       progress_status @default(PENDING)
   completedAt  DateTime?
   notes        String?
-  completed   Boolean @default(false)
+  completed   Boolean? @default(false)
 
   enrollment enrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
   topic      topic      @relation(fields: [topicId], references: [id], onDelete: Cascade)
