@@ -156,11 +156,33 @@ export class EnrollmentService {
   }
 
   async getUserEnrollments(userId: number) {
-    return await prisma.enrollment.findMany({
-      where: { user_id: userId },
-      include: { course: true },
-    });
-  }
+  return await prisma.enrollment.findMany({
+    where: { user_id: userId },
+    include: {
+      course: {
+        include: {
+          cohort: {
+            include: {
+              program: {
+                select: {
+                  id: true,
+                  title: true,
+                },
+              },
+            },
+          },
+          instructor: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+        },
+      },
+    },
+  });
+}
+
 
   async unenrollUser(course_id: number, user_id: number) {
     // Remove enrollment
