@@ -26,14 +26,13 @@ export function generateRecurringDates(
   }
 
   if (recurring.daysOfWeek) {
-      dates.push(currentDate)
-      for (let i=1; i<= Number(recurring.daysOfWeek)-1; i++)
-      {
-          let newshi: Date = addDays(currentDate, i);
-          currentWeekDay = newshi;
-          dates.push(newshi);
-      }
-      return dates
+    dates.push(currentDate);
+    for (let i = 1; i <= Number(recurring.daysOfWeek) - 1; i++) {
+      let newshi: Date = addDays(currentDate, i);
+      currentWeekDay = newshi;
+      dates.push(newshi);
+    }
+    return dates;
   }
 
   while (currentDate <= new Date(endDate)) {

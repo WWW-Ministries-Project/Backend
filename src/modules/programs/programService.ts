@@ -239,97 +239,95 @@ export class ProgramService {
 
   //create topic programId, name
   async createTopic(
-  programId: number,
-  name: string,
-  description: string,
-  learningUnit: any,
-
-) {
-  this.validateLearningUnit(learningUnit);
-
-  return prisma.$transaction(async (tx) => {
-    // 1️⃣ Create topic
-    const topic = await tx.topic.create({
-      data: {
-        name: name,
-        description: description,
-        programId,
-      },
-    });
-
-    // 2️⃣ Create learning unit
-    await tx.learningUnit.create({
-      data: {
-        topicId: topic.id,
-        type: learningUnit.type,
-        data: learningUnit.data,
-      },
-    });
-
-    // 3️⃣ Find enrolled students
-    const enrollments = await tx.enrollment.findMany({
-      where: {
-        course: {
-          cohort: {
-            programId,
-          },
-        },
-      },
-      select: { id: true },
-    });
-
-    // 4️⃣ Create progress records
-    if (enrollments.length > 0) {
-      await tx.progress.createMany({
-        data: enrollments.map((e) => ({
-          enrollmentId: e.id,
-          topicId: topic.id,
-          score: 0,
-        })),
-      });
-    }
-
-    return topic;
-  });
-}
-
-  async updateTopic(
-  id: number,
+    programId: number,
     name: string,
     description: string,
     learningUnit: any,
-  
-) {
-  this.validateLearningUnit(learningUnit);
+  ) {
+    this.validateLearningUnit(learningUnit);
 
-  return prisma.$transaction(async (tx) => {
-    // 1️⃣ Update topic
-    const topic = await tx.topic.update({
-      where: { id },
-      data: {
-        name: name,
-        description: description,
-      },
+    return prisma.$transaction(async (tx) => {
+      // 1️⃣ Create topic
+      const topic = await tx.topic.create({
+        data: {
+          name: name,
+          description: description,
+          programId,
+        },
+      });
+
+      // 2️⃣ Create learning unit
+      await tx.learningUnit.create({
+        data: {
+          topicId: topic.id,
+          type: learningUnit.type,
+          data: learningUnit.data,
+        },
+      });
+
+      // 3️⃣ Find enrolled students
+      const enrollments = await tx.enrollment.findMany({
+        where: {
+          course: {
+            cohort: {
+              programId,
+            },
+          },
+        },
+        select: { id: true },
+      });
+
+      // 4️⃣ Create progress records
+      if (enrollments.length > 0) {
+        await tx.progress.createMany({
+          data: enrollments.map((e) => ({
+            enrollmentId: e.id,
+            topicId: topic.id,
+            score: 0,
+          })),
+        });
+      }
+
+      return topic;
     });
+  }
 
-    // 2️⃣ Replace learning unit
-    await tx.learningUnit.upsert({
-      where: { topicId: id },
-      update: {
-        type: learningUnit.type,
-        data: learningUnit.data,
-        version: { increment: 1 },
-      },
-      create: {
-        topicId: id,
-        type: learningUnit.type,
-        data: learningUnit.data,
-      },
+  async updateTopic(
+    id: number,
+    name: string,
+    description: string,
+    learningUnit: any,
+  ) {
+    this.validateLearningUnit(learningUnit);
+
+    return prisma.$transaction(async (tx) => {
+      // 1️⃣ Update topic
+      const topic = await tx.topic.update({
+        where: { id },
+        data: {
+          name: name,
+          description: description,
+        },
+      });
+
+      // 2️⃣ Replace learning unit
+      await tx.learningUnit.upsert({
+        where: { topicId: id },
+        update: {
+          type: learningUnit.type,
+          data: learningUnit.data,
+          version: { increment: 1 },
+        },
+        create: {
+          topicId: id,
+          type: learningUnit.type,
+          data: learningUnit.data,
+        },
+      });
+
+      return topic;
     });
-
-    return topic;
-  });
-}
+  }
 
   //delete topic
   async deleteTopic(topicId: number) {
@@ -344,69 +342,207 @@ export class ProgramService {
   }
 
   //get topic
-  async getTopic(topicId:number){
+  async getTopic(topicId: number) {
     return await prisma.topic.findUnique({
-      where:{id:topicId},
-      include:{
-        LearningUnit:true,
-      }
+      where: { id: topicId },
+      include: {
+        LearningUnit: true,
+      },
     });
   }
 
+  async completeTopicByUserAndTopic(userId: number, topicId: number) {
+    const enrollment = await prisma.enrollment.findFirst({
+      where: {
+        user_id: userId,
+        course: {
+          cohort: {
+            program: {
+              topics: {
+                some: { id: topicId },
+              },
+            },
+          },
+        },
+      },
+      include: {
+        progress: {
+          where: { topicId },
+        },
+      },
+    });
+
+    if (!enrollment) {
+      throw new Error("User is not enrolled in this program");
+    }
+
+    if (enrollment.progress.length === 0) {
+      throw new Error("Progress not initialized for this topic");
+    }
+
+    const updatedProgress = await prisma.progress.update({
+      where: {
+        enrollmentId_topicId: {
+          enrollmentId: enrollment.id,
+          topicId,
+        },
+      },
+      data: {
+        completed: true,
+        status: "PASS",
+        completedAt: new Date(),
+      },
+    });
+
+    const remaining = await prisma.progress.count({
+      where: {
+        enrollmentId: enrollment.id,
+        completed: false,
+      },
+    });
+
+    if (remaining === 0) {
+      await prisma.enrollment.update({
+        where: { id: enrollment.id },
+        data: {
+          completed: true,
+          completedAt: new Date(),
+        },
+      });
+    }
+
+    return updatedProgress;
+  }
+
+  async getUserProgramWithProgressAndLearningUnit(
+    userId: number,
+    programId: number,
+  ) {
+    const enrollment = await prisma.enrollment.findFirst({
+      where: {
+        user_id: userId,
+        course: {
+          cohort: {
+            programId,
+          },
+        },
+      },
+      include: {
+        progress: true,
+        course: {
+          include: {
+            cohort: {
+              include: {
+                program: {
+                  include: {
+                    topics: {
+                      include: {
+                        LearningUnit: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!enrollment) {
+      throw new Error("User is not enrolled in this program");
+    }
+
+    const program = enrollment.course.cohort.program;
+
+    const topics = program.topics.map((topic) => {
+      const progress = enrollment.progress.find((p) => p.topicId === topic.id);
+
+      return {
+        id: topic.id,
+        name: topic.name,
+        description: topic.description,
+        completed: progress?.completed ?? false,
+        status: progress?.status ?? "PENDING",
+        completedAt: progress?.completedAt ?? null,
+        score: progress?.score ?? 0,
+        learningUnit: topic.LearningUnit
+          ? {
+              id: topic.LearningUnit.id,
+              type: topic.LearningUnit.type,
+              data: topic.LearningUnit.data,
+              version: topic.LearningUnit.version,
+            }
+          : null,
+      };
+    });
+
+    return {
+      id: program.id,
+      title: program.title,
+      description: program.description,
+      completed: enrollment.completed ?? false,
+      topics,
+    };
+  }
+
   private validateLearningUnit(learningUnit: any) {
-  if (!learningUnit?.type || !learningUnit?.data) {
-    throw new Error("Invalid learning unit payload");
+    if (!learningUnit?.type || !learningUnit?.data) {
+      throw new Error("Invalid learning unit payload");
+    }
+
+    switch (learningUnit.type) {
+      case "video":
+        if (!learningUnit.data.url) throw new Error("Video URL required");
+        break;
+
+      case "live":
+        if (!learningUnit.data.meetingLink)
+          throw new Error("Meeting link required");
+        break;
+
+      case "in-person":
+        if (!learningUnit.data.venue) throw new Error("Venue required");
+        break;
+
+      case "pdf":
+      case "ppt":
+        if (!learningUnit.data.link) throw new Error("Document link required");
+        break;
+
+      case "lesson-note":
+        if (!learningUnit.data.content)
+          throw new Error("Lesson content required");
+        break;
+
+      case "assignment":
+        this.validateMCQAssignment(learningUnit.data);
+        break;
+
+      case "assignment-essay":
+        if (!learningUnit.data.question)
+          throw new Error("Essay question required");
+        break;
+
+      default:
+        throw new Error(`Unsupported learning unit type: ${learningUnit.type}`);
+    }
   }
-
-  switch (learningUnit.type) {
-    case "video":
-      if (!learningUnit.data.url) throw new Error("Video URL required");
-      break;
-
-    case "live":
-      if (!learningUnit.data.meetingLink) throw new Error("Meeting link required");
-      break;
-
-    case "in-person":
-      if (!learningUnit.data.venue) throw new Error("Venue required");
-      break;
-
-    case "pdf":
-    case "ppt":
-      if (!learningUnit.data.link) throw new Error("Document link required");
-      break;
-
-    case "lesson-note":
-      if (!learningUnit.data.content) throw new Error("Lesson content required");
-      break;
-
-    case "assignment":
-      this.validateMCQAssignment(learningUnit.data);
-      break;
-
-    case "assignment-essay":
-      if (!learningUnit.data.question) throw new Error("Essay question required");
-      break;
-
-    default:
-      throw new Error(`Unsupported learning unit type: ${learningUnit.type}`);
-  }
-}
 
   private validateMCQAssignment(data: any) {
-  if (!Array.isArray(data.questions) || data.questions.length === 0) {
-    throw new Error("Assignment must have questions");
-  }
-
-  for (const q of data.questions) {
-    if (q.options.length < 2) {
-      throw new Error("Each question must have at least 2 options");
+    if (!Array.isArray(data.questions) || data.questions.length === 0) {
+      throw new Error("Assignment must have questions");
     }
 
-    const optionIds = q.options.map((o:any) => o.id);
-    if (!optionIds.includes(q.correctOptionId)) {
-      throw new Error("correctOptionId must match an option");
+    for (const q of data.questions) {
+      if (q.options.length < 2) {
+        throw new Error("Each question must have at least 2 options");
+      }
+
+      const optionIds = q.options.map((o: any) => o.id);
+      if (!optionIds.includes(q.correctOptionId)) {
+        throw new Error("correctOptionId must match an option");
+      }
     }
-  }
   }
 }

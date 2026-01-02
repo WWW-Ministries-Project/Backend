@@ -74,8 +74,15 @@ export class ProgramController {
   async createTopic(req: Request, res: Response) {
     try {
       const { programId, name, description, learningUnit } = req.body;
-      const topic = await programService.createTopic(programId, name, description, learningUnit);
-      return res.status(200).json({ message: "Topic created successfully", data: topic });
+      const topic = await programService.createTopic(
+        programId,
+        name,
+        description,
+        learningUnit,
+      );
+      return res
+        .status(200)
+        .json({ message: "Topic created successfully", data: topic });
     } catch (error: any) {
       return res
         .status(500)
@@ -86,7 +93,12 @@ export class ProgramController {
     try {
       const { id } = req.query;
       const { name, description, learningUnit } = req.body;
-      await programService.updateTopic(Number(id), name, description, learningUnit);
+      await programService.updateTopic(
+        Number(id),
+        name,
+        description,
+        learningUnit,
+      );
       return res.status(200).json({ message: "Topic update successfully" });
     } catch (error: any) {
       return res
@@ -130,8 +142,41 @@ export class ProgramController {
     } catch (error: any) {
       return res
         .status(500)
-        .json({ message: "Error deleting topicc", error: error.message });
+        .json({ message: "Error deleting topic", error: error.message });
     }
+  }
+  async completeTopic(req: Request, res: Response) {
+    try {
+      const { topicId, userId } = req.body;
+      const progres = await programService.completeTopicByUserAndTopic(
+        Number(topicId),
+        Number(userId),
+      );
 
+      return res
+        .status(200)
+        .json({ message: "Topic completed successfully", data: progres });
+    } catch (error: any) {
+      return res
+        .status(500)
+        .json({ message: "Error completing topic", error: error.message });
+    }
+  }
+
+  async getUserProgramCompletionStatus(req: Request, res: Response) {
+    try {
+      const { programId, userId } = req.query;
+      const status = await programService.getUserProgramWithProgressAndLearningUnit(
+        Number(programId),
+        Number(userId),
+      );
+      return res
+        .status(200)
+        .json({ message: "Program status fetched", data: status });
+    } catch (error: any) {
+      return res
+        .status(500)
+        .json({ message: "Error fetching program status", error: error.message });
+    }
   }
 }

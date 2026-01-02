@@ -156,60 +156,58 @@ export class EnrollmentService {
   }
 
   async getUserEnrollments(userId: number) {
-  const enrollments = await prisma.enrollment.findMany({
-    where: { user_id: userId },
-    include: {
-      course: {
-        include: {
-          cohort: {
-            include: {
-              program: {
-                select: {
-                  id: true,
-                  title: true,
+    const enrollments = await prisma.enrollment.findMany({
+      where: { user_id: userId },
+      include: {
+        course: {
+          include: {
+            cohort: {
+              include: {
+                program: {
+                  select: {
+                    id: true,
+                    title: true,
+                  },
                 },
               },
             },
-          },
-          instructor: {
-            select: {
-              id: true,
-              name: true,
+            instructor: {
+              select: {
+                id: true,
+                name: true,
+              },
             },
           },
         },
       },
-    },
-  });
+    });
 
-  return enrollments.map((e) => ({
-    id: e.id,
-    user_id: e.user_id,
-    course_id: e.course_id,
-    enrolledAt: e.enrolledAt,
-    completed: e.completed,
-    completedAt: e.completedAt,
-    instructor: e.course.instructor,
-    cohort: {
-      id: e.course.cohort.id,
-      name: e.course.cohort.name,
-      status: e.course.cohort.status,
-      startDate: e.course.cohort.startDate,
-      duration: e.course.cohort.duration,
-    },
-    program: e.course.cohort.program,
-    course: {
-      id: e.course.id,
-      name: e.course.name,
-      schedule: e.course.schedule,
-      classFormat: e.course.classFormat,
-      location: e.course.location,
-      meetingLink: e.course.meetingLink,
-    },
-  }));
-}
-
-
+    return enrollments.map((e) => ({
+      id: e.id,
+      user_id: e.user_id,
+      course_id: e.course_id,
+      enrolledAt: e.enrolledAt,
+      completed: e.completed,
+      completedAt: e.completedAt,
+      instructor: e.course.instructor,
+      cohort: {
+        id: e.course.cohort.id,
+        name: e.course.cohort.name,
+        status: e.course.cohort.status,
+        startDate: e.course.cohort.startDate,
+        duration: e.course.cohort.duration,
+      },
+      program: e.course.cohort.program,
+      course: {
+        id: e.course.id,
+        name: e.course.name,
+        schedule: e.course.schedule,
+        classFormat: e.course.classFormat,
+        location: e.course.location,
+        meetingLink: e.course.meetingLink,
+      },
+    }));
+  }
 
   async unenrollUser(course_id: number, user_id: number) {
     // Remove enrollment
@@ -422,8 +420,6 @@ export class EnrollmentService {
     //   where: { id: enrollmentId },
     //   data: { completedAt: new Date(), completed: true },
     // });
-
-    
     // return enrollment;
-}
+  }
 }

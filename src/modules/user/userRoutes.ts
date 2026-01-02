@@ -39,7 +39,7 @@ userRouter.get("/list-users", ListUsers);
 
 userRouter.get("/list-users-light", ListUsersLight);
 
-userRouter.get("/search-users", filterUsersInfo)
+userRouter.get("/search-users", filterUsersInfo);
 
 userRouter.get("/stats-users", [protect], statsUsers);
 

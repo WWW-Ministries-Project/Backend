@@ -689,7 +689,8 @@ export const ListUsers = async (req: Request, res: Response) => {
     ministry_worker,
     membership_type,
   } = req.query;
-  const isUser = is_user === "true" || ministry_worker === "true" ? true : false;
+  const isUser =
+    is_user === "true" || ministry_worker === "true" ? true : false;
 
   const pageNum = parseInt(page as string, 10);
   const pageSize = parseInt(take as string, 10);
@@ -809,7 +810,13 @@ export const ListUsersLight = async (req: Request, res: Response) => {
 };
 
 export const filterUsersInfo = async (req: Request, res: Response) => {
-  const { name, membership_type, ministry_worker, page = "1", take = "10" } = req.query;
+  const {
+    name,
+    membership_type,
+    ministry_worker,
+    page = "1",
+    take = "10",
+  } = req.query;
 
   try {
     // Convert pagination params to numbers
@@ -869,8 +876,6 @@ export const filterUsersInfo = async (req: Request, res: Response) => {
     });
   }
 };
-
-
 
 export const getUser = async (req: Request, res: Response) => {
   const { user_id } = req.query;
