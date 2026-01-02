@@ -62,7 +62,10 @@ programRouter.put(
 
 programRouter.get("/my-enrollment", enrollmentController.myEnrollment);
 
-programRouter.get("/program-completion-status", programController.getUserProgramCompletionStatus)
+programRouter.get(
+  "/program-completion-status",
+  programController.getUserProgramCompletionStatus,
+);
 
 //topics enpoint
 programRouter.post("/topic", programController.createTopic);

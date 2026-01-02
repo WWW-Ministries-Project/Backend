@@ -165,18 +165,30 @@ export class ProgramController {
 
   async getUserProgramCompletionStatus(req: Request, res: Response) {
     try {
-      const { programId, userId } = req.query;
-      const status = await programService.getUserProgramWithProgressAndLearningUnit(
-        Number(programId),
-        Number(userId),
-      );
-      return res
-        .status(200)
-        .json({ message: "Program status fetched", data: status });
+      const programId = Number(req.query.programId);
+      const userId = Number(req.query.userId);
+
+      if (!programId || !userId) {
+        return res.status(400).json({
+          message: "programId and userId are required",
+        });
+      }
+
+      const status =
+        await programService.getUserProgramWithProgressAndLearningUnit(
+          userId,
+          programId,
+        );
+
+      return res.status(200).json({
+        message: "Program status fetched",
+        data: status,
+      });
     } catch (error: any) {
-      return res
-        .status(500)
-        .json({ message: "Error fetching program status", error: error.message });
+      return res.status(500).json({
+        message: "Error fetching program status",
+        error: error.message,
+      });
     }
   }
 }
