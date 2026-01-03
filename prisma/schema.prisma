@@ -399,6 +399,7 @@ model topic {
   name         String
   programId    Int
   description  String?
+  order_number Int?
   program      program       @relation(fields: [programId], references: [id], onDelete: Cascade)
   progress     progress[]
   LearningUnit LearningUnit?

@@ -237,7 +237,6 @@ export class ProgramService {
     });
   }
 
-  //create topic programId, name
   async createTopic(
     programId: number,
     name: string,
@@ -247,16 +246,23 @@ export class ProgramService {
     this.validateLearningUnit(learningUnit);
 
     return prisma.$transaction(async (tx) => {
-      // 1️⃣ Create topic
+      const lastTopic = await tx.topic.findFirst({
+        where: { programId },
+        orderBy: { order_number: "desc" },
+        select: { order_number: true },
+      });
+
+      const nextOrderNumber = lastTopic ? (lastTopic.order_number ?? 0) + 1 : 1;
+
       const topic = await tx.topic.create({
         data: {
-          name: name,
-          description: description,
+          name,
+          description,
           programId,
+          order_number: nextOrderNumber,
         },
       });
 
-      // 2️⃣ Create learning unit
       await tx.learningUnit.create({
         data: {
           topicId: topic.id,
@@ -265,7 +271,6 @@ export class ProgramService {
         },
       });
 
-      // 3️⃣ Find enrolled students
       const enrollments = await tx.enrollment.findMany({
         where: {
           course: {
@@ -277,7 +282,6 @@ export class ProgramService {
         select: { id: true },
       });
 
-      // 4️⃣ Create progress records
       if (enrollments.length > 0) {
         await tx.progress.createMany({
           data: enrollments.map((e) => ({
@@ -329,16 +333,36 @@ export class ProgramService {
     });
   }
 
-  //delete topic
   async deleteTopic(topicId: number) {
-    await prisma.$transaction([
-      prisma.progress.deleteMany({
+    await prisma.$transaction(async (tx) => {
+      const topic = await tx.topic.findUnique({
+        where: { id: topicId },
+        select: { programId: true, order_number: true },
+      });
+
+      if (!topic) return;
+
+      await tx.progress.deleteMany({
         where: { topicId },
-      }),
-      prisma.topic.delete({
-        where: { id: topicId }, // Then delete the topic
-      }),
-    ]);
+      });
+
+      await tx.topic.delete({
+        where: { id: topicId },
+      });
+
+      // Shift topics after this one up
+      if (topic.order_number !== null) {
+        await tx.topic.updateMany({
+          where: {
+            programId: topic.programId,
+            order_number: { gt: topic.order_number },
+          },
+          data: {
+            order_number: { decrement: 1 },
+          },
+        });
+      }
+    });
   }
 
   //get topic
