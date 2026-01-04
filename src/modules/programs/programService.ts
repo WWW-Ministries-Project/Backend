@@ -460,6 +460,9 @@ export class ProgramService {
                 program: {
                   include: {
                     topics: {
+                      orderBy: {
+                      order_number: 'asc',
+                    },
                       include: {
                         LearningUnit: true,
                       },
@@ -488,6 +491,7 @@ export class ProgramService {
         description: topic.description,
         completed: progress?.completed ?? false,
         status: progress?.status ?? "PENDING",
+        order_number: topic.order_number,
         completedAt: progress?.completedAt ?? null,
         score: progress?.score ?? 0,
         learningUnit: topic.LearningUnit
