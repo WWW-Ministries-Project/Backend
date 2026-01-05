@@ -126,7 +126,7 @@ export class ProgramService {
           leader_required: data.leader_required,
           ministry_required: data.ministry_required,
           topics: {
-            create: data.topics.map((topic: string) => ({ name: topic })),
+            create: data.topics.map((topic: string, index: number) => ({ name: topic, order_number: index + 1 })),
           },
         },
         include: { topics: true },
