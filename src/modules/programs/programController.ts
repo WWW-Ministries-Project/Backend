@@ -149,8 +149,8 @@ export class ProgramController {
     try {
       const { topicId, userId } = req.body;
       const progres = await programService.completeTopicByUserAndTopic(
-        Number(topicId),
         Number(userId),
+        Number(topicId),
       );
 
       return res
