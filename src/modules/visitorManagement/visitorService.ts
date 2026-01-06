@@ -148,16 +148,15 @@ export class VisitorService {
       visit,
       consentToContact,
       membershipWish,
-      eventId,
     } = body;
 
     const visitDate = new Date(visit.date);
     const email = contact_info.email;
 
     const event_id =
-      isNaN(parseInt(eventId)) || parseInt(eventId) === 0
+      isNaN(parseInt(visit.eventId)) || parseInt(visit.eventId) === 0
         ? null
-        : parseInt(eventId);
+        : parseInt(visit.eventId);
 
     // Check if the visitor already exists
     const existingVisitor = await prisma.visitor.findUnique({
