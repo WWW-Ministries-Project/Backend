@@ -191,4 +191,36 @@ export class ProgramController {
       });
     }
   }
+
+  async getProgramsByinstructor(req: Request, res: Response) {
+    try {
+      const { instructorId } = req.query;
+      const programs = await programService.getProgramsByInstructor(
+        Number(instructorId),
+      );
+      return res
+        .status(200)
+        .json({ message: "Programs fetched", data: programs });
+    } catch (error: any) {
+      return res
+        .status(500)
+        .json({ message: "Error fetching programs", error: error.message });
+    }
+  } 
+
+  async getCohortsByProgram(req: Request, res: Response) {
+    try {
+      const { programId } = req.query;
+      const cohorts = await programService.getCohortsByProgram(
+        Number(programId),
+      );
+      return res
+        .status(200)
+        .json({ message: "Cohorts fetched", data: cohorts });
+    } catch (error: any) {
+      return res
+        .status(500)
+        .json({ message: "Error fetching cohorts", error: error.message });
+    }
+  } 
 }

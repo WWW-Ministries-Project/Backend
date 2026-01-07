@@ -514,6 +514,26 @@ export class ProgramService {
     };
   }
 
+  async getProgramsByInstructor(instructorId: number) {
+    const programs = await prisma.course.findMany({
+      where: { instructorId },
+      include: {
+        cohort: {
+          include: {
+            program: true
+          }
+        }
+      }
+    })
+  }
+
+  async getCohortsByProgram(programId: number) {
+    const cohorts = await prisma.cohort.findMany({
+      where: { programId },
+    });
+    return cohorts;
+  }
+
   private validateLearningUnit(learningUnit: any) {
     if (!learningUnit?.type || !learningUnit?.data) {
       throw new Error("Invalid learning unit payload");

@@ -22,6 +22,8 @@ programRouter.get(
   "/get-member-programs",
   programController.getAllProgramForMember,
 );
+programRouter.get("/get-instructor-programs", programController.getProgramsByinstructor);
+programRouter.get("/get-cohorts-by-program", programController.getCohortsByProgram);
 
 //cohort enpoint
 programRouter.post("/cohort", cohortController.createCohort);
