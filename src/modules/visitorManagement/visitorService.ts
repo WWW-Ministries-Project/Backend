@@ -108,39 +108,117 @@ export class VisitorService {
       })),
     };
   }
-  async getAllVisitors() {
-    const visitors = await prisma.visitor.findMany({
-      include: {
-        visits: {
-          include: {
-            event: {
-              include: {
-                event: {
-                  select: {
-                    event_name: true,
-                    id: true,
-                  },
+  async getAllVisitors(query: {
+  search?: string;
+  createdMonth?: string;
+  visitMonth?: string;
+  eventId?: string;
+  page?: string;
+  limit?: string;
+}) {
+  const {
+    search,
+    createdMonth,
+    visitMonth,
+    eventId,
+    page = '1',
+    limit = '10',
+  } = query;
+
+  const pageNumber = Math.max(Number(page), 1);
+  const pageSize = Math.max(Number(limit), 1);
+  const skip = (pageNumber - 1) * pageSize;
+
+  const where: any = {};
+
+  if (search) {
+    where.OR = [
+      { firstName: { contains: toSentenceCase(search) } },
+      { lastName: { contains: toSentenceCase(search) } },
+      { otherName: { contains: toSentenceCase(search) } },
+      { email: { contains: toSentenceCase(search) } },
+      { phone: { contains: toSentenceCase(search) } },
+    ];
+  }
+
+  if (createdMonth) {
+    const { start, end } = this.getMonthRange(createdMonth);
+    where.createdAt = { gte: start, lt: end };
+  }
+
+  /* 📅 VISIT MONTH */
+  if (visitMonth) {
+    const { start, end } = this.getMonthRange(visitMonth);
+    where.visits = {
+      some: {
+        date: { gte: start, lt: end },
+      },
+    };
+  }
+
+  /* 🎯 EVENT REFERRAL */
+  if (eventId) {
+    where.visits = {
+      ...(where.visits || {}),
+      some: {
+        ...(where.visits?.some || {}),
+        eventId: Number(eventId),
+      },
+    };
+  }
+
+  /* 🔢 TOTAL COUNT */
+  const total = await prisma.visitor.count({ where });
+
+  /* 📦 DATA QUERY */
+  const visitors = await prisma.visitor.findMany({
+    where,
+    include: {
+      visits: {
+        include: {
+          event: {
+            include: {
+              event: {
+                select: {
+                  id: true,
+                  event_name: true,
                 },
               },
             },
           },
         },
-        followUps: true,
       },
-    });
+      followUps: {
+        orderBy: { createdAt: 'asc' },
+      },
+    },
+    orderBy: { createdAt: 'desc' },
+    skip,
+    take: pageSize,
+  });
 
-    const visitorsWithVisitCount = visitors.map(
-      ({ visits, followUps, ...visitor }) => ({
-        ...visitor,
-        eventId: visits[0]?.event?.event.id || null,
-        eventName: visits[0]?.event?.event.event_name || null,
-        visitCount: visits.length,
-        followUp:
-          followUps[followUps.length - 1]?.status || "No Follow Ups Yet",
-      }),
-    );
-    return visitorsWithVisitCount;
-  }
+  const data = visitors.map(({ visits, followUps, ...visitor }) => ({
+    ...visitor,
+    eventId: visits[0]?.event?.event.id || null,
+    eventName: visits[0]?.event?.event.event_name || null,
+    visitCount: visits.length,
+    followUp:
+      followUps.length > 0
+        ? followUps[followUps.length - 1].status
+        : 'No Follow Ups Yet',
+  }));
+
+  return {
+    data,
+    meta: {
+      total,
+      page: pageNumber,
+      limit: pageSize,
+      totalPages: Math.ceil(total / pageSize),
+    },
+  };
+}
+
   async createVisitor(body: any) {
     const {
       personal_info,
@@ -221,6 +299,14 @@ export class VisitorService {
 
     return { visitor: createdVisitor, createdVisit: newVisit };
   }
+
+  private getMonthRange(month: string) {
+    const start = new Date(`${month}-01`);
+    const end = new Date(start);
+    end.setMonth(end.getMonth() + 1);
+  return { start, end };
+  }
+
 
   async changeVisitorStatusToMember(id: number) {
     const visitor = await this.getVisitorById(id);
