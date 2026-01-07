@@ -525,6 +525,7 @@ export class ProgramService {
         }
       }
     })
+    return programs
   }
 
   async getCohortsByProgram(programId: number) {
