@@ -145,6 +145,18 @@ export class ProgramController {
         .json({ message: "Error deleting topic", error: error.message });
     }
   }
+  async getAllTopics(req: Request, res: Response) {
+    try {
+      const topics = await programService.getAllTopics();
+      return res
+        .status(200)
+        .json({ message: "Topics fetched successfully", data: topics });
+    } catch (error: any) {
+      return res
+        .status(500)
+        .json({ message: "Error fetching topics", error: error.message });
+    }
+  }     
   async completeTopic(req: Request, res: Response) {
     try {
       const { topicId, userId } = req.body;

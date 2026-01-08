@@ -166,6 +166,15 @@ export class ProgramService {
     });
   }
 
+  async getAllTopics() {
+    return await prisma.topic.findMany({
+      include: {
+        program: true,
+        LearningUnit: true,
+      },
+    });
+  } 
+
   async getProgramById(id: number) {
     return await prisma.program.findUnique({
       where: { id },

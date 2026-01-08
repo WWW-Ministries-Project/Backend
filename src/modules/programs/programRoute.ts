@@ -74,6 +74,7 @@ programRouter.post("/topic", programController.createTopic);
 programRouter.put("/topic", programController.updateTopic);
 programRouter.delete("/topic", programController.deleteTopic);
 programRouter.get("/topic", programController.getTopic);
+programRouter.get("/topics", programController.getAllTopics);
 
 programRouter.put("/complete-topic", programController.completeTopic);
 

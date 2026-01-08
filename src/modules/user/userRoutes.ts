@@ -93,7 +93,6 @@ userRouter.put(
 
 userRouter.get(
   "/get-user-family",
-  [protect, permissions.can_Manage_Members],
   getUserFamily,
 );
 
