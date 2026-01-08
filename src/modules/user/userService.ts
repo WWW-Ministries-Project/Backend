@@ -693,76 +693,83 @@ async registerFamilyMembers(family: any[], primaryUser: any) {
   async getUserFamily(userId: number) {
     const siblingsKeywords = ["sibling", "brother", "sister", "sibs", "sis", "bro", "siblings"];
     const childKeywords = ["child", "son", "daughter", "ward", "kid", "children"];
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-    include: { user_info: true },
-  });
 
-  if (!user) {
-    throw new Error("User not found");
+    // Helper to remove password
+    const sanitizeUser = (u: any) => {
+      if (!u) return null;
+      const { password: _, ...safe } = u;
+      return safe;
+    };
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      include: { user_info: true },
+    });
+
+    if (!user) {
+      throw new Error("User not found");
+    }
+
+    const relations = await prisma.family_relation.findMany({
+      where: { user_id: userId },
+      include: { family: { include: { user_info: true } } },
+    });
+
+    // 3️⃣ Organize relations by type
+    const spouses = relations
+      .filter((r) => r.relation.toLowerCase() === "spouse")
+      .map((r) => sanitizeUser(r.family));
+
+    const children = relations
+      .filter((r) => childKeywords.includes(r.relation.toLowerCase()))
+      .map((r) => sanitizeUser(r.family));
+
+    const siblings = relations
+      .filter((r) => siblingsKeywords.includes(r.relation.toLowerCase()))
+      .map((r) => sanitizeUser(r.family));
+
+    const parents = relations
+      .filter((r) => r.relation.toLowerCase() === "parent")
+      .map((r) => sanitizeUser(r.family));
+
+    const others = relations
+      .filter(
+        (r) =>
+          !["spouse", "child", "sibling", "parent"]
+            .concat(siblingsKeywords, childKeywords)
+            .includes(r.relation.toLowerCase()),
+      )
+      .map((r) => ({ ...sanitizeUser(r.family), relation: r.relation }));
+
+    // 4️⃣ Include children who have this user as biological parent
+    const biologicalChildren = await prisma.user.findMany({
+      where: { parent_id: user.id },
+      include: { user_info: true },
+    });
+
+    // Merge children from family_relation and parent_id, deduplicate
+    const childrenMap = new Map<number, any>();
+    [...children, ...biologicalChildren.map(sanitizeUser)].forEach((c) => childrenMap.set(c.id, c));
+
+    // 5️⃣ Include siblings by checking parent_id
+    const parentIds = parents.map((p) => p.id);
+    const siblingsByParent = await prisma.user.findMany({
+      where: { parent_id: { in: parentIds }, NOT: { id: user.id } },
+      include: { user_info: true },
+    });
+
+    const siblingsMap = new Map<number, any>();
+    [...siblings, ...siblingsByParent.map(sanitizeUser)].forEach((s) => siblingsMap.set(s.id, s));
+
+    return {
+      user: sanitizeUser(user),
+      spouses,
+      children: Array.from(childrenMap.values()),
+      parents,
+      siblings: Array.from(siblingsMap.values()),
+      others,
+    };
   }
-
-  const relations = await prisma.family_relation.findMany({
-    where: { user_id: userId },
-    include: { family: { include: { user_info: true } } },
-  });
-
-  // 3️⃣ Organize relations by type
-  const spouses = relations
-    .filter((r) => r.relation.toLowerCase() === "spouse")
-    .map((r) => r.family);
-
-  const children = relations
-    .filter((r) => childKeywords.includes(r.relation.toLowerCase()))
-    .map((r) => r.family);
-
-  const siblings = relations
-    .filter((r) => siblingsKeywords.includes(r.relation.toLowerCase()))
-    .map((r) => r.family);
-
-  const parents = relations
-    .filter((r) => r.relation.toLowerCase() === "parent")
-    .map((r) => r.family);
-
-  const others = relations
-    .filter(
-      (r) =>
-        !["spouse", "child", "sibling", "parent"].concat(siblingsKeywords, childKeywords).includes(
-          r.relation.toLowerCase(),
-        ),
-    )
-    .map((r) => ({ ...r.family, relation: r.relation }));
-
-  // 4️⃣ Include children who have this user as biological parent
-  const biologicalChildren = await prisma.user.findMany({
-    where: { parent_id: user.id },
-    include: { user_info: true },
-  });
-
-  // Merge children from family_relation and parent_id, deduplicate
-  const childrenMap = new Map<number, any>();
-  [...children, ...biologicalChildren].forEach((c) => childrenMap.set(c.id, c));
-
-  // 5️⃣ Include siblings by checking parent_id
-  const parentIds = parents.map((p) => p.id);
-  const siblingsByParent = await prisma.user.findMany({
-    where: { parent_id: { in: parentIds }, NOT: { id: user.id } },
-    include: { user_info: true },
-  });
-
-  const siblingsMap = new Map<number, any>();
-  [...siblings, ...siblingsByParent].forEach((s) => siblingsMap.set(s.id, s));
-
-  // 6️⃣ Return structured family tree
-  return {
-    user,
-    spouses,
-    children: Array.from(childrenMap.values()),
-    parents,
-    siblings: Array.from(siblingsMap.values()),
-    others,
-  };
-}
 
 
   async linkChildren(childrenIds: number[], parentId: number) {

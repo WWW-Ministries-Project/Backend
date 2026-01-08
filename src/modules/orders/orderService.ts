@@ -16,7 +16,7 @@ export class OrderService {
       },
       include: {
         items: {
-          include: { product: true },
+          include: { product: true, market: true},
         },
         billing_details: true,
       },
@@ -149,6 +149,7 @@ export class OrderService {
         items: {
           include: {
             product: true,
+            market: true,
           },
         },
         billing_details: true,
@@ -176,7 +177,7 @@ export class OrderService {
       where: { user_id: userId },
       include: {
         items: {
-          include: { product: true },
+          include: { product: true, market: true},
         },
         billing_details: true,
       },
@@ -198,7 +199,7 @@ export class OrderService {
       },
       include: {
         items: {
-          include: { product: true },
+          include: { product: true, market: true},
         },
         billing_details: true,
       },
@@ -423,6 +424,7 @@ export class OrderService {
         order_id: item.order_id,
         name: item.name,
         market_id: item.market_id,
+        market: item.market,
         product_id: item.product_id,
         price_amount: item.price_amount,
         price_currency: item.price_currency,
