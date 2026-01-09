@@ -91,10 +91,7 @@ userRouter.put(
   linkSpouses,
 );
 
-userRouter.get(
-  "/get-user-family",
-  getUserFamily,
-);
+userRouter.get("/get-user-family", getUserFamily);
 
 userRouter.put(
   "/link-children",

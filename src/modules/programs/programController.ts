@@ -156,7 +156,7 @@ export class ProgramController {
         .status(500)
         .json({ message: "Error fetching topics", error: error.message });
     }
-  }     
+  }
   async completeTopic(req: Request, res: Response) {
     try {
       const { topicId, userId } = req.body;
@@ -218,7 +218,7 @@ export class ProgramController {
         .status(500)
         .json({ message: "Error fetching programs", error: error.message });
     }
-  } 
+  }
 
   async getCohortsByProgram(req: Request, res: Response) {
     try {
@@ -234,5 +234,5 @@ export class ProgramController {
         .status(500)
         .json({ message: "Error fetching cohorts", error: error.message });
     }
-  } 
+  }
 }

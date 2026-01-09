@@ -126,7 +126,10 @@ export class ProgramService {
           leader_required: data.leader_required,
           ministry_required: data.ministry_required,
           topics: {
-            create: data.topics.map((topic: string, index: number) => ({ name: topic, order_number: index + 1 })),
+            create: data.topics.map((topic: string, index: number) => ({
+              name: topic,
+              order_number: index + 1,
+            })),
           },
         },
         include: { topics: true },
@@ -173,7 +176,7 @@ export class ProgramService {
         LearningUnit: true,
       },
     });
-  } 
+  }
 
   async getProgramById(id: number) {
     return await prisma.program.findUnique({
@@ -470,8 +473,8 @@ export class ProgramService {
                   include: {
                     topics: {
                       orderBy: {
-                      order_number: 'asc',
-                    },
+                        order_number: "asc",
+                      },
                       include: {
                         LearningUnit: true,
                       },
@@ -529,12 +532,12 @@ export class ProgramService {
       include: {
         cohort: {
           include: {
-            program: true
-          }
-        }
-      }
-    })
-    return programs
+            program: true,
+          },
+        },
+      },
+    });
+    return programs;
   }
 
   async getCohortsByProgram(programId: number) {

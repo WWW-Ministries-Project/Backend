@@ -15,10 +15,7 @@ eventRouter.get(
   eventContoller.getEvent,
 );
 
-eventRouter.get(
-  "/list-events",
-  eventContoller.listEvents,
-);
+eventRouter.get("/list-events", eventContoller.listEvents);
 eventRouter.get(
   "/list-events-light",
   [protect, permissions.can_view_events],

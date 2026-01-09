@@ -54,7 +54,7 @@ export class UserService {
       } = {},
 
       children = [],
-      family =[],
+      family = [],
       status,
       password,
       is_user,
@@ -177,102 +177,159 @@ export class UserService {
     };
   }
 
-async registerFamilyMembers(family: any[], primaryUser: any) {
-  const childKeywords = ["child", "son", "daughter", "ward", "kid", "children"];
-  const spouseKeywords = ["spouse", "wife", "husband"];
+  async registerFamilyMembers(family: any[], primaryUser: any) {
+    const childKeywords = [
+      "child",
+      "son",
+      "daughter",
+      "ward",
+      "kid",
+      "children",
+    ];
+    const spouseKeywords = ["spouse", "wife", "husband"];
 
-  let spouseUser: any = null;
+    let spouseUser: any = null;
 
-  // 1️⃣ First pass → handle spouse
-  for (const member of family) {
-    if (spouseKeywords.includes(member.relation.toLowerCase())) {
-      if (member.user_id) {
-        spouseUser = await prisma.user.findUnique({
-          where: { id: Number(member.user_id) },
-        });
-      } else {
-        spouseUser = await prisma.user.create({
-          data: {
-            name: toCapitalizeEachWord(
-              `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
-            ),
-            email:
-              member.email ||
-              `${member.first_name.toLowerCase()}_${member.last_name.toLowerCase()}_${Date.now()}@temp.com`,
-            is_user: false,
-            is_active: true,
-            user_info: {
-              create: {
-                title: member.title,
-                first_name: member.first_name,
-                last_name: member.last_name,
-                other_name: member.other_name || null,
-                date_of_birth: new Date(member.date_of_birth),
-                gender: member.gender,
-                marital_status: member.marital_status,
-                nationality: member.nationality,
+    // 1️⃣ First pass → handle spouse
+    for (const member of family) {
+      if (spouseKeywords.includes(member.relation.toLowerCase())) {
+        if (member.user_id) {
+          spouseUser = await prisma.user.findUnique({
+            where: { id: Number(member.user_id) },
+          });
+        } else {
+          spouseUser = await prisma.user.create({
+            data: {
+              name: toCapitalizeEachWord(
+                `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
+              ),
+              email:
+                member.email ||
+                `${member.first_name.toLowerCase()}_${member.last_name.toLowerCase()}_${Date.now()}@temp.com`,
+              is_user: false,
+              is_active: true,
+              user_info: {
+                create: {
+                  title: member.title,
+                  first_name: member.first_name,
+                  last_name: member.last_name,
+                  other_name: member.other_name || null,
+                  date_of_birth: new Date(member.date_of_birth),
+                  gender: member.gender,
+                  marital_status: member.marital_status,
+                  nationality: member.nationality,
+                },
               },
             },
+          });
+
+          await this.generateUserId(spouseUser);
+        }
+
+        // 🔗 link spouses
+        await prisma.family_relation.upsert({
+          where: {
+            user_id_family_id: {
+              user_id: primaryUser.id,
+              family_id: spouseUser.id,
+            },
           },
-        });
-
-        await this.generateUserId(spouseUser);
-      }
-
-      // 🔗 link spouses
-      await prisma.family_relation.upsert({
-        where: {
-          user_id_family_id: {
+          update: { relation: member.relation },
+          create: {
             user_id: primaryUser.id,
             family_id: spouseUser.id,
+            relation: member.relation,
           },
-        },
-        update: { relation: member.relation },
-        create: {
-          user_id: primaryUser.id,
-          family_id: spouseUser.id,
-          relation: member.relation,
-        },
-      });
+        });
+      }
     }
-  }
 
-  // 2️⃣ Second pass → handle everyone else (including children)
-  return Promise.all(
-    family.map(async (member) => {
-      let familyUser : any;
+    // 2️⃣ Second pass → handle everyone else (including children)
+    return Promise.all(
+      family.map(async (member) => {
+        let familyUser: any;
 
-      // Skip spouse (already handled)
-      if (spouseKeywords.includes(member.relation.toLowerCase())) {
-        return spouseUser;
-      }
+        // Skip spouse (already handled)
+        if (spouseKeywords.includes(member.relation.toLowerCase())) {
+          return spouseUser;
+        }
 
-      // 3️⃣ Existing user
-      if (member.user_id) {
-        familyUser = await prisma.user.findUnique({
-          where: { id: Number(member.user_id) },
-        });
-      }
+        // 3️⃣ Existing user
+        if (member.user_id) {
+          familyUser = await prisma.user.findUnique({
+            where: { id: Number(member.user_id) },
+          });
+        }
 
-      // 4️⃣ Child logic
-      else if (childKeywords.includes(member.relation.toLowerCase())) {
-        // Try to find existing child for either parent
-        familyUser = await prisma.user.findFirst({
-          where: {
-            user_info: {
-              first_name: member.first_name,
-              last_name: member.last_name,
-              date_of_birth: new Date(member.date_of_birth),
+        // 4️⃣ Child logic
+        else if (childKeywords.includes(member.relation.toLowerCase())) {
+          // Try to find existing child for either parent
+          familyUser = await prisma.user.findFirst({
+            where: {
+              user_info: {
+                first_name: member.first_name,
+                last_name: member.last_name,
+                date_of_birth: new Date(member.date_of_birth),
+              },
+              OR: [
+                { parent_id: primaryUser.id },
+                { parent_id: spouseUser?.id },
+              ],
             },
-            OR: [
-              { parent_id: primaryUser.id },
-              { parent_id: spouseUser?.id },
-            ],
-          },
-        });
+          });
 
-        // Create child if not found
-        if (!familyUser) {
+          // Create child if not found
+          if (!familyUser) {
+            familyUser = await prisma.user.create({
+              data: {
+                name: toCapitalizeEachWord(
+                  `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
+                ),
+                email:
+                  member.email ||
+                  `${member.first_name.toLowerCase()}_${member.last_name.toLowerCase()}_${Date.now()}@temp.com`,
+                parent_id: primaryUser.id, // biological / primary
+                is_user: false,
+                is_active: true,
+                user_info: {
+                  create: {
+                    title: member.title,
+                    first_name: member.first_name,
+                    last_name: member.last_name,
+                    other_name: member.other_name || null,
+                    date_of_birth: new Date(member.date_of_birth),
+                    gender: member.gender,
+                    marital_status: member.marital_status,
+                    nationality: member.nationality,
+                  },
+                },
+              },
+            });
+
+            await this.generateUserId(familyUser);
+          }
+
+          // 🔗 Link child to spouse as well
+          if (spouseUser) {
+            await prisma.family_relation.upsert({
+              where: {
+                user_id_family_id: {
+                  user_id: spouseUser.id,
+                  family_id: familyUser.id,
+                },
+              },
+              update: { relation: "child" },
+              create: {
+                user_id: spouseUser.id,
+                family_id: familyUser.id,
+                relation: "child",
+              },
+            });
+          }
+        }
+
+        // 5️⃣ Other family members
+        else {
           familyUser = await prisma.user.create({
             data: {
               name: toCapitalizeEachWord(
@@ -281,7 +338,6 @@ async registerFamilyMembers(family: any[], primaryUser: any) {
               email:
                 member.email ||
                 `${member.first_name.toLowerCase()}_${member.last_name.toLowerCase()}_${Date.now()}@temp.com`,
-              parent_id: primaryUser.id, // biological / primary
               is_user: false,
               is_active: true,
               user_info: {
@@ -302,75 +358,26 @@ async registerFamilyMembers(family: any[], primaryUser: any) {
           await this.generateUserId(familyUser);
         }
 
-        // 🔗 Link child to spouse as well
-        if (spouseUser) {
-          await prisma.family_relation.upsert({
-            where: {
-              user_id_family_id: {
-                user_id: spouseUser.id,
-                family_id: familyUser.id,
-              },
-            },
-            update: { relation: "child" },
-            create: {
-              user_id: spouseUser.id,
+        // 🔗 Link to primary user
+        await prisma.family_relation.upsert({
+          where: {
+            user_id_family_id: {
+              user_id: primaryUser.id,
               family_id: familyUser.id,
-              relation: "child",
             },
-          });
-        }
-      }
-
-      // 5️⃣ Other family members
-      else {
-        familyUser = await prisma.user.create({
-          data: {
-            name: toCapitalizeEachWord(
-              `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
-            ),
-            email:
-              member.email ||
-              `${member.first_name.toLowerCase()}_${member.last_name.toLowerCase()}_${Date.now()}@temp.com`,
-            is_user: false,
-            is_active: true,
-            user_info: {
-              create: {
-                title: member.title,
-                first_name: member.first_name,
-                last_name: member.last_name,
-                other_name: member.other_name || null,
-                date_of_birth: new Date(member.date_of_birth),
-                gender: member.gender,
-                marital_status: member.marital_status,
-                nationality: member.nationality,
-              },
-            },
+          },
+          update: { relation: member.relation },
+          create: {
+            user_id: primaryUser.id,
+            family_id: familyUser.id,
+            relation: member.relation,
           },
         });
 
-        await this.generateUserId(familyUser);
-      }
-
-      // 🔗 Link to primary user
-      await prisma.family_relation.upsert({
-        where: {
-          user_id_family_id: {
-            user_id: primaryUser.id,
-            family_id: familyUser.id,
-          },
-        },
-        update: { relation: member.relation },
-        create: {
-          user_id: primaryUser.id,
-          family_id: familyUser.id,
-          relation: member.relation,
-        },
-      });
-
-      return familyUser;
-    }),
-  );
-}
+        return familyUser;
+      }),
+    );
+  }
 
   private async savedDepartments(
     userId: number,
@@ -691,8 +698,23 @@ async registerFamilyMembers(family: any[], primaryUser: any) {
     return { message: "Spouses linked successfully.", error: "" };
   }
   async getUserFamily(userId: number) {
-    const siblingsKeywords = ["sibling", "brother", "sister", "sibs", "sis", "bro", "siblings"];
-    const childKeywords = ["child", "son", "daughter", "ward", "kid", "children"];
+    const siblingsKeywords = [
+      "sibling",
+      "brother",
+      "sister",
+      "sibs",
+      "sis",
+      "bro",
+      "siblings",
+    ];
+    const childKeywords = [
+      "child",
+      "son",
+      "daughter",
+      "ward",
+      "kid",
+      "children",
+    ];
 
     // Helper to remove password
     const sanitizeUser = (u: any) => {
@@ -749,7 +771,9 @@ async registerFamilyMembers(family: any[], primaryUser: any) {
 
     // Merge children from family_relation and parent_id, deduplicate
     const childrenMap = new Map<number, any>();
-    [...children, ...biologicalChildren.map(sanitizeUser)].forEach((c) => childrenMap.set(c.id, c));
+    [...children, ...biologicalChildren.map(sanitizeUser)].forEach((c) =>
+      childrenMap.set(c.id, c),
+    );
 
     // 5️⃣ Include siblings by checking parent_id
     const parentIds = parents.map((p) => p.id);
@@ -759,7 +783,9 @@ async registerFamilyMembers(family: any[], primaryUser: any) {
     });
 
     const siblingsMap = new Map<number, any>();
-    [...siblings, ...siblingsByParent.map(sanitizeUser)].forEach((s) => siblingsMap.set(s.id, s));
+    [...siblings, ...siblingsByParent.map(sanitizeUser)].forEach((s) =>
+      siblingsMap.set(s.id, s),
+    );
 
     return {
       user: sanitizeUser(user),
@@ -770,7 +796,6 @@ async registerFamilyMembers(family: any[], primaryUser: any) {
       others,
     };
   }
-
 
   async linkChildren(childrenIds: number[], parentId: number) {
     if (!childrenIds || childrenIds.length === 0) return;

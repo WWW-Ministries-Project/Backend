@@ -16,7 +16,7 @@ export class OrderService {
       },
       include: {
         items: {
-          include: { product: true, market: true},
+          include: { product: true, market: true },
         },
         billing_details: true,
       },
@@ -177,7 +177,7 @@ export class OrderService {
       where: { user_id: userId },
       include: {
         items: {
-          include: { product: true, market: true},
+          include: { product: true, market: true },
         },
         billing_details: true,
       },
@@ -199,7 +199,7 @@ export class OrderService {
       },
       include: {
         items: {
-          include: { product: true, market: true},
+          include: { product: true, market: true },
         },
         billing_details: true,
       },
@@ -418,48 +418,69 @@ export class OrderService {
     return orders.flatMap((order) => {
       const billingDetails = order.billing_details;
 
-      return order.items.map((item: any) => ({
-        // Item fields
-        id: item.id,
-        order_id: item.order_id,
-        name: item.name,
-        market_id: item.market_id,
-        market: item.market,
-        product_id: item.product_id,
-        price_amount: item.price_amount,
-        price_currency: item.price_currency,
-        quantity: item.quantity,
-        product_type: item.product_type,
-        product_category: item.product_category,
-        image_url: item.image_url,
-        color: item.color,
-        size: item.size,
+      return order.items
+        .filter((item: any) => {
+          const market = item.market;
 
-        // Order fields
-        order_number: order.order_number,
-        payment_status: order.payment_status,
-        reference: order.reference,
+          console.log("Filtering item:", item.id);
+          console.log("market:", market);
 
-        // Flattened product fields
-        product_name: item.product?.name,
-        product_description: item.product?.description,
-        product_colours: item.product?.colours,
-        product_status: item.product?.status,
-        product_price_amount: item.product?.price_amount,
-        product_price_currency: item.product?.price_currency,
-        product_market_id: item.product?.market_id,
+          // Remove items without a market
+          if (!market) return false;
 
-        // Flattened billing details
-        first_name: billingDetails?.first_name,
-        last_name: billingDetails?.last_name,
-        email: billingDetails?.email,
-        phone_number: billingDetails?.phone_number,
-        country: billingDetails?.country,
-        country_code: billingDetails?.country_code,
+          // Remove deleted markets
+          if (market.deleted === true) return false;
 
-        // Computed field
-        total_amount: item.price_amount * item.quantity,
-      }));
+          // Remove markets without end_date
+          if (!market.end_date) return true;
+
+          // Remove ended markets
+          const endDate = new Date(market.end_date);
+          const now = new Date();
+
+          return endDate > now;
+        })
+        .map((item: any) => ({
+          id: item.id,
+          order_id: item.order_id,
+          name: item.name,
+          market_id: item.market_id,
+          market: item.market,
+          product_id: item.product_id,
+          price_amount: item.price_amount,
+          price_currency: item.price_currency,
+          quantity: item.quantity,
+          product_type: item.product_type,
+          product_category: item.product_category,
+          image_url: item.image_url,
+          color: item.color,
+          size: item.size,
+
+          // Order fields
+          order_number: order.order_number,
+          payment_status: order.payment_status,
+          reference: order.reference,
+
+          // Flattened product fields
+          product_name: item.product?.name,
+          product_description: item.product?.description,
+          product_colours: item.product?.colours,
+          product_status: item.product?.status,
+          product_price_amount: item.product?.price_amount,
+          product_price_currency: item.product?.price_currency,
+          product_market_id: item.product?.market_id,
+
+          // Flattened billing details
+          first_name: billingDetails?.first_name,
+          last_name: billingDetails?.last_name,
+          email: billingDetails?.email,
+          phone_number: billingDetails?.phone_number,
+          country: billingDetails?.country,
+          country_code: billingDetails?.country_code,
+
+          // Computed field
+          total_amount: item.price_amount * item.quantity,
+        }));
     });
   }
 }

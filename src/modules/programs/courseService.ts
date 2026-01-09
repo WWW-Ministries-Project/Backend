@@ -143,4 +143,11 @@ export class CourseService {
       where: { id },
     });
   }
+
+  async checkIfInstructor(userId: number) {
+    const instructorCourses = await prisma.course.findMany({
+      where: { instructorId: userId },
+    });
+    return instructorCourses.length > 0;
+  }
 }
