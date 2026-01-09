@@ -1,3 +1,4 @@
+import { max } from "date-fns";
 import { prisma } from "../../Models/context";
 import { toCapitalizeEachWord } from "../../utils";
 
@@ -279,6 +280,7 @@ export class ProgramService {
         data: {
           topicId: topic.id,
           type: learningUnit.type,
+          maxAttempts: learningUnit.maxAttempts,
           data: learningUnit.data,
         },
       });
@@ -659,7 +661,7 @@ export class ProgramService {
       where: { topicId },
     });
 
-    if (!learningUnit || learningUnit.type !== "assignment") {
+    if (!learningUnit || !learningUnit.type.startsWith("assignment")) {
       throw new Error("No MCQ assignment found for this topic");
     }
 
@@ -697,6 +699,19 @@ export class ProgramService {
 
     if (!cohortAssignment) {
       throw new Error("Assignment is not active for your cohort");
+    }
+
+    const previousSubmissions = await prisma.assignment_submission.findMany({
+      where: {
+        enrollmentId: enrollment.id,
+        learningUnitId: learningUnit.id,
+      },
+    });
+
+    const maxAttempts = learningUnit.maxAttempts ?? 3;
+    const currentAttempt = previousSubmissions.length + 1;
+    if (currentAttempt > maxAttempts) {
+      throw new Error(`Maximum attempts of ${maxAttempts} exceeded`);
     }
 
     const questions = (learningUnit?.data as any)?.questions as any[];
@@ -746,10 +761,12 @@ export class ProgramService {
     });
 
     return {
-      message: "Assignment submitted successfully",
+      submissionId: submission.id,
+      attempt: currentAttempt,
       score,
       totalQuestions,
       percentageScore,
+      maxAttempts,
     };
   }
   private validateLearningUnit(learningUnit: any) {

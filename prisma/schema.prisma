@@ -426,6 +426,7 @@ model LearningUnit {
   type    String
   data    Json
   version Int    @default(1)
+  maxAttempts Int?   @default(3)
 
   topic topic @relation(fields: [topicId], references: [id], onDelete: Cascade)
 
