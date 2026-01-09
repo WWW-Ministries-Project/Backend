@@ -478,7 +478,9 @@ export const login = async (req: Request, res: Response) => {
     const life_center_leader: boolean = await checkIfLifeCenterLeader(
       existance.id,
     );
-    const instructor: boolean = await courseService.checkIfInstructor(existance.id);
+    const instructor: boolean = await courseService.checkIfInstructor(
+      existance.id,
+    );
     if (await comparePassword(password, existance?.password)) {
       const token = JWT.sign(
         {

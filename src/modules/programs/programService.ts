@@ -547,6 +547,211 @@ export class ProgramService {
     return cohorts;
   }
 
+  async activateAssignmentForCohort(
+    cohortId: number,
+    topicId: number,
+    dueDate?: string,
+  ) {
+    const learningUnit = await prisma.learningUnit.findUnique({
+      where: { topicId },
+    });
+
+    if (!learningUnit) {
+      throw new Error("No learning unit found for this topic");
+    }
+
+    if (!learningUnit.type.startsWith("assignment")) {
+      throw new Error("Only assignment learning units can be activated");
+    }
+
+    return prisma.cohort_assignment.upsert({
+      where: {
+        cohortId_learningUnitId: {
+          cohortId,
+          learningUnitId: learningUnit.id,
+        },
+      },
+      update: {
+        isActive: true,
+        activatedAt: new Date(),
+        dueDate: new Date(dueDate!),
+        closedAt: null,
+      },
+      create: {
+        cohortId,
+        learningUnitId: learningUnit.id,
+        isActive: true,
+        activatedAt: new Date(),
+        dueDate,
+      },
+    });
+  }
+
+  async deactivateAssignmentForCohort(cohortId: number, topicId: number) {
+    const learningUnit = await prisma.learningUnit.findUnique({
+      where: { topicId },
+    });
+
+    if (!learningUnit) {
+      throw new Error("No learning unit found for this topic");
+    }
+
+    if (!learningUnit.type.startsWith("assignment")) {
+      throw new Error("Only assignment learning units can be deactivated");
+    }
+
+    const existing = await prisma.cohort_assignment.findUnique({
+      where: {
+        cohortId_learningUnitId: {
+          cohortId,
+          learningUnitId: learningUnit.id,
+        },
+      },
+    });
+
+    if (!existing || !existing.isActive) {
+      throw new Error("Assignment is not currently active for this cohort");
+    }
+
+    return prisma.cohort_assignment.update({
+      where: {
+        cohortId_learningUnitId: {
+          cohortId,
+          learningUnitId: learningUnit.id,
+        },
+      },
+      data: {
+        isActive: false,
+        closedAt: new Date(),
+      },
+    });
+  }
+
+  async isAssignmentActiveForCohort(cohortId: number, topicId: number) {
+    const learningUnit = await prisma.learningUnit.findUnique({
+      where: { topicId },
+      select: { id: true, type: true },
+    });
+
+    if (!learningUnit || !learningUnit.type.startsWith("assignment")) {
+      return false;
+    }
+
+    const assignment = await prisma.cohort_assignment.findUnique({
+      where: {
+        cohortId_learningUnitId: {
+          cohortId,
+          learningUnitId: learningUnit.id,
+        },
+      },
+    });
+
+    return !!assignment?.isActive;
+  }
+
+  async submitMCQAssignment(
+    userId: number,
+    programId: number,
+    topicId: number,
+    answers: Record<string, string>,
+  ) {
+    const learningUnit = await prisma.learningUnit.findUnique({
+      where: { topicId },
+    });
+
+    if (!learningUnit || learningUnit.type !== "assignment") {
+      throw new Error("No MCQ assignment found for this topic");
+    }
+
+    const enrollment = await prisma.enrollment.findFirst({
+      where: {
+        user_id: userId,
+        course: {
+          cohort: {
+            programId,
+          },
+        },
+      },
+      include: {
+        course: {
+          include: {
+            cohort: true,
+          },
+        },
+      },
+    });
+
+    if (!enrollment) {
+      throw new Error("User is not enrolled in this program");
+    }
+
+    const cohortAssignment = await prisma.cohort_assignment.findFirst({
+      where: {
+        cohortId: enrollment.course.cohortId,
+        learningUnitId: learningUnit.id,
+        isActive: true,
+        closedAt: null,
+        OR: [{ dueDate: null }, { dueDate: { gte: new Date() } }],
+      },
+    });
+
+    if (!cohortAssignment) {
+      throw new Error("Assignment is not active for your cohort");
+    }
+
+    const questions = (learningUnit?.data as any)?.questions as any[];
+    let score = 0;
+
+    for (const question of questions) {
+      const userAnswer = answers[question.id];
+      if (userAnswer && userAnswer === question.correctOptionId) {
+        score += 1;
+      }
+    }
+    const totalQuestions = questions.length;
+    const percentageScore = (score / questions.length) * 100;
+
+    const submission = await prisma.assignment_submission.create({
+      data: {
+        enrollmentId: enrollment.id,
+        learningUnitId: learningUnit.id,
+        content: answers,
+        status: "GRADED",
+        score,
+        gradedAt: new Date(),
+      },
+    });
+
+    await prisma.progress.upsert({
+      where: {
+        enrollmentId_topicId: {
+          enrollmentId: enrollment.id,
+          topicId,
+        },
+      },
+      update: {
+        score: percentageScore,
+        status: percentageScore >= 50 ? "PASS" : "FAIL",
+        completed: true,
+        completedAt: new Date(),
+      },
+      create: {
+        enrollmentId: enrollment.id,
+        topicId,
+        score: percentageScore,
+        status: percentageScore >= 50 ? "PASS" : "FAIL",
+        completed: true,
+        completedAt: new Date(),
+      },
+    });
+
+    return {
+      message: "Assignment submitted successfully",
+      score,
+      totalQuestions,
+      percentageScore,
+    };
+  }
   private validateLearningUnit(learningUnit: any) {
     if (!learningUnit?.type || !learningUnit?.data) {
       throw new Error("Invalid learning unit payload");

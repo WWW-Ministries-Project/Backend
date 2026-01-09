@@ -235,4 +235,80 @@ export class ProgramController {
         .json({ message: "Error fetching cohorts", error: error.message });
     }
   }
+
+  async activateCohortAssignment(req: Request, res: Response) {
+    try {
+      const { cohortId, topicId, dueDate } = req.body;
+      await programService.activateAssignmentForCohort(
+        Number(cohortId),
+        Number(topicId),
+        dueDate,
+      );
+      return res
+        .status(200)
+        .json({ message: "Cohort assignment activated successfully" });
+    } catch (error: any) {
+      return res.status(500).json({
+        message: "Error activating cohort assignment",
+        error: error.message,
+      });
+    }
+  }
+
+  async deactivateCohortAssignment(req: Request, res: Response) {
+    try {
+      const { cohortId, topicId } = req.body;
+      await programService.deactivateAssignmentForCohort(
+        Number(cohortId),
+        Number(topicId),
+      );
+      return res
+        .status(200)
+        .json({ message: "Cohort assignment deactivated successfully" });
+    } catch (error: any) {
+      return res.status(500).json({
+        message: "Error deactivating cohort assignment",
+        error: error.message,
+      });
+    }
+  }
+
+  async isAssignmentActiveForCohort(req: Request, res: Response) {
+    try {
+      const { cohortId, topicId } = req.query;
+      const isActive = await programService.isAssignmentActiveForCohort(
+        Number(cohortId),
+        Number(topicId),
+      );
+      return res.status(200).json({
+        message: "Cohort assignment status fetched successfully",
+        data: { isActive },
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        message: "Error fetching cohort assignment status",
+        error: error.message,
+      });
+    }
+  }
+
+  async submitMCQAssignment(req: Request, res: Response) {
+    try {
+      const { userId, assignmentId, topicId, answers } = req.body;
+      const result = await programService.submitMCQAssignment(
+        Number(userId),
+        Number(assignmentId),
+        Number(topicId),
+        answers,
+      );
+      return res
+        .status(200)
+        .json({ message: "MCQ Assignment submitted", data: result });
+    } catch (error: any) {
+      return res.status(500).json({
+        message: "Error submitting MCQ assignment",
+        error: error.message,
+      });
+    }
+  }
 }

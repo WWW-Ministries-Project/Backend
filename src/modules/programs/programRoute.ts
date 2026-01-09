@@ -75,6 +75,21 @@ programRouter.get(
   programController.getUserProgramCompletionStatus,
 );
 
+//Assignment stuffs
+programRouter.put(
+  "/activate-cohort-assignment",
+  programController.activateCohortAssignment,
+);
+programRouter.put(
+  "/deactivate-cohort-assignment",
+  programController.deactivateCohortAssignment,
+);
+programRouter.get(
+  "/is-assignment-active",
+  programController.isAssignmentActiveForCohort,
+);
+programRouter.post("/submit-mcq-assignment", programController.submitMCQAssignment);
+
 //topics enpoint
 programRouter.post("/topic", programController.createTopic);
 programRouter.put("/topic", programController.updateTopic);
