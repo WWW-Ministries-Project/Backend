@@ -419,33 +419,34 @@ export class OrderService {
       const billingDetails = order.billing_details;
 
       return order.items
-        .filter((item: any) => {
-          const market = item.market;
+        // .filter((item: any) => {
+        //   const market = item.market;
 
-          console.log("Filtering item:", item.id);
-          console.log("market:", market);
+        //   console.log("Filtering item:", item.id);
+        //   console.log("market:", market);
 
-          // Remove items without a market
-          if (!market) return false;
+        //   // Remove items without a market
+        //   if (!market) return false;
 
-          // Remove deleted markets
-          if (market.deleted === true) return false;
+        //   // Remove deleted markets
+        //   if (market.deleted === true) return false;
 
-          // Remove markets without end_date
-          if (!market.end_date) return true;
+        //   // Remove markets without end_date
+        //   if (!market.end_date) return true;
 
-          // Remove ended markets
-          const endDate = new Date(market.end_date);
-          const now = new Date();
+        //   // Remove ended markets
+        //   const endDate = new Date(market.end_date);
+        //   const now = new Date();
 
-          return endDate > now;
-        })
+        //   return endDate > now;
+        // })
         .map((item: any) => ({
           id: item.id,
           order_id: item.order_id,
           name: item.name,
           market_id: item.market_id,
-          market: item.market,
+          market_name: item.market?.name,
+          market_status: new Date(item.market?.end_date) > new Date() ? "Ended" : "Active",
           product_id: item.product_id,
           price_amount: item.price_amount,
           price_currency: item.price_currency,
