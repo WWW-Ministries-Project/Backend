@@ -183,7 +183,11 @@ export class ProgramService {
     return await prisma.program.findUnique({
       where: { id },
       include: {
-        topics: true,
+        topics: {
+          include:{
+            LearningUnit: true,
+          }
+        },
         prerequisitePrograms: {
           select: {
             prerequisiteId: true,
