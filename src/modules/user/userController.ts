@@ -1031,28 +1031,28 @@ export const getUser = async (req: Request, res: Response) => {
     const spouses = relations
       .filter((r) => r.relation.toLowerCase() === "spouse")
       .map((r) => ({
-        ...r.family,
+        ...r.family.user_info,
         relation: r.relation,
       }));
 
     const relationChildren = relations
       .filter((r) => childKeywords.includes(r.relation.toLowerCase()))
       .map((r) => ({
-        ...r.family,
+        ...r.family.user_info,
         relation: r.relation,
       }));
 
     const parents = relations
       .filter((r) => r.relation.toLowerCase() === "parent")
       .map((r) => ({
-        ...r.family,
+        ...r.family.user_info,
         relation: r.relation,
       }));
 
     const relationSiblings = relations
       .filter((r) => siblingsKeywords.includes(r.relation.toLowerCase()))
       .map((r) => ({
-        ...r.family,
+        ...r.family.user_info,
         relation: r.relation,
       }));
 
@@ -1076,12 +1076,12 @@ export const getUser = async (req: Request, res: Response) => {
 
     // Merge children
     const childrenMap = new Map<number, any>();
-    [...relationChildren, ...biologicalChildren].forEach((c) =>
+    [...relationChildren, ...biologicalChildren].forEach((c:any) =>
       childrenMap.set(c.id, c),
     );
 
     // Siblings via parents
-    const parentIds = parents.map((p) => p.id);
+    const parentIds = parents.map((p:any) => p.id);
     const siblingsByParent =
       parentIds.length > 0
         ? await prisma.user.findMany({
@@ -1094,7 +1094,7 @@ export const getUser = async (req: Request, res: Response) => {
         : [];
 
     const siblingsMap = new Map<number, any>();
-    [...relationSiblings, ...siblingsByParent].forEach((s) =>
+    [...relationSiblings, ...siblingsByParent].forEach((s:any) =>
       siblingsMap.set(s.id, s),
     );
 
