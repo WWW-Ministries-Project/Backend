@@ -160,4 +160,27 @@ export class EnrollmentController {
       });
     }
   }
+
+  // async markCourseAsComplete(req: Request, res: Response) {
+  //   const { id } = req.query;
+
+  //   try {
+  //     const response = await enrollment.completeEnrollment(Number(id));
+  //     if (response) {
+  //       res.status(200).json({
+  //         message: "Enrolment completed successfully.",
+  //       });
+  //     } else {
+  //       res.status(200).json({
+  //         message: "Enrolment not completed successfully.",
+  //       });
+  //     }
+  //   } catch (error) {
+  //     console.error(error);
+  //     res.status(500).json({
+  //       message: "Failed to update progress scores.",
+  //       error,
+  //     });
+  //   }
+  // }
 }

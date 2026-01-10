@@ -24,6 +24,7 @@ import {
   activateAccount,
   updateUserPasswordToDefault,
   sendEmailToAllUsers,
+  filterUsersInfo,
 } from "../user/userController";
 import { Permissions } from "../../middleWare/authorization";
 const permissions = new Permissions();
@@ -37,6 +38,8 @@ userRouter.get("/get-user", getUser);
 userRouter.get("/list-users", ListUsers);
 
 userRouter.get("/list-users-light", ListUsersLight);
+
+userRouter.get("/search-users", filterUsersInfo);
 
 userRouter.get("/stats-users", [protect], statsUsers);
 
@@ -88,11 +91,7 @@ userRouter.put(
   linkSpouses,
 );
 
-userRouter.get(
-  "/get-user-family",
-  [protect, permissions.can_Manage_Members],
-  getUserFamily,
-);
+userRouter.get("/get-user-family", getUserFamily);
 
 userRouter.put(
   "/link-children",

@@ -478,6 +478,9 @@ export const login = async (req: Request, res: Response) => {
     const life_center_leader: boolean = await checkIfLifeCenterLeader(
       existance.id,
     );
+    const instructor: boolean = await courseService.checkIfInstructor(
+      existance.id,
+    );
     if (await comparePassword(password, existance?.password)) {
       const token = JWT.sign(
         {
@@ -490,6 +493,7 @@ export const login = async (req: Request, res: Response) => {
           membership_type: existance.membership_type || null,
           department,
           life_center_leader,
+          instructor,
           phone: existance.user_info?.primary_number || null,
           member_since: existance.user_info?.member_since || null,
         },
@@ -686,8 +690,11 @@ export const ListUsers = async (req: Request, res: Response) => {
     take = "12",
     is_active,
     name,
+    ministry_worker,
+    membership_type,
   } = req.query;
-  const isUser = is_user === "true";
+  const isUser =
+    is_user === "true" || ministry_worker === "true" ? true : false;
 
   const pageNum = parseInt(page as string, 10);
   const pageSize = parseInt(take as string, 10);
@@ -708,6 +715,7 @@ export const ListUsers = async (req: Request, res: Response) => {
     if (is_active !== undefined) whereFilter.is_active = is_active;
     if (is_user !== undefined) whereFilter.is_user = isUser;
     if (department_id) whereFilter.department_id = Number(department_id);
+    if (membership_type) whereFilter.membership_type = membership_type;
     if (typeof name === "string" && name.trim()) {
       whereFilter.name = { contains: name.trim() };
     }
@@ -802,6 +810,74 @@ export const ListUsersLight = async (req: Request, res: Response) => {
     });
   } catch (error) {
     return res.status(500).json({ message: "Something Went Wrong", error });
+  }
+};
+
+export const filterUsersInfo = async (req: Request, res: Response) => {
+  const {
+    name,
+    membership_type,
+    ministry_worker,
+    page = "1",
+    take = "10",
+  } = req.query;
+
+  try {
+    // Convert pagination params to numbers
+    const pageNum = parseInt(page as string, 10) || 1;
+    const limitNum = parseInt(take as string, 10) || 10;
+    const skip = (pageNum - 1) * limitNum;
+
+    const filters: any = {};
+
+    if (name) {
+      filters.name = {
+        contains: String(name),
+        mode: "insensitive",
+      };
+    }
+
+    if (membership_type) {
+      filters.membership_type = String(membership_type);
+    }
+
+    if (ministry_worker !== undefined) {
+      filters.is_user = ministry_worker === "true";
+    }
+
+    // Fetch total count for pagination info
+    const total = await prisma.user.count({ where: filters });
+
+    // Fetch paginated users
+    const users = await prisma.user.findMany({
+      where: filters,
+      include: {
+        user_info: true,
+      },
+      orderBy: {
+        created_at: "asc",
+      },
+      skip,
+      take: limitNum,
+    });
+
+    const totalPages = Math.ceil(total / limitNum);
+
+    return res.status(200).json({
+      message: "Users fetched successfully",
+      page: pageNum,
+      limit: limitNum,
+      total,
+      totalPages,
+      count: users.length,
+      data: users,
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({
+      message: "Something Went Wrong",
+      error: error instanceof Error ? error.message : error,
+    });
   }
 };
 

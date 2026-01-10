@@ -49,12 +49,17 @@ model user {
   soul_won              soul_won[]             @relation("user_soul_winner")
   department_positions  department_positions[]
 
-  spouse_id   Int?          @unique
-  spouse      user?         @relation("SpouseRelation", fields: [spouse_id], references: [id])
-  spouse_of   user?         @relation("SpouseRelation")
-  course      course[]
-  orders      orders[]
-  certificate certificate[]
+  spouse_id             Int?                    @unique
+  spouse                user?                   @relation("SpouseRelation", fields: [spouse_id], references: [id])
+  spouse_of             user?                   @relation("SpouseRelation")
+  course                course[]
+  orders                orders[]
+  certificate           certificate[]
+  event_registers       event_registers[]
+  assignment_submission assignment_submission[]
+
+  family_links    family_relation[] @relation("UserFamily")
+  family_of_links family_relation[] @relation("FamilyUser")
 
   @@index([access_level_id], map: "user_access_level_id_fkey")
   @@index([position_id], map: "user_position_id_fkey")
@@ -93,6 +98,19 @@ model user_info {
   @@index([emergency_contact_id], map: "user_info_emergency_contact_id_fkey")
   @@index([work_info_id], map: "user_info_work_info_id_fkey")
 }
+
+model family_relation {
+  id         Int    @id @default(autoincrement())
+  user_id    Int
+  family_id  Int
+  relation   String
+
+  user       user   @relation("UserFamily", fields: [user_id], references: [id])
+  family     user   @relation("FamilyUser", fields: [family_id], references: [id])
+
+  @@unique([user_id, family_id])
+}
+
 
 model user_work_info {
   id                  Int         @id @default(autoincrement())
@@ -247,10 +265,23 @@ model event_mgt {
   request          request[]
   visit            visit[]
 
-  markets markets[]
+  markets         markets[]
+  event_registers event_registers[]
 }
 
 model event_attendance {
+  id         Int       @id @default(autoincrement())
+  event_id   Int
+  user_id    Int
+  created_at DateTime  @default(now())
+  event      event_mgt @relation(fields: [event_id], references: [id])
+  user       user      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([event_id], map: "event_attendance_event_id_fkey")
+  @@index([user_id], map: "event_attendance_user_id_fkey")
+}
+
+model event_registers {
   id         Int       @id @default(autoincrement())
   event_id   Int
   user_id    Int
@@ -363,7 +394,6 @@ model program {
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
-  // Define relation for prerequisites
   prerequisitePrograms program_prerequisites[] @relation("ProgramToPrerequisite")
   requiredForPrograms  program_prerequisites[] @relation("ProgramToRequired")
   certificate          certificate[]
@@ -373,19 +403,35 @@ model program_prerequisites {
   programId      Int
   prerequisiteId Int
 
-  // Relations
   program      program @relation("ProgramToPrerequisite", fields: [programId], references: [id], onDelete: Cascade)
   prerequisite program @relation("ProgramToRequired", fields: [prerequisiteId], references: [id], onDelete: Cascade)
 
-  @@id([programId, prerequisiteId]) // Composite Primary Key
+  @@id([programId, prerequisiteId])
 }
 
 model topic {
-  id        Int        @id @default(autoincrement())
-  name      String
-  programId Int
-  program   program    @relation(fields: [programId], references: [id], onDelete: Cascade)
-  progress  progress[]
+  id           Int           @id @default(autoincrement())
+  name         String
+  programId    Int
+  description  String?
+  order_number Int?
+  program      program       @relation(fields: [programId], references: [id], onDelete: Cascade)
+  progress     progress[]
+  LearningUnit LearningUnit?
+}
+
+model LearningUnit {
+  id      Int    @id @default(autoincrement())
+  topicId Int    @unique
+  type    String
+  data    Json
+  version Int    @default(1)
+  maxAttempts Int?   @default(3)
+
+  topic topic @relation(fields: [topicId], references: [id], onDelete: Cascade)
+
+  cohortAssignments cohort_assignment[]
+  submissions       assignment_submission[]
 }
 
 model cohort {
@@ -401,6 +447,8 @@ model cohort {
   courses             course[]
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
+
+  assignments cohort_assignment[]
 }
 
 model course {
@@ -422,13 +470,17 @@ model course {
 }
 
 model enrollment {
-  id         Int        @id @default(autoincrement())
-  user_id    Int?
-  course_id  Int
-  user       user?      @relation(fields: [user_id], references: [id], onDelete: Cascade)
-  course     course     @relation(fields: [course_id], references: [id], onDelete: Cascade)
-  enrolledAt DateTime   @default(now())
-  progress   progress[]
+  id          Int        @id @default(autoincrement())
+  user_id     Int?
+  course_id   Int
+  user        user?      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  course      course     @relation(fields: [course_id], references: [id], onDelete: Cascade)
+  enrolledAt  DateTime   @default(now())
+  progress    progress[]
+  completed   Boolean?   @default(false)
+  completedAt DateTime?
+
+  submissions assignment_submission[]
 
   @@unique([user_id, course_id])
 }
@@ -443,15 +495,62 @@ model progress {
   id           Int             @id @default(autoincrement())
   enrollmentId Int
   topicId      Int
-  score        Int             @default(0) // Score for the topic
+  score        Int             @default(0)
   status       progress_status @default(PENDING)
   completedAt  DateTime?
   notes        String?
+  completed    Boolean?        @default(false)
 
   enrollment enrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
   topic      topic      @relation(fields: [topicId], references: [id], onDelete: Cascade)
 
   @@unique([enrollmentId, topicId])
+}
+
+model cohort_assignment {
+  id             Int       @id @default(autoincrement())
+  cohortId       Int
+  learningUnitId Int
+  isActive       Boolean   @default(false)
+  activatedAt    DateTime?
+  dueDate        DateTime?
+  closedAt       DateTime?
+
+  cohort       cohort       @relation(fields: [cohortId], references: [id], onDelete: Cascade)
+  learningUnit LearningUnit @relation(fields: [learningUnitId], references: [id], onDelete: Cascade)
+
+  @@unique([cohortId, learningUnitId])
+}
+
+model assignment_submission {
+  id             Int @id @default(autoincrement())
+  enrollmentId   Int
+  learningUnitId Int
+
+  content Json?
+  fileUrl String?
+  attempt Int     @default(1)
+
+  status      submission_status @default(SUBMITTED)
+  submittedAt DateTime          @default(now())
+
+  score      Int?
+  feedback   String?
+  gradedById Int?
+  gradedAt   DateTime?
+
+  enrollment   enrollment   @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  learningUnit LearningUnit @relation(fields: [learningUnitId], references: [id], onDelete: Cascade)
+  gradedBy     user?        @relation(fields: [gradedById], references: [id])
+
+  @@index([enrollmentId, learningUnitId])
+}
+
+enum submission_status {
+  SUBMITTED
+  RESUBMITTED
+  GRADED
+  RETURNED
 }
 
 enum progress_status {

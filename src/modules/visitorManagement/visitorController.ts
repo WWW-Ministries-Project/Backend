@@ -19,7 +19,8 @@ export class VisitorController {
 
   async getAllVisitors(req: Request, res: Response) {
     try {
-      const programs = await visitorService.getAllVisitors();
+      const queryParams = req.query as any;
+      const programs = await visitorService.getAllVisitors(queryParams);
       return res.status(200).json({ data: programs });
     } catch (error: any) {
       return res

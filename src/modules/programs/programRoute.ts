@@ -22,6 +22,14 @@ programRouter.get(
   "/get-member-programs",
   programController.getAllProgramForMember,
 );
+programRouter.get(
+  "/get-instructor-programs",
+  programController.getProgramsByinstructor,
+);
+programRouter.get(
+  "/get-cohorts-by-program",
+  programController.getCohortsByProgram,
+);
 
 //cohort enpoint
 programRouter.post("/cohort", cohortController.createCohort);
@@ -62,9 +70,45 @@ programRouter.put(
 
 programRouter.get("/my-enrollment", enrollmentController.myEnrollment);
 
+programRouter.get(
+  "/program-completion-status",
+  programController.getUserProgramCompletionStatus,
+);
+
+//Assignment stuffs
+programRouter.put(
+  "/activate-cohort-assignment",
+  programController.activateCohortAssignment,
+);
+programRouter.put(
+  "/deactivate-cohort-assignment",
+  programController.deactivateCohortAssignment,
+);
+programRouter.get(
+  "/is-assignment-active",
+  programController.isAssignmentActiveForCohort,
+);
+programRouter.post(
+  "/submit-mcq-assignment",
+  programController.submitMCQAssignment,
+);
+programRouter.get(
+  "/assignment-results",
+  programController.getAssignmentResults,
+);
+
+programRouter.get(
+  "/get-cohort-assigments",
+  programController.getAssignmentsByCohort,
+);
+
 //topics enpoint
 programRouter.post("/topic", programController.createTopic);
 programRouter.put("/topic", programController.updateTopic);
 programRouter.delete("/topic", programController.deleteTopic);
+programRouter.get("/topic", programController.getTopic);
+programRouter.get("/topics", programController.getAllTopics);
+
+programRouter.put("/complete-topic", programController.completeTopic);
 
 export default programRouter;

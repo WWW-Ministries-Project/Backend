@@ -3,6 +3,7 @@ import { prisma } from "../../Models/context";
 import { Request, Response } from "express";
 import * as dotenv from "dotenv";
 import { addDays } from "date-fns";
+import { number } from "joi";
 
 dotenv.config();
 
@@ -34,7 +35,7 @@ export class eventManagement {
         return res.status(400).json({ message: "Event Name Id not found" });
       }
       let { start_date, end_date, day_event, repetitive, recurring } = req.body;
-    
+
       if (day_event === "multi" && repetitive === "no") {
         end_date = addDays(start_date, recurring.daysOfWeek);
         const data2 = generateRecurringDates(start_date, end_date, recurring);
@@ -926,6 +927,197 @@ export class eventManagement {
       return res.status(500).json({
         message: "Failed to delete event type",
         error: error.message,
+      });
+    }
+  };
+
+  register = async (req: Request, res: Response) => {
+    try {
+      const { event_id, user_id } = req.body;
+
+      if (!event_id || !user_id) {
+        return res.status(400).json({
+          success: false,
+          message: "event_id and user_id are required",
+        });
+      }
+
+      // Check if already registered
+      const existing = await prisma.event_registers.findFirst({
+        where: {
+          event_id: Number(event_id),
+          user_id: Number(user_id),
+        },
+      });
+
+      if (existing) {
+        return res.status(400).json({
+          success: false,
+          message: "User already registered for this event",
+        });
+      }
+
+      // Create new registration
+      const registration = await prisma.event_registers.create({
+        data: {
+          event_id: Number(event_id),
+          user_id: Number(user_id),
+        },
+        include: {
+          user: {
+            select: {
+              name: true,
+              user_info: {
+                select: {
+                  first_name: true,
+                  last_name: true,
+                  primary_number: true,
+                },
+              },
+            },
+          },
+        },
+      });
+
+      return res.status(201).json({
+        success: true,
+        message: "User registered successfully",
+        registration,
+      });
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({
+        success: false,
+        message: "Something went wrong",
+      });
+    }
+  };
+
+  allRegisteredMembers = async (req: Request, res: Response) => {
+    try {
+      const { event_id } = req.query;
+
+      if (!event_id) {
+        return res.status(400).json({
+          success: false,
+          message: "event_id is required",
+        });
+      }
+
+      const members = await prisma.event_registers.findMany({
+        where: {
+          event_id: Number(event_id),
+        },
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              user_info: {
+                select: {
+                  first_name: true,
+                  last_name: true,
+                  other_name: true,
+                  primary_number: true,
+                  country_code: true,
+                  country: true,
+                },
+              },
+            },
+          },
+        },
+      });
+
+      const flattenedMembers = members.map((m) => ({
+        id: m.id,
+        event_id: m.event_id,
+        user_id: m.user_id,
+        created_at: m.created_at,
+        name: m.user.name,
+        number: m.user.user_info?.primary_number || null,
+        country_code: m.user.user_info?.country_code || null,
+        ...m.user.user_info,
+      }));
+
+      return res.status(200).json({
+        success: true,
+        message: "All registered members fetched successfully",
+        members: flattenedMembers,
+      });
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({
+        success: false,
+        message: "Something went wrong",
+      });
+    }
+  };
+
+  registeredMember = async (req: Request, res: Response) => {
+    try {
+      const { event_id, user_id } = req.body;
+
+      if (!event_id || !user_id) {
+        return res.status(400).json({
+          success: false,
+          message: "event_id and user_id are required",
+        });
+      }
+
+      const member = await prisma.event_registers.findFirst({
+        where: {
+          event_id: Number(event_id),
+          user_id: Number(user_id),
+        },
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              user_info: {
+                select: {
+                  first_name: true,
+                  last_name: true,
+                  other_name: true,
+                  primary_number: true,
+                  country_code: true,
+                  country: true,
+                },
+              },
+            },
+          },
+        },
+      });
+
+      if (!member) {
+        return res.status(404).json({
+          success: false,
+          message: "Member not found for this event",
+        });
+      }
+
+      // flatten
+      const flattened = {
+        id: member.id,
+        event_id: member.event_id,
+        user_id: member.user_id,
+        created_at: member.created_at,
+        name: member.user.name,
+        number: member.user.user_info?.primary_number || null,
+        country_code: member.user.user_info?.country_code || null,
+        ...member.user.user_info,
+      };
+
+      return res.status(200).json({
+        success: true,
+        message: "Registered member fetched successfully",
+        member: flattened,
+      });
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({
+        success: false,
+        message: "Something went wrong",
       });
     }
   };
