@@ -1,4 +1,4 @@
-import { max } from "date-fns";
+import { max, sub } from "date-fns";
 import { prisma } from "../../Models/context";
 import { toCapitalizeEachWord } from "../../utils";
 
@@ -53,7 +53,10 @@ export class ProgramService {
           id: program.id,
           name: program.title,
           upcomingCohort: selectedCohort.name,
-          topics: program.topics.map((t) => t.name),
+          topics: program.topics.map((t) => ({
+            name: t.name,
+            description: t.description,
+          })),
           member_required: program.member_required,
           leader_required: program.leader_required,
           ministry_required: program.ministry_required,
@@ -183,7 +186,11 @@ export class ProgramService {
     return await prisma.program.findUnique({
       where: { id },
       include: {
-        topics: true,
+        topics: {
+          include: {
+            LearningUnit: true,
+          },
+        },
         prerequisitePrograms: {
           select: {
             prerequisiteId: true,
@@ -404,6 +411,7 @@ export class ProgramService {
         },
       },
       include: {
+        submissions:true,
         progress: {
           where: { topicId },
         },
@@ -449,7 +457,7 @@ export class ProgramService {
       });
     }
 
-    return updatedProgress;
+    return { updatedProgress, submissions: enrollment.submissions.length };
   }
 
   async getUserProgramWithProgressAndLearningUnit(
@@ -478,7 +486,11 @@ export class ProgramService {
                         order_number: "asc",
                       },
                       include: {
-                        LearningUnit: true,
+                        LearningUnit: {
+                          include: {
+                            cohortAssignments: true,
+                          },
+                        },
                       },
                     },
                   },
@@ -497,6 +509,7 @@ export class ProgramService {
     const program = enrollment.course.cohort.program;
 
     const topics = program.topics.map((topic) => {
+      const activation = topic.LearningUnit?.cohortAssignments[0] ?? null;
       const progress = enrollment.progress.find((p) => p.topicId === topic.id);
 
       return {
@@ -513,9 +526,23 @@ export class ProgramService {
               id: topic.LearningUnit.id,
               type: topic.LearningUnit.type,
               data: topic.LearningUnit.data,
+              maxAttempts: topic.LearningUnit.maxAttempts,
               version: topic.LearningUnit.version,
             }
           : null,
+        activation: activation
+          ? {
+              isActive: activation.isActive,
+              activatedAt: activation.activatedAt,
+              dueDate: activation.dueDate,
+              closedAt: activation.closedAt,
+            }
+          : {
+              isActive: true,
+              activatedAt: null,
+              dueDate: null,
+              closedAt: null,
+            },
       };
     });
 
@@ -545,6 +572,14 @@ export class ProgramService {
   async getCohortsByProgram(programId: number) {
     const cohorts = await prisma.cohort.findMany({
       where: { programId },
+      include:{
+        courses:{
+          select:{
+            id:true,
+            name:true,
+          }
+        }
+      },
     });
     return cohorts;
   }
@@ -771,179 +806,172 @@ export class ProgramService {
   }
 
   async getAssignmentResults(
-  topicId: number,
-  filters?: {
-    cohortId?: number;
-    programId?: number;
-  },
-) {
-  // 1️⃣ Resolve learning unit
-  const learningUnit = await prisma.learningUnit.findUnique({
-    where: { topicId },
-  });
-
-  if (!learningUnit) {
-    throw new Error("Learning unit not found for this topic");
-  }
-
-  if (!learningUnit.type.startsWith("assignment")) {
-    throw new Error("This topic is not an assignment");
-  }
-
-  // 2️⃣ Build dynamic enrollment filter
-  const enrollmentWhere: any = {};
-
-  if (filters?.cohortId) {
-    enrollmentWhere.course = {
-      cohortId: filters.cohortId,
-    };
-  }
-
-  if (filters?.programId) {
-    enrollmentWhere.course = {
-      ...(enrollmentWhere.course ?? {}),
-      cohort: {
-        programId: filters.programId,
-      },
-    };
-  }
-
-  // 3️⃣ Fetch enrollments
-  const enrollments = await prisma.enrollment.findMany({
-    where: enrollmentWhere,
-    include: {
-      user: {
-        select: {
-          id: true,
-          name: true,
-          email: true,
-        },
-      },
-      submissions: {
-        where: {
-          learningUnitId: learningUnit.id,
-        },
-        orderBy: {
-          attempt: "desc",
-        },
-      },
-      progress: {
-        where: {
-          topicId,
-        },
-      },
+    topicId: number,
+    filters?: {
+      cohortId?: number;
+      programId?: number;
     },
-  });
+  ) {
+    // 1️⃣ Resolve learning unit
+    const learningUnit = await prisma.learningUnit.findUnique({
+      where: { topicId },
+    });
 
-  return enrollments.map((enrollment) => {
-    const latestSubmission = enrollment.submissions[0] ?? null;
-    const progress = enrollment.progress[0] ?? null;
+    if (!learningUnit) {
+      throw new Error("Learning unit not found for this topic");
+    }
 
-    return {
-      student: {
-        id: enrollment.user?.id,
-        name: `${enrollment.user?.name ?? ""}`,
-        email: enrollment.user?.email,
-      },
+    if (!learningUnit.type.startsWith("assignment")) {
+      throw new Error("This topic is not an assignment");
+    }
 
-      submission: latestSubmission
-        ? {
-            id: latestSubmission.id,
-            attempt: latestSubmission.attempt,
-            score: latestSubmission.score,
-            status: latestSubmission.status,
-            submittedAt: latestSubmission.submittedAt,
-          }
-        : null,
+    // 2️⃣ Build dynamic enrollment filter
+    const enrollmentWhere: any = {};
 
-      progress: progress
-        ? {
-            score: progress.score,
-            status: progress.status,
-            completed: progress.completed,
-            completedAt: progress.completedAt,
-          }
-        : {
-            score: null,
-            status: "PENDING",
-            completed: false,
+    if (filters?.cohortId) {
+      enrollmentWhere.course = {
+        cohortId: filters.cohortId,
+      };
+    }
+
+    if (filters?.programId) {
+      enrollmentWhere.course = {
+        ...(enrollmentWhere.course ?? {}),
+        cohort: {
+          programId: filters.programId,
+        },
+      };
+    }
+
+    // 3️⃣ Fetch enrollments
+    const enrollments = await prisma.enrollment.findMany({
+      where: enrollmentWhere,
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
           },
-    };
-  });
-}
-
-async getAssignmentsByCohort(
-  cohortId: number,
-  options?: {
-    activeOnly?: boolean;
-    type?: string;
-  },
-) {
-  const where: any = {
-    cohortId,
-    learningUnit: {
-      type: {
-        startsWith: "assignment",
+        },
+        submissions: {
+          where: {
+            learningUnitId: learningUnit.id,
+          },
+          orderBy: {
+            attempt: "desc",
+          },
+        },
+        progress: {
+          where: {
+            topicId,
+          },
+        },
       },
-    },
-  };
+    });
 
-  if (options?.activeOnly) {
-    where.isActive = true;
-  }
+    return enrollments.map((enrollment) => {
+      const latestSubmission = enrollment.submissions[0] ?? null;
+      const progress = enrollment.progress[0] ?? null;
 
-  if (options?.type) {
-    where.learningUnit.type = options.type;
-  }
+      return {
+        student: {
+          id: enrollment.user?.id,
+          name: `${enrollment.user?.name ?? ""}`,
+          email: enrollment.user?.email,
+        },
 
-  const assignments = await prisma.cohort_assignment.findMany({
-    where,
-    include: {
-      learningUnit: {
-        include: {
-          topic: {
-            include: {
-              program: true,
+        submission: latestSubmission
+          ? {
+              id: latestSubmission.id,
+              attempt: latestSubmission.attempt,
+              score: latestSubmission.score,
+              status: latestSubmission.status,
+              submittedAt: latestSubmission.submittedAt,
+            }
+          : null,
+
+        progress: progress
+          ? {
+              score: progress.score,
+              status: progress.status,
+              completed: progress.completed,
+              completedAt: progress.completedAt,
+            }
+          : {
+              score: null,
+              status: "PENDING",
+              completed: false,
             },
+      };
+    });
+  }
+
+  async getAssignmentsForCohort(cohortId: number) {
+    const cohort = await prisma.cohort.findUnique({
+      where: { id: cohortId },
+      select: { id: true, programId: true },
+    });
+
+    if (!cohort) {
+      throw new Error("Cohort not found");
+    }
+
+    const learningUnits = await prisma.learningUnit.findMany({
+      where: {
+        type: {
+          startsWith: "assignment",
+        },
+        topic: {
+          programId: cohort.programId,
+        },
+      },
+      include: {
+        topic: true,
+        cohortAssignments: {
+          where: {
+            cohortId: cohort.id,
           },
         },
       },
-    },
-    orderBy: {
-      activatedAt: "desc",
-    },
-  });
+      orderBy: {
+        topic: {
+          order_number: "asc",
+        },
+      },
+    });
 
-  return assignments.map((a) => ({
-    cohortAssignmentId: a.id,
+    return learningUnits.map((lu) => {
+      const activation = lu.cohortAssignments[0] ?? null;
 
-    // Activation info
-    isActive: a.isActive,
-    activatedAt: a.activatedAt,
-    dueDate: a.dueDate,
-    closedAt: a.closedAt,
+      return {
+        learningUnitId: lu.id,
+        type: lu.type,
+        version: lu.version,
 
-    // Learning unit
-    learningUnit: {
-      id: a.learningUnit.id,
-      type: a.learningUnit.type,
-      version: a.learningUnit.version,
-    },
+        topic: {
+          id: lu.topic.id,
+          name: lu.topic.name,
+          description: lu.topic.description,
+          order: lu.topic.order_number,
+        },
 
-    topic: {
-      id: a.learningUnit.topic.id,
-      name: a.learningUnit.topic.name,
-      description: a.learningUnit.topic.description,
-      order: a.learningUnit.topic.order_number,
-    },
-
-    program: {
-      id: a.learningUnit.topic.program.id,
-      title: a.learningUnit.topic.program.title,
-    },
-  }));
-}
-
+        activation: activation
+          ? {
+              isActive: activation.isActive,
+              activatedAt: activation.activatedAt,
+              dueDate: activation.dueDate,
+              closedAt: activation.closedAt,
+            }
+          : {
+              isActive: false,
+              activatedAt: null,
+              dueDate: null,
+              closedAt: null,
+            },
+      };
+    });
+  }
 
   private validateLearningUnit(learningUnit: any) {
     if (!learningUnit?.type || !learningUnit?.data) {
