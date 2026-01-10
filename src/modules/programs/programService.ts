@@ -1,4 +1,4 @@
-import { max } from "date-fns";
+import { max, sub } from "date-fns";
 import { prisma } from "../../Models/context";
 import { toCapitalizeEachWord } from "../../utils";
 
@@ -411,6 +411,7 @@ export class ProgramService {
         },
       },
       include: {
+        submissions:true,
         progress: {
           where: { topicId },
         },
@@ -456,7 +457,7 @@ export class ProgramService {
       });
     }
 
-    return updatedProgress;
+    return { updatedProgress, submissions: enrollment.submissions.length };
   }
 
   async getUserProgramWithProgressAndLearningUnit(
@@ -525,6 +526,7 @@ export class ProgramService {
               id: topic.LearningUnit.id,
               type: topic.LearningUnit.type,
               data: topic.LearningUnit.data,
+              maxAttempts: topic.LearningUnit.maxAttempts,
               version: topic.LearningUnit.version,
             }
           : null,
@@ -536,7 +538,7 @@ export class ProgramService {
               closedAt: activation.closedAt,
             }
           : {
-              isActive: false,
+              isActive: true,
               activatedAt: null,
               dueDate: null,
               closedAt: null,
@@ -570,6 +572,14 @@ export class ProgramService {
   async getCohortsByProgram(programId: number) {
     const cohorts = await prisma.cohort.findMany({
       where: { programId },
+      include:{
+        courses:{
+          select:{
+            id:true,
+            name:true,
+          }
+        }
+      },
     });
     return cohorts;
   }
