@@ -53,7 +53,7 @@ export class ProgramService {
           id: program.id,
           name: program.title,
           upcomingCohort: selectedCohort.name,
-          topics: program.topics.map((t) => t.name),
+          topics: program.topics.map((t) => ({ name: t.name, description: t.description })),
           member_required: program.member_required,
           leader_required: program.leader_required,
           ministry_required: program.ministry_required,
@@ -482,7 +482,11 @@ export class ProgramService {
                         order_number: "asc",
                       },
                       include: {
-                        LearningUnit: true,
+                        LearningUnit: {
+                          include:{
+                            cohortAssignments: true
+                          }
+                        },
                       },
                     },
                   },
@@ -501,6 +505,7 @@ export class ProgramService {
     const program = enrollment.course.cohort.program;
 
     const topics = program.topics.map((topic) => {
+      const activation = topic.LearningUnit?.cohortAssignments[0] ?? null;
       const progress = enrollment.progress.find((p) => p.topicId === topic.id);
 
       return {
@@ -520,6 +525,19 @@ export class ProgramService {
               version: topic.LearningUnit.version,
             }
           : null,
+          activation: activation
+        ? {
+            isActive: activation.isActive,
+            activatedAt: activation.activatedAt,
+            dueDate: activation.dueDate,
+            closedAt: activation.closedAt,
+          }
+        : {
+            isActive: false,
+            activatedAt: null,
+            dueDate: null,
+            closedAt: null,
+          },
       };
     });
 
