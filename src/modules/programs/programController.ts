@@ -311,4 +311,42 @@ export class ProgramController {
       });
     }
   }
+
+  async getAssignmentResults(req: Request, res: Response) {
+    try {
+      const { topicId, cohortId, programId } = req.query;
+      const filters: { cohortId?: number; programId?: number } = {};
+      if (cohortId) filters.cohortId = Number(cohortId);
+      if (programId) filters.programId = Number(programId);
+
+      const results = await programService.getAssignmentResults(
+        Number(topicId),
+        filters,
+      );
+      return res
+        .status(200)
+        .json({ message: "Assignment results fetched", data: results });
+    } catch (error: any) {
+      return res.status(500).json({
+        message: "Error fetching assignment results",
+        error: error.message,
+      });
+    }
+  }
+
+  async getAssignmentsByCohort(req: Request, res: Response) {
+    try {
+      const { cohortId } = req.query;
+      const assignments = await programService.getAssignmentsByCohort(
+        Number(cohortId),
+      );
+      return res
+        .status(200)
+        .json({ message: "Assignments fetched", data: assignments });
+    } catch (error: any) {
+      return res
+        .status(500)
+        .json({ message: "Error fetching assignments", error: error.message });
+    }
+  } 
 }

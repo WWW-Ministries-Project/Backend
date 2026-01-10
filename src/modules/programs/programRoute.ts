@@ -92,6 +92,15 @@ programRouter.post(
   "/submit-mcq-assignment",
   programController.submitMCQAssignment,
 );
+programRouter.get(
+  "/assignment-results",
+  programController.getAssignmentResults,
+);
+
+programRouter.get(
+  "/get-cohort-assigments",
+  programController.getAssignmentsByCohort,
+);
 
 //topics enpoint
 programRouter.post("/topic", programController.createTopic);
