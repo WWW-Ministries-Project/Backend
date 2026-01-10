@@ -872,76 +872,70 @@ export class ProgramService {
   });
 }
 
-async getAssignmentsByCohort(
-  cohortId: number,
-  options?: {
-    activeOnly?: boolean;
-    type?: string;
-  },
-) {
-  const where: any = {
-    cohortId,
-    learningUnit: {
+async getAssignmentsForCohort(cohortId: number) {
+  const cohort = await prisma.cohort.findUnique({
+    where: { id: cohortId },
+    select: { id: true, programId: true },
+  });
+
+  if (!cohort) {
+    throw new Error("Cohort not found");
+  }
+
+  const learningUnits = await prisma.learningUnit.findMany({
+    where: {
       type: {
         startsWith: "assignment",
       },
+      topic: {
+        programId: cohort.programId,
+      },
     },
-  };
-
-  if (options?.activeOnly) {
-    where.isActive = true;
-  }
-
-  if (options?.type) {
-    where.learningUnit.type = options.type;
-  }
-
-  const assignments = await prisma.cohort_assignment.findMany({
-    where,
     include: {
-      learningUnit: {
-        include: {
-          topic: {
-            include: {
-              program: true,
-            },
-          },
+      topic: true,
+      cohortAssignments: {
+        where: {
+          cohortId: cohort.id,
         },
       },
     },
     orderBy: {
-      activatedAt: "desc",
+      topic: {
+        order_number: "asc",
+      },
     },
   });
 
-  return assignments.map((a) => ({
-    cohortAssignmentId: a.id,
+  return learningUnits.map((lu) => {
+    const activation = lu.cohortAssignments[0] ?? null;
 
-    // Activation info
-    isActive: a.isActive,
-    activatedAt: a.activatedAt,
-    dueDate: a.dueDate,
-    closedAt: a.closedAt,
+    return {
+      learningUnitId: lu.id,
+      type: lu.type,
+      version: lu.version,
 
-    // Learning unit
-    learningUnit: {
-      id: a.learningUnit.id,
-      type: a.learningUnit.type,
-      version: a.learningUnit.version,
-    },
+      topic: {
+        id: lu.topic.id,
+        name: lu.topic.name,
+        description: lu.topic.description,
+        order: lu.topic.order_number,
+      },
 
-    topic: {
-      id: a.learningUnit.topic.id,
-      name: a.learningUnit.topic.name,
-      description: a.learningUnit.topic.description,
-      order: a.learningUnit.topic.order_number,
-    },
-
-    program: {
-      id: a.learningUnit.topic.program.id,
-      title: a.learningUnit.topic.program.title,
-    },
-  }));
+      activation: activation
+        ? {
+            isActive: activation.isActive,
+            activatedAt: activation.activatedAt,
+            dueDate: activation.dueDate,
+            closedAt: activation.closedAt,
+          }
+        : {
+            isActive: false,
+            activatedAt: null,
+            dueDate: null,
+            closedAt: null,
+          },
+    };
+  });
 }
 
 

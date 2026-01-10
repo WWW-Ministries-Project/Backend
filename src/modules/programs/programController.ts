@@ -337,7 +337,7 @@ export class ProgramController {
   async getAssignmentsByCohort(req: Request, res: Response) {
     try {
       const { cohortId } = req.query;
-      const assignments = await programService.getAssignmentsByCohort(
+      const assignments = await programService.getAssignmentsForCohort(
         Number(cohortId),
       );
       return res
