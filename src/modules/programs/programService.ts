@@ -53,7 +53,10 @@ export class ProgramService {
           id: program.id,
           name: program.title,
           upcomingCohort: selectedCohort.name,
-          topics: program.topics.map((t) => ({ name: t.name, description: t.description })),
+          topics: program.topics.map((t) => ({
+            name: t.name,
+            description: t.description,
+          })),
           member_required: program.member_required,
           leader_required: program.leader_required,
           ministry_required: program.ministry_required,
@@ -184,9 +187,9 @@ export class ProgramService {
       where: { id },
       include: {
         topics: {
-          include:{
+          include: {
             LearningUnit: true,
-          }
+          },
         },
         prerequisitePrograms: {
           select: {
@@ -483,9 +486,9 @@ export class ProgramService {
                       },
                       include: {
                         LearningUnit: {
-                          include:{
-                            cohortAssignments: true
-                          }
+                          include: {
+                            cohortAssignments: true,
+                          },
                         },
                       },
                     },
@@ -525,19 +528,19 @@ export class ProgramService {
               version: topic.LearningUnit.version,
             }
           : null,
-          activation: activation
-        ? {
-            isActive: activation.isActive,
-            activatedAt: activation.activatedAt,
-            dueDate: activation.dueDate,
-            closedAt: activation.closedAt,
-          }
-        : {
-            isActive: false,
-            activatedAt: null,
-            dueDate: null,
-            closedAt: null,
-          },
+        activation: activation
+          ? {
+              isActive: activation.isActive,
+              activatedAt: activation.activatedAt,
+              dueDate: activation.dueDate,
+              closedAt: activation.closedAt,
+            }
+          : {
+              isActive: false,
+              activatedAt: null,
+              dueDate: null,
+              closedAt: null,
+            },
       };
     });
 
@@ -793,173 +796,172 @@ export class ProgramService {
   }
 
   async getAssignmentResults(
-  topicId: number,
-  filters?: {
-    cohortId?: number;
-    programId?: number;
-  },
-) {
-  // 1️⃣ Resolve learning unit
-  const learningUnit = await prisma.learningUnit.findUnique({
-    where: { topicId },
-  });
-
-  if (!learningUnit) {
-    throw new Error("Learning unit not found for this topic");
-  }
-
-  if (!learningUnit.type.startsWith("assignment")) {
-    throw new Error("This topic is not an assignment");
-  }
-
-  // 2️⃣ Build dynamic enrollment filter
-  const enrollmentWhere: any = {};
-
-  if (filters?.cohortId) {
-    enrollmentWhere.course = {
-      cohortId: filters.cohortId,
-    };
-  }
-
-  if (filters?.programId) {
-    enrollmentWhere.course = {
-      ...(enrollmentWhere.course ?? {}),
-      cohort: {
-        programId: filters.programId,
-      },
-    };
-  }
-
-  // 3️⃣ Fetch enrollments
-  const enrollments = await prisma.enrollment.findMany({
-    where: enrollmentWhere,
-    include: {
-      user: {
-        select: {
-          id: true,
-          name: true,
-          email: true,
-        },
-      },
-      submissions: {
-        where: {
-          learningUnitId: learningUnit.id,
-        },
-        orderBy: {
-          attempt: "desc",
-        },
-      },
-      progress: {
-        where: {
-          topicId,
-        },
-      },
+    topicId: number,
+    filters?: {
+      cohortId?: number;
+      programId?: number;
     },
-  });
+  ) {
+    // 1️⃣ Resolve learning unit
+    const learningUnit = await prisma.learningUnit.findUnique({
+      where: { topicId },
+    });
 
-  return enrollments.map((enrollment) => {
-    const latestSubmission = enrollment.submissions[0] ?? null;
-    const progress = enrollment.progress[0] ?? null;
+    if (!learningUnit) {
+      throw new Error("Learning unit not found for this topic");
+    }
 
-    return {
-      student: {
-        id: enrollment.user?.id,
-        name: `${enrollment.user?.name ?? ""}`,
-        email: enrollment.user?.email,
-      },
+    if (!learningUnit.type.startsWith("assignment")) {
+      throw new Error("This topic is not an assignment");
+    }
 
-      submission: latestSubmission
-        ? {
-            id: latestSubmission.id,
-            attempt: latestSubmission.attempt,
-            score: latestSubmission.score,
-            status: latestSubmission.status,
-            submittedAt: latestSubmission.submittedAt,
-          }
-        : null,
+    // 2️⃣ Build dynamic enrollment filter
+    const enrollmentWhere: any = {};
 
-      progress: progress
-        ? {
-            score: progress.score,
-            status: progress.status,
-            completed: progress.completed,
-            completedAt: progress.completedAt,
-          }
-        : {
-            score: null,
-            status: "PENDING",
-            completed: false,
+    if (filters?.cohortId) {
+      enrollmentWhere.course = {
+        cohortId: filters.cohortId,
+      };
+    }
+
+    if (filters?.programId) {
+      enrollmentWhere.course = {
+        ...(enrollmentWhere.course ?? {}),
+        cohort: {
+          programId: filters.programId,
+        },
+      };
+    }
+
+    // 3️⃣ Fetch enrollments
+    const enrollments = await prisma.enrollment.findMany({
+      where: enrollmentWhere,
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
           },
-    };
-  });
-}
-
-async getAssignmentsForCohort(cohortId: number) {
-  const cohort = await prisma.cohort.findUnique({
-    where: { id: cohortId },
-    select: { id: true, programId: true },
-  });
-
-  if (!cohort) {
-    throw new Error("Cohort not found");
-  }
-
-  const learningUnits = await prisma.learningUnit.findMany({
-    where: {
-      type: {
-        startsWith: "assignment",
-      },
-      topic: {
-        programId: cohort.programId,
-      },
-    },
-    include: {
-      topic: true,
-      cohortAssignments: {
-        where: {
-          cohortId: cohort.id,
+        },
+        submissions: {
+          where: {
+            learningUnitId: learningUnit.id,
+          },
+          orderBy: {
+            attempt: "desc",
+          },
+        },
+        progress: {
+          where: {
+            topicId,
+          },
         },
       },
-    },
-    orderBy: {
-      topic: {
-        order_number: "asc",
+    });
+
+    return enrollments.map((enrollment) => {
+      const latestSubmission = enrollment.submissions[0] ?? null;
+      const progress = enrollment.progress[0] ?? null;
+
+      return {
+        student: {
+          id: enrollment.user?.id,
+          name: `${enrollment.user?.name ?? ""}`,
+          email: enrollment.user?.email,
+        },
+
+        submission: latestSubmission
+          ? {
+              id: latestSubmission.id,
+              attempt: latestSubmission.attempt,
+              score: latestSubmission.score,
+              status: latestSubmission.status,
+              submittedAt: latestSubmission.submittedAt,
+            }
+          : null,
+
+        progress: progress
+          ? {
+              score: progress.score,
+              status: progress.status,
+              completed: progress.completed,
+              completedAt: progress.completedAt,
+            }
+          : {
+              score: null,
+              status: "PENDING",
+              completed: false,
+            },
+      };
+    });
+  }
+
+  async getAssignmentsForCohort(cohortId: number) {
+    const cohort = await prisma.cohort.findUnique({
+      where: { id: cohortId },
+      select: { id: true, programId: true },
+    });
+
+    if (!cohort) {
+      throw new Error("Cohort not found");
+    }
+
+    const learningUnits = await prisma.learningUnit.findMany({
+      where: {
+        type: {
+          startsWith: "assignment",
+        },
+        topic: {
+          programId: cohort.programId,
+        },
       },
-    },
-  });
-
-  return learningUnits.map((lu) => {
-    const activation = lu.cohortAssignments[0] ?? null;
-
-    return {
-      learningUnitId: lu.id,
-      type: lu.type,
-      version: lu.version,
-
-      topic: {
-        id: lu.topic.id,
-        name: lu.topic.name,
-        description: lu.topic.description,
-        order: lu.topic.order_number,
-      },
-
-      activation: activation
-        ? {
-            isActive: activation.isActive,
-            activatedAt: activation.activatedAt,
-            dueDate: activation.dueDate,
-            closedAt: activation.closedAt,
-          }
-        : {
-            isActive: false,
-            activatedAt: null,
-            dueDate: null,
-            closedAt: null,
+      include: {
+        topic: true,
+        cohortAssignments: {
+          where: {
+            cohortId: cohort.id,
           },
-    };
-  });
-}
+        },
+      },
+      orderBy: {
+        topic: {
+          order_number: "asc",
+        },
+      },
+    });
 
+    return learningUnits.map((lu) => {
+      const activation = lu.cohortAssignments[0] ?? null;
+
+      return {
+        learningUnitId: lu.id,
+        type: lu.type,
+        version: lu.version,
+
+        topic: {
+          id: lu.topic.id,
+          name: lu.topic.name,
+          description: lu.topic.description,
+          order: lu.topic.order_number,
+        },
+
+        activation: activation
+          ? {
+              isActive: activation.isActive,
+              activatedAt: activation.activatedAt,
+              dueDate: activation.dueDate,
+              closedAt: activation.closedAt,
+            }
+          : {
+              isActive: false,
+              activatedAt: null,
+              dueDate: null,
+              closedAt: null,
+            },
+      };
+    });
+  }
 
   private validateLearningUnit(learningUnit: any) {
     if (!learningUnit?.type || !learningUnit?.data) {

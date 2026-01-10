@@ -348,5 +348,5 @@ export class ProgramController {
         .status(500)
         .json({ message: "Error fetching assignments", error: error.message });
     }
-  } 
+  }
 }

@@ -884,6 +884,18 @@ export const filterUsersInfo = async (req: Request, res: Response) => {
 export const getUser = async (req: Request, res: Response) => {
   const { user_id } = req.query;
 
+  const siblingsKeywords = [
+    "sibling",
+    "brother",
+    "sister",
+    "sibs",
+    "sis",
+    "bro",
+    "siblings",
+  ];
+
+  const childKeywords = ["child", "son", "daughter", "ward", "kid", "children"];
+
   try {
     const response: any = await prisma.user.findUnique({
       where: {
@@ -993,47 +1005,7 @@ export const getUser = async (req: Request, res: Response) => {
             },
           },
         },
-        children: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            membership_type: true,
-            created_at: true,
-            status: true,
-            user_info: {
-              select: {
-                first_name: true,
-                last_name: true,
-                other_name: true,
-                date_of_birth: true,
-                gender: true,
-                nationality: true,
-                marital_status: true,
-                title: true,
-              },
-            },
-          },
-        },
-        parent: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            membership_type: true,
-            created_at: true,
-            user_info: {
-              select: {
-                first_name: true,
-                last_name: true,
-                other_name: true,
-                date_of_birth: true,
-                gender: true,
-                nationality: true,
-              },
-            },
-          },
-        },
+
         department_positions: {
           include: {
             department: true,
@@ -1047,39 +1019,106 @@ export const getUser = async (req: Request, res: Response) => {
       return res.status(404).json({ message: "User not found" });
     }
 
-    // Flatten user_info and others
-    const { user_info, parent, children, department_positions, ...rest } =
-      response;
-    const user = { ...rest, ...user_info };
+    const relations = await prisma.family_relation.findMany({
+      where: { user_id: response.id },
+      include: {
+        family: {
+          include: { user_info: true },
+        },
+      },
+    });
 
-    // Flatten parent user_info
-    if (parent?.user_info) {
-      user.parent = { ...parent, ...parent.user_info };
-      delete user.parent.user_info;
-    }
+    const spouses = relations
+      .filter((r) => r.relation.toLowerCase() === "spouse")
+      .map((r) => ({
+        ...r.family,
+        relation: r.relation,
+      }));
 
-    // Flatten each child’s user_info
-    if (children && Array.isArray(children)) {
-      user.children = children.map((child) => {
-        if (child.user_info) {
-          const { user_info, ...restChild } = child;
-          return { ...restChild, ...user_info };
-        }
-        return child;
-      });
-    }
+    const relationChildren = relations
+      .filter((r) => childKeywords.includes(r.relation.toLowerCase()))
+      .map((r) => ({
+        ...r.family,
+        relation: r.relation,
+      }));
+
+    const parents = relations
+      .filter((r) => r.relation.toLowerCase() === "parent")
+      .map((r) => ({
+        ...r.family,
+        relation: r.relation,
+      }));
+
+    const relationSiblings = relations
+      .filter((r) => siblingsKeywords.includes(r.relation.toLowerCase()))
+      .map((r) => ({
+        ...r.family,
+        relation: r.relation,
+      }));
+
+    const others = relations
+      .filter(
+        (r) =>
+          !["spouse", "parent"]
+            .concat(childKeywords, siblingsKeywords)
+            .includes(r.relation.toLowerCase()),
+      )
+      .map((r) => ({
+        ...r.family,
+        relation: r.relation,
+      }));
+
+    // Biological children
+    const biologicalChildren = await prisma.user.findMany({
+      where: { parent_id: response.id },
+      include: { user_info: true },
+    });
+
+    // Merge children
+    const childrenMap = new Map<number, any>();
+    [...relationChildren, ...biologicalChildren].forEach((c) =>
+      childrenMap.set(c.id, c),
+    );
+
+    // Siblings via parents
+    const parentIds = parents.map((p) => p.id);
+    const siblingsByParent =
+      parentIds.length > 0
+        ? await prisma.user.findMany({
+            where: {
+              parent_id: { in: parentIds },
+              NOT: { id: response.id },
+            },
+            include: { user_info: true },
+          })
+        : [];
+
+    const siblingsMap = new Map<number, any>();
+    [...relationSiblings, ...siblingsByParent].forEach((s) =>
+      siblingsMap.set(s.id, s),
+    );
+
+    const { user_info, department_positions, ...rest } = response;
+    const user: any = { ...rest, ...user_info };
+
+    user.family = spouses.concat(
+      Array.from(childrenMap.values()),
+      parents,
+      Array.from(siblingsMap.values()),
+      others,
+    );
 
     // Flatten department_positions
-    if (department_positions && Array.isArray(department_positions)) {
-      user.department_positions = department_positions.map((dp) => ({
+    if (department_positions?.length) {
+      user.department_positions = department_positions.map((dp: any) => ({
         department_id: dp.department?.id ?? null,
         department_name: dp.department?.name ?? null,
-        position_name: dp.position?.name ?? null,
         position_id: dp.position?.id ?? null,
+        position_name: dp.position?.name ?? null,
       }));
     }
 
-    res.status(200).json({
+    return res.status(200).json({
       message: "Operation Successful",
       data: user,
     });
