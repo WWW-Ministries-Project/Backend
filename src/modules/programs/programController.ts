@@ -294,10 +294,10 @@ export class ProgramController {
 
   async submitMCQAssignment(req: Request, res: Response) {
     try {
-      const { userId, assignmentId, topicId, answers } = req.body;
+      const { userId, programId, topicId, answers } = req.body;
       const result = await programService.submitMCQAssignment(
         Number(userId),
-        Number(assignmentId),
+        Number(programId),
         Number(topicId),
         answers,
       );
