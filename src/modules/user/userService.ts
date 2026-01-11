@@ -190,7 +190,6 @@ export class UserService {
 
     let spouseUser: any = null;
 
-    // 1️⃣ First pass → handle spouse
     for (const member of family) {
       if (spouseKeywords.includes(member.relation.toLowerCase())) {
         if (member.user_id) {
@@ -225,8 +224,6 @@ export class UserService {
 
           await this.generateUserId(spouseUser);
         }
-
-        // 🔗 link spouses
         await prisma.family_relation.upsert({
           where: {
             user_id_family_id: {
@@ -244,25 +241,19 @@ export class UserService {
       }
     }
 
-    // 2️⃣ Second pass → handle everyone else (including children)
     return Promise.all(
       family.map(async (member) => {
         let familyUser: any;
 
-        // Skip spouse (already handled)
         if (spouseKeywords.includes(member.relation.toLowerCase())) {
           return spouseUser;
         }
 
-        // 3️⃣ Existing user
         if (member.user_id) {
           familyUser = await prisma.user.findUnique({
             where: { id: Number(member.user_id) },
           });
-        }
-
-        // 4️⃣ Child logic
-        else if (childKeywords.includes(member.relation.toLowerCase())) {
+        } else if (childKeywords.includes(member.relation.toLowerCase())) {
           // Try to find existing child for either parent
           familyUser = await prisma.user.findFirst({
             where: {
@@ -448,7 +439,7 @@ export class UserService {
     return createdChildren.filter(Boolean);
   }
 
-  private async generateUserId(userData: any) {
+  async generateUserId(userData: any) {
     const prefix = process.env.ID_PREFIX || "WWM-HC";
     const year = new Date().getFullYear();
     const paddedId = (userData.id - 1).toString().padStart(4, "0");
