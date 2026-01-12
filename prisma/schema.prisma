@@ -100,17 +100,16 @@ model user_info {
 }
 
 model family_relation {
-  id         Int    @id @default(autoincrement())
-  user_id    Int
-  family_id  Int
-  relation   String
+  id        Int    @id @default(autoincrement())
+  user_id   Int
+  family_id Int
+  relation  String
 
-  user       user   @relation("UserFamily", fields: [user_id], references: [id])
-  family     user   @relation("FamilyUser", fields: [family_id], references: [id])
+  user   user @relation("UserFamily", fields: [user_id], references: [id])
+  family user @relation("FamilyUser", fields: [family_id], references: [id])
 
   @@unique([user_id, family_id])
 }
-
 
 model user_work_info {
   id                  Int         @id @default(autoincrement())
@@ -421,11 +420,11 @@ model topic {
 }
 
 model LearningUnit {
-  id      Int    @id @default(autoincrement())
-  topicId Int    @unique
-  type    String
-  data    Json
-  version Int    @default(1)
+  id          Int    @id @default(autoincrement())
+  topicId     Int    @unique
+  type        String
+  data        Json
+  version     Int    @default(1)
   maxAttempts Int?   @default(3)
 
   topic topic @relation(fields: [topicId], references: [id], onDelete: Cascade)

@@ -1164,9 +1164,7 @@ export const getUser = async (req: Request, res: Response) => {
   try {
     const response: any = await prisma.user.findUnique({
       where: { id: Number(user_id) },
-      omit: {
-        password: true,
-      },
+
       include: {
         user_info: {
           include: {
@@ -1189,6 +1187,8 @@ export const getUser = async (req: Request, res: Response) => {
     if (!response) {
       return res.status(404).json({ message: "User not found" });
     }
+
+    delete response.password;
 
     /* =========================
        2️⃣ FETCH FAMILY RELATIONS
