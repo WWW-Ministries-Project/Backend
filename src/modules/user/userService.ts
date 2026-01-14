@@ -207,6 +207,7 @@ export class UserService {
                 `${member.first_name.toLowerCase()}_${member.last_name.toLowerCase()}_${Date.now()}@temp.com`,
               is_user: false,
               is_active: true,
+              membership_type: primaryUser.membership_type || "IN_HOUSE",
               user_info: {
                 create: {
                   title: member.title,
