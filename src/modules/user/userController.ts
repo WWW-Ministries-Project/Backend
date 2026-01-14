@@ -499,8 +499,7 @@ async function updateFamilyMembers(family: any[], primaryUser: any) {
           });
         }
       } else {
-
-      /* =====================
+        /* =====================
          OTHER FAMILY MEMBERS
       ====================== */
         familyUser = await prisma.user.create({

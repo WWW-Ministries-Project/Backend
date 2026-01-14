@@ -65,3 +65,48 @@ eventRouter.get(
   "/all-registered-event-member",
   eventContoller.registeredMember,
 );
+
+/**
+ * Create attendance summary
+ */
+eventRouter.post(
+  "/attendance-summary",
+  eventContoller.createAttendanceSummary
+);
+
+/**
+ * Get all attendance summaries
+ * Optional query params: ?eventId=&date=
+ */
+eventRouter.get(
+  "/attendance-summary",
+  eventContoller.getAttendances
+);
+
+/**
+ * Get attendance summary by ID
+ * Uses query param ?id=
+ */
+eventRouter.get(
+  "/attendance-summary/by-id",
+  eventContoller.getAttendanceById
+);
+
+/**
+ * Update attendance summary by ID
+ * Uses URL param :id
+ */
+eventRouter.put(
+  "/attendance-summary/:id",
+  eventContoller.updateAttendance
+);
+
+/**
+ * Delete attendance summary by ID
+ * Uses URL param :id
+ */
+eventRouter.delete(
+  "/attendance-summary/:id",
+  eventContoller.deleteAttendance
+);
+

@@ -1121,4 +1121,120 @@ export class eventManagement {
       });
     }
   };
+
+  createAttendanceSummary = async (req: Request, res: Response) => {
+    try {
+      const { eventId, date, group, attendance, recordedBy, recordedByName } =
+        req.body;
+      const record = await prisma.event_attendance_summary.create({
+        data: {
+          event_mgt_id: eventId,
+          attendance_date: new Date(date),
+          group,
+          adult_male: attendance.adults.male,
+          adult_female: attendance.adults.female,
+          children_male: attendance.children.male,
+          children_female: attendance.children.female,
+          recorded_by: recordedBy,
+          recorded_by_name: recordedByName,
+        },
+      });
+
+      res.status(201).json({
+        success: true,
+        message: "Attendance recorded successfully",
+        data: record,
+      });
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({
+        success: false,
+        message: "Error creating attendance summary",
+      });
+    }
+  };
+  getAttendances = async (req: Request, res: Response) => {
+    try {
+      const { eventId, date } = req.query;
+
+      const filter = {} as any;
+      if (eventId) filter.event_mgt_id = Number(eventId);
+      if (date) filter.attendance_date = new Date(date as string);
+
+      const records = await prisma.event_attendance_summary.findMany({
+        where: filter,
+        include: {
+          event: true,
+          recordedBy: { select: { id: true, name: true } },
+        },
+        orderBy: { attendance_date: "desc" },
+      });
+
+      res.json({ success: true, data: records });
+    } catch (error: any) {
+      res.status(500).json({ success: false, message: error.message });
+    }
+  };
+
+  getAttendanceById = async (req: Request, res: Response) => {
+    try {
+      const { id } = req.query;
+
+      const record = await prisma.event_attendance_summary.findUnique({
+        where: { id: Number(id) },
+      });
+
+      if (!record) {
+        return res.status(404).json({ success: false, message: "Not found" });
+      }
+
+      res.json({ success: true, data: record });
+    } catch (error: any) {
+      res.status(500).json({ success: false, message: error.message });
+    }
+  };
+
+  updateAttendance = async (req: Request, res: Response) => {
+    try {
+      const id = Number(req.params.id);
+      const { group, attendance } = req.body;
+
+      const updated = await prisma.event_attendance_summary.update({
+        where: { id },
+        data: {
+          group,
+          adult_male: attendance?.adults?.male,
+          adult_female: attendance?.adults?.female,
+          children_male: attendance?.children?.male,
+          children_female: attendance?.children?.female,
+          updated_at: new Date(),
+        },
+      });
+
+      res.json({
+        success: true,
+        message: "Attendance updated successfully",
+        data: updated,
+      });
+    } catch (error: any) {
+      res.status(500).json({ success: false, message: error.message });
+    }
+  };
+
+  deleteAttendance = async (req: Request, res: Response) => {
+    try {
+      const id = Number(req.params.id);
+
+      await prisma.event_attendance_summary.delete({
+        where: { id },
+      });
+
+      res.json({
+        success: true,
+        message: "Attendance deleted successfully",
+      });
+    } catch (error: any) {
+      res.status(500).json({ success: false, message: error.message });
+    }
+  };
 }

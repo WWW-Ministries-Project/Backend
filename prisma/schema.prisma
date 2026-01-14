@@ -58,8 +58,9 @@ model user {
   event_registers       event_registers[]
   assignment_submission assignment_submission[]
 
-  family_links    family_relation[] @relation("UserFamily")
-  family_of_links family_relation[] @relation("FamilyUser")
+  family_links             family_relation[]          @relation("UserFamily")
+  family_of_links          family_relation[]          @relation("FamilyUser")
+  event_attendance_summary event_attendance_summary[]
 
   @@index([access_level_id], map: "user_access_level_id_fkey")
   @@index([position_id], map: "user_position_id_fkey")
@@ -243,29 +244,61 @@ model event_act {
 }
 
 model event_mgt {
-  id               Int                @id @default(autoincrement())
-  start_time       String?
-  end_time         String?
-  location         String?
-  description      String?
-  poster           String?
-  qr_code          String?
-  event_name_id    Int
-  event            event_act          @relation(fields: [event_name_id], references: [id])
-  created_by       Int
-  created_at       DateTime           @default(now())
-  updated_by       Int?
-  updated_at       DateTime?
-  end_date         DateTime?
-  start_date       DateTime?
-  event_type       event_type?
-  event_status     event_status?
-  event_attendance event_attendance[]
-  request          request[]
-  visit            visit[]
+  id                   Int                        @id @default(autoincrement())
+  start_time           String?
+  end_time             String?
+  location             String?
+  description          String?
+  poster               String?
+  qr_code              String?
+  event_name_id        Int
+  event                event_act                  @relation(fields: [event_name_id], references: [id])
+  created_by           Int
+  created_at           DateTime                   @default(now())
+  updated_by           Int?
+  updated_at           DateTime?
+  end_date             DateTime?
+  start_date           DateTime?
+  event_type           event_type?
+  event_status         event_status?
+  attendance_summaries event_attendance_summary[]
+  event_attendance     event_attendance[]
+  request              request[]
+  visit                visit[]
 
   markets         markets[]
   event_registers event_registers[]
+}
+
+model event_attendance_summary {
+  id Int @id @default(autoincrement())
+
+  event_mgt_id    Int
+  event           event_mgt        @relation(fields: [event_mgt_id], references: [id])
+  attendance_date DateTime
+  group           attendance_group @default(BOTH)
+  adult_male      Int              @default(0)
+  adult_female    Int              @default(0)
+  children_male   Int              @default(0)
+  children_female Int              @default(0)
+
+  recorded_by Int
+  recordedBy  user @relation(fields: [recorded_by], references: [id])
+
+  recorded_by_name String
+
+  created_at DateTime  @default(now())
+  updated_at DateTime?
+
+  @@unique([event_mgt_id, attendance_date])
+  @@index([event_mgt_id])
+  @@index([attendance_date])
+}
+
+enum attendance_group {
+  ADULTS
+  CHILDREN
+  BOTH
 }
 
 model event_attendance {
