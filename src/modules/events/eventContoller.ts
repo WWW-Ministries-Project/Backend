@@ -1124,19 +1124,19 @@ export class eventManagement {
 
   createAttendanceSummary = async (req: Request, res: Response) => {
     try {
-      const { eventId, date, group, attendance, recordedBy, recordedByName } =
+      const { eventId, date, group, adultMale, adultFemale, childrenMale, childrenFemale, recordedBy, recordedByName } =
         req.body;
       const record = await prisma.event_attendance_summary.create({
         data: {
           event_mgt_id: Number(eventId),
-          attendance_date: new Date(date),
+          date: new Date(date),
           group,
-          adult_male: Number(attendance.adults.male) || 0,
-          adult_female: Number(attendance.adults.female) || 0,
-          children_male: Number(attendance.children.male) || 0,
-          children_female: Number(attendance.children.female) || 0,
-          recorded_by: recordedBy,
-          recorded_by_name: recordedByName,
+          adultMale: Number(adultMale) || 0,
+          adultFemale: Number(adultFemale) || 0,
+          childrenMale: Number(childrenMale) || 0,
+          childrenFemale: Number(childrenFemale) || 0,
+          recordedBy: recordedBy,
+          recordedByName: recordedByName,
         },
       });
 
@@ -1164,10 +1164,16 @@ export class eventManagement {
       const records = await prisma.event_attendance_summary.findMany({
         where: filter,
         include: {
-          event: true,
-          recordedBy: { select: { id: true, name: true } },
+          event: {
+            include: {
+              event: {
+                select: { event_name: true },
+              },
+            },
+          },
+          recordedByUser: { select: { id: true, name: true } },
         },
-        orderBy: { attendance_date: "desc" },
+        orderBy: { date: "desc" },
       });
 
       res.json({ success: true, data: records });
@@ -1197,16 +1203,16 @@ export class eventManagement {
   updateAttendance = async (req: Request, res: Response) => {
     try {
       const id = Number(req.params.id);
-      const { group, attendance } = req.body;
+      const { group, adultMale, adultFemale, childrenMale, childrenFemale } = req.body;
 
       const updated = await prisma.event_attendance_summary.update({
         where: { id },
         data: {
           group,
-          adult_male: Number(attendance?.adults?.male) || 0,
-          adult_female: Number(attendance?.adults?.female) || 0,
-          children_male: Number(attendance?.children?.male) || 0,
-          children_female: Number(attendance?.children?.female) || 0,
+          adultMale: Number(adultMale) || 0,
+          adultFemale: Number(adultFemale) || 0,
+          childrenMale: Number(childrenMale) || 0,
+          childrenFemale: Number(childrenFemale) || 0,
           updated_at: new Date(),
         },
       });

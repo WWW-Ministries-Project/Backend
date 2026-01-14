@@ -273,26 +273,26 @@ model event_mgt {
 model event_attendance_summary {
   id Int @id @default(autoincrement())
 
-  event_mgt_id    Int
-  event           event_mgt        @relation(fields: [event_mgt_id], references: [id])
-  attendance_date DateTime
-  group           attendance_group @default(BOTH)
-  adult_male      Int              @default(0)
-  adult_female    Int              @default(0)
-  children_male   Int              @default(0)
-  children_female Int              @default(0)
+  event_mgt_id   Int
+  event          event_mgt        @relation(fields: [event_mgt_id], references: [id])
+  date           DateTime       
+  group          attendance_group @default(BOTH)
+  adultMale      Int              @default(0)
+  adultFemale    Int              @default(0)
+  childrenMale   Int              @default(0)
+  childrenFemale Int              @default(0)
 
-  recorded_by Int
-  recordedBy  user @relation(fields: [recorded_by], references: [id])
+  recordedBy     Int            
+  recordedByUser user @relation(fields: [recordedBy], references: [id])
 
-  recorded_by_name String
+  recordedByName String         
 
   created_at DateTime  @default(now())
   updated_at DateTime?
 
-  @@unique([event_mgt_id, attendance_date])
+  @@unique([event_mgt_id, date])
   @@index([event_mgt_id])
-  @@index([attendance_date])
+  @@index([date])
 }
 
 enum attendance_group {
