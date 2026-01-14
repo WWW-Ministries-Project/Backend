@@ -109,4 +109,3 @@ eventRouter.delete(
   "/church-attendance/:id",
   eventContoller.deleteAttendance
 );
-

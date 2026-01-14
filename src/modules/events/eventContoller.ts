@@ -1128,13 +1128,13 @@ export class eventManagement {
         req.body;
       const record = await prisma.event_attendance_summary.create({
         data: {
-          event_mgt_id: eventId,
+          event_mgt_id: Number(eventId),
           attendance_date: new Date(date),
           group,
-          adult_male: attendance.adults.male,
-          adult_female: attendance.adults.female,
-          children_male: attendance.children.male,
-          children_female: attendance.children.female,
+          adult_male: Number(attendance.adults.male) || 0,
+          adult_female: Number(attendance.adults.female) || 0,
+          children_male: Number(attendance.children.male) || 0,
+          children_female: Number(attendance.children.female) || 0,
           recorded_by: recordedBy,
           recorded_by_name: recordedByName,
         },
@@ -1203,10 +1203,10 @@ export class eventManagement {
         where: { id },
         data: {
           group,
-          adult_male: attendance?.adults?.male,
-          adult_female: attendance?.adults?.female,
-          children_male: attendance?.children?.male,
-          children_female: attendance?.children?.female,
+          adult_male: Number(attendance?.adults?.male) || 0,
+          adult_female: Number(attendance?.adults?.female) || 0,
+          children_male: Number(attendance?.children?.male) || 0,
+          children_female: Number(attendance?.children?.female) || 0,
           updated_at: new Date(),
         },
       });
