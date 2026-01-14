@@ -1352,119 +1352,106 @@ export const getUser = async (req: Request, res: Response) => {
   }
 };
 
+type Gender = "Male" | "Female" | "Other";
+type AgeCategory = "children" | "adults";
+
+interface Stats {
+  Total: number;
+  Male: number;
+  Female: number;
+  Other: number;
+}
+
+interface CategoryStats {
+  children: Stats;
+  adults: Stats;
+}
+
+const emptyStats = (): Stats => ({
+  Total: 0,
+  Male: 0,
+  Female: 0,
+  Other: 0,
+});
+
+const emptyCategoryStats = (): CategoryStats => ({
+  children: emptyStats(),
+  adults: emptyStats(),
+});
+
+const normalizeGender = (gender?: string): Gender => {
+  if (gender === "Male" || gender === "Female") return gender;
+  return "Other";
+};
+
+const getAgeCategory = (dob?: Date): AgeCategory => {
+  if (!dob) return "adults"; // safe fallback
+  const age = new Date().getFullYear() - dob.getFullYear();
+  return age <= 18 ? "children" : "adults";
+};
+
+const calculateStats = (users: any[]) => {
+  const totals = emptyStats();
+  const categories = emptyCategoryStats();
+
+  for (const user of users) {
+    const gender = normalizeGender(user.gender);
+    const ageCategory = getAgeCategory(user.date_of_birth);
+
+    // Overall totals
+    totals.Total++;
+    totals[gender]++;
+
+    // Age category stats
+    categories[ageCategory].Total++;
+    categories[ageCategory][gender]++;
+  }
+
+  return { totals, categories };
+};
+
 export const statsUsers = async (req: Request, res: Response) => {
   try {
-    interface Stats {
-      Total: number;
-      Male: number;
-      Female: number;
-      Other: number;
-    }
-
-    interface CategoryStats {
-      children: Stats;
-      adults: Stats;
-    }
-
-    const allUserInfos_members = await prisma.user_info.findMany({
-      where: {
-        user: {
-          membership_type: "ONLINE",
+    const [onlineUsers, inhouseUsers] = await Promise.all([
+      prisma.user_info.findMany({
+        where: {
+          user: { membership_type: "ONLINE" },
         },
-      },
-    });
-    const allUserInfos_visitors = await prisma.user_info.findMany({
-      where: {
-        user: {
-          membership_type: "IN_HOUSE",
+      }),
+      prisma.user_info.findMany({
+        where: {
+          user: { membership_type: "IN_HOUSE" },
         },
-      },
-    });
-    const allUserInfosByCategory = allUserInfos_members.reduce(
-      (acc: any, cur: any) => {
-        const gender = cur.gender || "other";
+      }),
+    ]);
 
-        acc.total++;
-        acc[gender]++;
+    const onlineStats = calculateStats(onlineUsers);
+    const inhouseStats = calculateStats(inhouseUsers);
 
-        return acc;
-      },
-      { total: 0, Male: 0, Female: 0, other: 0 },
-    );
-
-    const stats: CategoryStats = allUserInfos_members.reduce(
-      (acc: any, user: any) => {
-        const age =
-          Number(new Date().getFullYear()) -
-          Number(user.date_of_birth?.getFullYear());
-        const category = age <= 18 ? "children" : "adults";
-        const gender = user.gender || "other";
-
-        acc[category].Total++;
-        acc[category][gender]++;
-
-        return acc;
-      },
-      {
-        children: { Total: 0, Male: 0, Female: 0, other: 0 },
-        adults: { Total: 0, Male: 0, Female: 0, other: 0 },
-      },
-    );
-
-    const visitorInfosByCategory = allUserInfos_visitors.reduce(
-      (acc: any, cur: any) => {
-        const gender = cur.gender || "other";
-
-        acc.total++;
-        acc[gender]++;
-
-        return acc;
-      },
-      { total: 0, Male: 0, Female: 0, other: 0 },
-    );
-
-    const visitor_stats: CategoryStats = allUserInfos_visitors.reduce(
-      (acc: any, user: any) => {
-        const age =
-          Number(new Date().getFullYear()) -
-          Number(user.date_of_birth?.getFullYear());
-        const category = age <= 18 ? "children" : "adults";
-        const gender = user.gender || "other";
-
-        acc[category].Total++;
-        acc[category][gender]++;
-
-        return acc;
-      },
-      {
-        children: { Total: 0, Male: 0, Female: 0, other: 0 },
-        adults: { Total: 0, Male: 0, Female: 0, other: 0 },
-      },
-    );
-
-    return res.status(202).json({
-      message: "Operation Sucessful",
+    return res.status(200).json({
+      message: "Operation Successful",
       data: {
         online: {
-          total_members: allUserInfosByCategory.total,
-          total_males: allUserInfosByCategory.Male,
-          total_females: allUserInfosByCategory.Female,
-          total_others: allUserInfosByCategory.other,
-          stats: stats,
+          total_members: onlineStats.totals.Total,
+          total_males: onlineStats.totals.Male,
+          total_females: onlineStats.totals.Female,
+          total_others: onlineStats.totals.Other,
+          stats: onlineStats.categories,
         },
         inhouse: {
-          total_members: visitorInfosByCategory.total,
-          total_males: visitorInfosByCategory.Male,
-          total_females: visitorInfosByCategory.Female,
-          total_others: visitorInfosByCategory.other,
-          stats: visitor_stats,
+          total_members: inhouseStats.totals.Total,
+          total_males: inhouseStats.totals.Male,
+          total_females: inhouseStats.totals.Female,
+          total_others: inhouseStats.totals.Other,
+          stats: inhouseStats.categories,
         },
       },
     });
   } catch (error) {
-    return res
-      .status(500)
-      .json({ message: "Internal Server Error", data: error });
+    return res.status(500).json({
+      message: "Internal Server Error",
+      data: error,
+    });
   }
 };
 
