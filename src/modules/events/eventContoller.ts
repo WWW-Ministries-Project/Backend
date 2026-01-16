@@ -1123,36 +1123,117 @@ export class eventManagement {
   };
 
   createAttendanceSummary = async (req: Request, res: Response) => {
-    try {
-      const { eventId, date, group, adultMale, adultFemale, childrenMale, childrenFemale, recordedBy, recordedByName } =
-        req.body;
-      const record = await prisma.event_attendance_summary.create({
+  try {
+    const {
+      eventId,
+      date,
+      group = "BOTH",
+      adultMale = 0,
+      adultFemale = 0,
+      childrenMale = 0,
+      childrenFemale = 0,
+      recordedBy,
+      recordedByName,
+    } = req.body;
+
+    /* ---------------- Validation ---------------- */
+    if (!eventId || !date || !recordedBy || !recordedByName) {
+      return res.status(400).json({
+        success: false,
+        message: "eventId, date, recordedBy and recordedByName are required",
+      });
+    }
+
+    const event_mgt_id = Number(eventId);
+    if (Number.isNaN(event_mgt_id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid eventId",
+      });
+    }
+
+    const attendanceDate = new Date(date);
+    if (isNaN(attendanceDate.getTime())) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid date",
+      });
+    }
+
+    // Normalize date (VERY important)
+    attendanceDate.setHours(0, 0, 0, 0);
+
+    /* ---------------- Transaction ---------------- */
+    const record = await prisma.$transaction(async (tx) => {
+      const event = await tx.event_mgt.findUnique({
+        where: { id: event_mgt_id },
+        select: { id: true },
+      });
+
+      if (!event) {
+        throw new Error("EVENT_NOT_FOUND");
+      }
+
+      const existingSummary =
+        await tx.event_attendance_summary.findUnique({
+          where: {
+            event_mgt_id_date: {
+              event_mgt_id,
+              date: attendanceDate,
+            },
+          },
+        });
+
+      if (existingSummary) {
+        throw new Error("DUPLICATE_ATTENDANCE");
+      }
+
+      return tx.event_attendance_summary.create({
         data: {
-          event_mgt_id: Number(eventId),
-          date: new Date(date),
+          event_mgt_id,
+          date: attendanceDate,
           group,
           adultMale: Number(adultMale) || 0,
           adultFemale: Number(adultFemale) || 0,
           childrenMale: Number(childrenMale) || 0,
           childrenFemale: Number(childrenFemale) || 0,
-          recordedBy: recordedBy,
-          recordedByName: recordedByName,
+          recordedBy: Number(recordedBy),
+          recordedByName: recordedByName.trim(),
         },
       });
+    });
 
-      res.status(201).json({
-        success: true,
-        message: "Attendance recorded successfully",
-        data: record,
-      });
-    } catch (error) {
-      console.error(error);
-      return res.status(500).json({
+    /* ---------------- Success Response ---------------- */
+    return res.status(201).json({
+      success: true,
+      message: "Attendance recorded successfully",
+      data: record,
+    });
+  } catch (error: any) {
+    console.error(error);
+
+    if (error.message === "EVENT_NOT_FOUND") {
+      return res.status(404).json({
         success: false,
-        message: "Error creating attendance summary",
+        message: "Event does not exist",
       });
     }
-  };
+
+    if (error.message === "DUPLICATE_ATTENDANCE") {
+      return res.status(409).json({
+        success: false,
+        message:
+          "Attendance already recorded for this event on the same date",
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: "Error creating attendance summary",
+    });
+  }
+};
+
   getAttendances = async (req: Request, res: Response) => {
     try {
       const { eventId, date } = req.query;
@@ -1176,7 +1257,23 @@ export class eventManagement {
         orderBy: { date: "desc" },
       });
 
-      res.json({ success: true, data: records });
+      const formattedRecords = records.map((record) => ({
+        id: record.id,
+        date: record.date,
+        group: record.group,
+        adultMale: record.adultMale,
+        adultFemale: record.adultFemale,
+        childrenMale: record.childrenMale,
+        childrenFemale: record.childrenFemale,
+        recordedBy: record.recordedBy,
+        recordedByName: record.recordedByName,
+        created_at: record.created_at,
+        updated_at: record.updated_at,
+        event_id: record.event_mgt_id,
+        event_name: record.event.event.event_name,
+      }));
+
+      res.json({ success: true, data: formattedRecords });
     } catch (error: any) {
       res.status(500).json({ success: false, message: error.message });
     }
@@ -1203,7 +1300,8 @@ export class eventManagement {
   updateAttendance = async (req: Request, res: Response) => {
     try {
       const id = Number(req.params.id);
-      const { group, adultMale, adultFemale, childrenMale, childrenFemale } = req.body;
+      const { group, adultMale, adultFemale, childrenMale, childrenFemale } =
+        req.body;
 
       const updated = await prisma.event_attendance_summary.update({
         where: { id },

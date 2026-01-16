@@ -69,43 +69,28 @@ eventRouter.get(
 /**
  * Create attendance summary
  */
-eventRouter.post(
-  "/church-attendance",
-  eventContoller.createAttendanceSummary
-);
+eventRouter.post("/church-attendance", eventContoller.createAttendanceSummary);
 
 /**
  * Get all attendance summaries
  * Optional query params: ?eventId=&date=
  */
-eventRouter.get(
-  "/church-attendance",
-  eventContoller.getAttendances
-);
+eventRouter.get("/church-attendance", eventContoller.getAttendances);
 
 /**
  * Get attendance summary by ID
  * Uses query param ?id=
  */
-eventRouter.get(
-  "/church-attendance/by-id",
-  eventContoller.getAttendanceById
-);
+eventRouter.get("/church-attendance/by-id", eventContoller.getAttendanceById);
 
 /**
  * Update attendance summary by ID
  * Uses URL param :id
  */
-eventRouter.put(
-  "/church-attendance/:id",
-  eventContoller.updateAttendance
-);
+eventRouter.put("/church-attendance/:id", eventContoller.updateAttendance);
 
 /**
  * Delete attendance summary by ID
  * Uses URL param :id
  */
-eventRouter.delete(
-  "/church-attendance/:id",
-  eventContoller.deleteAttendance
-);
+eventRouter.delete("/church-attendance/:id", eventContoller.deleteAttendance);
