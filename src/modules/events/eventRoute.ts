@@ -93,4 +93,4 @@ eventRouter.put("/church-attendance", eventContoller.updateAttendance);
  * Delete attendance summary by ID
  * Uses URL param :id
  */
-eventRouter.delete("/church-attendance/:id", eventContoller.deleteAttendance);
+eventRouter.delete("/church-attendance", eventContoller.deleteAttendance);
