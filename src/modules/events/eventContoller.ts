@@ -1269,7 +1269,7 @@ export class eventManagement {
         recordedByName: record.recordedByName,
         created_at: record.created_at,
         updated_at: record.updated_at,
-        event_id: record.event_mgt_id,
+        eventId: record.event_mgt_id,
         event_name: record.event.event.event_name,
       }));
 
