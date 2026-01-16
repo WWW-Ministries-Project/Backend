@@ -87,7 +87,7 @@ eventRouter.get("/church-attendance/by-id", eventContoller.getAttendanceById);
  * Update attendance summary by ID
  * Uses URL param :id
  */
-eventRouter.put("/church-attendance/:id", eventContoller.updateAttendance);
+eventRouter.put("/church-attendance", eventContoller.updateAttendance);
 
 /**
  * Delete attendance summary by ID

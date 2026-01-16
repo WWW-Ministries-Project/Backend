@@ -1299,12 +1299,12 @@ export class eventManagement {
 
   updateAttendance = async (req: Request, res: Response) => {
     try {
-      const id = Number(req.params.id);
+      const { id } = req.query;
       const { group, adultMale, adultFemale, childrenMale, childrenFemale } =
         req.body;
 
       const updated = await prisma.event_attendance_summary.update({
-        where: { id },
+        where: { id: Number(id) },
         data: {
           group,
           adultMale: Number(adultMale) || 0,
