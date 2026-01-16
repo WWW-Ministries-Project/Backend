@@ -1327,10 +1327,10 @@ export class eventManagement {
 
   deleteAttendance = async (req: Request, res: Response) => {
     try {
-      const id = Number(req.params.id);
+      const { id } = req.query;
 
       await prisma.event_attendance_summary.delete({
-        where: { id },
+        where: { id: Number(id) },
       });
 
       res.json({
