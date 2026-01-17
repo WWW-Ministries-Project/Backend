@@ -943,3 +943,19 @@ model certificate {
 
   @@unique([userId, programId])
 }
+
+model AnnualTheme {
+  id             Int   @id @default(autoincrement())
+  year           Int
+  title          String
+  verseReference String
+  verse          String
+  message        String
+  imageUrl       String?  
+  isActive       Boolean  @default(false)
+
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([year])
+}
