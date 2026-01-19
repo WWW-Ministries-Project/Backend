@@ -50,7 +50,7 @@ export class AnnualThemeService {
   async update(
     id: number,
     data: Partial<{
-      year: number;
+      year: string | number;
       title: string;
       verseReference: string;
       verse: string;
@@ -68,7 +68,10 @@ export class AnnualThemeService {
 
     return prisma.annualTheme.update({
       where: { id },
-      data,
+      data:{
+        ...data,
+        year: data.year ? Number(data.year) : undefined
+      },
     });
   }
 
