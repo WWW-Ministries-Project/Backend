@@ -19,6 +19,7 @@ import marketRouter from "../modules/marketplace/marketRouter";
 import productRouter from "../modules/products/productRouter";
 import orderRouter from "../modules/orders/orderRoutes";
 import themeRouter from "../modules/theme/route";
+import appointmentRouter from "../modules/appointment/appointment-route";
 dotenv.config();
 
 export const appRouter = Router();
@@ -40,3 +41,4 @@ appRouter.use("/market", marketRouter);
 appRouter.use("/product", productRouter);
 appRouter.use("/orders", orderRouter);
 appRouter.use("/theme", themeRouter);
+appRouter.use("/appointment", appointmentRouter);
