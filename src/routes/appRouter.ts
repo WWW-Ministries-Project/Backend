@@ -22,6 +22,8 @@ import themeRouter from "../modules/theme/route";
 import appointmentRouter from "../modules/appointment/appointment-route";
 import { fi } from "date-fns/locale";
 import receiptConfigRouter from "../modules/finance/ReceiptConfig/route";
+import bankAccountConfigRouter from "../modules/finance/BankAccountConfig/route";
+import paymentConfigRouter from "../modules/finance/PaymentConfig/route";
 dotenv.config();
 
 export const appRouter = Router();
@@ -45,3 +47,6 @@ appRouter.use("/orders", orderRouter);
 appRouter.use("/theme", themeRouter);
 appRouter.use("/appointment", appointmentRouter);
 appRouter.use("/receiptconfig", receiptConfigRouter);
+appRouter.use("/paymentconfig", paymentConfigRouter);
+appRouter.use("/bankaccountconfig", bankAccountConfigRouter);
+

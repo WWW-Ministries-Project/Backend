@@ -3,7 +3,7 @@ import { prisma } from "../../../Models/context";
 interface CreateBankAccountConfigValues {
   name: string;
   description: string;
-  percentage: string;
+  percentage: number;
 }
 
 
@@ -63,6 +63,9 @@ export class bankAccountConfigurationService {
         ...(data.name !== undefined && { name: data.name }),
         ...(data.description !== undefined && {
           description: data.description,
+        }),
+        ...(data.percentage !== undefined && {
+          percentage: data.percentage,
         }),
       },
     });
