@@ -1018,3 +1018,22 @@ model receiptConfig {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 }
+
+model paymentConfig {
+  id          String   @id @default(uuid())
+  name        String
+  description String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model bankAccountConfig {
+  id          String   @id @default(uuid())
+  name        String
+  description String
+  percentage  Float
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+}
+
