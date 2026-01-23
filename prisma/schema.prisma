@@ -1010,3 +1010,11 @@ enum appointment_status {
   CONFIRMED
   CANCELLED
 }
+
+model receiptConfig {
+  id          String   @id @default(uuid())
+  name        String
+  description String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
