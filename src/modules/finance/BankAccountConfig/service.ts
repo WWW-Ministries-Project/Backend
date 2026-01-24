@@ -1,6 +1,7 @@
 import { prisma } from "../../../Models/context";
 
 interface CreateBankAccountConfigValues {
+  id?: number;
   name: string;
   description: string;
   percentage: number;
@@ -38,7 +39,7 @@ export class bankAccountConfigurationService {
   /**
    * Fetch a single finance config by ID
    */
-  async findById(id: string) {
+  async findById(id: number) {
     const config = await prisma.bankAccountConfig.findUnique({
       where: { id },
     });
@@ -53,7 +54,7 @@ export class bankAccountConfigurationService {
   /**
    * Update a finance config
    */
-  async update(id: string, data: Partial<CreateBankAccountConfigValues>) {
+  async update(id: number, data: Partial<CreateBankAccountConfigValues>) {
     // Ensure record exists
     await this.findById(id);
 
@@ -76,7 +77,7 @@ export class bankAccountConfigurationService {
   /**
    * Delete a finance config
    */
-  async delete(id: string) {
+  async delete(id: number) {
     // Ensure record exists
     await this.findById(id);
 

@@ -41,9 +41,7 @@ export class FinacialsService {
     try {
       const existingConfig = await prisma.financeData.findUnique({
         where: {
-          metaData_month: data.metaData?.month,
-          metaData_year: data.metaData?.year,
-          metaData_week: data.metaData?.week
+          metaData: data.metaData
         }
       });
 
