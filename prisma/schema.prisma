@@ -127,8 +127,8 @@ model user_emergency_contact {
   id           Int         @id @default(autoincrement())
   name         String
   relation     String
-  country_code String?
   phone_number String
+  country_code String?
   user_info    user_info[]
 }
 
@@ -201,7 +201,6 @@ model assets {
   date_assigned       DateTime?
   date_purchased      DateTime?
   price               Float?
-  asset_id            String?
   description         String?
   updated_at          DateTime?
   supplier            String?
@@ -211,6 +210,7 @@ model assets {
   updated_by          Int?
   created_at          DateTime      @default(now())
   department_assigned Int?
+  asset_id            String?
   assigned_to         department?   @relation(fields: [department_assigned], references: [id])
 
   @@index([department_assigned], map: "assets_department_assigned_fkey")
@@ -245,15 +245,15 @@ model event_mgt {
   description          String?
   poster               String?
   qr_code              String?
-  event_name_id        Int
   created_by           Int
   created_at           DateTime                   @default(now())
   updated_by           Int?
   updated_at           DateTime?
   end_date             DateTime?
   start_date           DateTime?
-  event_type           event_type?
   event_status         event_status?
+  event_type           event_type?
+  event_name_id        Int
   event_attendance     event_attendance[]
   attendance_summaries event_attendance_summary[]
   event                event_act                  @relation(fields: [event_name_id], references: [id])
@@ -405,12 +405,12 @@ model program {
   id                   Int                     @id @default(autoincrement())
   title                String
   description          String
-  member_required      Boolean                 @default(false)
-  leader_required      Boolean                 @default(false)
-  ministry_required    Boolean                 @default(false)
   completed            Boolean                 @default(false)
   createdAt            DateTime                @default(now())
   updatedAt            DateTime                @updatedAt
+  leader_required      Boolean                 @default(false)
+  member_required      Boolean                 @default(false)
+  ministry_required    Boolean                 @default(false)
   certificate          certificate[]
   cohorts              cohort[]
   requiredForPrograms  program_prerequisites[] @relation("ProgramToRequired")
@@ -474,7 +474,6 @@ model cohort {
 model course {
   id           Int          @id @default(autoincrement())
   name         String
-  instructorId Int?
   capacity     Int
   enrolled     Int          @default(0)
   schedule     String
@@ -484,6 +483,7 @@ model course {
   meetingLink  String?
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
+  instructorId Int?
   cohort       cohort       @relation(fields: [cohortId], references: [id], onDelete: Cascade)
   instructor   user?        @relation(fields: [instructorId], references: [id], onDelete: Cascade)
   enrollments  enrollment[]
@@ -494,9 +494,9 @@ model course {
 
 model enrollment {
   id          Int                     @id @default(autoincrement())
-  user_id     Int?
-  course_id   Int
   enrolledAt  DateTime                @default(now())
+  course_id   Int
+  user_id     Int?
   completed   Boolean?                @default(false)
   completedAt DateTime?
   submissions assignment_submission[]
@@ -563,14 +563,11 @@ model assignment_submission {
 
 model visitor {
   id               Int              @id @default(autoincrement())
-  title            String?
   firstName        String
   lastName         String
-  otherName        String?
   email            String?          @unique
   phone            String?
   country          String?
-  country_code     String?
   address          String?
   city             String?
   state            String?
@@ -582,6 +579,9 @@ model visitor {
   membershipWish   Boolean          @default(false)
   createdAt        DateTime         @default(now())
   updatedAt        DateTime         @updatedAt
+  country_code     String?
+  otherName        String?
+  title            String?
   followUps        follow_up[]
   notes            note[]
   prayerRequests   prayer_request[]
@@ -746,13 +746,13 @@ model markets {
   name          String        @unique
   description   String?
   deleted       Boolean       @default(false)
-  event_mgt_id  Int?
   start_date    DateTime?
   end_date      DateTime?
   created_at    DateTime      @default(now())
   updated_at    DateTime      @updatedAt
   created_by_id Int?
   updated_at_id Int?
+  event_mgt_id  Int?
   event         event_mgt?    @relation(fields: [event_mgt_id], references: [id])
   order_items   order_items[]
   products      products[]
@@ -764,20 +764,20 @@ model products {
   id                  Int               @id @default(autoincrement())
   name                String
   description         String?
-  colours             String?
-  image_url           String?
   deleted             Boolean           @default(false)
-  stock_managed       String            @default("no")
-  status              String?           @default("draft")
-  product_type_id     Int?
-  product_category_id Int?
-  price_currency      String?
-  price_amount        Float?
+  colours             String?
   created_at          DateTime          @default(now())
   updated_at          DateTime          @updatedAt
   created_by_id       Int?
   updated_at_id       Int?
+  image_url           String?
   market_id           Int?
+  price_amount        Float?
+  price_currency      String?
+  product_category_id Int?
+  product_type_id     Int?
+  status              String?           @default("draft")
+  stock_managed       String            @default("no")
   order_items         order_items[]
   product_colours     product_colour[]
   market              markets?          @relation(fields: [market_id], references: [id])
@@ -961,7 +961,7 @@ model bankAccountConfig {
 }
 
 model receiptConfig {
-  id          Int  @id @default(autoincrement())
+  id          Int      @id @default(autoincrement())
   name        String
   description String
   createdAt   DateTime @default(now())
@@ -969,18 +969,16 @@ model receiptConfig {
 }
 
 model financeData {
-  id              Int   @id @default(autoincrement())
-  metaData        Json?
-  receipts        Json?
-  tithe           Json?
-  payments        Json?
-  balance         Json?
-  fundsAllocation Json?
+  id              Int      @id @default(autoincrement())
+  metaData        String?  @db.LongText
+  receipts        String?  @db.LongText
+  tithe           String?  @db.LongText
+  payments        String?  @db.LongText
+  balance         String?  @db.LongText
+  fundsAllocation String?  @db.LongText
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 }
-
-
 
 enum status_type {
   UNCONFIRMED
