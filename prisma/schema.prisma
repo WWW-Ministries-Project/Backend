@@ -9,64 +9,62 @@ datasource db {
 }
 
 model user {
-  id                    Int                    @id @default(autoincrement())
-  name                  String
-  email                 String?                @unique
-  is_active             Boolean?               @default(true)
-  partner               Boolean?               @default(false)
-  is_user               Boolean?               @default(false)
-  password              String?
-  member_id             String?
-  position_id           Int?
-  department_id         Int?
-  created_at            DateTime               @default(now())
-  updated_at            DateTime?
-  access_level_id       Int?
-  membership_type       membership_type?
-  asset_history         asset_history[]
-  department_head       department[]
-  event_attendance      event_attendance[]
-  request               request[]
-  access                access_level?          @relation(fields: [access_level_id], references: [id])
-  position              position?              @relation(fields: [position_id], references: [id])
-  department            user_departments?
-  user_info             user_info?
-  hod_user              request_approvals[]    @relation("hod_user")
-  ps_user               request_approvals[]    @relation("ps_user")
-  user_request_comments request_comments[]
-  enrollments           enrollment[]
-  parent_id             Int?
-  parent                user?                  @relation("UserParent", fields: [parent_id], references: [id])
-  children              user[]                 @relation("UserParent")
-  status                status_type?
-  is_sync               Boolean?               @default(false)
-  sync_id               Int?
-  mode                  classFormat?
-  followUps             follow_up[]
-  prayerRequests        prayer_request[]
-  notes                 note[]
-  life_center_member    life_center_member[]
-  soul_won              soul_won[]             @relation("user_soul_winner")
-  department_positions  department_positions[]
-
-  spouse_id             Int?                    @unique
-  spouse                user?                   @relation("SpouseRelation", fields: [spouse_id], references: [id])
-  spouse_of             user?                   @relation("SpouseRelation")
-  course                course[]
-  orders                orders[]
-  certificate           certificate[]
-  event_registers       event_registers[]
-  assignment_submission assignment_submission[]
-
-  family_links             family_relation[]          @relation("UserFamily")
-  family_of_links          family_relation[]          @relation("FamilyUser")
+  id                       Int                        @id @default(autoincrement())
+  name                     String
+  email                    String?                    @unique
+  is_active                Boolean?                   @default(true)
+  partner                  Boolean?                   @default(false)
+  is_user                  Boolean?                   @default(false)
+  password                 String?
+  member_id                String?
+  position_id              Int?
+  department_id            Int?
+  created_at               DateTime                   @default(now())
+  updated_at               DateTime?
+  access_level_id          Int?
+  membership_type          membership_type?
+  parent_id                Int?
+  status                   status_type?
+  is_sync                  Boolean?                   @default(false)
+  sync_id                  Int?
+  mode                     classFormat?
+  spouse_id                Int?                       @unique
+  appointments             appointment[]
+  asset_history            asset_history[]
+  assignment_submission    assignment_submission[]
+  timeSlots                availability[]
+  certificate              certificate[]
+  course                   course[]
+  department_head          department[]
+  department_positions     department_positions[]
+  enrollments              enrollment[]
+  event_attendance         event_attendance[]
   event_attendance_summary event_attendance_summary[]
-
-  timeSlots    availability[]
-  appointments appointment[]
+  event_registers          event_registers[]
+  family_of_links          family_relation[]          @relation("FamilyUser")
+  family_links             family_relation[]          @relation("UserFamily")
+  followUps                follow_up[]
+  life_center_member       life_center_member[]
+  notes                    note[]
+  orders                   orders[]
+  prayerRequests           prayer_request[]
+  request                  request[]
+  hod_user                 request_approvals[]        @relation("hod_user")
+  ps_user                  request_approvals[]        @relation("ps_user")
+  user_request_comments    request_comments[]
+  soul_won                 soul_won[]                 @relation("user_soul_winner")
+  access                   access_level?              @relation(fields: [access_level_id], references: [id])
+  parent                   user?                      @relation("UserParent", fields: [parent_id], references: [id])
+  children                 user[]                     @relation("UserParent")
+  position                 position?                  @relation(fields: [position_id], references: [id])
+  spouse                   user?                      @relation("SpouseRelation", fields: [spouse_id], references: [id])
+  spouse_of                user?                      @relation("SpouseRelation")
+  department               user_departments?
+  user_info                user_info?
 
   @@index([access_level_id], map: "user_access_level_id_fkey")
   @@index([position_id], map: "user_position_id_fkey")
+  @@index([parent_id], map: "user_parent_id_fkey")
 }
 
 model user_info {
@@ -108,11 +106,11 @@ model family_relation {
   user_id   Int
   family_id Int
   relation  String
-
-  user   user @relation("UserFamily", fields: [user_id], references: [id])
-  family user @relation("FamilyUser", fields: [family_id], references: [id])
+  family    user   @relation("FamilyUser", fields: [family_id], references: [id])
+  user      user   @relation("UserFamily", fields: [user_id], references: [id])
 
   @@unique([user_id, family_id])
+  @@index([family_id], map: "family_relation_family_id_fkey")
 }
 
 model user_work_info {
@@ -120,15 +118,9 @@ model user_work_info {
   name_of_institution String
   industry            String
   position            String
-  user_info           user_info[]
   employment_status   String?
   school_name         String?
-}
-
-enum status_type {
-  UNCONFIRMED
-  CONFIRMED
-  MEMBER
+  user_info           user_info[]
 }
 
 model user_emergency_contact {
@@ -149,14 +141,14 @@ model department {
   created_at           DateTime               @default(now())
   updated_by           Int?
   updated_at           DateTime?
+  is_sync              Boolean?               @default(false)
+  sync_id              Int?
   assets               assets[]
   department_head_info user?                  @relation(fields: [department_head], references: [id])
+  department_positions department_positions[]
   position             position[]
   request              request[]
   user_departments     user_departments[]
-  is_sync              Boolean?               @default(false)
-  sync_id              Int?
-  department_positions department_positions[]
 
   @@index([department_head], map: "department_department_head_fkey")
 }
@@ -180,11 +172,11 @@ model position {
   created_at           DateTime               @default(now())
   updated_by           Int?
   updated_at           DateTime?
-  department           department?            @relation(fields: [department_id], references: [id])
-  user                 user[]
   is_sync              Boolean?               @default(false)
   sync_id              Int?
   department_positions department_positions[]
+  department           department?            @relation(fields: [department_id], references: [id])
+  user                 user[]
 
   @@index([department_id], map: "position_department_id_fkey")
 }
@@ -193,7 +185,7 @@ model access_level {
   id             Int       @id @default(autoincrement())
   name           String    @unique
   description    String?
-  permissions    Json?
+  permissions    String?   @db.LongText
   created_by     Int?
   updated_by     Int?
   deleted_at     DateTime?
@@ -242,8 +234,7 @@ model event_act {
   event_status      event_status?
   event_type        event_type?
   event_description String?       @default("event_description")
-
-  event_mgt event_mgt[]
+  event_mgt         event_mgt[]
 }
 
 model event_mgt {
@@ -255,7 +246,6 @@ model event_mgt {
   poster               String?
   qr_code              String?
   event_name_id        Int
-  event                event_act                  @relation(fields: [event_name_id], references: [id])
   created_by           Int
   created_at           DateTime                   @default(now())
   updated_by           Int?
@@ -264,44 +254,37 @@ model event_mgt {
   start_date           DateTime?
   event_type           event_type?
   event_status         event_status?
-  attendance_summaries event_attendance_summary[]
   event_attendance     event_attendance[]
+  attendance_summaries event_attendance_summary[]
+  event                event_act                  @relation(fields: [event_name_id], references: [id])
+  event_registers      event_registers[]
+  markets              markets[]
   request              request[]
   visit                visit[]
 
-  markets         markets[]
-  event_registers event_registers[]
+  @@index([event_name_id], map: "event_mgt_event_name_id_fkey")
 }
 
 model event_attendance_summary {
-  id Int @id @default(autoincrement())
-
+  id             Int              @id @default(autoincrement())
   event_mgt_id   Int
-  event          event_mgt        @relation(fields: [event_mgt_id], references: [id])
   date           DateTime
   group          attendance_group @default(BOTH)
   adultMale      Int              @default(0)
   adultFemale    Int              @default(0)
   childrenMale   Int              @default(0)
   childrenFemale Int              @default(0)
-
   recordedBy     Int
-  recordedByUser user @relation(fields: [recordedBy], references: [id])
-
   recordedByName String
-
-  created_at DateTime  @default(now())
-  updated_at DateTime?
+  created_at     DateTime         @default(now())
+  updated_at     DateTime?
+  event          event_mgt        @relation(fields: [event_mgt_id], references: [id])
+  recordedByUser user             @relation(fields: [recordedBy], references: [id])
 
   @@unique([event_mgt_id, date])
   @@index([event_mgt_id])
   @@index([date])
-}
-
-enum attendance_group {
-  ADULTS
-  CHILDREN
-  BOTH
+  @@index([recordedBy], map: "event_attendance_summary_recordedBy_fkey")
 }
 
 model event_attendance {
@@ -337,14 +320,14 @@ model request {
   request_approval_status RequestApprovalStatus
   requisition_date        DateTime
   currency                String
+  user_sign               String?
   attachmentsList         request_attachment[]
   department              department            @relation(fields: [department_id], references: [id])
   event                   event_mgt             @relation(fields: [event_id], references: [id])
   user                    user                  @relation(fields: [user_id], references: [id])
   request_approvals       request_approvals?
-  products                requested_item[]      @relation("ProductRequest")
-  user_sign               String?
   request_comments        request_comments[]
+  products                requested_item[]      @relation("ProductRequest")
 
   @@index([user_id], map: "request_user_id_fkey")
   @@index([department_id], map: "request_department_id_fkey")
@@ -355,7 +338,7 @@ model requisition_summary {
   requisition_id  Int      @unique
   user_id         Int
   generated_id    String
-  product_names   Json
+  product_names   String   @db.LongText
   date_created    DateTime
   approval_status String
   total_amount    Float?
@@ -365,12 +348,11 @@ model requisition_summary {
 }
 
 model request_comments {
-  id         Int      @id @default(autoincrement())
-  request_id Int?
-  user_id    Int?
-  comment    String?
-  created_at DateTime @default(now())
-
+  id                   Int      @id @default(autoincrement())
+  request_id           Int?
+  user_id              Int?
+  comment              String?
+  created_at           DateTime @default(now())
   requesition          request? @relation(fields: [request_id], references: [id])
   request_comment_user user?    @relation(fields: [user_id], references: [id])
 
@@ -411,37 +393,39 @@ model request_approvals {
   ps_approved       Boolean   @default(false)
   ps_approval_date  DateTime?
   ps_sign           String?
-  request           request?  @relation(fields: [request_id], references: [id])
   hod_user          user?     @relation("hod_user", fields: [hod_user_id], references: [id])
   ps_user           user?     @relation("ps_user", fields: [ps_user_id], references: [id])
+  request           request?  @relation(fields: [request_id], references: [id])
+
+  @@index([hod_user_id], map: "request_approvals_hod_user_id_fkey")
+  @@index([ps_user_id], map: "request_approvals_ps_user_id_fkey")
 }
 
 model program {
-  id                Int      @id @default(autoincrement())
-  title             String
-  description       String
-  member_required   Boolean  @default(false)
-  leader_required   Boolean  @default(false)
-  ministry_required Boolean  @default(false)
-  topics            topic[]
-  cohorts           cohort[]
-  completed         Boolean  @default(false)
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-
-  prerequisitePrograms program_prerequisites[] @relation("ProgramToPrerequisite")
-  requiredForPrograms  program_prerequisites[] @relation("ProgramToRequired")
+  id                   Int                     @id @default(autoincrement())
+  title                String
+  description          String
+  member_required      Boolean                 @default(false)
+  leader_required      Boolean                 @default(false)
+  ministry_required    Boolean                 @default(false)
+  completed            Boolean                 @default(false)
+  createdAt            DateTime                @default(now())
+  updatedAt            DateTime                @updatedAt
   certificate          certificate[]
+  cohorts              cohort[]
+  requiredForPrograms  program_prerequisites[] @relation("ProgramToRequired")
+  prerequisitePrograms program_prerequisites[] @relation("ProgramToPrerequisite")
+  topics               topic[]
 }
 
 model program_prerequisites {
   programId      Int
   prerequisiteId Int
-
-  program      program @relation("ProgramToPrerequisite", fields: [programId], references: [id], onDelete: Cascade)
-  prerequisite program @relation("ProgramToRequired", fields: [prerequisiteId], references: [id], onDelete: Cascade)
+  prerequisite   program @relation("ProgramToRequired", fields: [prerequisiteId], references: [id], onDelete: Cascade)
+  program        program @relation("ProgramToPrerequisite", fields: [programId], references: [id], onDelete: Cascade)
 
   @@id([programId, prerequisiteId])
+  @@index([prerequisiteId], map: "program_prerequisites_prerequisiteId_fkey")
 }
 
 model topic {
@@ -450,27 +434,27 @@ model topic {
   programId    Int
   description  String?
   order_number Int?
-  program      program       @relation(fields: [programId], references: [id], onDelete: Cascade)
-  progress     progress[]
   LearningUnit LearningUnit?
+  progress     progress[]
+  program      program       @relation(fields: [programId], references: [id], onDelete: Cascade)
+
+  @@index([programId], map: "topic_programId_fkey")
 }
 
 model LearningUnit {
-  id          Int    @id @default(autoincrement())
-  topicId     Int    @unique
-  type        String
-  data        Json
-  version     Int    @default(1)
-  maxAttempts Int?   @default(3)
-
-  topic topic @relation(fields: [topicId], references: [id], onDelete: Cascade)
-
-  cohortAssignments cohort_assignment[]
+  id                Int                     @id @default(autoincrement())
+  topicId           Int                     @unique
+  type              String
+  data              String                  @db.LongText
+  version           Int                     @default(1)
+  maxAttempts       Int?                    @default(3)
+  topic             topic                   @relation(fields: [topicId], references: [id], onDelete: Cascade)
   submissions       assignment_submission[]
+  cohortAssignments cohort_assignment[]
 }
 
 model cohort {
-  id                  Int      @id @default(autoincrement())
+  id                  Int                 @id @default(autoincrement())
   name                String
   startDate           DateTime
   status              String
@@ -478,12 +462,13 @@ model cohort {
   duration            String
   applicationDeadline DateTime
   programId           Int
-  program             program  @relation(fields: [programId], references: [id], onDelete: Cascade)
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  program             program             @relation(fields: [programId], references: [id], onDelete: Cascade)
+  assignments         cohort_assignment[]
   courses             course[]
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
 
-  assignments cohort_assignment[]
+  @@index([programId], map: "cohort_programId_fkey")
 }
 
 model course {
@@ -497,33 +482,30 @@ model course {
   classFormat  classFormat?
   location     String?
   meetingLink  String?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
   cohort       cohort       @relation(fields: [cohortId], references: [id], onDelete: Cascade)
   instructor   user?        @relation(fields: [instructorId], references: [id], onDelete: Cascade)
   enrollments  enrollment[]
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
+
+  @@index([cohortId], map: "course_cohortId_fkey")
+  @@index([instructorId], map: "course_instructorId_fkey")
 }
 
 model enrollment {
-  id          Int        @id @default(autoincrement())
+  id          Int                     @id @default(autoincrement())
   user_id     Int?
   course_id   Int
-  user        user?      @relation(fields: [user_id], references: [id], onDelete: Cascade)
-  course      course     @relation(fields: [course_id], references: [id], onDelete: Cascade)
-  enrolledAt  DateTime   @default(now())
-  progress    progress[]
-  completed   Boolean?   @default(false)
+  enrolledAt  DateTime                @default(now())
+  completed   Boolean?                @default(false)
   completedAt DateTime?
-
   submissions assignment_submission[]
+  course      course                  @relation(fields: [course_id], references: [id], onDelete: Cascade)
+  user        user?                   @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  progress    progress[]
 
   @@unique([user_id, course_id])
-}
-
-enum classFormat {
-  In_Person
-  Online
-  Hybrid
+  @@index([course_id], map: "enrollment_course_id_fkey")
 }
 
 model progress {
@@ -535,50 +517,487 @@ model progress {
   completedAt  DateTime?
   notes        String?
   completed    Boolean?        @default(false)
-
-  enrollment enrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
-  topic      topic      @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  enrollment   enrollment      @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  topic        topic           @relation(fields: [topicId], references: [id], onDelete: Cascade)
 
   @@unique([enrollmentId, topicId])
+  @@index([topicId], map: "progress_topicId_fkey")
 }
 
 model cohort_assignment {
-  id             Int       @id @default(autoincrement())
+  id             Int          @id @default(autoincrement())
   cohortId       Int
   learningUnitId Int
-  isActive       Boolean   @default(false)
+  isActive       Boolean      @default(false)
   activatedAt    DateTime?
   dueDate        DateTime?
   closedAt       DateTime?
-
-  cohort       cohort       @relation(fields: [cohortId], references: [id], onDelete: Cascade)
-  learningUnit LearningUnit @relation(fields: [learningUnitId], references: [id], onDelete: Cascade)
+  cohort         cohort       @relation(fields: [cohortId], references: [id], onDelete: Cascade)
+  learningUnit   LearningUnit @relation(fields: [learningUnitId], references: [id], onDelete: Cascade)
 
   @@unique([cohortId, learningUnitId])
+  @@index([learningUnitId], map: "cohort_assignment_learningUnitId_fkey")
 }
 
 model assignment_submission {
-  id             Int @id @default(autoincrement())
+  id             Int               @id @default(autoincrement())
   enrollmentId   Int
   learningUnitId Int
-
-  content Json?
-  fileUrl String?
-  attempt Int     @default(1)
-
-  status      submission_status @default(SUBMITTED)
-  submittedAt DateTime          @default(now())
-
-  score      Int?
-  feedback   String?
-  gradedById Int?
-  gradedAt   DateTime?
-
-  enrollment   enrollment   @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
-  learningUnit LearningUnit @relation(fields: [learningUnitId], references: [id], onDelete: Cascade)
-  gradedBy     user?        @relation(fields: [gradedById], references: [id])
+  content        String?           @db.LongText
+  fileUrl        String?
+  attempt        Int               @default(1)
+  status         submission_status @default(SUBMITTED)
+  submittedAt    DateTime          @default(now())
+  score          Int?
+  feedback       String?
+  gradedById     Int?
+  gradedAt       DateTime?
+  enrollment     enrollment        @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  gradedBy       user?             @relation(fields: [gradedById], references: [id])
+  learningUnit   LearningUnit      @relation(fields: [learningUnitId], references: [id], onDelete: Cascade)
 
   @@index([enrollmentId, learningUnitId])
+  @@index([gradedById], map: "assignment_submission_gradedById_fkey")
+  @@index([learningUnitId], map: "assignment_submission_learningUnitId_fkey")
+}
+
+model visitor {
+  id               Int              @id @default(autoincrement())
+  title            String?
+  firstName        String
+  lastName         String
+  otherName        String?
+  email            String?          @unique
+  phone            String?
+  country          String?
+  country_code     String?
+  address          String?
+  city             String?
+  state            String?
+  zipCode          String?
+  visitDate        DateTime
+  is_member        Boolean          @default(false)
+  howHeard         String?
+  consentToContact Boolean          @default(false)
+  membershipWish   Boolean          @default(false)
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  followUps        follow_up[]
+  notes            note[]
+  prayerRequests   prayer_request[]
+  visits           visit[]
+}
+
+model visit {
+  id        Int        @id @default(autoincrement())
+  visitorId Int?
+  date      DateTime
+  eventId   Int?
+  notes     String?
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  event     event_mgt? @relation(fields: [eventId], references: [id])
+  visitor   visitor?   @relation(fields: [visitorId], references: [id], onDelete: Cascade)
+
+  @@index([eventId], map: "visit_eventId_fkey")
+  @@index([visitorId], map: "visit_visitorId_fkey")
+}
+
+model follow_up {
+  id         Int      @id @default(autoincrement())
+  visitorId  Int
+  userId     Int?
+  date       DateTime
+  type       String
+  status     String   @default("pending")
+  notes      String?
+  assignedTo Int?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  user       user?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  visitor    visitor  @relation(fields: [visitorId], references: [id], onDelete: Cascade)
+
+  @@index([userId], map: "follow_up_userId_fkey")
+  @@index([visitorId], map: "follow_up_visitorId_fkey")
+}
+
+model prayer_request {
+  id        Int      @id @default(autoincrement())
+  visitorId Int?
+  userId    Int?
+  date      DateTime
+  request   String
+  status    String   @default("active")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      user?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  visitor   visitor? @relation(fields: [visitorId], references: [id], onDelete: Cascade)
+
+  @@index([userId], map: "prayer_request_userId_fkey")
+  @@index([visitorId], map: "prayer_request_visitorId_fkey")
+}
+
+model note {
+  id        Int      @id @default(autoincrement())
+  visitorId Int?
+  userId    Int?
+  date      DateTime
+  author    String
+  content   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      user?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  visitor   visitor? @relation(fields: [visitorId], references: [id], onDelete: Cascade)
+
+  @@index([userId], map: "note_userId_fkey")
+  @@index([visitorId], map: "note_visitorId_fkey")
+}
+
+model life_center_role {
+  id                 Int                  @id @default(autoincrement())
+  name               String
+  life_center_member life_center_member[]
+}
+
+model life_center {
+  id                 Int                  @id @default(autoincrement())
+  name               String
+  description        String
+  meetingLocation    String
+  meetingDays        String
+  life_center_member life_center_member[]
+  soul_won           soul_won[]           @relation("life_center_soul_won")
+}
+
+model life_center_member {
+  id           Int              @id @default(autoincrement())
+  userId       Int
+  lifeCenterId Int
+  roleId       Int
+  lifeCenter   life_center      @relation(fields: [lifeCenterId], references: [id])
+  role         life_center_role @relation(fields: [roleId], references: [id])
+  user         user             @relation(fields: [userId], references: [id])
+
+  @@unique([userId, lifeCenterId])
+  @@index([lifeCenterId], map: "life_center_member_lifeCenterId_fkey")
+  @@index([roleId], map: "life_center_member_roleId_fkey")
+}
+
+model soul_won {
+  id             Int         @id @unique @default(autoincrement())
+  title          String?
+  first_name     String
+  last_name      String
+  other_name     String?
+  contact_number String
+  contact_email  String?
+  country_code   String?
+  country        String
+  city           String
+  date_won       DateTime
+  wonById        Int
+  lifeCenterId   Int
+  lifeCenter     life_center @relation("life_center_soul_won", fields: [lifeCenterId], references: [id], map: "soulwon_lifecenter_fkey")
+  wonBy          user        @relation("user_soul_winner", fields: [wonById], references: [id], map: "soulwon_wonby_fkey")
+
+  @@index([lifeCenterId], map: "soulwon_lifecenter_fkey")
+  @@index([wonById], map: "soulwon_wonby_fkey")
+}
+
+model devices {
+  id          Int    @id @default(autoincrement())
+  device_name String
+  ip_address  String
+  port        String
+  location    String
+}
+
+model department_positions {
+  id            Int        @id @default(autoincrement())
+  user_id       Int
+  department_id Int
+  position_id   Int?
+  department    department @relation(fields: [department_id], references: [id])
+  position      position?  @relation(fields: [position_id], references: [id])
+  user          user       @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@unique([user_id, department_id])
+  @@index([user_id])
+  @@index([department_id])
+  @@index([position_id])
+}
+
+model product_type {
+  id       Int        @id @default(autoincrement())
+  name     String
+  deleted  Boolean    @default(false)
+  products products[]
+}
+
+model product_category {
+  id       Int        @id @default(autoincrement())
+  name     String
+  deleted  Boolean    @default(false)
+  products products[]
+}
+
+model markets {
+  id            Int           @id @default(autoincrement())
+  name          String        @unique
+  description   String?
+  deleted       Boolean       @default(false)
+  event_mgt_id  Int?
+  start_date    DateTime?
+  end_date      DateTime?
+  created_at    DateTime      @default(now())
+  updated_at    DateTime      @updatedAt
+  created_by_id Int?
+  updated_at_id Int?
+  event         event_mgt?    @relation(fields: [event_mgt_id], references: [id])
+  order_items   order_items[]
+  products      products[]
+
+  @@index([event_mgt_id], map: "markets_event_mgt_id_fkey")
+}
+
+model products {
+  id                  Int               @id @default(autoincrement())
+  name                String
+  description         String?
+  colours             String?
+  image_url           String?
+  deleted             Boolean           @default(false)
+  stock_managed       String            @default("no")
+  status              String?           @default("draft")
+  product_type_id     Int?
+  product_category_id Int?
+  price_currency      String?
+  price_amount        Float?
+  created_at          DateTime          @default(now())
+  updated_at          DateTime          @updatedAt
+  created_by_id       Int?
+  updated_at_id       Int?
+  market_id           Int?
+  order_items         order_items[]
+  product_colours     product_colour[]
+  market              markets?          @relation(fields: [market_id], references: [id])
+  product_category    product_category? @relation(fields: [product_category_id], references: [id])
+  product_type        product_type?     @relation(fields: [product_type_id], references: [id])
+
+  @@index([market_id], map: "products_market_id_fkey")
+  @@index([product_category_id], map: "products_product_category_id_fkey")
+  @@index([product_type_id], map: "products_product_type_id_fkey")
+}
+
+model sizes {
+  id                   Int             @id @default(autoincrement())
+  name                 String          @unique
+  sort_order           Int?
+  created_at           DateTime        @default(now())
+  updated_at           DateTime        @updatedAt
+  created_by_id        Int?
+  updated_at_id        Int?
+  product_colour_stock product_stock[]
+}
+
+model product_colour {
+  id         Int             @id @default(autoincrement())
+  colour     String?
+  image_url  String?
+  product_id Int
+  product    products        @relation(fields: [product_id], references: [id])
+  sizes      product_stock[]
+
+  @@index([product_id], map: "product_colour_product_id_fkey")
+}
+
+model product_stock {
+  product_colour_id Int
+  size_id           Int
+  stock             Int            @default(0)
+  product_colour    product_colour @relation(fields: [product_colour_id], references: [id])
+  size              sizes          @relation(fields: [size_id], references: [id])
+
+  @@id([size_id, product_colour_id])
+  @@index([product_colour_id], map: "product_stock_product_colour_id_fkey")
+}
+
+model orders {
+  id              Int              @id @default(autoincrement())
+  order_number    String?
+  total_amount    Float
+  user_id         Int?
+  payment_status  payment_status   @default(pending)
+  delivery_status delivery_status  @default(pending)
+  created_at      DateTime         @default(now())
+  updated_at      DateTime         @updatedAt
+  reference       String
+  billing_details billing_details?
+  items           order_items[]
+  user            user?            @relation(fields: [user_id], references: [id])
+
+  @@index([user_id], map: "orders_user_id_fkey")
+}
+
+model order_items {
+  id               Int       @id @default(autoincrement())
+  order_id         Int
+  name             String
+  market_id        Int?
+  product_id       Int?
+  price_amount     Float
+  price_currency   String
+  quantity         Int
+  product_type     String
+  product_category String
+  image_url        String
+  color            String
+  size             String
+  market           markets?  @relation(fields: [market_id], references: [id])
+  order            orders    @relation(fields: [order_id], references: [id], onDelete: Cascade)
+  product          products? @relation(fields: [product_id], references: [id])
+
+  @@index([market_id], map: "order_items_market_id_fkey")
+  @@index([order_id], map: "order_items_order_id_fkey")
+  @@index([product_id], map: "order_items_product_id_fkey")
+}
+
+model billing_details {
+  id           Int    @id @default(autoincrement())
+  order_id     Int    @unique
+  first_name   String
+  last_name    String
+  email        String
+  phone_number String
+  country      String
+  country_code String
+  orders       orders @relation(fields: [order_id], references: [id], onDelete: Cascade)
+}
+
+model certificate {
+  id                Int      @id @default(autoincrement())
+  userId            Int
+  programId         Int
+  issuedAt          DateTime @default(now())
+  certificateNumber String   @unique
+  program           program  @relation(fields: [programId], references: [id])
+  user              user     @relation(fields: [userId], references: [id])
+
+  @@unique([userId, programId])
+  @@index([programId], map: "certificate_programId_fkey")
+}
+
+model AnnualTheme {
+  id             Int      @id @default(autoincrement())
+  year           Int      @unique
+  title          String
+  verseReference String
+  verse          String
+  message        String
+  imageUrl       String?
+  isActive       Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+model availability {
+  id                     Int            @id @default(autoincrement())
+  day                    String
+  startTime              String
+  endTime                String
+  sessionDurationMinutes Int            @default(30)
+  userId                 Int
+  maxBookingsPerSlot     Int
+  user                   user           @relation(fields: [userId], references: [id])
+  sessions               session_slot[]
+
+  @@index([userId])
+}
+
+model session_slot {
+  id             Int          @id @default(autoincrement())
+  start          String
+  end            String
+  availabilityId Int
+  availability   availability @relation(fields: [availabilityId], references: [id], onDelete: Cascade)
+
+  @@index([availabilityId], map: "session_slot_availabilityId_fkey")
+}
+
+model appointment {
+  id        Int                @id @default(autoincrement())
+  fullName  String
+  email     String
+  phone     String
+  purpose   String
+  note      String?
+  date      DateTime
+  startTime String
+  endTime   String
+  status    appointment_status @default(PENDING)
+  createdAt DateTime           @default(now())
+  userId    Int
+  user      user               @relation(fields: [userId], references: [id])
+
+  @@index([email])
+  @@index([userId])
+}
+
+model paymentConfig {
+  id          String      @id
+  name        String
+  description String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model bankAccountConfig {
+  id          String      @id
+  name        String
+  description String
+  percentage  Float
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model receiptConfig {
+  id          String  @id
+  name        String
+  description String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime
+}
+
+model financeData {
+  id              Int   @id @default(autoincrement())
+  metaData        Json?
+  receipts        Json?
+  tithe           Json?
+  payments        Json?
+  balance         Json?
+  fundsAllocation Json?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+
+
+enum status_type {
+  UNCONFIRMED
+  CONFIRMED
+  MEMBER
+}
+
+enum attendance_group {
+  ADULTS
+  CHILDREN
+  BOTH
+}
+
+enum classFormat {
+  In_Person
+  Online
+  Hybrid
 }
 
 enum submission_status {
@@ -635,247 +1054,6 @@ enum event_status {
   TENTATIVE
 }
 
-model visitor {
-  id               Int              @id @default(autoincrement())
-  title            String?
-  firstName        String
-  lastName         String
-  otherName        String?
-  email            String?          @unique
-  phone            String?
-  country          String?
-  country_code     String?
-  address          String?
-  city             String?
-  state            String?
-  zipCode          String?
-  visitDate        DateTime
-  is_member        Boolean          @default(false)
-  howHeard         String?
-  consentToContact Boolean          @default(false)
-  membershipWish   Boolean          @default(false)
-  visits           visit[]
-  followUps        follow_up[]
-  prayerRequests   prayer_request[]
-  notes            note[]
-  createdAt        DateTime         @default(now())
-  updatedAt        DateTime         @updatedAt
-}
-
-model visit {
-  id        Int        @id @default(autoincrement())
-  visitor   visitor?   @relation(fields: [visitorId], references: [id], onDelete: Cascade)
-  visitorId Int?
-  date      DateTime
-  event     event_mgt? @relation(fields: [eventId], references: [id])
-  eventId   Int?
-  notes     String?
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
-}
-
-model follow_up {
-  id         Int      @id @default(autoincrement())
-  visitor    visitor  @relation(fields: [visitorId], references: [id], onDelete: Cascade)
-  visitorId  Int
-  user       user?    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  userId     Int?
-  date       DateTime
-  type       String
-  status     String   @default("pending")
-  notes      String?
-  assignedTo Int?
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-}
-
-model prayer_request {
-  id        Int      @id @default(autoincrement())
-  visitor   visitor? @relation(fields: [visitorId], references: [id], onDelete: Cascade)
-  visitorId Int?
-  user      user?    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  userId    Int?
-  date      DateTime
-  request   String
-  status    String   @default("active")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-}
-
-model note {
-  id        Int      @id @default(autoincrement())
-  visitor   visitor? @relation(fields: [visitorId], references: [id], onDelete: Cascade)
-  visitorId Int?
-  user      user?    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  userId    Int?
-  date      DateTime
-  author    String
-  content   String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-}
-
-model life_center_role {
-  id                 Int                  @id @default(autoincrement())
-  name               String
-  life_center_member life_center_member[]
-}
-
-model life_center {
-  id                 Int                  @id @default(autoincrement())
-  name               String
-  description        String
-  meetingLocation    String
-  meetingDays        String
-  life_center_member life_center_member[]
-
-  soul_won soul_won[] @relation("life_center_soul_won")
-}
-
-model life_center_member {
-  id           Int              @id @default(autoincrement())
-  user         user             @relation(fields: [userId], references: [id])
-  userId       Int
-  lifeCenter   life_center      @relation(fields: [lifeCenterId], references: [id])
-  lifeCenterId Int
-  role         life_center_role @relation(fields: [roleId], references: [id])
-  roleId       Int
-
-  @@unique([userId, lifeCenterId])
-}
-
-model soul_won {
-  id             Int      @id @default(autoincrement())
-  title          String?
-  first_name     String
-  last_name      String
-  other_name     String?
-  contact_number String
-  contact_email  String?
-  country_code   String?
-  country        String
-  city           String
-  date_won       DateTime
-
-  wonBy   user @relation("user_soul_winner", fields: [wonById], references: [id], map: "soulwon_wonby_fkey")
-  wonById Int
-
-  lifeCenter   life_center @relation("life_center_soul_won", fields: [lifeCenterId], references: [id], map: "soulwon_lifecenter_fkey")
-  lifeCenterId Int
-
-  @@unique(id)
-}
-
-model devices {
-  id          Int    @id @default(autoincrement())
-  device_name String
-  ip_address  String
-  port        String
-  location    String
-}
-
-model department_positions {
-  id            Int  @id @default(autoincrement())
-  user_id       Int
-  department_id Int
-  position_id   Int?
-
-  user       user       @relation(fields: [user_id], references: [id], onDelete: Cascade)
-  department department @relation(fields: [department_id], references: [id])
-  position   position?  @relation(fields: [position_id], references: [id])
-
-  @@unique([user_id, department_id]) // Prevent duplicate entries
-  @@index([user_id])
-  @@index([department_id])
-  @@index([position_id])
-}
-
-model product_type {
-  id       Int        @id @default(autoincrement())
-  name     String
-  deleted  Boolean    @default(false)
-  products products[]
-}
-
-model product_category {
-  id       Int        @id @default(autoincrement())
-  name     String
-  deleted  Boolean    @default(false)
-  products products[]
-}
-
-model markets {
-  id            Int           @id @default(autoincrement())
-  name          String        @unique
-  description   String?
-  deleted       Boolean       @default(false)
-  event         event_mgt?    @relation(fields: [event_mgt_id], references: [id])
-  event_mgt_id  Int?
-  products      products[]
-  start_date    DateTime?
-  end_date      DateTime?
-  created_at    DateTime      @default(now())
-  updated_at    DateTime      @updatedAt
-  created_by_id Int?
-  updated_at_id Int?
-  order_items   order_items[]
-}
-
-model products {
-  id                  Int               @id @default(autoincrement())
-  name                String
-  description         String?
-  colours             String?
-  image_url           String?
-  deleted             Boolean           @default(false)
-  stock_managed       String            @default("no")
-  status              String?           @default("draft")
-  product_type        product_type?     @relation(fields: [product_type_id], references: [id])
-  product_category    product_category? @relation(fields: [product_category_id], references: [id])
-  product_type_id     Int?
-  product_category_id Int?
-  price_currency      String?
-  price_amount        Float?
-  created_at          DateTime          @default(now())
-  updated_at          DateTime          @updatedAt
-  created_by_id       Int?
-  updated_at_id       Int?
-  market              markets?          @relation(fields: [market_id], references: [id])
-  market_id           Int?
-  product_colours     product_colour[]
-  order_items         order_items[]
-}
-
-model sizes {
-  id                   Int             @id @default(autoincrement())
-  name                 String          @unique
-  sort_order           Int?
-  created_at           DateTime        @default(now())
-  updated_at           DateTime        @updatedAt
-  created_by_id        Int?
-  updated_at_id        Int?
-  product_colour_stock product_stock[]
-}
-
-model product_colour {
-  id         Int             @id @default(autoincrement())
-  colour     String?
-  image_url  String?
-  product_id Int
-  product    products        @relation(fields: [product_id], references: [id])
-  sizes      product_stock[]
-}
-
-model product_stock {
-  product_colour_id Int
-  product_colour    product_colour @relation(fields: [product_colour_id], references: [id])
-  size_id           Int
-  stock             Int            @default(0)
-  size              sizes          @relation(fields: [size_id], references: [id])
-
-  @@id([size_id, product_colour_id])
-}
-
 enum payment_status {
   pending
   success
@@ -889,151 +1067,8 @@ enum delivery_status {
   cancelled
 }
 
-model orders {
-  id              Int              @id @default(autoincrement())
-  order_number    String?
-  total_amount    Float
-  user            user?            @relation(fields: [user_id], references: [id])
-  user_id         Int?
-  payment_status  payment_status   @default(pending)
-  delivery_status delivery_status  @default(pending)
-  created_at      DateTime         @default(now())
-  updated_at      DateTime         @updatedAt
-  reference       String
-  items           order_items[]
-  billing_details billing_details?
-}
-
-model order_items {
-  id               Int       @id @default(autoincrement())
-  order            orders    @relation(fields: [order_id], references: [id], onDelete: Cascade)
-  order_id         Int
-  name             String
-  market           markets?  @relation(fields: [market_id], references: [id])
-  market_id        Int?
-  product          products? @relation(fields: [product_id], references: [id])
-  product_id       Int?
-  price_amount     Float
-  price_currency   String
-  quantity         Int
-  product_type     String
-  product_category String
-  image_url        String
-  color            String
-  size             String
-}
-
-model billing_details {
-  id           Int    @id @default(autoincrement())
-  orders       orders @relation(fields: [order_id], references: [id], onDelete: Cascade)
-  order_id     Int    @unique
-  first_name   String
-  last_name    String
-  email        String
-  phone_number String
-  country      String
-  country_code String
-}
-
-model certificate {
-  id                Int      @id @default(autoincrement())
-  userId            Int
-  programId         Int
-  issuedAt          DateTime @default(now())
-  certificateNumber String   @unique
-  user              user     @relation(fields: [userId], references: [id])
-  program           program  @relation(fields: [programId], references: [id])
-
-  @@unique([userId, programId])
-}
-
-model AnnualTheme {
-  id             Int     @id @default(autoincrement())
-  year           Int
-  title          String
-  verseReference String
-  verse          String
-  message        String
-  imageUrl       String?
-  isActive       Boolean @default(false)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@unique([year])
-}
-
-model availability {
-  id                     Int            @id @default(autoincrement())
-  day                    String
-  maxBookingsPerSlot     Int
-  startTime              String
-  endTime                String
-  sessionDurationMinutes Int            @default(30)
-  userId                 Int
-  user                   user           @relation(fields: [userId], references: [id])
-  sessions               session_slot[]
-
-  @@index([userId])
-}
-
-model session_slot {
-  id             Int          @id @default(autoincrement())
-  start          String
-  end            String
-  availabilityId Int
-  availability   availability @relation(fields: [availabilityId], references: [id], onDelete: Cascade)
-}
-
-model appointment {
-  id        Int                @id @default(autoincrement())
-  fullName  String
-  email     String
-  phone     String
-  purpose   String
-  note      String?
-  date      DateTime
-  startTime String
-  endTime   String
-  status    appointment_status @default(PENDING)
-  createdAt DateTime           @default(now())
-
-  userId Int
-  user   user @relation(fields: [userId], references: [id])
-
-  @@index([email])
-  @@index([userId])
-}
-
 enum appointment_status {
   PENDING
   CONFIRMED
   CANCELLED
 }
-
-model receiptConfig {
-  id          String   @id @default(uuid())
-  name        String
-  description String
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-}
-
-model paymentConfig {
-  id          String   @id @default(uuid())
-  name        String
-  description String
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-}
-
-model bankAccountConfig {
-  id          String   @id @default(uuid())
-  name        String
-  description String
-  percentage  Float
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-}
-
