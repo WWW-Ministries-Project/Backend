@@ -1,4 +1,3 @@
-import { appointment_status } from "@prisma/client";
 import { prisma } from "../../Models/context";
 
 export const AppointmentService = {

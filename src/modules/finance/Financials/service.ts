@@ -88,7 +88,7 @@ export class FinacialsService {
         updatedBy: null,
         updatedDate: null,
       },
-      receipts: receiptConfigs.map((config) => ({
+      receipts: receiptConfigs.map((config:any) => ({
         item: config.name,
         amount: 0,
       })),
@@ -97,7 +97,7 @@ export class FinacialsService {
         generalTithe: { percentage: 0, amount: 0, funds:0, label:''},
         icareTithe: { percentage: 0, amount: 0, funds:0, label:''},
       },
-      payments: paymentConfigs.map((config) => ({
+      payments: paymentConfigs.map((config:any) => ({
         item: config.name,
         amount: 0,
       })),
@@ -108,7 +108,7 @@ export class FinacialsService {
         WeeklyRefund: { item: '', amount: 0 },
         OfficeMaintenanceReserve: { item: '', amount: 0 },
       },
-      fundsAllocation: bankAccountConfigs.map((config) => ({
+      fundsAllocation: bankAccountConfigs.map((config:any) => ({
         movement: config.name,
         portionPercent: config.percentage,
         actual: 0,
