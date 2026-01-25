@@ -32,11 +32,11 @@ export class ReceiptConfigController {
   async findById(req: Request, res: Response) {
     const { id } = req.query;
 
-    if (!id || typeof id !== "string") {
+    if (!id) {
       return res.status(400).json({ message: "Invalid finance configuration ID" });
     }
 
-    const config = await receiptConfigService.findById(id);
+    const config = await receiptConfigService.findById(Number(id));
 
     if (!config) {
       return res.status(404).json({
@@ -52,12 +52,12 @@ export class ReceiptConfigController {
   async update(req: Request, res: Response) {
     const { id } = req.query;
 
-    if (!id || typeof id !== "string") {
+    if (!id) {
       return res.status(400).json({ message: "Invalid finance configuration ID" });
     }
 
     try {
-      const updatedConfig = await receiptConfigService.update(id, req.body);
+      const updatedConfig = await receiptConfigService.update(Number(id), req.body);
 
       return res.status(200).json({
         message: "Receipt configuration updated successfully",
@@ -74,11 +74,11 @@ export class ReceiptConfigController {
   async delete(req: Request, res: Response) {
     const { id } = req.query;
 
-    if (!id || typeof id !== "string") {
+    if (!id) {
       return res.status(400).json({ message: "Invalid finance configuration ID" });
     }
 
-    await receiptConfigService.delete(id);
+    await receiptConfigService.delete(Number(id));
 
     return res.status(204).send();
   }

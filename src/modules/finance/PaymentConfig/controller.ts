@@ -32,11 +32,11 @@ export class PaymentConfigController {
   async findById(req: Request, res: Response) {
     const { id } = req.query;
 
-    if (!id || typeof id !== "string") {
+    if (!id) {
       return res.status(400).json({ message: "Invalid payment configuration ID" });
     }
 
-    const config = await paymentConfigService.findById(id);
+    const config = await paymentConfigService.findById(Number(id));
 
     if (!config) {
       return res.status(404).json({
@@ -52,12 +52,12 @@ export class PaymentConfigController {
   async update(req: Request, res: Response) {
     const { id } = req.query;
 
-    if (!id || typeof id !== "string") {
+    if (!id ) {
       return res.status(400).json({ message: "Invalid payment configuration ID" });
     }
 
     try {
-      const updatedConfig = await paymentConfigService.update(id, req.body);
+      const updatedConfig = await paymentConfigService.update(Number(id), req.body);
 
       return res.status(200).json({
         message: "Payment configuration updated successfully",
@@ -78,7 +78,7 @@ export class PaymentConfigController {
       return res.status(400).json({ message: "Invalid payment configuration ID" });
     }
 
-    await paymentConfigService.delete(id);
+    await paymentConfigService.delete(Number(id));
 
     return res.status(204).send();
   }

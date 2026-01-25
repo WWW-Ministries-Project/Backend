@@ -51,12 +51,12 @@ export class FinancialsController {
   async findById(req: Request, res: Response) {
     const { id } = req.query;
 
-    if (!id || typeof id !== "string") {
+    if (!id) {
       return res.status(400).json({ message: "Invalid financial data ID" });
     }
 
     try {
-      const data = await financialService.findById(id);
+      const data = await financialService.findById(Number(id));
       return res.status(200).json({
         data,
       });
@@ -71,12 +71,12 @@ export class FinancialsController {
   async update(req: Request, res: Response) {
     const { id } = req.query;
 
-    if (!id || typeof id !== "string") {
+    if (!id ) {
       return res.status(400).json({ message: "Invalid financial data ID" });
     }
 
     try {
-      const updatedData = await financialService.update(id, req.body);
+      const updatedData = await financialService.update(Number(id), req.body);
       return res.status(200).json({
         message: "Financial data updated successfully",
         data: updatedData,
@@ -92,12 +92,12 @@ export class FinancialsController {
   async delete(req: Request, res: Response) {
     const { id } = req.query;
 
-    if (!id || typeof id !== "string") {
+    if (!id ) {
       return res.status(400).json({ message: "Invalid financial data ID" });
     }
 
     try {
-      await financialService.delete(id);
+      await financialService.delete(Number(id));
       return res.status(200).json({
         message: "Financial data deleted successfully",
       });

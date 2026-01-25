@@ -38,33 +38,33 @@ export class FinacialsService {
    */
 
   async create(data: FinanceData) {
-    try {
-      const existingConfig = await prisma.financeData.findUnique({
-        where: {
-          metaData: data.metaData
-        }
-      });
+    // try {
+    //   const existingConfig = await prisma.financeData.findUnique({
+    //     where: {
+    //       metaData: data.metaData
+    //     }
+    //   });
 
-      if (existingConfig) {
-        throw new Error('Finance data for this month, year, and week already exists.');
-      }
+    //   if (existingConfig) {
+    //     throw new Error('Finance data for this month, year, and week already exists.');
+    //   }
 
-      const createdData = await prisma.financeData.create({
-        data: {
-          metaData: data.metaData,
-          receipts: data.receipts,
-          tithe: data.tithe,
-          payments: data.payments,
-          balance: data.balance,
-          fundsAllocation: data.fundsAllocation
-        }
-      });
+    //   const createdData = await prisma.financeData.create({
+    //     data: {
+    //       metaData: data.metaData,
+    //       receipts: data.receipts,
+    //       tithe: data.tithe,
+    //       payments: data.payments,
+    //       balance: data.balance,
+    //       fundsAllocation: data.fundsAllocation
+    //     }
+    //   });
 
-      return createdData;
+    //   return createdData;
 
-    } catch (error: any) {
-      throw new Error(`Failed to create finance data: ${error.message}`);
-    }
+    // } catch (error: any) {
+    //   throw new Error(`Failed to create finance data: ${error.message}`);
+    // }
   
 
     // return this.mapResponse(createdData);
@@ -133,7 +133,7 @@ export class FinacialsService {
   /**
    * Fetch a single finance data record by ID
    */
-  async findById(id: string) {
+  async findById(id: number) {
     const record = await prisma.financeData.findUnique({
       where: { id },
     });
@@ -148,29 +148,29 @@ export class FinacialsService {
   /**
    * Update a finance data record
    */
-  async update(id: string, data: Partial<FinanceData>) {
+  async update(id: number, data: Partial<FinanceData>) {
     // Ensure record exists
     await this.findById(id);
 
-    const updated = await prisma.financeData.update({
-      where: { id },
-      data: {
-        ...(data.metaData && { metaData: data.metaData }),
-        ...(data.receipts && { receipts: data.receipts }),
-        ...(data.tithe && { tithe: data.tithe }),
-        ...(data.payments && { payments: data.payments }),
-        ...(data.balance && { balance: data.balance }),
-        ...(data.fundsAllocation && { fundsAllocation: data.fundsAllocation }),
-      },
-    });
+    // const updated = await prisma.financeData.update({
+    //   where: { id },
+    //   data: {
+    //     ...(data.metaData && { metaData: data.metaData }),
+    //     ...(data.receipts && { receipts: data.receipts }),
+    //     ...(data.tithe && { tithe: data.tithe }),
+    //     ...(data.payments && { payments: data.payments }),
+    //     ...(data.balance && { balance: data.balance }),
+    //     ...(data.fundsAllocation && { fundsAllocation: data.fundsAllocation }),
+    //   },
+    // });
 
-    return this.mapResponse(updated);
+    return this.mapResponse(null);
   }
 
   /**
    * Delete a finance data record
    */
-  async delete(id: string) {
+  async delete(id: number) {
     // Ensure record exists
     await this.findById(id);
 
