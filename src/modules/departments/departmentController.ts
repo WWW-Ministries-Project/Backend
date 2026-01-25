@@ -217,12 +217,12 @@ export const listDepartmentsLight = async (req: Request, res: Response) => {
         },
       },
     });
-    const data = response?.map((d) => {
+    const data = response?.map((d:any) => {
       const { department_head_info, position, ...rest } = d;
       return {
         ...rest,
         department_head: department_head_info?.name || "No Department Head",
-        positions: position?.map((p) => p.name) || [],
+        positions: position?.map((p:any) => p.name) || [],
       };
     });
 

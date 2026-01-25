@@ -52,7 +52,7 @@ export const AppointmentService = {
   async saveStaffAvailability(payload: any) {
     const { userId, maxBookingsPerSlot, timeSlots } = payload;
 
-    return await prisma.$transaction(async (tx) => {
+    return await prisma.$transaction(async (tx:any) => {
       // Update the user's max booking limit
       await tx.availability.deleteMany({ where: { userId: Number(userId) } });
 
@@ -94,7 +94,7 @@ export const AppointmentService = {
   },
 
   // UPDATE STATUS
-  async updateStatus(id: number, app_status: appointment_status) {
+  async updateStatus(id: number, app_status: any) {
     return prisma.appointment.update({
       where: { id },
       data: { status: app_status }

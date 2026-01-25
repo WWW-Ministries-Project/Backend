@@ -33,7 +33,7 @@ export class DeviceService {
 
   async findAll() {
     const devices = await prisma.devices.findMany();
-    return devices.map((device) => ({
+    return devices.map((device:any) => ({
       id: device.id,
       name: device.device_name,
       ip_address: device.ip_address,
