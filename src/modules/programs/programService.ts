@@ -411,7 +411,7 @@ export class ProgramService {
         },
       },
       include: {
-        submissions:true,
+        submissions: true,
         progress: {
           where: { topicId },
         },
@@ -572,13 +572,13 @@ export class ProgramService {
   async getCohortsByProgram(programId: number) {
     const cohorts = await prisma.cohort.findMany({
       where: { programId },
-      include:{
-        courses:{
-          select:{
-            id:true,
-            name:true,
-          }
-        }
+      include: {
+        courses: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
       },
     });
     return cohorts;

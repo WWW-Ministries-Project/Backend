@@ -58,8 +58,12 @@ model user {
   event_registers       event_registers[]
   assignment_submission assignment_submission[]
 
-  family_links    family_relation[] @relation("UserFamily")
-  family_of_links family_relation[] @relation("FamilyUser")
+  family_links             family_relation[]          @relation("UserFamily")
+  family_of_links          family_relation[]          @relation("FamilyUser")
+  event_attendance_summary event_attendance_summary[]
+
+  timeSlots    availability[]
+  appointments appointment[]
 
   @@index([access_level_id], map: "user_access_level_id_fkey")
   @@index([position_id], map: "user_position_id_fkey")
@@ -100,17 +104,16 @@ model user_info {
 }
 
 model family_relation {
-  id         Int    @id @default(autoincrement())
-  user_id    Int
-  family_id  Int
-  relation   String
+  id        Int    @id @default(autoincrement())
+  user_id   Int
+  family_id Int
+  relation  String
 
-  user       user   @relation("UserFamily", fields: [user_id], references: [id])
-  family     user   @relation("FamilyUser", fields: [family_id], references: [id])
+  user   user @relation("UserFamily", fields: [user_id], references: [id])
+  family user @relation("FamilyUser", fields: [family_id], references: [id])
 
   @@unique([user_id, family_id])
 }
-
 
 model user_work_info {
   id                  Int         @id @default(autoincrement())
@@ -244,29 +247,61 @@ model event_act {
 }
 
 model event_mgt {
-  id               Int                @id @default(autoincrement())
-  start_time       String?
-  end_time         String?
-  location         String?
-  description      String?
-  poster           String?
-  qr_code          String?
-  event_name_id    Int
-  event            event_act          @relation(fields: [event_name_id], references: [id])
-  created_by       Int
-  created_at       DateTime           @default(now())
-  updated_by       Int?
-  updated_at       DateTime?
-  end_date         DateTime?
-  start_date       DateTime?
-  event_type       event_type?
-  event_status     event_status?
-  event_attendance event_attendance[]
-  request          request[]
-  visit            visit[]
+  id                   Int                        @id @default(autoincrement())
+  start_time           String?
+  end_time             String?
+  location             String?
+  description          String?
+  poster               String?
+  qr_code              String?
+  event_name_id        Int
+  event                event_act                  @relation(fields: [event_name_id], references: [id])
+  created_by           Int
+  created_at           DateTime                   @default(now())
+  updated_by           Int?
+  updated_at           DateTime?
+  end_date             DateTime?
+  start_date           DateTime?
+  event_type           event_type?
+  event_status         event_status?
+  attendance_summaries event_attendance_summary[]
+  event_attendance     event_attendance[]
+  request              request[]
+  visit                visit[]
 
   markets         markets[]
   event_registers event_registers[]
+}
+
+model event_attendance_summary {
+  id Int @id @default(autoincrement())
+
+  event_mgt_id   Int
+  event          event_mgt        @relation(fields: [event_mgt_id], references: [id])
+  date           DateTime
+  group          attendance_group @default(BOTH)
+  adultMale      Int              @default(0)
+  adultFemale    Int              @default(0)
+  childrenMale   Int              @default(0)
+  childrenFemale Int              @default(0)
+
+  recordedBy     Int
+  recordedByUser user @relation(fields: [recordedBy], references: [id])
+
+  recordedByName String
+
+  created_at DateTime  @default(now())
+  updated_at DateTime?
+
+  @@unique([event_mgt_id, date])
+  @@index([event_mgt_id])
+  @@index([date])
+}
+
+enum attendance_group {
+  ADULTS
+  CHILDREN
+  BOTH
 }
 
 model event_attendance {
@@ -421,11 +456,11 @@ model topic {
 }
 
 model LearningUnit {
-  id      Int    @id @default(autoincrement())
-  topicId Int    @unique
-  type    String
-  data    Json
-  version Int    @default(1)
+  id          Int    @id @default(autoincrement())
+  topicId     Int    @unique
+  type        String
+  data        Json
+  version     Int    @default(1)
   maxAttempts Int?   @default(3)
 
   topic topic @relation(fields: [topicId], references: [id], onDelete: Cascade)
@@ -911,3 +946,68 @@ model certificate {
 
   @@unique([userId, programId])
 }
+
+model AnnualTheme {
+  id             Int     @id @default(autoincrement())
+  year           Int
+  title          String
+  verseReference String
+  verse          String
+  message        String
+  imageUrl       String?
+  isActive       Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([year])
+}
+
+model availability {
+  id                     Int            @id @default(autoincrement())
+  day                    String
+  maxBookingsPerSlot     Int
+  startTime              String
+  endTime                String
+  sessionDurationMinutes Int            @default(30)
+  userId                 Int
+  user                   user           @relation(fields: [userId], references: [id])
+  sessions               session_slot[]
+
+  @@index([userId])
+}
+
+model session_slot {
+  id             Int          @id @default(autoincrement())
+  start          String
+  end            String
+  availabilityId Int
+  availability   availability @relation(fields: [availabilityId], references: [id], onDelete: Cascade)
+}
+
+model appointment {
+  id        Int                @id @default(autoincrement())
+  fullName  String
+  email     String
+  phone     String
+  purpose   String
+  note      String?
+  date      DateTime
+  startTime String
+  endTime   String
+  status    appointment_status @default(PENDING)
+  createdAt DateTime           @default(now())
+
+  userId Int
+  user   user @relation(fields: [userId], references: [id])
+
+  @@index([email])
+  @@index([userId])
+}
+
+enum appointment_status {
+  PENDING
+  CONFIRMED
+  CANCELLED
+}
+

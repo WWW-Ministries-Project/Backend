@@ -2,7 +2,12 @@ import e, { Request, Response } from "express";
 import JWT from "jsonwebtoken";
 import * as dotenv from "dotenv";
 import { prisma } from "../../Models/context";
-import { sendEmail, comparePassword, hashPassword } from "../../utils";
+import {
+  sendEmail,
+  comparePassword,
+  hashPassword,
+  toCapitalizeEachWord,
+} from "../../utils";
 import { UserService } from "./userService";
 import { CourseService } from "../programs/courseService";
 import { LifeCenterService } from "../lifeCenterMangement/lifeCenterService";
@@ -166,6 +171,7 @@ export const updateUser = async (req: Request, res: Response) => {
         member_since,
       } = {},
       children = [],
+      family = [],
       status,
       is_user,
       department_positions,
@@ -260,16 +266,9 @@ export const updateUser = async (req: Request, res: Response) => {
     }
 
     // Optional: handle children (currently stubbed)
-    if (has_children && children.length > 0) {
-      console.log("Stub: handle child updates here");
-      kids = await updateChildren(
-        children,
-        updatedUser,
-        membership_type,
-        Number(user_id),
-      );
+    if (family.length > 0) {
+      await updateFamilyMembers(family, updatedUser);
     }
-
     const { password, ...rest } = updatedUser;
 
     const data = {
@@ -288,6 +287,271 @@ export const updateUser = async (req: Request, res: Response) => {
       .json({ message: "Internal Server Error", data: error?.message });
   }
 };
+
+async function updateFamilyMembers(family: any[], primaryUser: any) {
+  const childKeywords = ["child", "son", "daughter", "ward", "kid", "children"];
+  const spouseKeywords = ["spouse", "wife", "husband"];
+
+  let spouseUser: any = null;
+
+  /* =====================================================
+     1️⃣ HANDLE SPOUSE FIRST (UPDATE OR CREATE)
+  ====================================================== */
+  for (const member of family) {
+    if (!spouseKeywords.includes(member.relation.toLowerCase())) continue;
+
+    if (member.user_id) {
+      // UPDATE EXISTING SPOUSE
+      spouseUser = await prisma.user.update({
+        where: { id: Number(member.user_id) },
+        data: {
+          name: toCapitalizeEachWord(
+            `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
+          ),
+          email: member.email,
+          user_info: {
+            upsert: {
+              create: {
+                title: member.title,
+                first_name: member.first_name,
+                last_name: member.last_name,
+                other_name: member.other_name || null,
+                date_of_birth: new Date(member.date_of_birth),
+                gender: member.gender,
+                marital_status: member.marital_status,
+                nationality: member.nationality,
+              },
+              update: {
+                title: member.title,
+                first_name: member.first_name,
+                last_name: member.last_name,
+                other_name: member.other_name || null,
+                date_of_birth: new Date(member.date_of_birth),
+                gender: member.gender,
+                marital_status: member.marital_status,
+                nationality: member.nationality,
+              },
+            },
+          },
+        },
+      });
+    } else {
+      // CREATE SPOUSE
+      spouseUser = await prisma.user.create({
+        data: {
+          name: toCapitalizeEachWord(
+            `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
+          ),
+          email:
+            member.email ||
+            `${member.first_name.toLowerCase()}_${member.last_name.toLowerCase()}_${Date.now()}@temp.com`,
+          is_user: false,
+          is_active: true,
+          user_info: {
+            create: {
+              title: member.title,
+              first_name: member.first_name,
+              last_name: member.last_name,
+              other_name: member.other_name || null,
+              date_of_birth: new Date(member.date_of_birth),
+              gender: member.gender,
+              marital_status: member.marital_status,
+              nationality: member.nationality,
+            },
+          },
+        },
+      });
+
+      await userService.generateUserId(spouseUser);
+    }
+
+    await prisma.family_relation.upsert({
+      where: {
+        user_id_family_id: {
+          user_id: primaryUser.id,
+          family_id: spouseUser.id,
+        },
+      },
+      update: { relation: member.relation },
+      create: {
+        user_id: primaryUser.id,
+        family_id: spouseUser.id,
+        relation: member.relation,
+      },
+    });
+
+    await prisma.family_relation.upsert({
+      where: {
+        user_id_family_id: {
+          user_id: spouseUser.id,
+          family_id: primaryUser.id,
+        },
+      },
+      update: { relation: member.relation },
+      create: {
+        user_id: spouseUser.id,
+        family_id: primaryUser.id,
+        relation: member.relation,
+      },
+    });
+  }
+
+  return Promise.all(
+    family.map(async (member) => {
+      let familyUser: any;
+
+      // Skip spouse (already handled)
+      if (spouseKeywords.includes(member.relation.toLowerCase())) {
+        return spouseUser;
+      }
+
+      if (member.user_id) {
+        familyUser = await prisma.user.update({
+          where: { id: Number(member.user_id) },
+          data: {
+            name: toCapitalizeEachWord(
+              `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
+            ),
+            email: member.email,
+            user_info: {
+              upsert: {
+                create: {
+                  title: member.title,
+                  first_name: member.first_name,
+                  last_name: member.last_name,
+                  other_name: member.other_name || null,
+                  date_of_birth: new Date(member.date_of_birth),
+                  gender: member.gender,
+                  marital_status: member.marital_status,
+                  nationality: member.nationality,
+                },
+                update: {
+                  title: member.title,
+                  first_name: member.first_name,
+                  last_name: member.last_name,
+                  other_name: member.other_name || null,
+                  date_of_birth: new Date(member.date_of_birth),
+                  gender: member.gender,
+                  marital_status: member.marital_status,
+                  nationality: member.nationality,
+                },
+              },
+            },
+          },
+        });
+      } else if (childKeywords.includes(member.relation.toLowerCase())) {
+        familyUser = await prisma.user.findFirst({
+          where: {
+            user_info: {
+              first_name: member.first_name,
+              last_name: member.last_name,
+              date_of_birth: new Date(member.date_of_birth),
+            },
+            OR: [{ parent_id: primaryUser.id }, { parent_id: spouseUser?.id }],
+          },
+        });
+
+        if (!familyUser) {
+          familyUser = await prisma.user.create({
+            data: {
+              name: toCapitalizeEachWord(
+                `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
+              ),
+              email:
+                member.email ||
+                `${member.first_name.toLowerCase()}_${member.last_name.toLowerCase()}_${Date.now()}@temp.com`,
+              parent_id: primaryUser.id,
+              is_user: false,
+              is_active: true,
+              user_info: {
+                create: {
+                  title: member.title,
+                  first_name: member.first_name,
+                  last_name: member.last_name,
+                  other_name: member.other_name || null,
+                  date_of_birth: new Date(member.date_of_birth),
+                  gender: member.gender,
+                  marital_status: member.marital_status,
+                  nationality: member.nationality,
+                },
+              },
+            },
+          });
+
+          await userService.generateUserId(familyUser);
+        }
+
+        // 🔗 CHILD ↔ SPOUSE
+        if (spouseUser) {
+          await prisma.family_relation.upsert({
+            where: {
+              user_id_family_id: {
+                user_id: spouseUser.id,
+                family_id: familyUser.id,
+              },
+            },
+            update: { relation: "child" },
+            create: {
+              user_id: spouseUser.id,
+              family_id: familyUser.id,
+              relation: "child",
+            },
+          });
+        }
+      } else {
+        /* =====================
+         OTHER FAMILY MEMBERS
+      ====================== */
+        familyUser = await prisma.user.create({
+          data: {
+            name: toCapitalizeEachWord(
+              `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
+            ),
+            email:
+              member.email ||
+              `${member.first_name.toLowerCase()}_${member.last_name.toLowerCase()}_${Date.now()}@temp.com`,
+            is_user: false,
+            is_active: true,
+            user_info: {
+              create: {
+                title: member.title,
+                first_name: member.first_name,
+                last_name: member.last_name,
+                other_name: member.other_name || null,
+                date_of_birth: new Date(member.date_of_birth),
+                gender: member.gender,
+                marital_status: member.marital_status,
+                nationality: member.nationality,
+              },
+            },
+          },
+        });
+
+        await userService.generateUserId(familyUser);
+      }
+
+      /* =====================
+         LINK TO PRIMARY USER
+      ====================== */
+      await prisma.family_relation.upsert({
+        where: {
+          user_id_family_id: {
+            user_id: primaryUser.id,
+            family_id: familyUser.id,
+          },
+        },
+        update: { relation: member.relation },
+        create: {
+          user_id: primaryUser.id,
+          family_id: familyUser.id,
+          relation: member.relation,
+        },
+      });
+
+      return familyUser;
+    }),
+  );
+}
 
 // Helper to update department_positions
 async function updateDepartmentPositions(
@@ -898,120 +1162,24 @@ export const getUser = async (req: Request, res: Response) => {
 
   try {
     const response: any = await prisma.user.findUnique({
-      where: {
-        id: Number(user_id),
-      },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        membership_type: true,
-        created_at: true,
-        is_active: true,
-        position_id: true,
-        department_id: true,
-        access_level_id: true,
-        status: true,
-        is_user: true,
-        member_id: true,
-        user_info: {
-          select: {
-            first_name: true,
-            last_name: true,
-            other_name: true,
-            country_code: true,
-            primary_number: true,
-            title: true,
-            photo: true,
-            state_region: true,
-            city: true,
-            marital_status: true,
-            member_since: true,
-            nationality: true,
-            date_of_birth: true,
-            gender: true,
-            country: true,
-            occupation: true,
-            company: true,
-            address: true,
-            emergency_contact: {
-              select: {
-                name: true,
-                country_code: true,
-                phone_number: true,
-                relation: true,
-              },
-            },
-            work_info: {
-              select: {
-                name_of_institution: true,
-                industry: true,
-                position: true,
-              },
-            },
-          },
-        },
-        department: {
-          select: {
-            department_info: {
-              select: {
-                id: true,
-                name: true,
-              },
-            },
-          },
-        },
-        position: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
-        access: true,
-        enrollments: {
-          select: {
-            id: true,
-            course: {
-              select: {
-                id: true,
-                name: true,
-                instructor: true,
-                cohort: {
-                  select: {
-                    id: true,
-                    name: true,
-                    status: true,
-                    program: {
-                      select: {
-                        id: true,
-                        title: true,
-                      },
-                    },
-                  },
-                },
-              },
-            },
-            progress: {
-              select: {
-                id: true,
-                topic: {
-                  select: {
-                    id: true,
-                    name: true,
-                  },
-                },
-                status: true,
-              },
-            },
-          },
-        },
+      where: { id: Number(user_id) },
 
+      include: {
+        user_info: {
+          include: {
+            emergency_contact: true,
+            work_info: true,
+          },
+        },
         department_positions: {
           include: {
             department: true,
             position: true,
           },
         },
+        department: true,
+        position: true,
+        access: true,
       },
     });
 
@@ -1019,70 +1187,102 @@ export const getUser = async (req: Request, res: Response) => {
       return res.status(404).json({ message: "User not found" });
     }
 
-    const relations = await prisma.family_relation.findMany({
+    delete response.password;
+
+    /* =========================
+       2️⃣ FETCH FAMILY RELATIONS
+       - Forward
+       - Reverse
+    ========================== */
+    const forwardRelations = await prisma.family_relation.findMany({
       where: { user_id: response.id },
       include: {
-        family: {
-          include: { user_info: true },
-        },
+        family: { include: { user_info: true } },
       },
     });
 
-    const spouses = relations
-      .filter((r) => r.relation.toLowerCase() === "spouse")
-      .map((r) => ({
-        ...r.family.user_info,
-        relation: r.relation,
-      }));
+    const reverseRelations = await prisma.family_relation.findMany({
+      where: { family_id: response.id },
+      include: {
+        user: { include: { user_info: true } },
+      },
+    });
 
-    const relationChildren = relations
-      .filter((r) => childKeywords.includes(r.relation.toLowerCase()))
-      .map((r) => ({
-        ...r.family.user_info,
-        relation: r.relation,
-      }));
+    const normalizedRelations: any[] = [];
 
-    const parents = relations
-      .filter((r) => r.relation.toLowerCase() === "parent")
-      .map((r) => ({
-        ...r.family.user_info,
-        relation: r.relation,
-      }));
+    // Forward (me → them)
+    forwardRelations.forEach((r) => {
+      normalizedRelations.push({
+        user: r.family,
+        relation: r.relation.toLowerCase(),
+        direction: "forward",
+      });
+    });
 
-    const relationSiblings = relations
-      .filter((r) => siblingsKeywords.includes(r.relation.toLowerCase()))
-      .map((r) => ({
-        ...r.family.user_info,
-        relation: r.relation,
-      }));
+    // Reverse (them → me)
+    reverseRelations.forEach((r) => {
+      let inferredRelation = r.relation.toLowerCase();
 
-    const others = relations
-      .filter(
-        (r) =>
-          !["spouse", "parent"]
-            .concat(childKeywords, siblingsKeywords)
-            .includes(r.relation.toLowerCase()),
-      )
-      .map((r) => ({
-        ...r.family,
-        relation: r.relation,
-      }));
+      if (childKeywords.includes(inferredRelation)) inferredRelation = "parent";
+      else if (inferredRelation === "parent") inferredRelation = "child";
 
-    // Biological children
+      normalizedRelations.push({
+        user: r.user,
+        relation: inferredRelation,
+        direction: "reverse",
+      });
+    });
+
+    /* =========================
+       4️⃣ DEDUPE BY USER ID
+    ========================== */
+    const relationMap = new Map<number, any>();
+
+    normalizedRelations.forEach((r) => {
+      if (!relationMap.has(r.user.id)) {
+        relationMap.set(r.user.id, r);
+      }
+    });
+
+    const relations = Array.from(relationMap.values());
+
+    /* =========================
+       5️⃣ GROUP FAMILY
+    ========================== */
+    const spouses = relations.filter((r) => r.relation === "spouse");
+
+    const parents = relations.filter((r) => r.relation === "parent");
+
+    const children = relations.filter((r) =>
+      childKeywords.includes(r.relation),
+    );
+
+    const siblings = relations.filter((r) =>
+      siblingsKeywords.includes(r.relation),
+    );
+
+    const others = relations.filter(
+      (r) =>
+        !["spouse", "parent"]
+          .concat(childKeywords, siblingsKeywords)
+          .includes(r.relation),
+    );
+
+    /* =========================
+       6️⃣ BIOLOGICAL LOOKUPS
+    ========================== */
     const biologicalChildren = await prisma.user.findMany({
       where: { parent_id: response.id },
       include: { user_info: true },
     });
 
-    // Merge children
     const childrenMap = new Map<number, any>();
-    [...relationChildren, ...biologicalChildren].forEach((c:any) =>
+    [...children.map((c) => c.user), ...biologicalChildren].forEach((c) =>
       childrenMap.set(c.id, c),
     );
 
-    // Siblings via parents
-    const parentIds = parents.map((p:any) => p.id);
-    const siblingsByParent =
+    const parentIds = parents.map((p) => p.user.id);
+    const siblingByParent =
       parentIds.length > 0
         ? await prisma.user.findMany({
             where: {
@@ -1094,21 +1294,43 @@ export const getUser = async (req: Request, res: Response) => {
         : [];
 
     const siblingsMap = new Map<number, any>();
-    [...relationSiblings, ...siblingsByParent].forEach((s:any) =>
+    [...siblings.map((s) => s.user), ...siblingByParent].forEach((s) =>
       siblingsMap.set(s.id, s),
     );
 
+    /* =========================
+       7️⃣ BUILD RESPONSE
+    ========================== */
     const { user_info, department_positions, ...rest } = response;
-    const user: any = { ...rest, ...user_info };
 
-    user.family = spouses.concat(
-      Array.from(childrenMap.values()),
-      parents,
-      Array.from(siblingsMap.values()),
-      others,
-    );
+    const user: any = {
+      ...rest,
+      ...user_info,
+    };
 
-    // Flatten department_positions
+    user.family = [
+      ...spouses.map((s) => ({ ...s.user.user_info, relation: "spouse" })),
+      ...Array.from(childrenMap.values()).map((c) => ({
+        ...c.user_info,
+        relation: "child",
+      })),
+      ...parents.map((p) => ({
+        ...p.user.user_info,
+        relation: "parent",
+      })),
+      ...Array.from(siblingsMap.values()).map((s) => ({
+        ...s.user_info,
+        relation: "sibling",
+      })),
+      ...others.map((o) => ({
+        ...o.user.user_info,
+        relation: o.relation,
+      })),
+    ];
+
+    /* =========================
+       8️⃣ FLATTEN DEPARTMENTS
+    ========================== */
     if (department_positions?.length) {
       user.department_positions = department_positions.map((dp: any) => ({
         department_id: dp.department?.id ?? null,
@@ -1130,119 +1352,106 @@ export const getUser = async (req: Request, res: Response) => {
   }
 };
 
+type Gender = "Male" | "Female" | "Other";
+type AgeCategory = "children" | "adults";
+
+interface Stats {
+  Total: number;
+  Male: number;
+  Female: number;
+  Other: number;
+}
+
+interface CategoryStats {
+  children: Stats;
+  adults: Stats;
+}
+
+const emptyStats = (): Stats => ({
+  Total: 0,
+  Male: 0,
+  Female: 0,
+  Other: 0,
+});
+
+const emptyCategoryStats = (): CategoryStats => ({
+  children: emptyStats(),
+  adults: emptyStats(),
+});
+
+const normalizeGender = (gender?: string): Gender => {
+  if (gender === "Male" || gender === "Female") return gender;
+  return "Other";
+};
+
+const getAgeCategory = (dob?: Date): AgeCategory => {
+  if (!dob) return "adults"; // safe fallback
+  const age = new Date().getFullYear() - dob.getFullYear();
+  return age <= 18 ? "children" : "adults";
+};
+
+const calculateStats = (users: any[]) => {
+  const totals = emptyStats();
+  const categories = emptyCategoryStats();
+
+  for (const user of users) {
+    const gender = normalizeGender(user.gender);
+    const ageCategory = getAgeCategory(user.date_of_birth);
+
+    // Overall totals
+    totals.Total++;
+    totals[gender]++;
+
+    // Age category stats
+    categories[ageCategory].Total++;
+    categories[ageCategory][gender]++;
+  }
+
+  return { totals, categories };
+};
+
 export const statsUsers = async (req: Request, res: Response) => {
   try {
-    interface Stats {
-      Total: number;
-      Male: number;
-      Female: number;
-      Other: number;
-    }
-
-    interface CategoryStats {
-      children: Stats;
-      adults: Stats;
-    }
-
-    const allUserInfos_members = await prisma.user_info.findMany({
-      where: {
-        user: {
-          membership_type: "ONLINE",
+    const [onlineUsers, inhouseUsers] = await Promise.all([
+      prisma.user_info.findMany({
+        where: {
+          user: { membership_type: "ONLINE" },
         },
-      },
-    });
-    const allUserInfos_visitors = await prisma.user_info.findMany({
-      where: {
-        user: {
-          membership_type: "IN_HOUSE",
+      }),
+      prisma.user_info.findMany({
+        where: {
+          user: { membership_type: "IN_HOUSE" },
         },
-      },
-    });
-    const allUserInfosByCategory = allUserInfos_members.reduce(
-      (acc: any, cur: any) => {
-        const gender = cur.gender || "other";
+      }),
+    ]);
 
-        acc.total++;
-        acc[gender]++;
+    const onlineStats = calculateStats(onlineUsers);
+    const inhouseStats = calculateStats(inhouseUsers);
 
-        return acc;
-      },
-      { total: 0, Male: 0, Female: 0, other: 0 },
-    );
-
-    const stats: CategoryStats = allUserInfos_members.reduce(
-      (acc: any, user: any) => {
-        const age =
-          Number(new Date().getFullYear()) -
-          Number(user.date_of_birth?.getFullYear());
-        const category = age <= 18 ? "children" : "adults";
-        const gender = user.gender || "other";
-
-        acc[category].Total++;
-        acc[category][gender]++;
-
-        return acc;
-      },
-      {
-        children: { Total: 0, Male: 0, Female: 0, other: 0 },
-        adults: { Total: 0, Male: 0, Female: 0, other: 0 },
-      },
-    );
-
-    const visitorInfosByCategory = allUserInfos_visitors.reduce(
-      (acc: any, cur: any) => {
-        const gender = cur.gender || "other";
-
-        acc.total++;
-        acc[gender]++;
-
-        return acc;
-      },
-      { total: 0, Male: 0, Female: 0, other: 0 },
-    );
-
-    const visitor_stats: CategoryStats = allUserInfos_visitors.reduce(
-      (acc: any, user: any) => {
-        const age =
-          Number(new Date().getFullYear()) -
-          Number(user.date_of_birth?.getFullYear());
-        const category = age <= 18 ? "children" : "adults";
-        const gender = user.gender || "other";
-
-        acc[category].Total++;
-        acc[category][gender]++;
-
-        return acc;
-      },
-      {
-        children: { Total: 0, Male: 0, Female: 0, other: 0 },
-        adults: { Total: 0, Male: 0, Female: 0, other: 0 },
-      },
-    );
-
-    return res.status(202).json({
-      message: "Operation Sucessful",
+    return res.status(200).json({
+      message: "Operation Successful",
       data: {
         online: {
-          total_members: allUserInfosByCategory.total,
-          total_males: allUserInfosByCategory.Male,
-          total_females: allUserInfosByCategory.Female,
-          total_others: allUserInfosByCategory.other,
-          stats: stats,
+          total_members: onlineStats.totals.Total,
+          total_males: onlineStats.totals.Male,
+          total_females: onlineStats.totals.Female,
+          total_others: onlineStats.totals.Other,
+          stats: onlineStats.categories,
         },
         inhouse: {
-          total_members: visitorInfosByCategory.total,
-          total_males: visitorInfosByCategory.Male,
-          total_females: visitorInfosByCategory.Female,
-          total_others: visitorInfosByCategory.other,
-          stats: visitor_stats,
+          total_members: inhouseStats.totals.Total,
+          total_males: inhouseStats.totals.Male,
+          total_females: inhouseStats.totals.Female,
+          total_others: inhouseStats.totals.Other,
+          stats: inhouseStats.categories,
         },
       },
     });
   } catch (error) {
-    return res
-      .status(500)
-      .json({ message: "Internal Server Error", data: error });
+    return res.status(500).json({
+      message: "Internal Server Error",
+      data: error,
+    });
   }
 };
 
