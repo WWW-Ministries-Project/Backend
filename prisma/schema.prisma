@@ -1012,7 +1012,7 @@ enum appointment_status {
 }
 
 model receiptConfig {
-  id          String   @id @default(uuid())
+  id          Int   @id @default(autoincrement())
   name        String
   description String
   createdAt   DateTime @default(now())
@@ -1020,7 +1020,7 @@ model receiptConfig {
 }
 
 model paymentConfig {
-  id          String   @id @default(uuid())
+  id          Int   @id @default(autoincrement())
   name        String
   description String
   createdAt   DateTime @default(now())
@@ -1028,7 +1028,7 @@ model paymentConfig {
 }
 
 model bankAccountConfig {
-  id          String   @id @default(uuid())
+  id          Int   @id @default(autoincrement())
   name        String
   description String
   percentage  Float
