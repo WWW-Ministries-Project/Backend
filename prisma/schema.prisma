@@ -1011,29 +1011,3 @@ enum appointment_status {
   CANCELLED
 }
 
-model receiptConfig {
-  id          Int   @id @default(autoincrement())
-  name        String
-  description String
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-}
-
-model paymentConfig {
-  id          Int   @id @default(autoincrement())
-  name        String
-  description String
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-}
-
-model bankAccountConfig {
-  id          Int   @id @default(autoincrement())
-  name        String
-  description String
-  percentage  Float
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-}
-
