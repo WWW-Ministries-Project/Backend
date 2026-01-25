@@ -32,11 +32,11 @@ export class BankAccountConfigController {
   async findById(req: Request, res: Response) {
     const { id } = req.query;
 
-    if (!id || typeof id !== "string") {
+    if (!id) {
       return res.status(400).json({ message: "Invalid payment configuration ID" });
     }
 
-    const config = await bankAccountConfigService.findById(id);
+    const config = await bankAccountConfigService.findById(Number(id));
 
     if (!config) {
       return res.status(404).json({
@@ -52,12 +52,12 @@ export class BankAccountConfigController {
   async update(req: Request, res: Response) {
     const { id } = req.query;
 
-    if (!id || typeof id !== "string") {
+    if (!id) {
       return res.status(400).json({ message: "Invalid payment configuration ID" });
     }
 
     try {
-      const updatedConfig = await bankAccountConfigService.update(id, req.body);
+      const updatedConfig = await bankAccountConfigService.update(Number(id), req.body);
 
       return res.status(200).json({
         message: "Payment configuration updated successfully",
@@ -74,11 +74,11 @@ export class BankAccountConfigController {
   async delete(req: Request, res: Response) {
     const { id } = req.query;
 
-    if (!id || typeof id !== "string") {
+    if (!id) {
       return res.status(400).json({ message: "Invalid payment configuration ID" });
     }
 
-    await bankAccountConfigService.delete(id);
+    await bankAccountConfigService.delete(Number(id));
 
     return res.status(204).send();
   }

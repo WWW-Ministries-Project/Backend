@@ -765,7 +765,7 @@ export class ProgramService {
       data: {
         enrollmentId: enrollment.id,
         learningUnitId: learningUnit.id,
-        content: answers,
+        content: JSON.stringify(answers),
         status: "GRADED",
         score,
         gradedAt: new Date(),

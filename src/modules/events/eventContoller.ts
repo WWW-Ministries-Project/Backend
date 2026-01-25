@@ -235,7 +235,7 @@ export class eventManagement {
         },
       });
 
-      const flat_data = data.map((event) => ({
+      const flat_data = data.map((event:any) => ({
         ...event,
         event_name_id: event?.event.id,
         event_name: event?.event.event_name,
@@ -302,7 +302,7 @@ export class eventManagement {
         },
       });
 
-      const flat_data = data.map((e) => {
+      const flat_data = data.map((e:any) => {
         const { event, ...rest } = e;
         return {
           ...event,
@@ -388,7 +388,7 @@ export class eventManagement {
           },
         },
       });
-      const flat_data = data.map((event) => ({
+      const flat_data = data.map((event:any) => ({
         ...event,
         event_name_id: event?.event.id,
         event_name: event?.event.event_name,
@@ -781,7 +781,7 @@ export class eventManagement {
         },
       });
 
-      const flattened_events = raw_events.map((event) => ({
+      const flattened_events = raw_events.map((event:any) => ({
         ...event,
         event_name: event.event?.event_name ?? null,
         event_name_id: event.event?.id ?? null,
@@ -1028,7 +1028,7 @@ export class eventManagement {
         },
       });
 
-      const flattenedMembers = members.map((m) => ({
+      const flattenedMembers = members.map((m:any) => ({
         id: m.id,
         event_id: m.event_id,
         user_id: m.user_id,
@@ -1113,7 +1113,7 @@ export class eventManagement {
         message: "Registered member fetched successfully",
         member: flattened,
       });
-    } catch (error) {
+    } catch (error:any) {
       console.error(error);
       return res.status(500).json({
         success: false,
@@ -1164,7 +1164,7 @@ export class eventManagement {
     attendanceDate.setHours(0, 0, 0, 0);
 
     /* ---------------- Transaction ---------------- */
-    const record = await prisma.$transaction(async (tx) => {
+    const record = await prisma.$transaction(async (tx:any) => {
       const event = await tx.event_mgt.findUnique({
         where: { id: event_mgt_id },
         select: { id: true },
@@ -1257,7 +1257,7 @@ export class eventManagement {
         orderBy: { date: "desc" },
       });
 
-      const formattedRecords = records.map((record) => ({
+      const formattedRecords = records.map((record:any) => ({
         id: record.id,
         date: record.date,
         group: record.group,

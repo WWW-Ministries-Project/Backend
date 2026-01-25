@@ -36,7 +36,7 @@ export class paymentConfigurationService {
   /**
    * Fetch a single finance config by ID
    */
-  async findById(id: string) {
+  async findById(id: number) {
     const config = await prisma.paymentConfig.findUnique({
       where: { id },
     });
@@ -51,7 +51,7 @@ export class paymentConfigurationService {
   /**
    * Update a finance config
    */
-  async update(id: string, data: Partial<CreatePaymentConfigValues>) {
+  async update(id: number, data: Partial<CreatePaymentConfigValues>) {
     // Ensure record exists
     await this.findById(id);
 
@@ -71,7 +71,7 @@ export class paymentConfigurationService {
   /**
    * Delete a finance config
    */
-  async delete(id: string) {
+  async delete(id: number) {
     // Ensure record exists
     await this.findById(id);
 

@@ -49,13 +49,13 @@ export class LifeCenterService {
       },
     });
 
-    return results.map((response) => {
+    return results.map((response:any) => {
       return {
         id: response.id,
         name: response.name,
         description: response.description,
         location: response.meetingLocation,
-        meeting_dates: response.meetingDays.split(",").map((day) => day.trim()),
+        meeting_dates: response.meetingDays.split(",").map((day:any) => day.trim()),
         totalMembers: response._count.life_center_member,
         totalSoulsWon: response._count.soul_won,
       };
@@ -163,7 +163,7 @@ export class LifeCenterService {
       name: response.name,
       description: response.description,
       location: response.meetingLocation,
-      meeting_dates: response.meetingDays.split(",").map((day) => day.trim()),
+      meeting_dates: response.meetingDays.split(",").map((day:any) => day.trim()),
     };
   }
 
@@ -376,7 +376,7 @@ export class LifeCenterService {
         },
       },
     });
-    const formatted_output = souls.map((soul) => ({
+    const formatted_output = souls.map((soul:any) => ({
       life_center_name: soul.lifeCenter?.name,
       leader_name: soul.lifeCenter?.life_center_member?.[0]
         ? soul.lifeCenter.life_center_member[0].user.name
