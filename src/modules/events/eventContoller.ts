@@ -30,6 +30,7 @@ export class eventManagement {
   createEvent = async (req: Request, res: Response) => {
     try {
       const data = req.body;
+      const createdEventIds: number[] = [];
       if (!data.event_name_id) {
         return res.status(400).json({ message: "Event Name Id not found" });
       }
@@ -39,38 +40,53 @@ export class eventManagement {
         end_date = addDays(new Date(start_date), Number(recurring?.daysOfWeek));
         const data2 = generateRecurringDates(start_date, end_date, recurring);
         for (const new_date of data2) {
-          await this.createEventController({
+          const eventId = await this.createEventController({
             ...data,
             start_date: new_date,
             end_date,
           });
+          createdEventIds.push(eventId);
         }
       } else if (day_event === "one" && repetitive === "no") {
-        await this.createEventController({
+        const eventId = await this.createEventController({
           ...data,
           end_date: data.start_date,
         });
+        createdEventIds.push(eventId);
       } else if (day_event === "one" && repetitive === "yes") {
         const data2 = generateRecurringDates(start_date, end_date, recurring);
         for (const new_date of data2) {
-          await this.createEventController({
+          const eventId = await this.createEventController({
             ...data,
             start_date: new_date,
           });
+          createdEventIds.push(eventId);
         }
       } else if (day_event === "multi" && repetitive === "yes") {
         const data2 = generateRecurringDates(start_date, end_date, recurring);
         for (const new_date of data2) {
-          await this.createEventController({
+          const eventId = await this.createEventController({
             ...data,
             start_date: new_date,
           });
+          createdEventIds.push(eventId);
         }
+      } else {
+        return res.status(400).json({
+          message: "Invalid event recurrence payload",
+        });
       }
+
+      const responseData = await this.listEventsP();
+      this.queueQrGeneration(createdEventIds);
 
       return res.status(200).json({
         message: "Event Created Succesfully",
-        data: await this.listEventsP(),
+        data: responseData,
+        meta: {
+          created_count: createdEventIds.length,
+          qr_status: "processing",
+        },
       });
     } catch (error: any) {
       return res.status(500).json({
@@ -652,7 +668,7 @@ export class eventManagement {
     }
   };
 
-  private async createEventController(data: any): Promise<void> {
+  private async createEventController(data: any): Promise<number> {
     const { start_date, end_date } = data;
     try {
       const response = await prisma.event_mgt.create({
@@ -669,22 +685,57 @@ export class eventManagement {
         },
         select: selectQuery,
       });
+      return response.id;
+    } catch (error: any) {
+      console.log(error);
+      throw error;
+    }
+  }
 
+  private queueQrGeneration(eventIds: number[]) {
+    if (!eventIds.length) {
+      return;
+    }
+
+    setImmediate(() => {
+      this.processQrGeneration(eventIds).catch((error) => {
+        console.log("Background QR generation failed", error);
+      });
+    });
+  }
+
+  private async processQrGeneration(eventIds: number[]) {
+    const batchSize = Math.max(
+      1,
+      Math.min(Number(process.env.EVENT_QR_BATCH_SIZE ?? 2), 2),
+    );
+
+    for (let i = 0; i < eventIds.length; i += batchSize) {
+      const batch = eventIds.slice(i, i + batchSize);
+      await Promise.all(batch.map((eventId) => this.updateEventQrCode(eventId)));
+    }
+  }
+
+  private async updateEventQrCode(eventId: number) {
+    try {
       const qr_code = await generateQR(
-        `${process.env.Frontend_URL}/events/register-event?event_id=${response.id}`,
+        `${process.env.Frontend_URL}/events/register-event?event_id=${eventId}`,
       );
+
+      if (!qr_code || qr_code === "Unable to upload") {
+        return;
+      }
 
       await prisma.event_mgt.update({
         where: {
-          id: response.id,
+          id: eventId,
         },
         data: {
           qr_code,
         },
       });
-    } catch (error: any) {
-      console.log(error);
-      throw error;
+    } catch (error) {
+      console.log(`QR update failed for event ${eventId}`, error);
     }
   }
 
