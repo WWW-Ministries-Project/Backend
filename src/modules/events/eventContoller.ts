@@ -3,7 +3,6 @@ import { prisma } from "../../Models/context";
 import { Request, Response } from "express";
 import * as dotenv from "dotenv";
 import { addDays } from "date-fns";
-import { number } from "joi";
 
 dotenv.config();
 
@@ -30,37 +29,46 @@ const selectQuery = {
 export class eventManagement {
   createEvent = async (req: Request, res: Response) => {
     try {
-      let data = req.body;
+      const data = req.body;
       if (!data.event_name_id) {
         return res.status(400).json({ message: "Event Name Id not found" });
       }
       let { start_date, end_date, day_event, repetitive, recurring } = req.body;
 
       if (day_event === "multi" && repetitive === "no") {
-        end_date = addDays(start_date, recurring.daysOfWeek);
+        end_date = addDays(new Date(start_date), Number(recurring?.daysOfWeek));
         const data2 = generateRecurringDates(start_date, end_date, recurring);
-        data2.map((new_date: string) => {
-          data.start_date = new_date;
-          this.createEventController(data);
-        });
+        for (const new_date of data2) {
+          await this.createEventController({
+            ...data,
+            start_date: new_date,
+            end_date,
+          });
+        }
       } else if (day_event === "one" && repetitive === "no") {
-        data.end_date = data.start_date;
-        this.createEventController(data);
+        await this.createEventController({
+          ...data,
+          end_date: data.start_date,
+        });
       } else if (day_event === "one" && repetitive === "yes") {
         const data2 = generateRecurringDates(start_date, end_date, recurring);
-        data2.map((new_date: string) => {
-          data.start_date = new_date;
-          this.createEventController(data);
-        });
+        for (const new_date of data2) {
+          await this.createEventController({
+            ...data,
+            start_date: new_date,
+          });
+        }
       } else if (day_event === "multi" && repetitive === "yes") {
         const data2 = generateRecurringDates(start_date, end_date, recurring);
-        data2.map((new_date: string) => {
-          data.start_date = new_date;
-          this.createEventController(data);
-        });
+        for (const new_date of data2) {
+          await this.createEventController({
+            ...data,
+            start_date: new_date,
+          });
+        }
       }
 
-      res.status(200).json({
+      return res.status(200).json({
         message: "Event Created Succesfully",
         data: await this.listEventsP(),
       });
@@ -676,7 +684,7 @@ export class eventManagement {
       });
     } catch (error: any) {
       console.log(error);
-      return error;
+      throw error;
     }
   }
 
@@ -790,7 +798,7 @@ export class eventManagement {
 
       return flattened_events;
     } catch (error) {
-      return error;
+      throw error;
     }
   }
 
