@@ -49,4 +49,3 @@ appRouter.use("/appointment", appointmentRouter);
 // appRouter.use("/receiptconfig", receiptConfigRouter);
 // appRouter.use("/paymentconfig", paymentConfigRouter);
 // appRouter.use("/bankaccountconfig", bankAccountConfigRouter);
-

@@ -6,7 +6,6 @@
 //   percentage: number;
 // }
 
-
 // export class bankAccountConfigurationService {
 //   /**
 //    * Create a new finance config

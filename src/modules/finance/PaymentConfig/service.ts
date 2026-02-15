@@ -5,7 +5,6 @@
 //   description: string;
 // }
 
-
 // export class paymentConfigurationService {
 //   /**
 //    * Create a new finance config

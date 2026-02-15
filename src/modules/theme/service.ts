@@ -24,7 +24,7 @@ export class AnnualThemeService {
         verse: data.verse,
         message: data.message,
         imageUrl: data.imageUrl,
-        isActive: data.isActive
+        isActive: data.isActive,
       },
     });
   }
@@ -57,7 +57,7 @@ export class AnnualThemeService {
       message: string;
       imageUrl: string;
       isActive: boolean;
-    }>
+    }>,
   ) {
     if (data.isActive) {
       await prisma.annualTheme.updateMany({
@@ -68,9 +68,9 @@ export class AnnualThemeService {
 
     return prisma.annualTheme.update({
       where: { id },
-      data:{
+      data: {
         ...data,
-        year: data.year ? Number(data.year) : undefined
+        year: data.year ? Number(data.year) : undefined,
       },
     });
   }

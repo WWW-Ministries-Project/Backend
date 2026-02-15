@@ -1,7 +1,6 @@
 // import { Request, Response } from "express";
 // import {  receiptConfigurationService }  from "./service";
 
-
 // const receiptConfigService = new receiptConfigurationService();
 
 // export class ReceiptConfigController {

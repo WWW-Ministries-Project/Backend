@@ -1,5 +1,5 @@
-import { Request, Response } from 'express';
-import { AppointmentService } from './appointment-service';
+import { Request, Response } from "express";
+import { AppointmentService } from "./appointment-service";
 
 export class AppointmentController {
   /**
@@ -8,13 +8,16 @@ export class AppointmentController {
    */
   async setAvailability(req: Request, res: Response) {
     try {
-      const appointment_availability = await AppointmentService.saveStaffAvailability(req.body);
-      res.status(200).json({ 
-        message: "Availability schedule updated", 
-        data: appointment_availability 
+      const appointment_availability =
+        await AppointmentService.saveStaffAvailability(req.body);
+      res.status(200).json({
+        message: "Availability schedule updated",
+        data: appointment_availability,
       });
     } catch (error: any) {
-      res.status(500).json({ error: error.message || "Could not save availability" });
+      res
+        .status(500)
+        .json({ error: error.message || "Could not save availability" });
     }
   }
 
@@ -27,7 +30,7 @@ export class AppointmentController {
       const newBooking = await AppointmentService.createAppointment(req.body);
       res.status(201).json({
         message: "Appointment booked successfully",
-        data: newBooking
+        data: newBooking,
       });
     } catch (error: any) {
       // If the overbooking logic throws an error, it will be caught here
@@ -78,17 +81,22 @@ export class AppointmentController {
     try {
       const { id } = req.query;
       const { isConfirmed } = req.body;
-      
+
       if (!id) {
-        return res.status(400).json({ error: "Appointment ID is required in query" });
+        return res
+          .status(400)
+          .json({ error: "Appointment ID is required in query" });
       }
 
-      const newStatus = isConfirmed ? 'CONFIRMED' : 'PENDING';
-      const updated = await AppointmentService.updateStatus(Number(id), newStatus);
-      
+      const newStatus = isConfirmed ? "CONFIRMED" : "PENDING";
+      const updated = await AppointmentService.updateStatus(
+        Number(id),
+        newStatus,
+      );
+
       res.json({
         message: `Appointment ${newStatus.toLowerCase()} successfully`,
-        data: updated
+        data: updated,
       });
     } catch (error: any) {
       res.status(500).json({ error: error.message || "Status update failed" });

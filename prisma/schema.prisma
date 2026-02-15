@@ -276,14 +276,19 @@ model event_mgt {
 model event_attendance_summary {
   id Int @id @default(autoincrement())
 
-  event_mgt_id   Int
-  event          event_mgt        @relation(fields: [event_mgt_id], references: [id])
-  date           DateTime
-  group          attendance_group @default(BOTH)
-  adultMale      Int              @default(0)
-  adultFemale    Int              @default(0)
-  childrenMale   Int              @default(0)
-  childrenFemale Int              @default(0)
+  event_mgt_id    Int
+  event           event_mgt        @relation(fields: [event_mgt_id], references: [id])
+  date            DateTime
+  group           attendance_group @default(BOTH)
+  adultMale       Int              @default(0)
+  adultFemale     Int              @default(0)
+  childrenMale    Int              @default(0)
+  childrenFemale  Int              @default(0)
+  youthMale       Int              @default(0)
+  youthFemale     Int              @default(0)
+  visitors        Int              @default(0)
+  newMembers      Int              @default(0)
+  visitingPastors Int              @default(0)
 
   recordedBy     Int
   recordedByUser user @relation(fields: [recordedBy], references: [id])
@@ -1010,4 +1015,3 @@ enum appointment_status {
   CONFIRMED
   CANCELLED
 }
-
