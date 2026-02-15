@@ -1,7 +1,6 @@
 // import { Request, Response } from "express";
 // import {  paymentConfigurationService }  from "./service";
 
-
 // const paymentConfigService = new paymentConfigurationService();
 
 // export class PaymentConfigController {

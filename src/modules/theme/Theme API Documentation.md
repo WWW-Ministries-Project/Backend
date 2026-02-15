@@ -51,7 +51,7 @@ All endpoints return JSON.
 
 ## 2️⃣ Get All Annual Themes
 
-**GET** ``/theme/get-themes``
+**GET** `/theme/get-themes`
 
 **Response (200)**
 
@@ -170,10 +170,10 @@ No Content
 
 ## ℹ️ Important Notes
 
-* Only **one annual theme can be active at a time**
-* When `isActive = true`, all other themes are automatically deactivated
-* `year` must be unique
-* `imageUrl` is optional and should be a public URL
+- Only **one annual theme can be active at a time**
+- When `isActive = true`, all other themes are automatically deactivated
+- `year` must be unique
+- `imageUrl` is optional and should be a public URL
 
 ---
 

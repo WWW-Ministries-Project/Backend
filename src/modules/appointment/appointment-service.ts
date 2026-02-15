@@ -4,17 +4,15 @@ import { prisma } from "../../Models/context";
 export const AppointmentService = {
   // CREATE APPOINTMENT (With Overbooking Protection)
   async createAppointment(payload: any) {
-    const { 
-      fullName, email, phone, purpose, note, 
-      userId, date, session 
-    } = payload;
+    const { fullName, email, phone, purpose, note, userId, date, session } =
+      payload;
 
     const bookingDate = new Date(date);
 
     // 1. Validation: Check how many people already booked this specific slot
     const staff = await prisma.availability.findFirst({
       where: { userId: Number(userId) },
-      select: { maxBookingsPerSlot: true }
+      select: { maxBookingsPerSlot: true },
     });
 
     const currentBookingsCount = await prisma.appointment.count({
@@ -22,8 +20,8 @@ export const AppointmentService = {
         userId: Number(userId),
         date: bookingDate,
         startTime: session.start,
-        status: { not: 'CANCELLED' } // Don't count cancelled ones
-      }
+        status: { not: "CANCELLED" }, // Don't count cancelled ones
+      },
     });
 
     // 2. Prevent booking if limit reached (default to 1 if not set)
@@ -43,8 +41,8 @@ export const AppointmentService = {
         startTime: session.start,
         endTime: session.end,
         userId: Number(userId),
-        status: 'PENDING'
-      }
+        status: "PENDING",
+      },
     });
   },
 
@@ -68,10 +66,10 @@ export const AppointmentService = {
             sessions: {
               create: slot.sessions.map((s: any) => ({
                 start: s.start,
-                end: s.end
-              }))
-            }
-          }
+                end: s.end,
+              })),
+            },
+          },
         });
       }
     });
@@ -81,7 +79,7 @@ export const AppointmentService = {
   async getByStaff(userId: number) {
     return prisma.appointment.findMany({
       where: { userId },
-      orderBy: { date: 'asc' }
+      orderBy: { date: "asc" },
     });
   },
 
@@ -89,7 +87,7 @@ export const AppointmentService = {
   async getByClientEmail(email?: string) {
     return prisma.appointment.findMany({
       where: { email },
-      include: { user: true }
+      include: { user: true },
     });
   },
 
@@ -97,7 +95,7 @@ export const AppointmentService = {
   async updateStatus(id: number, app_status: appointment_status) {
     return prisma.appointment.update({
       where: { id },
-      data: { status: app_status }
+      data: { status: app_status },
     });
-  }
+  },
 };

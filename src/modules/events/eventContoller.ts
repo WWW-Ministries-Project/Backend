@@ -1123,59 +1123,63 @@ export class eventManagement {
   };
 
   createAttendanceSummary = async (req: Request, res: Response) => {
-  try {
-    const {
-      eventId,
-      date,
-      group = "BOTH",
-      adultMale = 0,
-      adultFemale = 0,
-      childrenMale = 0,
-      childrenFemale = 0,
-      recordedBy,
-      recordedByName,
-    } = req.body;
+    try {
+      const {
+        eventId,
+        date,
+        group = "BOTH",
+        adultMale = 0,
+        adultFemale = 0,
+        childrenMale = 0,
+        childrenFemale = 0,
+        youthMale = 0,
+        youthFemale = 0,
+        visitors = 0,
+        newMembers = 0,
+        visitingPastors = 0,
+        recordedBy,
+        recordedByName,
+      } = req.body;
 
-    /* ---------------- Validation ---------------- */
-    if (!eventId || !date || !recordedBy || !recordedByName) {
-      return res.status(400).json({
-        success: false,
-        message: "eventId, date, recordedBy and recordedByName are required",
-      });
-    }
-
-    const event_mgt_id = Number(eventId);
-    if (Number.isNaN(event_mgt_id)) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid eventId",
-      });
-    }
-
-    const attendanceDate = new Date(date);
-    if (isNaN(attendanceDate.getTime())) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid date",
-      });
-    }
-
-    // Normalize date (VERY important)
-    attendanceDate.setHours(0, 0, 0, 0);
-
-    /* ---------------- Transaction ---------------- */
-    const record = await prisma.$transaction(async (tx) => {
-      const event = await tx.event_mgt.findUnique({
-        where: { id: event_mgt_id },
-        select: { id: true },
-      });
-
-      if (!event) {
-        throw new Error("EVENT_NOT_FOUND");
+      /* ---------------- Validation ---------------- */
+      if (!eventId || !date || !recordedBy || !recordedByName) {
+        return res.status(400).json({
+          success: false,
+          message: "eventId, date, recordedBy and recordedByName are required",
+        });
       }
 
-      const existingSummary =
-        await tx.event_attendance_summary.findUnique({
+      const event_mgt_id = Number(eventId);
+      if (Number.isNaN(event_mgt_id)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid eventId",
+        });
+      }
+
+      const attendanceDate = new Date(date);
+      if (isNaN(attendanceDate.getTime())) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid date",
+        });
+      }
+
+      // Normalize date (VERY important)
+      attendanceDate.setHours(0, 0, 0, 0);
+
+      /* ---------------- Transaction ---------------- */
+      const record = await prisma.$transaction(async (tx) => {
+        const event = await tx.event_mgt.findUnique({
+          where: { id: event_mgt_id },
+          select: { id: true },
+        });
+
+        if (!event) {
+          throw new Error("EVENT_NOT_FOUND");
+        }
+
+        const existingSummary = await tx.event_attendance_summary.findUnique({
           where: {
             event_mgt_id_date: {
               event_mgt_id,
@@ -1184,55 +1188,60 @@ export class eventManagement {
           },
         });
 
-      if (existingSummary) {
-        throw new Error("DUPLICATE_ATTENDANCE");
+        if (existingSummary) {
+          throw new Error("DUPLICATE_ATTENDANCE");
+        }
+
+        return tx.event_attendance_summary.create({
+          data: {
+            event_mgt_id,
+            date: attendanceDate,
+            group,
+            adultMale: Number(adultMale) || 0,
+            adultFemale: Number(adultFemale) || 0,
+            childrenMale: Number(childrenMale) || 0,
+            youthMale: Number(youthMale) || 0,
+            youthFemale: Number(youthFemale) || 0,
+            visitors: Number(visitors) || 0,
+            newMembers: Number(newMembers) || 0,
+            visitingPastors: Number(visitingPastors) || 0,
+            childrenFemale: Number(childrenFemale) || 0,
+            recordedBy: Number(recordedBy),
+            recordedByName: recordedByName.trim(),
+          },
+        });
+      });
+
+      /* ---------------- Success Response ---------------- */
+      return res.status(201).json({
+        success: true,
+        message: "Attendance recorded successfully",
+        data: record,
+      });
+    } catch (error: any) {
+      console.error(error);
+
+      if (error.message === "EVENT_NOT_FOUND") {
+        return res.status(404).json({
+          success: false,
+          message: "Event does not exist",
+        });
       }
 
-      return tx.event_attendance_summary.create({
-        data: {
-          event_mgt_id,
-          date: attendanceDate,
-          group,
-          adultMale: Number(adultMale) || 0,
-          adultFemale: Number(adultFemale) || 0,
-          childrenMale: Number(childrenMale) || 0,
-          childrenFemale: Number(childrenFemale) || 0,
-          recordedBy: Number(recordedBy),
-          recordedByName: recordedByName.trim(),
-        },
-      });
-    });
+      if (error.message === "DUPLICATE_ATTENDANCE") {
+        return res.status(409).json({
+          success: false,
+          message:
+            "Attendance already recorded for this event on the same date",
+        });
+      }
 
-    /* ---------------- Success Response ---------------- */
-    return res.status(201).json({
-      success: true,
-      message: "Attendance recorded successfully",
-      data: record,
-    });
-  } catch (error: any) {
-    console.error(error);
-
-    if (error.message === "EVENT_NOT_FOUND") {
-      return res.status(404).json({
+      return res.status(500).json({
         success: false,
-        message: "Event does not exist",
+        message: "Error creating attendance summary",
       });
     }
-
-    if (error.message === "DUPLICATE_ATTENDANCE") {
-      return res.status(409).json({
-        success: false,
-        message:
-          "Attendance already recorded for this event on the same date",
-      });
-    }
-
-    return res.status(500).json({
-      success: false,
-      message: "Error creating attendance summary",
-    });
-  }
-};
+  };
 
   getAttendances = async (req: Request, res: Response) => {
     try {

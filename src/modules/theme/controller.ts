@@ -37,7 +37,7 @@ export class AnnualThemeController {
   }
 
   async findById(req: Request, res: Response) {
-    const {id} = req.query;
+    const { id } = req.query;
 
     const theme = await annualThemeService.findById(Number(id));
 
@@ -53,10 +53,13 @@ export class AnnualThemeController {
   }
 
   async update(req: Request, res: Response) {
-    const {id} = req.query  ;
+    const { id } = req.query;
 
     try {
-      const updatedTheme = await annualThemeService.update(Number(id), req.body);
+      const updatedTheme = await annualThemeService.update(
+        Number(id),
+        req.body,
+      );
 
       return res.status(200).json({
         message: "Annual theme updated successfully",
@@ -71,7 +74,7 @@ export class AnnualThemeController {
   }
 
   async delete(req: Request, res: Response) {
-    const {id} = req.query;
+    const { id } = req.query;
 
     await annualThemeService.delete(Number(id));
 

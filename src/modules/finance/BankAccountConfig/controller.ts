@@ -1,7 +1,6 @@
 // import { Request, Response } from "express";
 // import {  bankAccountConfigurationService }  from "./service";
 
-
 // const bankAccountConfigService = new bankAccountConfigurationService();
 
 // export class BankAccountConfigController {

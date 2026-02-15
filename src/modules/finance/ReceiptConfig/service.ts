@@ -5,7 +5,6 @@
 //   description: string;
 // }
 
-
 // export class receiptConfigurationService {
 //   /**
 //    * Create a new finance config
