@@ -114,6 +114,25 @@ export class AppointmentController {
   }
 
   /**
+   * @route   GET /appointment/availability/status
+   * @desc    Fetch users with today's sessions and booking status tags
+   */
+  async getAvailabilityStatus(req: Request, res: Response) {
+    try {
+      const data = await AppointmentService.getAvailabilityWithSessionStatus();
+
+      res.status(200).json({
+        message: "Availability status fetched successfully",
+        data,
+      });
+    } catch (error: any) {
+      res.status(500).json({
+        error: error.message || "Error fetching availability status",
+      });
+    }
+  }
+
+  /**
    * @route   POST /api/appointments/book
    * @desc    Member/Client books a specific time slot
    */

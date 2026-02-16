@@ -24,25 +24,32 @@ appointmentRouter.post("/availability", appointmentController.setAvailability);
 // URL: GET /appointment/availability
 appointmentRouter.get("/availability", appointmentController.getAvailability);
 
-// 5. Update one availability slot by id
+// 5. Fetch users with daily sessions and booking status tags
+// URL: GET /appointment/availability/status
+appointmentRouter.get(
+  "/availability/status",
+  appointmentController.getAvailabilityStatus,
+);
+
+// 6. Update one availability slot by id
 // URL: PUT /appointment/availability/:id
 appointmentRouter.put(
   "/availability/:id",
   appointmentController.updateAvailability,
 );
 
-// 6. Delete one availability slot by id
+// 7. Delete one availability slot by id
 // URL: DELETE /appointment/availability/:id
 appointmentRouter.delete(
   "/availability/:id",
   appointmentController.deleteAvailability,
 );
 
-// 7. Fetch bookings for staff (Expects ?userId=123)
+// 8. Fetch bookings for staff (Expects ?userId=123)
 // URL: GET /appointment/staff
 appointmentRouter.get("/staff", appointmentController.getStaffBookings);
 
-// 8. Update status (Expects ?id=456 in query and { isConfirmed: boolean } in body)
+// 9. Update status (Expects ?id=456 in query and { isConfirmed: boolean } in body)
 // URL: PUT /appointment/status
 appointmentRouter.put("/status", appointmentController.toggleConfirmation);
 

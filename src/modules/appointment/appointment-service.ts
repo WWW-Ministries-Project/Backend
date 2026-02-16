@@ -16,33 +16,171 @@ const availabilityInclude = {
   },
 } as const;
 
+const WEEK_DAYS = [
+  "sunday",
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+];
+
+function parseDateInput(dateValue?: string) {
+  if (!dateValue) {
+    const now = new Date();
+    const y = now.getUTCFullYear();
+    const m = now.getUTCMonth();
+    const d = now.getUTCDate();
+
+    return {
+      dayStart: new Date(Date.UTC(y, m, d, 0, 0, 0, 0)),
+      dayEnd: new Date(Date.UTC(y, m, d, 23, 59, 59, 999)),
+      dayName: WEEK_DAYS[new Date(Date.UTC(y, m, d)).getUTCDay()],
+      appointmentDate: new Date(Date.UTC(y, m, d, 0, 0, 0, 0)),
+    };
+  }
+
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateValue);
+  if (!match) {
+    throw new Error("date must be in YYYY-MM-DD format");
+  }
+
+  const year = Number(match[1]);
+  const monthIndex = Number(match[2]) - 1;
+  const day = Number(match[3]);
+
+  const date = new Date(Date.UTC(year, monthIndex, day, 0, 0, 0, 0));
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== monthIndex ||
+    date.getUTCDate() !== day
+  ) {
+    throw new Error("date is invalid");
+  }
+
+  return {
+    dayStart: new Date(Date.UTC(year, monthIndex, day, 0, 0, 0, 0)),
+    dayEnd: new Date(Date.UTC(year, monthIndex, day, 23, 59, 59, 999)),
+    dayName: WEEK_DAYS[date.getUTCDay()],
+    appointmentDate: date,
+  };
+}
+
+function resolveStaffId(payload: any) {
+  const staffId = Number(payload.userId ?? payload.staffId);
+  if (!Number.isInteger(staffId) || staffId <= 0) {
+    throw new Error("userId (or staffId) must be a valid number");
+  }
+  return staffId;
+}
+
+function resolveSession(payload: any) {
+  if (
+    !payload?.session ||
+    typeof payload.session.start !== "string" ||
+    !payload.session.start.trim() ||
+    typeof payload.session.end !== "string" ||
+    !payload.session.end.trim()
+  ) {
+    throw new Error("session with valid start and end is required");
+  }
+
+  return {
+    start: payload.session.start.trim(),
+    end: payload.session.end.trim(),
+  };
+}
+
 export const AppointmentService = {
   // CREATE APPOINTMENT (With Overbooking Protection)
   async createAppointment(payload: any) {
-    const { fullName, email, phone, purpose, note, userId, date, session } =
-      payload;
+    const { fullName, email, phone, purpose, note } = payload;
+    const staffId = resolveStaffId(payload);
+    const session = resolveSession(payload);
 
-    const bookingDate = new Date(date);
+    if (!payload?.date || typeof payload.date !== "string") {
+      throw new Error("date is required in YYYY-MM-DD format");
+    }
 
-    // 1. Validation: Check how many people already booked this specific slot
-    const staff = await prisma.availability.findFirst({
-      where: { userId: Number(userId) },
-      select: { maxBookingsPerSlot: true },
-    });
+    const { dayStart, dayEnd, dayName, appointmentDate } = parseDateInput(
+      payload.date,
+    );
 
-    const currentBookingsCount = await prisma.appointment.count({
+    const availabilityForSession = await prisma.availability.findFirst({
       where: {
-        userId: Number(userId),
-        date: bookingDate,
-        startTime: session.start,
-        status: { not: "CANCELLED" }, // Don't count cancelled ones
+        userId: staffId,
+        day: dayName,
+        sessions: {
+          some: {
+            start: session.start,
+            end: session.end,
+          },
+        },
+      },
+      include: {
+        sessions: true,
       },
     });
 
-    // 2. Prevent booking if limit reached (default to 1 if not set)
-    const limit = staff?.maxBookingsPerSlot || 1;
-    if (currentBookingsCount >= limit) {
-      throw new Error(`This slot is fully booked. Limit is ${limit}.`);
+    if (!availabilityForSession) {
+      throw new Error("Selected session is not available for this user");
+    }
+
+    // one person cannot have two appointments at the same session time
+    const existingSessionBooking = await prisma.appointment.findFirst({
+      where: {
+        userId: staffId,
+        date: {
+          gte: dayStart,
+          lte: dayEnd,
+        },
+        startTime: session.start,
+        endTime: session.end,
+        status: {
+          not: "CANCELLED",
+        },
+      },
+      select: { id: true },
+    });
+
+    if (existingSessionBooking) {
+      throw new Error("This session is already booked");
+    }
+
+    const sessionFilters = availabilityForSession.sessions.map((s) => ({
+      startTime: s.start,
+      endTime: s.end,
+    }));
+
+    // maxBookingsPerSlot now applies to total booked sessions in this block
+    const bookedSessionsInBlock = await prisma.appointment.findMany({
+      where: {
+        userId: staffId,
+        date: {
+          gte: dayStart,
+          lte: dayEnd,
+        },
+        status: {
+          not: "CANCELLED",
+        },
+        OR: sessionFilters,
+      },
+      select: {
+        startTime: true,
+        endTime: true,
+      },
+    });
+
+    const uniqueBookedSessions = new Set(
+      bookedSessionsInBlock.map((booking) => `${booking.startTime}|${booking.endTime}`),
+    );
+
+    const limit = availabilityForSession.maxBookingsPerSlot || 1;
+    if (uniqueBookedSessions.size >= limit) {
+      throw new Error(
+        "This availability block has reached its max number of booked sessions",
+      );
     }
 
     return await prisma.appointment.create({
@@ -52,10 +190,10 @@ export const AppointmentService = {
         phone,
         purpose,
         note: note || "",
-        date: bookingDate,
+        date: appointmentDate,
         startTime: session.start,
         endTime: session.end,
-        userId: Number(userId),
+        userId: staffId,
         status: "PENDING",
       },
     });
@@ -212,6 +350,145 @@ export const AppointmentService = {
 
     await prisma.availability.delete({ where: { id } });
     return existing;
+  },
+
+  // FETCH AVAILABILITY FOR TODAY WITH SLOT/SESSION STATUS TAGS
+  async getAvailabilityWithSessionStatus() {
+    const { dayStart, dayEnd, dayName } = parseDateInput();
+
+    const availabilities = await prisma.availability.findMany({
+      where: { day: dayName },
+      include: availabilityInclude,
+      orderBy: [{ userId: "asc" }, { startTime: "asc" }],
+    });
+
+    if (availabilities.length === 0) {
+      return {
+        users: [],
+      };
+    }
+
+    const userIds = Array.from(new Set(availabilities.map((a) => a.userId)));
+
+    const appointments = await prisma.appointment.findMany({
+      where: {
+        userId: { in: userIds },
+        date: {
+          gte: dayStart,
+          lte: dayEnd,
+        },
+        status: { not: "CANCELLED" },
+      },
+      select: {
+        userId: true,
+        startTime: true,
+        endTime: true,
+      },
+    });
+
+    const bookingCountBySession = new Map<string, number>();
+    for (const booking of appointments) {
+      const key = `${booking.userId}|${booking.startTime}|${booking.endTime}`;
+      bookingCountBySession.set(key, (bookingCountBySession.get(key) || 0) + 1);
+    }
+
+    const appointmentsByUser = new Map<
+      number,
+      Array<{ startTime: string; endTime: string }>
+    >();
+    for (const booking of appointments) {
+      if (!appointmentsByUser.has(booking.userId)) {
+        appointmentsByUser.set(booking.userId, []);
+      }
+      appointmentsByUser.get(booking.userId)!.push({
+        startTime: booking.startTime,
+        endTime: booking.endTime,
+      });
+    }
+
+    const usersMap = new Map<
+      number,
+      {
+        userId: number;
+        staffName: string;
+        position: string | null;
+        timeSlots: Array<{
+          availabilityId: number;
+          day: string;
+          startTime: string;
+          endTime: string;
+          maxBookingsPerSlot: number;
+          sessionDurationMinutes: number;
+          status: "AVAILABLE" | "BOOKED";
+          sessions: Array<{
+            start: string;
+            end: string;
+            status: "AVAILABLE" | "BOOKED";
+          }>;
+        }>;
+      }
+    >();
+
+    for (const availability of availabilities) {
+      if (!usersMap.has(availability.userId)) {
+        usersMap.set(availability.userId, {
+          userId: availability.userId,
+          staffName: availability.user.name,
+          position: availability.user.position?.name ?? null,
+          timeSlots: [],
+        });
+      }
+
+      const slotLimit = availability.maxBookingsPerSlot || 1;
+      const slotSessionKeys = new Set(
+        availability.sessions.map((session) => `${session.start}|${session.end}`),
+      );
+      const userDayBookings = appointmentsByUser.get(availability.userId) || [];
+      const bookedSessionsInSlot = new Set<string>();
+
+      for (const booking of userDayBookings) {
+        const sessionKey = `${booking.startTime}|${booking.endTime}`;
+        if (slotSessionKeys.has(sessionKey)) {
+          bookedSessionsInSlot.add(sessionKey);
+        }
+      }
+
+      const slotMaxReached = bookedSessionsInSlot.size >= slotLimit;
+      const slotStatus: "AVAILABLE" | "BOOKED" = slotMaxReached
+        ? "BOOKED"
+        : "AVAILABLE";
+
+      const slotSessions = availability.sessions
+        .map((session) => {
+          const key = `${availability.userId}|${session.start}|${session.end}`;
+          const bookedCount = bookingCountBySession.get(key) || 0;
+
+          const status: "AVAILABLE" | "BOOKED" =
+            slotMaxReached || bookedCount > 0 ? "BOOKED" : "AVAILABLE";
+
+          return {
+            start: session.start,
+            end: session.end,
+            status,
+          };
+        })
+        .sort((a, b) => a.start.localeCompare(b.start));
+
+      usersMap.get(availability.userId)!.timeSlots.push({
+        availabilityId: availability.id,
+        day: availability.day,
+        startTime: availability.startTime,
+        endTime: availability.endTime,
+        maxBookingsPerSlot: slotLimit,
+        sessionDurationMinutes: availability.sessionDurationMinutes,
+        status: slotStatus,
+        sessions: slotSessions,
+      });
+    }
+
+    return {
+      users: Array.from(usersMap.values()),
+    };
   },
 
   // FETCH BY STAFF
