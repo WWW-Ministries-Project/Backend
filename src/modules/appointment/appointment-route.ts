@@ -12,37 +12,60 @@ const appointmentController = new AppointmentController();
 // URL: POST /appointment/book
 appointmentRouter.post("/book", appointmentController.bookNow);
 
-// 2. Fetch bookings for a client (Expects ?email=user@example.com)
+// 2. Fetch all booking appointments (supports ?attendeeId=, ?requesterId=, ?email=, ?status=, ?date=YYYY-MM-DD)
+// URL: GET /appointment/bookings
+appointmentRouter.get("/bookings", appointmentController.getBookings);
+
+// 3. Fetch one booking appointment by id
+// URL: GET /appointment/bookings/:id
+appointmentRouter.get("/bookings/:id", appointmentController.getBookingById);
+
+// 4. Update booking appointment by id
+// URL: PUT /appointment/bookings/:id
+appointmentRouter.put("/bookings/:id", appointmentController.updateBooking);
+
+// 5. Delete booking appointment by id
+// URL: DELETE /appointment/bookings/:id
+appointmentRouter.delete("/bookings/:id", appointmentController.deleteBooking);
+
+// 6. Fetch bookings for a client (Expects ?email=user@example.com)
 // URL: GET /appointment/client
 appointmentRouter.get("/client", appointmentController.getClientBookings);
 
-// 3. Staff sets availability (Wipes old slots and creates new ones)
+// 7. Staff sets availability (Wipes old slots and creates new ones)
 // URL: POST /appointment/availability
 appointmentRouter.post("/availability", appointmentController.setAvailability);
 
-// 4. Fetch all created availability (optional ?userId=123)
+// 8. Fetch all created availability (optional ?userId=123)
 // URL: GET /appointment/availability
 appointmentRouter.get("/availability", appointmentController.getAvailability);
 
-// 5. Update one availability slot by id
+// 9. Fetch users with daily sessions and booking status tags
+// URL: GET /appointment/availability/status
+appointmentRouter.get(
+  "/availability/status",
+  appointmentController.getAvailabilityStatus,
+);
+
+// 10. Update one availability slot by id
 // URL: PUT /appointment/availability/:id
 appointmentRouter.put(
   "/availability/:id",
   appointmentController.updateAvailability,
 );
 
-// 6. Delete one availability slot by id
+// 11. Delete one availability slot by id
 // URL: DELETE /appointment/availability/:id
 appointmentRouter.delete(
   "/availability/:id",
   appointmentController.deleteAvailability,
 );
 
-// 7. Fetch bookings for staff (Expects ?userId=123)
+// 12. Fetch bookings for staff (Expects ?userId=123)
 // URL: GET /appointment/staff
 appointmentRouter.get("/staff", appointmentController.getStaffBookings);
 
-// 8. Update status (Expects ?id=456 in query and { isConfirmed: boolean } in body)
+// 13. Update status (Expects ?id=456 in query and { isConfirmed: boolean } in body)
 // URL: PUT /appointment/status
 appointmentRouter.put("/status", appointmentController.toggleConfirmation);
 

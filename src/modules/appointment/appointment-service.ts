@@ -16,49 +16,295 @@ const availabilityInclude = {
   },
 } as const;
 
+const appointmentInclude = {
+  user: {
+    select: {
+      id: true,
+      name: true,
+      position: {
+        select: {
+          name: true,
+        },
+      },
+    },
+  },
+} as const;
+
+const WEEK_DAYS = [
+  "sunday",
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+];
+
+function parseDateInput(dateValue?: string) {
+  if (!dateValue) {
+    const now = new Date();
+    const y = now.getUTCFullYear();
+    const m = now.getUTCMonth();
+    const d = now.getUTCDate();
+
+    return {
+      dayStart: new Date(Date.UTC(y, m, d, 0, 0, 0, 0)),
+      dayEnd: new Date(Date.UTC(y, m, d, 23, 59, 59, 999)),
+      dayName: WEEK_DAYS[new Date(Date.UTC(y, m, d)).getUTCDay()],
+      appointmentDate: new Date(Date.UTC(y, m, d, 0, 0, 0, 0)),
+    };
+  }
+
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateValue);
+  if (!match) {
+    throw new Error("date must be in YYYY-MM-DD format");
+  }
+
+  const year = Number(match[1]);
+  const monthIndex = Number(match[2]) - 1;
+  const day = Number(match[3]);
+
+  const date = new Date(Date.UTC(year, monthIndex, day, 0, 0, 0, 0));
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== monthIndex ||
+    date.getUTCDate() !== day
+  ) {
+    throw new Error("date is invalid");
+  }
+
+  return {
+    dayStart: new Date(Date.UTC(year, monthIndex, day, 0, 0, 0, 0)),
+    dayEnd: new Date(Date.UTC(year, monthIndex, day, 23, 59, 59, 999)),
+    dayName: WEEK_DAYS[date.getUTCDay()],
+    appointmentDate: date,
+  };
+}
+
+function resolveAttendeeId(payload: any) {
+  const attendeeId = Number(payload.userId ?? payload.attendeeId ?? payload.staffId);
+  if (!Number.isInteger(attendeeId) || attendeeId <= 0) {
+    throw new Error("attendeeId (or userId/staffId) must be a valid number");
+  }
+  return attendeeId;
+}
+
+function resolveRequesterId(payload: any, required = false) {
+  const raw = payload.requesterId ?? payload.requestedBy;
+  if (raw === undefined || raw === null || raw === "") {
+    if (required) {
+      throw new Error("requesterId is required");
+    }
+    return undefined;
+  }
+
+  const requesterId = Number(raw);
+  if (!Number.isInteger(requesterId) || requesterId <= 0) {
+    throw new Error("requesterId must be a valid number");
+  }
+
+  return requesterId;
+}
+
+function resolveSession(payload: any) {
+  if (
+    !payload?.session ||
+    typeof payload.session.start !== "string" ||
+    !payload.session.start.trim() ||
+    typeof payload.session.end !== "string" ||
+    !payload.session.end.trim()
+  ) {
+    throw new Error("session with valid start and end is required");
+  }
+
+  return {
+    start: payload.session.start.trim(),
+    end: payload.session.end.trim(),
+  };
+}
+
+function formatDateUTC(date: Date) {
+  const year = date.getUTCFullYear();
+  const month = `${date.getUTCMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getUTCDate()}`.padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function normalizeStatus(value: string) {
+  const parsed = value.toUpperCase();
+  if (!["PENDING", "CONFIRMED", "CANCELLED"].includes(parsed)) {
+    throw new Error("status must be PENDING, CONFIRMED, or CANCELLED");
+  }
+  return parsed as appointment_status;
+}
+
+function mapAppointmentOutput(appointment: any) {
+  return {
+    id: appointment.id,
+    attendeeId: appointment.userId,
+    attendeeName: appointment.user?.name ?? null,
+    position: appointment.user?.position?.name ?? null,
+    requester: {
+      requesterId: appointment.requesterId ?? null,
+      fullName: appointment.fullName,
+      email: appointment.email,
+      phone: appointment.phone,
+    },
+    requesterId: appointment.requesterId ?? null,
+    // backward compatible fields
+    fullName: appointment.fullName,
+    email: appointment.email,
+    phone: appointment.phone,
+    purpose: appointment.purpose,
+    note: appointment.note ?? "",
+    date: formatDateUTC(appointment.date),
+    session: {
+      start: appointment.startTime,
+      end: appointment.endTime,
+    },
+    status: appointment.status,
+    createdAt: appointment.createdAt,
+  };
+}
+
+async function validateBookingWindow(params: {
+  attendeeId: number;
+  date: string;
+  session: { start: string; end: string };
+  excludeAppointmentId?: number;
+}) {
+  const { attendeeId, date, session, excludeAppointmentId } = params;
+  const { dayStart, dayEnd, dayName, appointmentDate } = parseDateInput(date);
+
+  const availabilityForSession = await prisma.availability.findFirst({
+    where: {
+      userId: attendeeId,
+      day: dayName,
+      sessions: {
+        some: {
+          start: session.start,
+          end: session.end,
+        },
+      },
+    },
+    include: {
+      sessions: true,
+    },
+  });
+
+  if (!availabilityForSession) {
+    throw new Error("Selected session is not available for this user");
+  }
+
+  const existingSessionBooking = await prisma.appointment.findFirst({
+    where: {
+      userId: attendeeId,
+      date: {
+        gte: dayStart,
+        lte: dayEnd,
+      },
+      startTime: session.start,
+      endTime: session.end,
+      status: {
+        not: "CANCELLED",
+      },
+      ...(excludeAppointmentId
+        ? {
+            id: {
+              not: excludeAppointmentId,
+            },
+          }
+        : {}),
+    },
+    select: { id: true },
+  });
+
+  if (existingSessionBooking) {
+    throw new Error("This session is already booked");
+  }
+
+  const sessionFilters = availabilityForSession.sessions.map((s) => ({
+    startTime: s.start,
+    endTime: s.end,
+  }));
+
+  const bookedSessionsInBlock = await prisma.appointment.findMany({
+    where: {
+      userId: attendeeId,
+      date: {
+        gte: dayStart,
+        lte: dayEnd,
+      },
+      status: {
+        not: "CANCELLED",
+      },
+      OR: sessionFilters,
+      ...(excludeAppointmentId
+        ? {
+            id: {
+              not: excludeAppointmentId,
+            },
+          }
+        : {}),
+    },
+    select: {
+      startTime: true,
+      endTime: true,
+    },
+  });
+
+  const uniqueBookedSessions = new Set(
+    bookedSessionsInBlock.map(
+      (booking) => `${booking.startTime}|${booking.endTime}`,
+    ),
+  );
+
+  const limit = availabilityForSession.maxBookingsPerSlot || 1;
+  if (uniqueBookedSessions.size >= limit) {
+    throw new Error(
+      "This availability block has reached its max number of booked sessions",
+    );
+  }
+
+  return appointmentDate;
+}
+
 export const AppointmentService = {
   // CREATE APPOINTMENT (With Overbooking Protection)
   async createAppointment(payload: any) {
-    const { fullName, email, phone, purpose, note, userId, date, session } =
-      payload;
+    const { fullName, email, phone, purpose, note } = payload;
+    const attendeeId = resolveAttendeeId(payload);
+    const requesterId = resolveRequesterId(payload, true);
+    const session = resolveSession(payload);
 
-    const bookingDate = new Date(date);
-
-    // 1. Validation: Check how many people already booked this specific slot
-    const staff = await prisma.availability.findFirst({
-      where: { userId: Number(userId) },
-      select: { maxBookingsPerSlot: true },
-    });
-
-    const currentBookingsCount = await prisma.appointment.count({
-      where: {
-        userId: Number(userId),
-        date: bookingDate,
-        startTime: session.start,
-        status: { not: "CANCELLED" }, // Don't count cancelled ones
-      },
-    });
-
-    // 2. Prevent booking if limit reached (default to 1 if not set)
-    const limit = staff?.maxBookingsPerSlot || 1;
-    if (currentBookingsCount >= limit) {
-      throw new Error(`This slot is fully booked. Limit is ${limit}.`);
+    if (!payload?.date || typeof payload.date !== "string") {
+      throw new Error("date is required in YYYY-MM-DD format");
     }
 
-    return await prisma.appointment.create({
+    const appointmentDate = await validateBookingWindow({
+      attendeeId,
+      date: payload.date,
+      session,
+    });
+
+    const created = await prisma.appointment.create({
       data: {
         fullName,
         email,
         phone,
         purpose,
         note: note || "",
-        date: bookingDate,
+        date: appointmentDate,
         startTime: session.start,
         endTime: session.end,
-        userId: Number(userId),
+        userId: attendeeId,
+        requesterId,
         status: "PENDING",
       },
+      include: appointmentInclude,
     });
+
+    return mapAppointmentOutput(created);
   },
 
   // SET AVAILABILITY
@@ -214,27 +460,319 @@ export const AppointmentService = {
     return existing;
   },
 
+  // FETCH AVAILABILITY FOR TODAY WITH SLOT/SESSION STATUS TAGS
+  async getAvailabilityWithSessionStatus() {
+    const { dayStart, dayEnd, dayName } = parseDateInput();
+
+    const availabilities = await prisma.availability.findMany({
+      where: { day: dayName },
+      include: availabilityInclude,
+      orderBy: [{ userId: "asc" }, { startTime: "asc" }],
+    });
+
+    if (availabilities.length === 0) {
+      return {
+        users: [],
+      };
+    }
+
+    const userIds = Array.from(new Set(availabilities.map((a) => a.userId)));
+
+    const appointments = await prisma.appointment.findMany({
+      where: {
+        userId: { in: userIds },
+        date: {
+          gte: dayStart,
+          lte: dayEnd,
+        },
+        status: { not: "CANCELLED" },
+      },
+      select: {
+        userId: true,
+        startTime: true,
+        endTime: true,
+      },
+    });
+
+    const appointmentsByUser = new Map<
+      number,
+      Array<{ startTime: string; endTime: string }>
+    >();
+    for (const booking of appointments) {
+      if (!appointmentsByUser.has(booking.userId)) {
+        appointmentsByUser.set(booking.userId, []);
+      }
+      appointmentsByUser.get(booking.userId)!.push({
+        startTime: booking.startTime,
+        endTime: booking.endTime,
+      });
+    }
+
+    const usersMap = new Map<
+      number,
+      {
+        userId: number;
+        staffName: string;
+        position: string | null;
+        timeSlots: Array<{
+          availabilityId: number;
+          day: string;
+          startTime: string;
+          endTime: string;
+          maxBookingsPerSlot: number;
+          sessionDurationMinutes: number;
+          status: "AVAILABLE" | "BOOKED";
+          sessions: Array<{
+            id: number;
+            start: string;
+            end: string;
+            availabilityId: number;
+            status: "AVAILABLE" | "BOOKED";
+          }>;
+        }>;
+      }
+    >();
+
+    for (const availability of availabilities) {
+      if (!usersMap.has(availability.userId)) {
+        usersMap.set(availability.userId, {
+          userId: availability.userId,
+          staffName: availability.user.name,
+          position: availability.user.position?.name ?? null,
+          timeSlots: [],
+        });
+      }
+
+      const slotLimit = availability.maxBookingsPerSlot || 1;
+      const slotSessionKeys = new Set(
+        availability.sessions.map((session) => `${session.start}|${session.end}`),
+      );
+      const userDayBookings = appointmentsByUser.get(availability.userId) || [];
+      const bookedSessionsInSlot = new Set<string>();
+
+      for (const booking of userDayBookings) {
+        const sessionKey = `${booking.startTime}|${booking.endTime}`;
+        if (slotSessionKeys.has(sessionKey)) {
+          bookedSessionsInSlot.add(sessionKey);
+        }
+      }
+
+      const slotMaxReached = bookedSessionsInSlot.size >= slotLimit;
+      const slotStatus: "AVAILABLE" | "BOOKED" = slotMaxReached
+        ? "BOOKED"
+        : "AVAILABLE";
+
+      const slotSessions = [...availability.sessions]
+        .map((session) => {
+          const sessionKey = `${session.start}|${session.end}`;
+          const sessionIsBooked = bookedSessionsInSlot.has(sessionKey);
+          const sessionStatus: "AVAILABLE" | "BOOKED" =
+            slotMaxReached || sessionIsBooked ? "BOOKED" : "AVAILABLE";
+
+          return {
+            id: session.id,
+            start: session.start,
+            end: session.end,
+            availabilityId: session.availabilityId,
+            status: sessionStatus,
+          };
+        })
+        .sort((a, b) => a.start.localeCompare(b.start));
+
+      usersMap.get(availability.userId)!.timeSlots.push({
+        availabilityId: availability.id,
+        day: availability.day,
+        startTime: availability.startTime,
+        endTime: availability.endTime,
+        maxBookingsPerSlot: slotLimit,
+        sessionDurationMinutes: availability.sessionDurationMinutes,
+        status: slotStatus,
+        sessions: slotSessions,
+      });
+    }
+
+    return {
+      users: Array.from(usersMap.values()),
+    };
+  },
+
+  // FETCH ALL APPOINTMENT BOOKINGS
+  async getAllBookings(filters: {
+    attendeeId?: number;
+    requesterId?: number;
+    email?: string;
+    status?: string;
+    date?: string;
+  }) {
+    const where: any = {};
+
+    if (filters.attendeeId !== undefined) {
+      where.userId = filters.attendeeId;
+    }
+
+    if (filters.requesterId !== undefined) {
+      where.requesterId = filters.requesterId;
+    }
+
+    if (filters.email) {
+      where.email = filters.email.trim();
+    }
+
+    if (filters.status) {
+      where.status = normalizeStatus(filters.status);
+    }
+
+    if (filters.date) {
+      const { dayStart, dayEnd } = parseDateInput(filters.date);
+      where.date = {
+        gte: dayStart,
+        lte: dayEnd,
+      };
+    }
+
+    const bookings = await prisma.appointment.findMany({
+      where,
+      include: appointmentInclude,
+      orderBy: [{ date: "asc" }, { startTime: "asc" }],
+    });
+
+    return bookings.map(mapAppointmentOutput);
+  },
+
+  // FETCH APPOINTMENT BOOKING BY ID
+  async getBookingById(id: number) {
+    const booking = await prisma.appointment.findUnique({
+      where: { id },
+      include: appointmentInclude,
+    });
+
+    if (!booking) {
+      throw new Error("Appointment not found");
+    }
+
+    return mapAppointmentOutput(booking);
+  },
+
+  // UPDATE APPOINTMENT BOOKING
+  async updateBooking(id: number, payload: any) {
+    const existing = await prisma.appointment.findUnique({
+      where: { id },
+      include: appointmentInclude,
+    });
+
+    if (!existing) {
+      throw new Error("Appointment not found");
+    }
+
+    const nextAttendeeId =
+      payload.userId !== undefined ||
+      payload.attendeeId !== undefined ||
+      payload.staffId !== undefined
+        ? resolveAttendeeId(payload)
+        : existing.userId;
+    const nextRequesterId =
+      payload.requesterId !== undefined || payload.requestedBy !== undefined
+        ? resolveRequesterId(payload, true)
+        : existing.requesterId;
+
+    const nextSession = payload.session
+      ? resolveSession(payload)
+      : {
+          start: existing.startTime,
+          end: existing.endTime,
+        };
+
+    const nextDate =
+      payload.date !== undefined ? String(payload.date) : formatDateUTC(existing.date);
+
+    const shouldRevalidate =
+      nextAttendeeId !== existing.userId ||
+      nextSession.start !== existing.startTime ||
+      nextSession.end !== existing.endTime ||
+      nextDate !== formatDateUTC(existing.date);
+
+    const appointmentDate = shouldRevalidate
+      ? await validateBookingWindow({
+          attendeeId: nextAttendeeId,
+          date: nextDate,
+          session: nextSession,
+          excludeAppointmentId: id,
+        })
+      : existing.date;
+
+    const status =
+      payload.status !== undefined
+        ? normalizeStatus(String(payload.status))
+        : existing.status;
+
+    const updated = await prisma.appointment.update({
+      where: { id },
+      data: {
+        fullName:
+          payload.fullName !== undefined ? String(payload.fullName) : existing.fullName,
+        email: payload.email !== undefined ? String(payload.email) : existing.email,
+        phone: payload.phone !== undefined ? String(payload.phone) : existing.phone,
+        purpose:
+          payload.purpose !== undefined ? String(payload.purpose) : existing.purpose,
+        note: payload.note !== undefined ? String(payload.note) : existing.note,
+        date: appointmentDate,
+        startTime: nextSession.start,
+        endTime: nextSession.end,
+        userId: nextAttendeeId,
+        requesterId: nextRequesterId,
+        status,
+      },
+      include: appointmentInclude,
+    });
+
+    return mapAppointmentOutput(updated);
+  },
+
+  // DELETE APPOINTMENT BOOKING
+  async deleteBooking(id: number) {
+    const booking = await prisma.appointment.findUnique({
+      where: { id },
+      include: appointmentInclude,
+    });
+
+    if (!booking) {
+      throw new Error("Appointment not found");
+    }
+
+    await prisma.appointment.delete({ where: { id } });
+    return mapAppointmentOutput(booking);
+  },
+
   // FETCH BY STAFF
   async getByStaff(userId: number) {
-    return prisma.appointment.findMany({
+    const bookings = await prisma.appointment.findMany({
       where: { userId },
-      orderBy: { date: "asc" },
+      include: appointmentInclude,
+      orderBy: [{ date: "asc" }, { startTime: "asc" }],
     });
+
+    return bookings.map(mapAppointmentOutput);
   },
 
   // FETCH BY CLIENT
   async getByClientEmail(email?: string) {
-    return prisma.appointment.findMany({
+    const bookings = await prisma.appointment.findMany({
       where: { email },
-      include: { user: true },
+      include: appointmentInclude,
+      orderBy: [{ date: "asc" }, { startTime: "asc" }],
     });
+
+    return bookings.map(mapAppointmentOutput);
   },
 
   // UPDATE STATUS
   async updateStatus(id: number, app_status: appointment_status) {
-    return prisma.appointment.update({
+    const updated = await prisma.appointment.update({
       where: { id },
       data: { status: app_status },
+      include: appointmentInclude,
     });
+
+    return mapAppointmentOutput(updated);
   },
 };

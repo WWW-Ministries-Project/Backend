@@ -114,6 +114,25 @@ export class AppointmentController {
   }
 
   /**
+   * @route   GET /appointment/availability/status
+   * @desc    Fetch users with today's sessions and booking status tags
+   */
+  async getAvailabilityStatus(req: Request, res: Response) {
+    try {
+      const data = await AppointmentService.getAvailabilityWithSessionStatus();
+
+      res.status(200).json({
+        message: "Availability status fetched successfully",
+        data,
+      });
+    } catch (error: any) {
+      res.status(500).json({
+        error: error.message || "Error fetching availability status",
+      });
+    }
+  }
+
+  /**
    * @route   POST /api/appointments/book
    * @desc    Member/Client books a specific time slot
    */
@@ -127,6 +146,146 @@ export class AppointmentController {
     } catch (error: any) {
       // If the overbooking logic throws an error, it will be caught here
       res.status(400).json({ error: error.message || "Booking failed" });
+    }
+  }
+
+  /**
+   * @route   GET /appointment/bookings
+   * @desc    Fetch all booking appointments (supports attendeeId, requesterId, email, status, date filters)
+   */
+  async getBookings(req: Request, res: Response) {
+    try {
+      const attendeeIdRaw =
+        req.query.attendeeId ?? req.query.staffId ?? req.query.userId;
+      const requesterIdRaw = req.query.requesterId ?? req.query.requestedBy;
+      const email =
+        typeof req.query.email === "string" ? req.query.email : undefined;
+      const status =
+        typeof req.query.status === "string" ? req.query.status : undefined;
+      const date =
+        typeof req.query.date === "string" ? req.query.date : undefined;
+
+      let attendeeId: number | undefined;
+      if (attendeeIdRaw !== undefined) {
+        attendeeId = Number(attendeeIdRaw);
+        if (!Number.isInteger(attendeeId) || attendeeId <= 0) {
+          return res
+            .status(400)
+            .json({ error: "attendeeId must be a valid number" });
+        }
+      }
+
+      let requesterId: number | undefined;
+      if (requesterIdRaw !== undefined) {
+        requesterId = Number(requesterIdRaw);
+        if (!Number.isInteger(requesterId) || requesterId <= 0) {
+          return res
+            .status(400)
+            .json({ error: "requesterId must be a valid number" });
+        }
+      }
+
+      const data = await AppointmentService.getAllBookings({
+        attendeeId,
+        requesterId,
+        email,
+        status,
+        date,
+      });
+
+      res.status(200).json({
+        message: "Bookings fetched successfully",
+        data,
+      });
+    } catch (error: any) {
+      const statusCode =
+        error?.message?.includes("status must") ||
+        error?.message?.includes("date")
+          ? 400
+          : 500;
+      res.status(statusCode).json({
+        error: error.message || "Error fetching bookings",
+      });
+    }
+  }
+
+  /**
+   * @route   GET /appointment/bookings/:id
+   * @desc    Fetch one booking appointment by id
+   */
+  async getBookingById(req: Request, res: Response) {
+    try {
+      const id = Number(req.params.id);
+      if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ error: "Booking ID must be a valid number" });
+      }
+
+      const data = await AppointmentService.getBookingById(id);
+      res.status(200).json({
+        message: "Booking fetched successfully",
+        data,
+      });
+    } catch (error: any) {
+      const statusCode = error?.message === "Appointment not found" ? 404 : 500;
+      res
+        .status(statusCode)
+        .json({ error: error.message || "Error fetching booking" });
+    }
+  }
+
+  /**
+   * @route   PUT /appointment/bookings/:id
+   * @desc    Update a booking appointment
+   */
+  async updateBooking(req: Request, res: Response) {
+    try {
+      const id = Number(req.params.id);
+      if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ error: "Booking ID must be a valid number" });
+      }
+
+      const data = await AppointmentService.updateBooking(id, req.body);
+      res.status(200).json({
+        message: "Booking updated successfully",
+        data,
+      });
+    } catch (error: any) {
+      const statusCode =
+        error?.message === "Appointment not found"
+          ? 404
+          : error?.message?.includes("must") ||
+              error?.message?.includes("required") ||
+              error?.message?.includes("already booked") ||
+              error?.message?.includes("max number")
+            ? 400
+            : 500;
+      res
+        .status(statusCode)
+        .json({ error: error.message || "Error updating booking" });
+    }
+  }
+
+  /**
+   * @route   DELETE /appointment/bookings/:id
+   * @desc    Delete a booking appointment
+   */
+  async deleteBooking(req: Request, res: Response) {
+    try {
+      const id = Number(req.params.id);
+      if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ error: "Booking ID must be a valid number" });
+      }
+
+      const data = await AppointmentService.deleteBooking(id);
+      res.status(200).json({
+        message: "Booking deleted successfully",
+        data,
+      });
+    } catch (error: any) {
+      const statusCode = error?.message === "Appointment not found" ? 404 : 500;
+      res
+        .status(statusCode)
+        .json({ error: error.message || "Error deleting booking" });
     }
   }
 
