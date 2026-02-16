@@ -81,12 +81,12 @@ function parseDateInput(dateValue?: string) {
   };
 }
 
-function resolveAttendeeId(payload: any) {
-  const attendeeId = Number(payload.userId ?? payload.attendeeId ?? payload.staffId);
-  if (!Number.isInteger(attendeeId) || attendeeId <= 0) {
-    throw new Error("attendeeId (or userId/staffId) must be a valid number");
+function resolvestaffId(payload: any) {
+  const staffId = Number(payload.userId ?? payload.staffId ?? payload.staffId);
+  if (!Number.isInteger(staffId) || staffId <= 0) {
+    throw new Error("staffId (or userId/staffId) must be a valid number");
   }
-  return attendeeId;
+  return staffId;
 }
 
 function resolveRequesterId(payload: any, required = false) {
@@ -141,7 +141,7 @@ function normalizeStatus(value: string) {
 function mapAppointmentOutput(appointment: any) {
   return {
     id: appointment.id,
-    attendeeId: appointment.userId,
+    staffId: appointment.userId,
     attendeeName: appointment.user?.name ?? null,
     position: appointment.user?.position?.name ?? null,
     requester: {
@@ -168,17 +168,17 @@ function mapAppointmentOutput(appointment: any) {
 }
 
 async function validateBookingWindow(params: {
-  attendeeId: number;
+  staffId: number;
   date: string;
   session: { start: string; end: string };
   excludeAppointmentId?: number;
 }) {
-  const { attendeeId, date, session, excludeAppointmentId } = params;
+  const { staffId, date, session, excludeAppointmentId } = params;
   const { dayStart, dayEnd, dayName, appointmentDate } = parseDateInput(date);
 
   const availabilityForSession = await prisma.availability.findFirst({
     where: {
-      userId: attendeeId,
+      userId: staffId,
       day: dayName,
       sessions: {
         some: {
@@ -198,7 +198,7 @@ async function validateBookingWindow(params: {
 
   const existingSessionBooking = await prisma.appointment.findFirst({
     where: {
-      userId: attendeeId,
+      userId: staffId,
       date: {
         gte: dayStart,
         lte: dayEnd,
@@ -230,7 +230,7 @@ async function validateBookingWindow(params: {
 
   const bookedSessionsInBlock = await prisma.appointment.findMany({
     where: {
-      userId: attendeeId,
+      userId: staffId,
       date: {
         gte: dayStart,
         lte: dayEnd,
@@ -273,7 +273,7 @@ export const AppointmentService = {
   // CREATE APPOINTMENT (With Overbooking Protection)
   async createAppointment(payload: any) {
     const { fullName, email, phone, purpose, note } = payload;
-    const attendeeId = resolveAttendeeId(payload);
+    const staffId = resolvestaffId(payload);
     const requesterId = resolveRequesterId(payload, true);
     const session = resolveSession(payload);
 
@@ -282,7 +282,7 @@ export const AppointmentService = {
     }
 
     const appointmentDate = await validateBookingWindow({
-      attendeeId,
+      staffId,
       date: payload.date,
       session,
     });
@@ -297,7 +297,7 @@ export const AppointmentService = {
         date: appointmentDate,
         startTime: session.start,
         endTime: session.end,
-        userId: attendeeId,
+        userId: staffId,
         requesterId,
         status: "PENDING",
       },
@@ -598,7 +598,7 @@ export const AppointmentService = {
 
   // FETCH ALL APPOINTMENT BOOKINGS
   async getAllBookings(filters: {
-    attendeeId?: number;
+    staffId?: number;
     requesterId?: number;
     email?: string;
     status?: string;
@@ -606,8 +606,8 @@ export const AppointmentService = {
   }) {
     const where: any = {};
 
-    if (filters.attendeeId !== undefined) {
-      where.userId = filters.attendeeId;
+    if (filters.staffId !== undefined) {
+      where.userId = filters.staffId;
     }
 
     if (filters.requesterId !== undefined) {
@@ -664,11 +664,11 @@ export const AppointmentService = {
       throw new Error("Appointment not found");
     }
 
-    const nextAttendeeId =
+    const nextstaffId =
       payload.userId !== undefined ||
-      payload.attendeeId !== undefined ||
+      payload.staffId !== undefined ||
       payload.staffId !== undefined
-        ? resolveAttendeeId(payload)
+        ? resolvestaffId(payload)
         : existing.userId;
     const nextRequesterId =
       payload.requesterId !== undefined || payload.requestedBy !== undefined
@@ -686,14 +686,14 @@ export const AppointmentService = {
       payload.date !== undefined ? String(payload.date) : formatDateUTC(existing.date);
 
     const shouldRevalidate =
-      nextAttendeeId !== existing.userId ||
+      nextstaffId !== existing.userId ||
       nextSession.start !== existing.startTime ||
       nextSession.end !== existing.endTime ||
       nextDate !== formatDateUTC(existing.date);
 
     const appointmentDate = shouldRevalidate
       ? await validateBookingWindow({
-          attendeeId: nextAttendeeId,
+          staffId: nextstaffId,
           date: nextDate,
           session: nextSession,
           excludeAppointmentId: id,
@@ -718,7 +718,7 @@ export const AppointmentService = {
         date: appointmentDate,
         startTime: nextSession.start,
         endTime: nextSession.end,
-        userId: nextAttendeeId,
+        userId: nextstaffId,
         requesterId: nextRequesterId,
         status,
       },

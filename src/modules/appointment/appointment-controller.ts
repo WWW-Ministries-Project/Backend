@@ -151,12 +151,12 @@ export class AppointmentController {
 
   /**
    * @route   GET /appointment/bookings
-   * @desc    Fetch all booking appointments (supports attendeeId, requesterId, email, status, date filters)
+   * @desc    Fetch all booking appointments (supports staffId, requesterId, email, status, date filters)
    */
   async getBookings(req: Request, res: Response) {
     try {
-      const attendeeIdRaw =
-        req.query.attendeeId ?? req.query.staffId ?? req.query.userId;
+      const staffIdRaw =
+        req.query.staffId ?? req.query.staffId ?? req.query.userId;
       const requesterIdRaw = req.query.requesterId ?? req.query.requestedBy;
       const email =
         typeof req.query.email === "string" ? req.query.email : undefined;
@@ -165,13 +165,13 @@ export class AppointmentController {
       const date =
         typeof req.query.date === "string" ? req.query.date : undefined;
 
-      let attendeeId: number | undefined;
-      if (attendeeIdRaw !== undefined) {
-        attendeeId = Number(attendeeIdRaw);
-        if (!Number.isInteger(attendeeId) || attendeeId <= 0) {
+      let staffId: number | undefined;
+      if (staffIdRaw !== undefined) {
+        staffId = Number(staffIdRaw);
+        if (!Number.isInteger(staffId) || staffId <= 0) {
           return res
             .status(400)
-            .json({ error: "attendeeId must be a valid number" });
+            .json({ error: "staffId must be a valid number" });
         }
       }
 
@@ -186,7 +186,7 @@ export class AppointmentController {
       }
 
       const data = await AppointmentService.getAllBookings({
-        attendeeId,
+        staffId,
         requesterId,
         email,
         status,
