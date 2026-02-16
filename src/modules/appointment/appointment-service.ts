@@ -1,6 +1,21 @@
 import { appointment_status } from "@prisma/client";
 import { prisma } from "../../Models/context";
 
+const availabilityInclude = {
+  sessions: true,
+  user: {
+    select: {
+      id: true,
+      name: true,
+      position: {
+        select: {
+          name: true,
+        },
+      },
+    },
+  },
+} as const;
+
 export const AppointmentService = {
   // CREATE APPOINTMENT (With Overbooking Protection)
   async createAppointment(payload: any) {
@@ -73,6 +88,130 @@ export const AppointmentService = {
         });
       }
     });
+  },
+
+  // FETCH ALL AVAILABILITY (OPTIONAL STAFF FILTER)
+  async getAllAvailability(userId?: number) {
+    return prisma.availability.findMany({
+      where: userId ? { userId } : undefined,
+      include: availabilityInclude,
+      orderBy: [{ userId: "asc" }, { day: "asc" }, { startTime: "asc" }],
+    });
+  },
+
+  // UPDATE AVAILABILITY SLOT
+  async updateAvailability(id: number, payload: any) {
+    const existing = await prisma.availability.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+
+    if (!existing) {
+      throw new Error("Availability not found");
+    }
+
+    const updateData: any = {};
+
+    if (payload.userId !== undefined) {
+      const parsedUserId = Number(payload.userId);
+      if (!Number.isInteger(parsedUserId) || parsedUserId <= 0) {
+        throw new Error("userId must be a valid positive number");
+      }
+      updateData.userId = parsedUserId;
+    }
+
+    if (payload.day !== undefined) {
+      if (typeof payload.day !== "string" || !payload.day.trim()) {
+        throw new Error("day must be a valid string");
+      }
+      updateData.day = payload.day.trim().toLowerCase();
+    }
+
+    if (payload.maxBookingsPerSlot !== undefined) {
+      const parsedLimit = Number(payload.maxBookingsPerSlot);
+      if (!Number.isInteger(parsedLimit) || parsedLimit <= 0) {
+        throw new Error("maxBookingsPerSlot must be a valid positive number");
+      }
+      updateData.maxBookingsPerSlot = parsedLimit;
+    }
+
+    if (payload.startTime !== undefined) {
+      if (typeof payload.startTime !== "string" || !payload.startTime.trim()) {
+        throw new Error("startTime must be a valid string");
+      }
+      updateData.startTime = payload.startTime.trim();
+    }
+
+    if (payload.endTime !== undefined) {
+      if (typeof payload.endTime !== "string" || !payload.endTime.trim()) {
+        throw new Error("endTime must be a valid string");
+      }
+      updateData.endTime = payload.endTime.trim();
+    }
+
+    if (payload.sessionDurationMinutes !== undefined) {
+      const parsedDuration = Number(payload.sessionDurationMinutes);
+      if (!Number.isInteger(parsedDuration) || parsedDuration <= 0) {
+        throw new Error(
+          "sessionDurationMinutes must be a valid positive number",
+        );
+      }
+      updateData.sessionDurationMinutes = parsedDuration;
+    }
+
+    const hasSessions = payload.sessions !== undefined;
+    if (hasSessions) {
+      if (!Array.isArray(payload.sessions) || payload.sessions.length === 0) {
+        throw new Error("sessions must be a non-empty array");
+      }
+
+      for (const session of payload.sessions) {
+        if (
+          typeof session?.start !== "string" ||
+          !session.start.trim() ||
+          typeof session?.end !== "string" ||
+          !session.end.trim()
+        ) {
+          throw new Error(
+            "Each session must contain non-empty start and end values",
+          );
+        }
+      }
+    }
+
+    return prisma.availability.update({
+      where: { id },
+      data: {
+        ...updateData,
+        ...(hasSessions
+          ? {
+              sessions: {
+                deleteMany: {},
+                create: payload.sessions.map((session: any) => ({
+                  start: session.start.trim(),
+                  end: session.end.trim(),
+                })),
+              },
+            }
+          : {}),
+      },
+      include: availabilityInclude,
+    });
+  },
+
+  // DELETE AVAILABILITY SLOT
+  async deleteAvailability(id: number) {
+    const existing = await prisma.availability.findUnique({
+      where: { id },
+      include: availabilityInclude,
+    });
+
+    if (!existing) {
+      throw new Error("Availability not found");
+    }
+
+    await prisma.availability.delete({ where: { id } });
+    return existing;
   },
 
   // FETCH BY STAFF

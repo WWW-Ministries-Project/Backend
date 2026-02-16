@@ -20,11 +20,29 @@ appointmentRouter.get("/client", appointmentController.getClientBookings);
 // URL: POST /appointment/availability
 appointmentRouter.post("/availability", appointmentController.setAvailability);
 
-// 4. Fetch bookings for staff (Expects ?userId=123)
+// 4. Fetch all created availability (optional ?userId=123)
+// URL: GET /appointment/availability
+appointmentRouter.get("/availability", appointmentController.getAvailability);
+
+// 5. Update one availability slot by id
+// URL: PUT /appointment/availability/:id
+appointmentRouter.put(
+  "/availability/:id",
+  appointmentController.updateAvailability,
+);
+
+// 6. Delete one availability slot by id
+// URL: DELETE /appointment/availability/:id
+appointmentRouter.delete(
+  "/availability/:id",
+  appointmentController.deleteAvailability,
+);
+
+// 7. Fetch bookings for staff (Expects ?userId=123)
 // URL: GET /appointment/staff
 appointmentRouter.get("/staff", appointmentController.getStaffBookings);
 
-// 5. Update status (Expects ?id=456 in query and { isConfirmed: boolean } in body)
+// 8. Update status (Expects ?id=456 in query and { isConfirmed: boolean } in body)
 // URL: PUT /appointment/status
 appointmentRouter.put("/status", appointmentController.toggleConfirmation);
 
