@@ -997,6 +997,7 @@ model appointment {
   phone     String
   purpose   String
   note      String?
+  requesterId Int?
   date      DateTime
   startTime String
   endTime   String
@@ -1008,6 +1009,7 @@ model appointment {
 
   @@index([email])
   @@index([userId])
+  @@index([requesterId])
 }
 
 enum appointment_status {
