@@ -22,6 +22,98 @@ export class AppointmentController {
   }
 
   /**
+   * @route   GET /api/appointments/availability?userId=1
+   * @desc    Fetch all created availability records (optionally by staff userId)
+   */
+  async getAvailability(req: Request, res: Response) {
+    try {
+      const { userId } = req.query;
+
+      if (userId !== undefined) {
+        const parsed = Number(userId);
+        if (!Number.isInteger(parsed) || parsed <= 0) {
+          return res.status(400).json({ error: "userId must be a valid number" });
+        }
+      }
+
+      const data = await AppointmentService.getAllAvailability(
+        userId !== undefined ? Number(userId) : undefined,
+      );
+
+      res.status(200).json({
+        message: "Availability fetched successfully",
+        data,
+      });
+    } catch (error: any) {
+      res
+        .status(500)
+        .json({ error: error.message || "Error fetching availability" });
+    }
+  }
+
+  /**
+   * @route   PUT /api/appointments/availability/:id
+   * @desc    Update a created availability slot
+   */
+  async updateAvailability(req: Request, res: Response) {
+    try {
+      const parsedId = Number(req.params.id);
+      if (!Number.isInteger(parsedId) || parsedId <= 0) {
+        return res
+          .status(400)
+          .json({ error: "Availability ID must be a valid number" });
+      }
+
+      const data = await AppointmentService.updateAvailability(
+        parsedId,
+        req.body,
+      );
+
+      res.status(200).json({
+        message: "Availability updated successfully",
+        data,
+      });
+    } catch (error: any) {
+      const statusCode =
+        error?.message === "Availability not found"
+          ? 404
+          : error?.message?.includes("must")
+            ? 400
+            : 500;
+
+      res
+        .status(statusCode)
+        .json({ error: error.message || "Could not update availability" });
+    }
+  }
+
+  /**
+   * @route   DELETE /api/appointments/availability/:id
+   * @desc    Delete a created availability slot
+   */
+  async deleteAvailability(req: Request, res: Response) {
+    try {
+      const parsedId = Number(req.params.id);
+      if (!Number.isInteger(parsedId) || parsedId <= 0) {
+        return res
+          .status(400)
+          .json({ error: "Availability ID must be a valid number" });
+      }
+
+      const data = await AppointmentService.deleteAvailability(parsedId);
+      res.status(200).json({
+        message: "Availability deleted successfully",
+        data,
+      });
+    } catch (error: any) {
+      const statusCode = error?.message === "Availability not found" ? 404 : 500;
+      res
+        .status(statusCode)
+        .json({ error: error.message || "Could not delete availability" });
+    }
+  }
+
+  /**
    * @route   POST /api/appointments/book
    * @desc    Member/Client books a specific time slot
    */
