@@ -1528,17 +1528,25 @@ export const convertMemeberToConfirmedMember = async (
   res: Response,
 ) => {
   const { user_id, status } = req.query;
-  let user_status: string | undefined = status as string;
-  if (!status) {
-    user_status = "CONFIRMED";
+
+  if (!user_id || Number.isNaN(Number(user_id))) {
+    return res.status(400).json({
+      message: "Operation failed",
+      data: {
+        message: "",
+        error: "Invalid or missing user_id.",
+      },
+    });
   }
+
+  const user_status = typeof status === "string" ? status : undefined;
 
   try {
     const result = await userService.convertMemeberToConfirmedMember(
       Number(user_id),
       user_status,
     );
-    if (result.error == "") {
+    if (result.error !== "") {
       return res.status(400).json({
         message: "Operation failed",
         data: result,
