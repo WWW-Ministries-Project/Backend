@@ -162,34 +162,6 @@ function getNextDateWindowForDay(day: string) {
   return parseDateInput(formatDateUTC(targetDate));
 }
 
-function pickNearestDayFrom(days: string[], startDay: string) {
-  const startIndex = WEEK_DAYS.indexOf(startDay);
-  if (startIndex < 0) {
-    return undefined;
-  }
-
-  let best:
-    | {
-        day: string;
-        offset: number;
-      }
-    | undefined;
-
-  for (const day of days) {
-    const dayIndex = WEEK_DAYS.indexOf(day);
-    if (dayIndex < 0) {
-      continue;
-    }
-
-    const offset = (dayIndex - startIndex + 7) % 7;
-    if (!best || offset < best.offset) {
-      best = { day, offset };
-    }
-  }
-
-  return best?.day;
-}
-
 function normalizeStatus(value: string) {
   const parsed = value.toUpperCase();
   if (!["PENDING", "CONFIRMED", "CANCELLED"].includes(parsed)) {
@@ -232,6 +204,7 @@ function mapAvailabilityPayload(records: any[]) {
     number,
     {
       userId: string;
+      fullName: string | null;
       slotLimits: number[];
       timeSlots: Array<{
         day: string;
@@ -247,6 +220,7 @@ function mapAvailabilityPayload(records: any[]) {
     if (!grouped.has(availability.userId)) {
       grouped.set(availability.userId, {
         userId: String(availability.userId),
+        fullName: availability.user?.name ?? null,
         slotLimits: [],
         timeSlots: [],
       });
@@ -277,6 +251,7 @@ function mapAvailabilityPayload(records: any[]) {
 
     return {
       userId: entry.userId,
+      fullName: entry.fullName,
       maxBookingsPerSlot: resolvedMaxBookingsPerSlot,
       timeSlots: entry.timeSlots.sort((a, b) => {
         const dayDiff = WEEK_DAYS.indexOf(a.day) - WEEK_DAYS.indexOf(b.day);
@@ -666,77 +641,79 @@ export const AppointmentService = {
     return existing;
   },
 
-  // FETCH AVAILABILITY FOR TODAY WITH SLOT/SESSION STATUS TAGS
+  // FETCH AVAILABILITY WITH SLOT/SESSION STATUS TAGS (ALL DAYS)
   async getAvailabilityWithSessionStatus() {
-    let { dayStart, dayEnd, dayName } = parseDateInput();
-
     const allAvailabilities = await prisma.availability.findMany({
       include: availabilityInclude,
       orderBy: [{ userId: "asc" }, { day: "asc" }, { startTime: "asc" }],
     });
 
-    let availabilities = allAvailabilities.filter(
-      (availability) => String(availability.day).toLowerCase() === dayName,
-    );
-
-    if (availabilities.length === 0) {
-      const availableDays = Array.from(
-        new Set(
-          allAvailabilities
-            .map((availability) => String(availability.day).toLowerCase())
-            .filter((day) => WEEK_DAYS.includes(day)),
-        ),
-      );
-
-      if (availableDays.length === 0) {
-        return [];
-      }
-
-      const fallbackDay = pickNearestDayFrom(availableDays, dayName);
-      if (!fallbackDay) {
-        return [];
-      }
-
-      const fallbackWindow = getNextDateWindowForDay(fallbackDay);
-      dayStart = fallbackWindow.dayStart;
-      dayEnd = fallbackWindow.dayEnd;
-      dayName = fallbackWindow.dayName;
-      availabilities = allAvailabilities.filter(
-        (availability) => String(availability.day).toLowerCase() === dayName,
-      );
-    }
-
-    if (availabilities.length === 0) {
+    if (allAvailabilities.length === 0) {
       return [];
     }
 
-    const userIds = Array.from(new Set(availabilities.map((a) => a.userId)));
+    const userIds = Array.from(new Set(allAvailabilities.map((a) => a.userId)));
+    const availabilityDays = Array.from(
+      new Set(
+        allAvailabilities
+          .map((availability) => String(availability.day).toLowerCase())
+          .filter((day) => WEEK_DAYS.includes(day)),
+      ),
+    );
 
-    const appointments = await prisma.appointment.findMany({
-      where: {
-        userId: { in: userIds },
-        date: {
-          gte: dayStart,
-          lte: dayEnd,
-        },
-        status: { not: "CANCELLED" },
-      },
-      select: {
-        userId: true,
-        startTime: true,
-        endTime: true,
-      },
-    });
+    const dayWindows = new Map<
+      string,
+      { dayStart: Date; dayEnd: Date; dayName: string }
+    >();
+    let rangeStart: Date | undefined;
+    let rangeEnd: Date | undefined;
 
-    const appointmentsByUser = new Map<
-      number,
+    for (const day of availabilityDays) {
+      const dayWindow = getNextDateWindowForDay(day);
+      dayWindows.set(day, dayWindow);
+      if (!rangeStart || dayWindow.dayStart < rangeStart) {
+        rangeStart = dayWindow.dayStart;
+      }
+      if (!rangeEnd || dayWindow.dayEnd > rangeEnd) {
+        rangeEnd = dayWindow.dayEnd;
+      }
+    }
+
+    const appointments =
+      rangeStart && rangeEnd
+        ? await prisma.appointment.findMany({
+            where: {
+              userId: { in: userIds },
+              date: {
+                gte: rangeStart,
+                lte: rangeEnd,
+              },
+              status: { not: "CANCELLED" },
+            },
+            select: {
+              userId: true,
+              startTime: true,
+              endTime: true,
+              date: true,
+            },
+          })
+        : [];
+
+    const appointmentsByUserDay = new Map<
+      string,
       Array<{ startTime: string; endTime: string }>
     >();
+
     for (const booking of appointments) {
-      if (!appointmentsByUser.has(booking.userId)) {
-        appointmentsByUser.set(booking.userId, []);
+      const bookingDay = WEEK_DAYS[booking.date.getUTCDay()];
+      if (!dayWindows.has(bookingDay)) {
+        continue;
       }
-      appointmentsByUser.get(booking.userId)!.push({
+      const key = `${booking.userId}|${bookingDay}`;
+      if (!appointmentsByUserDay.has(key)) {
+        appointmentsByUserDay.set(key, []);
+      }
+      appointmentsByUserDay.get(key)!.push({
         startTime: booking.startTime,
         endTime: booking.endTime,
       });
@@ -746,6 +723,7 @@ export const AppointmentService = {
       number,
       {
         userId: string;
+        fullName: string | null;
         slotLimits: number[];
         timeSlots: Array<{
           day: string;
@@ -762,10 +740,11 @@ export const AppointmentService = {
       }
     >();
 
-    for (const availability of availabilities) {
+    for (const availability of allAvailabilities) {
       if (!grouped.has(availability.userId)) {
         grouped.set(availability.userId, {
           userId: String(availability.userId),
+          fullName: availability.user?.name ?? null,
           slotLimits: [],
           timeSlots: [],
         });
@@ -777,7 +756,9 @@ export const AppointmentService = {
       const slotSessionKeys = new Set(
         availability.sessions.map((session) => `${session.start}|${session.end}`),
       );
-      const userDayBookings = appointmentsByUser.get(availability.userId) || [];
+      const slotDay = String(availability.day).toLowerCase();
+      const userDayBookings =
+        appointmentsByUserDay.get(`${availability.userId}|${slotDay}`) || [];
       const bookedSessionsInSlot = new Set<string>();
 
       for (const booking of userDayBookings) {
@@ -822,6 +803,7 @@ export const AppointmentService = {
         entry.slotLimits.length > 0 ? Math.min(...entry.slotLimits) : 1;
       return {
         userId: entry.userId,
+        fullName: entry.fullName,
         maxBookingsPerSlot: resolvedMaxBookingsPerSlot,
         timeSlots: entry.timeSlots.sort((a, b) => {
           const dayDiff = WEEK_DAYS.indexOf(a.day) - WEEK_DAYS.indexOf(b.day);
