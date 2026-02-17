@@ -73,4 +73,28 @@ export class VisitorController {
         .json({ message: "Error deleting visitor", error: error.message });
     }
   }
+
+  async convertVisitorToMember(req: Request, res: Response) {
+    try {
+      const { id } = req.query;
+
+      if (!id || Number.isNaN(Number(id))) {
+        return res
+          .status(400)
+          .json({ message: "Invalid or missing visitor id" });
+      }
+
+      const user = await visitorService.changeVisitorStatusToMember(Number(id));
+
+      return res.status(200).json({
+        message: "Visitor converted to member successfully",
+        data: user,
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        message: "Error converting visitor to member",
+        error: error.message,
+      });
+    }
+  }
 }

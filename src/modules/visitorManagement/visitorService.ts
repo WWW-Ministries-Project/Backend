@@ -346,7 +346,7 @@ export class VisitorService {
       },
       picture: {},
       children: [],
-      status: "active",
+      status: "CONFIRMED",
       password: "123456", // default or auto-generated
       is_user: true,
     };
