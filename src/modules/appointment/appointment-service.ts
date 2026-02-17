@@ -703,8 +703,25 @@ export const AppointmentService = {
       string,
       Array<{ startTime: string; endTime: string }>
     >();
+    const bookedSessionsByUser = new Map<
+      number,
+      Map<string, { date: string; start: string; end: string }>
+    >();
 
     for (const booking of appointments) {
+      const bookingDate = formatDateUTC(booking.date);
+      if (!bookedSessionsByUser.has(booking.userId)) {
+        bookedSessionsByUser.set(booking.userId, new Map());
+      }
+      bookedSessionsByUser.get(booking.userId)!.set(
+        `${bookingDate}|${booking.startTime}|${booking.endTime}`,
+        {
+          date: bookingDate,
+          start: booking.startTime,
+          end: booking.endTime,
+        },
+      );
+
       const bookingDay = WEEK_DAYS[booking.date.getUTCDay()];
       if (!dayWindows.has(bookingDay)) {
         continue;
@@ -725,6 +742,11 @@ export const AppointmentService = {
         userId: string;
         fullName: string | null;
         slotLimits: number[];
+        bookedSessions: Array<{
+          date: string;
+          start: string;
+          end: string;
+        }>;
         timeSlots: Array<{
           day: string;
           startTime: string;
@@ -734,7 +756,6 @@ export const AppointmentService = {
           sessions: Array<{
             start: string;
             end: string;
-            status: "AVAILABLE" | "BOOKED";
           }>;
         }>;
       }
@@ -742,10 +763,17 @@ export const AppointmentService = {
 
     for (const availability of allAvailabilities) {
       if (!grouped.has(availability.userId)) {
+        const userBookedSessions = Array.from(
+          bookedSessionsByUser.get(availability.userId)?.values() ?? [],
+        ).sort(
+          (a, b) => a.date.localeCompare(b.date) || a.start.localeCompare(b.start),
+        );
+
         grouped.set(availability.userId, {
           userId: String(availability.userId),
           fullName: availability.user?.name ?? null,
           slotLimits: [],
+          bookedSessions: userBookedSessions,
           timeSlots: [],
         });
       }
@@ -775,15 +803,9 @@ export const AppointmentService = {
 
       const slotSessions = [...availability.sessions]
         .map((session) => {
-          const sessionKey = `${session.start}|${session.end}`;
-          const sessionIsBooked = bookedSessionsInSlot.has(sessionKey);
-          const sessionStatus: "AVAILABLE" | "BOOKED" =
-            slotMaxReached || sessionIsBooked ? "BOOKED" : "AVAILABLE";
-
           return {
             start: session.start,
             end: session.end,
-            status: sessionStatus,
           };
         })
         .sort((a, b) => a.start.localeCompare(b.start));
@@ -805,6 +827,7 @@ export const AppointmentService = {
         userId: entry.userId,
         fullName: entry.fullName,
         maxBookingsPerSlot: resolvedMaxBookingsPerSlot,
+        bookedSessions: entry.bookedSessions,
         timeSlots: entry.timeSlots.sort((a, b) => {
           const dayDiff = WEEK_DAYS.indexOf(a.day) - WEEK_DAYS.indexOf(b.day);
           if (dayDiff !== 0) {

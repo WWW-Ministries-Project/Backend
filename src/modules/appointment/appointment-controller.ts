@@ -1,5 +1,8 @@
 import { Request, Response } from "express";
+import { appointment_status } from "@prisma/client";
 import { AppointmentService } from "./appointment-service";
+import { sendEmail } from "../../utils";
+import { appointmentStatusTemplate } from "../../utils/mail_templates/appointmentStatusTemplate";
 
 export class AppointmentController {
   /**
@@ -342,12 +345,47 @@ export class AppointmentController {
           .status(400)
           .json({ error: "Appointment ID is required in query" });
       }
+      const parsedId = Number(id);
+      if (!Number.isInteger(parsedId) || parsedId <= 0) {
+        return res
+          .status(400)
+          .json({ error: "Appointment ID must be a valid number" });
+      }
+      if (typeof isConfirmed !== "boolean") {
+        return res
+          .status(400)
+          .json({ error: "isConfirmed must be a boolean value" });
+      }
 
       const newStatus = isConfirmed ? "CONFIRMED" : "PENDING";
-      const updated = await AppointmentService.updateStatus(
-        Number(id),
-        newStatus,
-      );
+      const previous = await AppointmentService.getBookingById(parsedId);
+      const updated = await AppointmentService.updateStatus(parsedId, newStatus);
+
+      try {
+        await sendEmail(
+          appointmentStatusTemplate({
+            requesterName: updated.fullName || "Member",
+            attendeeName: updated.attendeeName || "Attendee",
+            date: updated.date,
+            startTime: updated.session?.start || "",
+            endTime: updated.session?.end || "",
+            status: newStatus as "CONFIRMED" | "PENDING",
+          }),
+          updated.email,
+          `Appointment ${isConfirmed ? "Confirmed" : "Unconfirmed"}`,
+          { throwOnError: true },
+        );
+      } catch (mailError: any) {
+        await AppointmentService.updateStatus(
+          parsedId,
+          previous.status as appointment_status,
+        );
+        return res.status(502).json({
+          error:
+            "Status update failed because notification email could not be delivered. No status change was applied.",
+          details: mailError?.message || "Email delivery failed",
+        });
+      }
 
       res.json({
         message: `Appointment ${newStatus.toLowerCase()} successfully`,

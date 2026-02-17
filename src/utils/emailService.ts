@@ -2,37 +2,59 @@ import nodemailer from "nodemailer";
 import * as dotenv from "dotenv";
 dotenv.config();
 
-export const sendEmail = async (
-  template: string,
-  to: string,
-  subject: string,
-) => {
-  const transporter = nodemailer.createTransport({
+type SendEmailOptions = {
+  throwOnError?: boolean;
+};
+
+let transporter: nodemailer.Transporter | null = null;
+
+function getTransporter() {
+  if (transporter) {
+    return transporter;
+  }
+
+  transporter = nodemailer.createTransport({
     host: process.env.MAIL_HOST,
     port: Number(process.env.MAIL_PORT),
-    // service: "gmail",
+    secure: String(process.env.MAIL_SECURE).toLowerCase() === "true",
     auth: {
       user: process.env.MAIL_USER,
       pass: process.env.MAIL_PASSWORD,
     },
-
     tls: {
       rejectUnauthorized: false,
     },
   });
 
-  const mailOptions = {
-    from: `World Wide Word Ministries <${process.env.MAIL_FROM}>`,
-    to,
-    subject,
-    html: template,
-  };
+  return transporter;
+}
 
-  transporter.sendMail(mailOptions, (error) => {
-    if (error) {
-      return error;
-    } else {
-      return "Email sent";
+export const sendEmail = async (
+  template: string,
+  to: string,
+  subject: string,
+  options: SendEmailOptions = {},
+) => {
+  try {
+    const mailOptions = {
+      from: `World Wide Word Ministries <${process.env.MAIL_FROM}>`,
+      to,
+      subject,
+      html: template,
+    };
+
+    const info = await getTransporter().sendMail(mailOptions);
+    return {
+      success: true,
+      messageId: info.messageId,
+    };
+  } catch (error: any) {
+    if (options.throwOnError) {
+      throw error;
     }
-  });
+    return {
+      success: false,
+      error: error?.message || "Failed to send email",
+    };
+  }
 };
