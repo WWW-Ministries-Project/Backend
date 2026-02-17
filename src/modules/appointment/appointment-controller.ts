@@ -1,5 +1,4 @@
 import { Request, Response } from "express";
-import { appointment_status } from "@prisma/client";
 import { AppointmentService } from "./appointment-service";
 import { sendEmail } from "../../utils";
 import { appointmentStatusTemplate } from "../../utils/mail_templates/appointmentStatusTemplate";
@@ -358,38 +357,32 @@ export class AppointmentController {
       }
 
       const newStatus = isConfirmed ? "CONFIRMED" : "PENDING";
-      const previous = await AppointmentService.getBookingById(parsedId);
       const updated = await AppointmentService.updateStatus(parsedId, newStatus);
-
-      try {
-        await sendEmail(
-          appointmentStatusTemplate({
-            requesterName: updated.fullName || "Member",
-            attendeeName: updated.attendeeName || "Attendee",
-            date: updated.date,
-            startTime: updated.session?.start || "",
-            endTime: updated.session?.end || "",
-            status: newStatus as "CONFIRMED" | "PENDING",
-          }),
-          updated.email,
-          `Appointment ${isConfirmed ? "Confirmed" : "Unconfirmed"}`,
-          { throwOnError: true },
-        );
-      } catch (mailError: any) {
-        await AppointmentService.updateStatus(
-          parsedId,
-          previous.status as appointment_status,
-        );
-        return res.status(502).json({
-          error:
-            "Status update failed because notification email could not be delivered. No status change was applied.",
-          details: mailError?.message || "Email delivery failed",
-        });
-      }
+      const mailResult = await sendEmail(
+        appointmentStatusTemplate({
+          requesterName: updated.fullName || "Member",
+          attendeeName: updated.attendeeName || "Attendee",
+          date: updated.date,
+          startTime: updated.session?.start || "",
+          endTime: updated.session?.end || "",
+          status: newStatus as "CONFIRMED" | "PENDING",
+        }),
+        updated.email,
+        `Appointment ${isConfirmed ? "Confirmed" : "Unconfirmed"}`,
+      );
 
       res.json({
         message: `Appointment ${newStatus.toLowerCase()} successfully`,
         data: updated,
+        notification: mailResult?.success
+          ? {
+              sent: true,
+              messageId: mailResult.messageId ?? null,
+            }
+          : {
+              sent: false,
+              error: mailResult?.error || "Email delivery failed",
+            },
       });
     } catch (error: any) {
       res.status(500).json({ error: error.message || "Status update failed" });
