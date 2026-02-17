@@ -15,8 +15,12 @@ export class AppointmentController {
         data: appointment_availability,
       });
     } catch (error: any) {
+      const statusCode =
+        error?.message?.includes("must") || error?.message?.includes("required")
+          ? 400
+          : 500;
       res
-        .status(500)
+        .status(statusCode)
         .json({ error: error.message || "Could not save availability" });
     }
   }
@@ -115,7 +119,7 @@ export class AppointmentController {
 
   /**
    * @route   GET /appointment/availability/status
-   * @desc    Fetch users with today's sessions and booking status tags
+   * @desc    Fetch availability in payload structure with slot/session status tags
    */
   async getAvailabilityStatus(req: Request, res: Response) {
     try {

@@ -40,6 +40,16 @@ const WEEK_DAYS = [
   "saturday",
 ];
 
+function normalizeWeekDay(value: string) {
+  const normalized = value.trim().toLowerCase();
+  if (!WEEK_DAYS.includes(normalized)) {
+    throw new Error(
+      "day must be one of sunday, monday, tuesday, wednesday, thursday, friday, saturday",
+    );
+  }
+  return normalized;
+}
+
 function parseDateInput(dateValue?: string) {
   if (!dateValue) {
     const now = new Date();
@@ -130,6 +140,56 @@ function formatDateUTC(date: Date) {
   return `${year}-${month}-${day}`;
 }
 
+function getNextDateWindowForDay(day: string) {
+  const targetDay = normalizeWeekDay(day);
+  const today = parseDateInput();
+  const todayIndex = WEEK_DAYS.indexOf(today.dayName);
+  const targetIndex = WEEK_DAYS.indexOf(targetDay);
+  const offset = (targetIndex - todayIndex + 7) % 7;
+
+  const targetDate = new Date(
+    Date.UTC(
+      today.appointmentDate.getUTCFullYear(),
+      today.appointmentDate.getUTCMonth(),
+      today.appointmentDate.getUTCDate() + offset,
+      0,
+      0,
+      0,
+      0,
+    ),
+  );
+
+  return parseDateInput(formatDateUTC(targetDate));
+}
+
+function pickNearestDayFrom(days: string[], startDay: string) {
+  const startIndex = WEEK_DAYS.indexOf(startDay);
+  if (startIndex < 0) {
+    return undefined;
+  }
+
+  let best:
+    | {
+        day: string;
+        offset: number;
+      }
+    | undefined;
+
+  for (const day of days) {
+    const dayIndex = WEEK_DAYS.indexOf(day);
+    if (dayIndex < 0) {
+      continue;
+    }
+
+    const offset = (dayIndex - startIndex + 7) % 7;
+    if (!best || offset < best.offset) {
+      best = { day, offset };
+    }
+  }
+
+  return best?.day;
+}
+
 function normalizeStatus(value: string) {
   const parsed = value.toUpperCase();
   if (!["PENDING", "CONFIRMED", "CANCELLED"].includes(parsed)) {
@@ -167,6 +227,68 @@ function mapAppointmentOutput(appointment: any) {
   };
 }
 
+function mapAvailabilityPayload(records: any[]) {
+  const grouped = new Map<
+    number,
+    {
+      userId: string;
+      slotLimits: number[];
+      timeSlots: Array<{
+        day: string;
+        startTime: string;
+        endTime: string;
+        sessionDurationMinutes: number;
+        sessions: Array<{ start: string; end: string }>;
+      }>;
+    }
+  >();
+
+  for (const availability of records) {
+    if (!grouped.has(availability.userId)) {
+      grouped.set(availability.userId, {
+        userId: String(availability.userId),
+        slotLimits: [],
+        timeSlots: [],
+      });
+    }
+
+    const entry = grouped.get(availability.userId)!;
+    const slotLimit = Number(availability.maxBookingsPerSlot);
+    entry.slotLimits.push(
+      Number.isInteger(slotLimit) && slotLimit > 0 ? slotLimit : 1,
+    );
+    entry.timeSlots.push({
+      day: String(availability.day).toLowerCase(),
+      startTime: availability.startTime,
+      endTime: availability.endTime,
+      sessionDurationMinutes: availability.sessionDurationMinutes,
+      sessions: [...availability.sessions]
+        .map((session: any) => ({
+          start: session.start,
+          end: session.end,
+        }))
+        .sort((a, b) => a.start.localeCompare(b.start)),
+    });
+  }
+
+  return Array.from(grouped.values()).map((entry) => {
+    const resolvedMaxBookingsPerSlot =
+      entry.slotLimits.length > 0 ? Math.min(...entry.slotLimits) : 1;
+
+    return {
+      userId: entry.userId,
+      maxBookingsPerSlot: resolvedMaxBookingsPerSlot,
+      timeSlots: entry.timeSlots.sort((a, b) => {
+        const dayDiff = WEEK_DAYS.indexOf(a.day) - WEEK_DAYS.indexOf(b.day);
+        if (dayDiff !== 0) {
+          return dayDiff;
+        }
+        return a.startTime.localeCompare(b.startTime);
+      }),
+    };
+  });
+}
+
 async function validateBookingWindow(params: {
   staffId: number;
   date: string;
@@ -176,10 +298,9 @@ async function validateBookingWindow(params: {
   const { staffId, date, session, excludeAppointmentId } = params;
   const { dayStart, dayEnd, dayName, appointmentDate } = parseDateInput(date);
 
-  const availabilityForSession = await prisma.availability.findFirst({
+  const availabilityCandidates = await prisma.availability.findMany({
     where: {
       userId: staffId,
-      day: dayName,
       sessions: {
         some: {
           start: session.start,
@@ -191,6 +312,10 @@ async function validateBookingWindow(params: {
       sessions: true,
     },
   });
+
+  const availabilityForSession = availabilityCandidates.find(
+    (availability) => String(availability.day).toLowerCase() === dayName,
+  );
 
   if (!availabilityForSession) {
     throw new Error("Selected session is not available for this user");
@@ -310,46 +435,102 @@ export const AppointmentService = {
   // SET AVAILABILITY
   async saveStaffAvailability(payload: any) {
     const { userId, maxBookingsPerSlot, timeSlots } = payload;
+    const parsedUserId = Number(userId);
+    const parsedMaxBookings = Number(maxBookingsPerSlot);
+
+    if (!Number.isInteger(parsedUserId) || parsedUserId <= 0) {
+      throw new Error("userId must be a valid positive number");
+    }
+    if (!Number.isInteger(parsedMaxBookings) || parsedMaxBookings <= 0) {
+      throw new Error("maxBookingsPerSlot must be a valid positive number");
+    }
+    if (!Array.isArray(timeSlots) || timeSlots.length === 0) {
+      throw new Error("timeSlots must be a non-empty array");
+    }
 
     return await prisma.$transaction(async (tx) => {
       // Update the user's max booking limit
-      await tx.availability.deleteMany({ where: { userId: Number(userId) } });
+      await tx.availability.deleteMany({ where: { userId: parsedUserId } });
 
       for (const slot of timeSlots) {
+        if (
+          typeof slot?.startTime !== "string" ||
+          !slot.startTime.trim() ||
+          typeof slot?.endTime !== "string" ||
+          !slot.endTime.trim()
+        ) {
+          throw new Error("Each time slot must include valid startTime and endTime");
+        }
+        if (
+          !Array.isArray(slot.sessions) ||
+          slot.sessions.length === 0 ||
+          !Number.isInteger(Number(slot.sessionDurationMinutes)) ||
+          Number(slot.sessionDurationMinutes) <= 0
+        ) {
+          throw new Error(
+            "Each time slot must include sessionDurationMinutes and a non-empty sessions array",
+          );
+        }
+        for (const session of slot.sessions) {
+          if (
+            typeof session?.start !== "string" ||
+            !session.start.trim() ||
+            typeof session?.end !== "string" ||
+            !session.end.trim()
+          ) {
+            throw new Error("Each session must include valid start and end");
+          }
+        }
+
+        const day = normalizeWeekDay(String(slot.day ?? ""));
         await tx.availability.create({
           data: {
-            userId: Number(userId),
-            day: slot.day,
-            maxBookingsPerSlot: Number(maxBookingsPerSlot),
-            startTime: slot.startTime,
-            endTime: slot.endTime,
-            sessionDurationMinutes: slot.sessionDurationMinutes,
+            userId: parsedUserId,
+            day,
+            maxBookingsPerSlot: parsedMaxBookings,
+            startTime: slot.startTime.trim(),
+            endTime: slot.endTime.trim(),
+            sessionDurationMinutes: Number(slot.sessionDurationMinutes),
             sessions: {
               create: slot.sessions.map((s: any) => ({
-                start: s.start,
-                end: s.end,
+                start: String(s.start ?? "").trim(),
+                end: String(s.end ?? "").trim(),
               })),
             },
           },
         });
       }
+
+      const created = await tx.availability.findMany({
+        where: { userId: parsedUserId },
+        include: availabilityInclude,
+        orderBy: [{ day: "asc" }, { startTime: "asc" }],
+      });
+
+      return mapAvailabilityPayload(created)[0] ?? {
+        userId: String(parsedUserId),
+        maxBookingsPerSlot: parsedMaxBookings,
+        timeSlots: [],
+      };
     });
   },
 
   // FETCH ALL AVAILABILITY (OPTIONAL STAFF FILTER)
   async getAllAvailability(userId?: number) {
-    return prisma.availability.findMany({
+    const availability = await prisma.availability.findMany({
       where: userId ? { userId } : undefined,
       include: availabilityInclude,
       orderBy: [{ userId: "asc" }, { day: "asc" }, { startTime: "asc" }],
     });
+
+    return mapAvailabilityPayload(availability);
   },
 
   // UPDATE AVAILABILITY SLOT
   async updateAvailability(id: number, payload: any) {
     const existing = await prisma.availability.findUnique({
       where: { id },
-      select: { id: true },
+      select: { id: true, userId: true },
     });
 
     if (!existing) {
@@ -370,11 +551,12 @@ export const AppointmentService = {
       if (typeof payload.day !== "string" || !payload.day.trim()) {
         throw new Error("day must be a valid string");
       }
-      updateData.day = payload.day.trim().toLowerCase();
+      updateData.day = normalizeWeekDay(payload.day);
     }
 
+    let parsedLimit: number | undefined;
     if (payload.maxBookingsPerSlot !== undefined) {
-      const parsedLimit = Number(payload.maxBookingsPerSlot);
+      parsedLimit = Number(payload.maxBookingsPerSlot);
       if (!Number.isInteger(parsedLimit) || parsedLimit <= 0) {
         throw new Error("maxBookingsPerSlot must be a valid positive number");
       }
@@ -425,23 +607,47 @@ export const AppointmentService = {
       }
     }
 
-    return prisma.availability.update({
-      where: { id },
-      data: {
-        ...updateData,
-        ...(hasSessions
-          ? {
-              sessions: {
-                deleteMany: {},
-                create: payload.sessions.map((session: any) => ({
-                  start: session.start.trim(),
-                  end: session.end.trim(),
-                })),
-              },
-            }
-          : {}),
-      },
-      include: availabilityInclude,
+    return prisma.$transaction(async (tx) => {
+      const updatedAvailability = await tx.availability.update({
+        where: { id },
+        data: {
+          ...updateData,
+          ...(hasSessions
+            ? {
+                sessions: {
+                  deleteMany: {},
+                  create: payload.sessions.map((session: any) => ({
+                    start: session.start.trim(),
+                    end: session.end.trim(),
+                  })),
+                },
+              }
+            : {}),
+        },
+        select: {
+          userId: true,
+        },
+      });
+
+      const targetUserId = updatedAvailability.userId;
+      if (parsedLimit !== undefined) {
+        await tx.availability.updateMany({
+          where: { userId: targetUserId },
+          data: { maxBookingsPerSlot: parsedLimit },
+        });
+      }
+
+      const normalized = await tx.availability.findMany({
+        where: { userId: targetUserId },
+        include: availabilityInclude,
+        orderBy: [{ day: "asc" }, { startTime: "asc" }],
+      });
+
+      return mapAvailabilityPayload(normalized)[0] ?? {
+        userId: String(targetUserId),
+        maxBookingsPerSlot: parsedLimit ?? 1,
+        timeSlots: [],
+      };
     });
   },
 
@@ -462,18 +668,46 @@ export const AppointmentService = {
 
   // FETCH AVAILABILITY FOR TODAY WITH SLOT/SESSION STATUS TAGS
   async getAvailabilityWithSessionStatus() {
-    const { dayStart, dayEnd, dayName } = parseDateInput();
+    let { dayStart, dayEnd, dayName } = parseDateInput();
 
-    const availabilities = await prisma.availability.findMany({
-      where: { day: dayName },
+    const allAvailabilities = await prisma.availability.findMany({
       include: availabilityInclude,
-      orderBy: [{ userId: "asc" }, { startTime: "asc" }],
+      orderBy: [{ userId: "asc" }, { day: "asc" }, { startTime: "asc" }],
     });
 
+    let availabilities = allAvailabilities.filter(
+      (availability) => String(availability.day).toLowerCase() === dayName,
+    );
+
     if (availabilities.length === 0) {
-      return {
-        users: [],
-      };
+      const availableDays = Array.from(
+        new Set(
+          allAvailabilities
+            .map((availability) => String(availability.day).toLowerCase())
+            .filter((day) => WEEK_DAYS.includes(day)),
+        ),
+      );
+
+      if (availableDays.length === 0) {
+        return [];
+      }
+
+      const fallbackDay = pickNearestDayFrom(availableDays, dayName);
+      if (!fallbackDay) {
+        return [];
+      }
+
+      const fallbackWindow = getNextDateWindowForDay(fallbackDay);
+      dayStart = fallbackWindow.dayStart;
+      dayEnd = fallbackWindow.dayEnd;
+      dayName = fallbackWindow.dayName;
+      availabilities = allAvailabilities.filter(
+        (availability) => String(availability.day).toLowerCase() === dayName,
+      );
+    }
+
+    if (availabilities.length === 0) {
+      return [];
     }
 
     const userIds = Array.from(new Set(availabilities.map((a) => a.userId)));
@@ -508,25 +742,20 @@ export const AppointmentService = {
       });
     }
 
-    const usersMap = new Map<
+    const grouped = new Map<
       number,
       {
-        userId: number;
-        staffName: string;
-        position: string | null;
+        userId: string;
+        slotLimits: number[];
         timeSlots: Array<{
-          availabilityId: number;
           day: string;
           startTime: string;
           endTime: string;
-          maxBookingsPerSlot: number;
           sessionDurationMinutes: number;
           status: "AVAILABLE" | "BOOKED";
           sessions: Array<{
-            id: number;
             start: string;
             end: string;
-            availabilityId: number;
             status: "AVAILABLE" | "BOOKED";
           }>;
         }>;
@@ -534,16 +763,17 @@ export const AppointmentService = {
     >();
 
     for (const availability of availabilities) {
-      if (!usersMap.has(availability.userId)) {
-        usersMap.set(availability.userId, {
-          userId: availability.userId,
-          staffName: availability.user.name,
-          position: availability.user.position?.name ?? null,
+      if (!grouped.has(availability.userId)) {
+        grouped.set(availability.userId, {
+          userId: String(availability.userId),
+          slotLimits: [],
           timeSlots: [],
         });
       }
 
+      const entry = grouped.get(availability.userId)!;
       const slotLimit = availability.maxBookingsPerSlot || 1;
+      entry.slotLimits.push(slotLimit);
       const slotSessionKeys = new Set(
         availability.sessions.map((session) => `${session.start}|${session.end}`),
       );
@@ -570,30 +800,38 @@ export const AppointmentService = {
             slotMaxReached || sessionIsBooked ? "BOOKED" : "AVAILABLE";
 
           return {
-            id: session.id,
             start: session.start,
             end: session.end,
-            availabilityId: session.availabilityId,
             status: sessionStatus,
           };
         })
         .sort((a, b) => a.start.localeCompare(b.start));
 
-      usersMap.get(availability.userId)!.timeSlots.push({
-        availabilityId: availability.id,
-        day: availability.day,
+      entry.timeSlots.push({
+        day: String(availability.day).toLowerCase(),
         startTime: availability.startTime,
         endTime: availability.endTime,
-        maxBookingsPerSlot: slotLimit,
         sessionDurationMinutes: availability.sessionDurationMinutes,
         status: slotStatus,
         sessions: slotSessions,
       });
     }
 
-    return {
-      users: Array.from(usersMap.values()),
-    };
+    return Array.from(grouped.values()).map((entry) => {
+      const resolvedMaxBookingsPerSlot =
+        entry.slotLimits.length > 0 ? Math.min(...entry.slotLimits) : 1;
+      return {
+        userId: entry.userId,
+        maxBookingsPerSlot: resolvedMaxBookingsPerSlot,
+        timeSlots: entry.timeSlots.sort((a, b) => {
+          const dayDiff = WEEK_DAYS.indexOf(a.day) - WEEK_DAYS.indexOf(b.day);
+          if (dayDiff !== 0) {
+            return dayDiff;
+          }
+          return a.startTime.localeCompare(b.startTime);
+        }),
+      };
+    });
   },
 
   // FETCH ALL APPOINTMENT BOOKINGS
