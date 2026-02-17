@@ -756,7 +756,6 @@ export const AppointmentService = {
           sessions: Array<{
             start: string;
             end: string;
-            status: "AVAILABLE" | "BOOKED";
           }>;
         }>;
       }
@@ -804,15 +803,9 @@ export const AppointmentService = {
 
       const slotSessions = [...availability.sessions]
         .map((session) => {
-          const sessionKey = `${session.start}|${session.end}`;
-          const sessionIsBooked = bookedSessionsInSlot.has(sessionKey);
-          const sessionStatus: "AVAILABLE" | "BOOKED" =
-            slotMaxReached || sessionIsBooked ? "BOOKED" : "AVAILABLE";
-
           return {
             start: session.start,
             end: session.end,
-            status: sessionStatus,
           };
         })
         .sort((a, b) => a.start.localeCompare(b.start));
