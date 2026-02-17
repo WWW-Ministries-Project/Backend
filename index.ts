@@ -6,6 +6,7 @@ import { appRouter } from "./src/routes/appRouter";
 import logger from "./src/utils/logger-config";
 import client from "prom-client";
 import { logRequests } from "./src/middleWare/requestLogger";
+import { responseMessageEnhancer } from "./src/middleWare/responseMessageEnhancer";
 dotenv.config();
 const collectDefaultMetrics = client.collectDefaultMetrics;
 collectDefaultMetrics();
@@ -19,6 +20,7 @@ const app = express();
 app.use(bodyParser.json());
 app.use(cors());
 app.use(express.json());
+app.use(responseMessageEnhancer);
 app.use(appRouter);
 app.use(logRequests);
 
