@@ -1,7 +1,6 @@
 import { prisma } from "../../Models/context";
 import { toCapitalizeEachWord, hashPassword, sendEmail } from "../../utils";
 import axios from "axios";
-import { program } from "@prisma/client/edge";
 import { applicationLiveTemplate } from "../../utils/mail_templates/applicationLiveTemplate";
 
 export class UserService {
@@ -530,49 +529,177 @@ export class UserService {
     }
   }
 
-  async convertMemeberToConfirmedMember(id: number, status: string) {
+  async convertMemeberToConfirmedMember(id: number, requestedStatus?: string) {
+    const member = await prisma.user.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        name: true,
+        status: true,
+      },
+    });
+
+    if (!member) {
+      return {
+        message: "",
+        error: "User not found.",
+      };
+    }
+
+    const targetStatus = this.resolveTargetMemberStatus(
+      member.status ?? null,
+      requestedStatus,
+    );
+
+    if (!targetStatus) {
+      return {
+        message: "",
+        error:
+          "Invalid target status. Use CONFIRMED for unconfirmed members or MEMBER for functional members.",
+      };
+    }
+
+    if (member.status === "MEMBER") {
+      return {
+        message: `${member.name} is already a functional member.`,
+        error: "",
+      };
+    }
+
+    if (member.status === "UNCONFIRMED" || member.status === null) {
+      if (targetStatus !== "CONFIRMED") {
+        return {
+          message: "",
+          error:
+            "Invalid transition. An unconfirmed member must be confirmed before becoming a functional member.",
+        };
+      }
+
+      return this.updateMemberStatus(
+        member.id,
+        "CONFIRMED",
+        `Membership confirmed for ${member.name}`,
+      );
+    }
+
+    if (member.status === "CONFIRMED") {
+      if (targetStatus === "CONFIRMED") {
+        return {
+          message: `${member.name} is already a confirmed member.`,
+          error: "",
+        };
+      }
+
+      return this.promoteConfirmedMemberToFunctionalMember(member.id, member.name);
+    }
+
+    return {
+      message: "",
+      error:
+        "Current member status is invalid for this action. Expected UNCONFIRMED, CONFIRMED, or MEMBER.",
+    };
+  }
+
+  private normalizeRequestedMemberStatus(
+    requestedStatus?: string,
+  ): "CONFIRMED" | "MEMBER" | null {
+    if (!requestedStatus) return null;
+
+    const normalized = requestedStatus.toUpperCase().trim();
+
+    if (normalized === "CONFIRMED") return "CONFIRMED";
+
+    if (
+      normalized === "MEMBER" ||
+      normalized === "FUNCTIONAL_MEMBER" ||
+      normalized === "FUNCTIONAL-MEMBER" ||
+      normalized === "FUNCTIONALMEMBER" ||
+      normalized === "FUNCTIONAL"
+    ) {
+      return "MEMBER";
+    }
+
+    return null;
+  }
+
+  private resolveTargetMemberStatus(
+    currentStatus: string | null,
+    requestedStatus?: string,
+  ): "CONFIRMED" | "MEMBER" | null {
+    const normalizedRequestedStatus =
+      this.normalizeRequestedMemberStatus(requestedStatus);
+
+    if (normalizedRequestedStatus) {
+      return normalizedRequestedStatus;
+    }
+
+    if (currentStatus === "UNCONFIRMED" || currentStatus === null) {
+      return "CONFIRMED";
+    }
+    if (currentStatus === "CONFIRMED") return "MEMBER";
+    if (currentStatus === "MEMBER") return "MEMBER";
+
+    return null;
+  }
+
+  private async promoteConfirmedMemberToFunctionalMember(
+    id: number,
+    memberName: string,
+  ) {
     const allRequiredMemberPrograms = await prisma.program.findMany({
       where: {
         member_required: true,
       },
+      select: {
+        id: true,
+        title: true,
+      },
     });
 
     if (allRequiredMemberPrograms.length === 0) {
-      return this.updateMemberToConfirmedMember(id, status);
+      return {
+        message: "",
+        error:
+          "Cannot make member functional. No member_required program has been configured.",
+      };
     }
 
-    const programIds = allRequiredMemberPrograms.map(
-      (program: program) => program.id,
-    );
+    const programIds = allRequiredMemberPrograms.map((entry) => entry.id);
     const completionResults = await this.checkMultipleProgramCompletion(
       id,
       programIds,
     );
 
-    const notEnrolledPrograms = completionResults
-      .filter((res) => !res.enrolled)
-      .map((res) => res.programId);
+    const completedPrograms = completionResults
+      .filter((result) => result.enrolled && result.completed)
+      .map((result) => result.programId);
 
-    const incompletePrograms = completionResults
-      .filter((res) => res.enrolled && !res.completed)
-      .map((res) => res.programId);
+    if (completedPrograms.length === 0) {
+      const notEnrolledPrograms = completionResults
+        .filter((result) => !result.enrolled)
+        .map((result) => result.programId);
 
-    const getProgramTitles = (ids: number[]) =>
-      allRequiredMemberPrograms
-        .filter((p: program) => ids.includes(p.id))
-        .map((p: any) => p.title);
+      const incompletePrograms = completionResults
+        .filter((result) => result.enrolled && !result.completed)
+        .map((result) => result.programId);
 
-    if (notEnrolledPrograms.length > 0 || incompletePrograms.length > 0) {
+      const getProgramTitles = (ids: number[]) =>
+        allRequiredMemberPrograms
+          .filter((program) => ids.includes(program.id))
+          .map((program) => program.title);
+
       const notEnrolledTitles = getProgramTitles(notEnrolledPrograms);
       const incompleteTitles = getProgramTitles(incompletePrograms);
 
-      let errorMsg = "Cannot confirm membership. ";
+      let errorMsg =
+        "Cannot make member functional. Complete at least one required program.";
 
       if (notEnrolledTitles.length > 0) {
-        errorMsg += `Not enrolled in: ${notEnrolledTitles.join(", ")}. `;
+        errorMsg += ` Not enrolled in: ${notEnrolledTitles.join(", ")}.`;
       }
+
       if (incompleteTitles.length > 0) {
-        errorMsg += `Incomplete programs: ${incompleteTitles.join(", ")}.`;
+        errorMsg += ` Incomplete programs: ${incompleteTitles.join(", ")}.`;
       }
 
       return {
@@ -581,30 +708,38 @@ export class UserService {
       };
     }
 
-    return this.updateMemberToConfirmedMember(id, status);
+    return this.updateMemberStatus(
+      id,
+      "MEMBER",
+      `${memberName} is now a functional member.`,
+    );
   }
 
-  private async updateMemberToConfirmedMember(id: number, status: string) {
+  private async updateMemberStatus(
+    id: number,
+    status: "CONFIRMED" | "MEMBER",
+    successMessage: string,
+  ) {
     const updatedMember = await prisma.user.update({
       where: {
         id,
       },
       data: {
-        status: "CONFIRMED",
+        status,
       },
     });
 
-    if (updatedMember.status === "CONFIRMED") {
+    if (updatedMember.status === status) {
       return {
-        message: `Membership confirmed for ${updatedMember.name}`,
+        message: successMessage,
         error: "",
       };
-    } else {
-      return {
-        message: "",
-        error: `Membership confirmed for ${updatedMember.name}`,
-      };
     }
+
+    return {
+      message: "",
+      error: `Failed to update membership status for ${updatedMember.name}.`,
+    };
   }
 
   private async checkMultipleProgramCompletion(
