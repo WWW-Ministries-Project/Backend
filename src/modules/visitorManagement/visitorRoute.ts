@@ -20,6 +20,11 @@ visitorRouter.get("/visitors", visitorController.getAllVisitors);
 visitorRouter.get("/visitor", visitorController.getVisitorsById);
 visitorRouter.put("/visitor", visitorController.updateVisitor);
 visitorRouter.delete("/visitor", visitorController.deleteVisitor);
+visitorRouter.post(
+  "/convert-to-member",
+  [protect, permissions.can_Manage_Members],
+  visitorController.convertVisitorToMember,
+);
 
 //visitor routes
 visitorRouter.post("/visit", visitController.createVisit);
