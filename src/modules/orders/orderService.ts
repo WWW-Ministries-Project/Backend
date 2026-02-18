@@ -186,6 +186,15 @@ export class OrderService {
   }
 
   async findOneByMarketplaceId(marketplaceId: number) {
+    try {
+      await this.reconcilePendingHubtelPaymentsByMarket(marketplaceId, 20);
+    } catch (error: any) {
+      console.error(
+        "Market-level Hubtel reconciliation failed:",
+        error.message || error,
+      );
+    }
+
     const orders = await prisma.orders.findMany({
       orderBy: {
         id: "desc",
@@ -199,22 +208,33 @@ export class OrderService {
       },
       include: {
         items: {
+          where: { market_id: marketplaceId },
           include: { product: true, market: true },
         },
         billing_details: true,
       },
     });
 
-    return await this.flattenOrders(orders);
+    const flattenedOrders = await this.flattenOrders(orders);
+    return this.deduplicateByOrderId(flattenedOrders);
   }
 
-  async updateOrderStatusByHubtel(clientReference: string, status: string) {
+  async updateOrderStatusByHubtel(
+    clientReference: string,
+    status: "success" | "failed" | "pending",
+  ) {
     const order = await prisma.orders.findFirst({
       where: { reference: clientReference },
       select: { id: true, order_number: true, payment_status: true },
     });
 
     if (!order) throw new Error("Order not found");
+    if (order.payment_status === status) {
+      return {
+        message: `Payment status already ${order.payment_status}`,
+        order,
+      };
+    }
     if (order.payment_status === "success") {
       return {
         message: `Payment status updated to ${order?.payment_status}`,
@@ -224,7 +244,7 @@ export class OrderService {
 
     const updatedOrder = await this.updateOrderPayment(
       order.id,
-      status as "success" | "failed",
+      status,
       order.order_number || undefined,
     );
 
@@ -346,8 +366,7 @@ export class OrderService {
       const status = response.data?.data?.status;
       if (!status) throw new Error("Invalid response from Hubtel");
 
-      const normalizedStatus =
-        status.toLowerCase() === "paid" ? "success" : "pending";
+      const normalizedStatus = this.normalizeHubtelStatus(status);
 
       return this.updateOrderStatusByHubtel(clientReference, normalizedStatus);
     } catch (error: any) {
@@ -370,6 +389,46 @@ export class OrderService {
     } else {
       return await this.checkHubtelTransactionStatus(String(order?.reference));
     }
+  }
+
+  async reconcilePendingHubtelPayments(limit = 100) {
+    const pendingOrders = await prisma.orders.findMany({
+      where: { payment_status: "pending" },
+      orderBy: { id: "desc" },
+      take: limit,
+      select: { id: true, reference: true, payment_status: true },
+    });
+
+    const results = await Promise.allSettled(
+      pendingOrders.map((order) =>
+        this.checkHubtelTransactionStatus(order.reference),
+      ),
+    );
+
+    let successUpdates = 0;
+    let failedUpdates = 0;
+    let stillPending = 0;
+    let errors = 0;
+
+    for (const result of results) {
+      if (result.status === "rejected") {
+        errors += 1;
+        continue;
+      }
+
+      const currentStatus = result.value?.order?.payment_status;
+      if (currentStatus === "success") successUpdates += 1;
+      else if (currentStatus === "failed") failedUpdates += 1;
+      else stillPending += 1;
+    }
+
+    return {
+      scanned: pendingOrders.length,
+      success_updates: successUpdates,
+      failed_updates: failedUpdates,
+      still_pending: stillPending,
+      errors,
+    };
   }
 
   private buildItems(items: any[]) {
@@ -412,6 +471,55 @@ export class OrderService {
   private generateReference(): string {
     const client_reference = crypto.randomUUID();
     return client_reference.toString();
+  }
+
+  private normalizeHubtelStatus(
+    status: string,
+  ): "success" | "failed" | "pending" {
+    const normalizedStatus = status.trim().toLowerCase();
+
+    if (
+      ["paid", "success", "successful", "completed", "complete"].includes(
+        normalizedStatus,
+      )
+    ) {
+      return "success";
+    }
+
+    if (
+      ["failed", "failure", "cancelled", "canceled", "expired", "declined"].includes(
+        normalizedStatus,
+      )
+    ) {
+      return "failed";
+    }
+
+    return "pending";
+  }
+
+  private async reconcilePendingHubtelPaymentsByMarket(
+    marketplaceId: number,
+    limit: number,
+  ) {
+    const pendingOrders = await prisma.orders.findMany({
+      where: {
+        payment_status: "pending",
+        items: {
+          some: {
+            market_id: marketplaceId,
+          },
+        },
+      },
+      orderBy: { id: "desc" },
+      take: limit,
+      select: { reference: true },
+    });
+
+    await Promise.allSettled(
+      pendingOrders.map((order) =>
+        this.checkHubtelTransactionStatus(order.reference),
+      ),
+    );
   }
 
   private async flattenOrders(orders: any[]) {
@@ -498,5 +606,17 @@ export class OrderService {
           })
       );
     });
+  }
+
+  private deduplicateByOrderId(orders: any[]) {
+    const uniqueOrdersById = new Map<number, any>();
+
+    for (const order of orders) {
+      if (!uniqueOrdersById.has(order.order_id)) {
+        uniqueOrdersById.set(order.order_id, order);
+      }
+    }
+
+    return Array.from(uniqueOrdersById.values());
   }
 }
