@@ -91,6 +91,23 @@ export class VisitorController {
         data: user,
       });
     } catch (error: any) {
+      if (
+        error?.message ===
+        "A valid non-temporary email is required to convert a visitor to a login user."
+      ) {
+        return res.status(400).json({
+          message: "Error converting visitor to member",
+          error: error.message,
+        });
+      }
+
+      if (String(error?.message || "").startsWith("User exist with this email")) {
+        return res.status(409).json({
+          message: "Error converting visitor to member",
+          error: error.message,
+        });
+      }
+
       return res.status(500).json({
         message: "Error converting visitor to member",
         error: error.message,

@@ -6,6 +6,25 @@ import { toSentenceCase } from "../../utils";
 const userService = new UserService();
 const visitService = new VisitService();
 
+const normalizeOptionalEmail = (email?: string | null) => {
+  const normalizedEmail = String(email || "")
+    .trim()
+    .toLowerCase();
+
+  return normalizedEmail || null;
+};
+
+const isRealEmail = (email?: string | null) => {
+  const normalizedEmail = normalizeOptionalEmail(email);
+  if (!normalizedEmail) return false;
+
+  const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  return (
+    emailPattern.test(normalizedEmail) &&
+    !normalizedEmail.endsWith("@temp.com")
+  );
+};
+
 export class VisitorService {
   async deleteVisitor(id: number) {
     return await prisma.visitor.delete({
@@ -312,6 +331,24 @@ export class VisitorService {
     if (!visitor) throw new Error("Visitor not found");
 
     const { firstName, lastName, email, phone, country } = visitor;
+    const normalizedEmail = normalizeOptionalEmail(email);
+
+    if (!isRealEmail(normalizedEmail)) {
+      throw new Error(
+        "A valid non-temporary email is required to convert a visitor to a login user.",
+      );
+    }
+
+    const loginEmail = normalizedEmail as string;
+
+    const existingUser = await prisma.user.findUnique({
+      where: { email: loginEmail },
+      select: { id: true },
+    });
+
+    if (existingUser) {
+      throw new Error("User exist with this email " + loginEmail);
+    }
 
     // Split phone into country_code and number (if possible)
     const country_code = phone?.slice(0, 4) || ""; // adjust slicing if needed
@@ -329,7 +366,7 @@ export class VisitorService {
         has_children: false,
       },
       contact_info: {
-        email: email || undefined,
+        email: loginEmail,
         resident_country: country,
         phone: {
           country_code,

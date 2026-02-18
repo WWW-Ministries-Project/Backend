@@ -10,7 +10,7 @@ const appointmentController = new AppointmentController();
 
 // 1. Members book an appointment
 // URL: POST /appointment/book
-appointmentRouter.post("/book", appointmentController.bookNow);
+appointmentRouter.post("/book", [protect], appointmentController.bookNow);
 
 // 2. Fetch all booking appointments (supports ?attendeeId=, ?requesterId=, ?email=, ?status=, ?date=YYYY-MM-DD)
 // URL: GET /appointment/bookings

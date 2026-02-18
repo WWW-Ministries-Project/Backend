@@ -74,8 +74,19 @@ export class EnrollmentController {
 
   async getEnrollmentByUser(req: Request, res: Response) {
     try {
+      const userIdInput =
+        req.params.id ?? req.query.userId ?? req.query.user_id ?? req.query.id;
+      const userId = Number(userIdInput);
+
+      if (!userIdInput || Number.isNaN(userId) || userId <= 0) {
+        return res.status(400).json({
+          message:
+            "Missing or invalid user id. Provide /user-enrollment/:id or ?userId=<id>",
+        });
+      }
+
       const allEnrollmentByCourse = await enrollment.getUserEnrollments(
-        Number(req.params.id),
+        userId,
       );
       return res
         .status(200)
