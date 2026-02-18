@@ -13,6 +13,28 @@ type TitheBreakdownConfigEntity = {
 };
 
 export class TitheBreakdownConfigurationService {
+  private async ensurePercentageLimit(
+    incomingPercentage: number,
+    idToExclude?: string,
+  ): Promise<void> {
+    const aggregate = await prisma.titheBreakdownConfig.aggregate({
+      where: {
+        ...(idToExclude !== undefined && { id: { not: idToExclude } }),
+      },
+      _sum: { percentage: true },
+    });
+
+    const currentTotal = aggregate._sum.percentage ?? 0;
+    const attemptedTotal = currentTotal + incomingPercentage;
+
+    if (attemptedTotal > 100) {
+      throw new FinanceHttpError(
+        422,
+        `Total tithe breakdown percentage cannot exceed 100%. Current total is ${currentTotal}%, attempted total is ${attemptedTotal}%`,
+      );
+    }
+  }
+
   private mapResponse(config: {
     id: string;
     name: string;
@@ -38,6 +60,10 @@ export class TitheBreakdownConfigurationService {
         409,
         "Tithe breakdown config name already exists",
       );
+    }
+
+    if (data.percentage !== undefined) {
+      await this.ensurePercentageLimit(data.percentage);
     }
 
     const created = await prisma.titheBreakdownConfig.create({
@@ -108,6 +134,10 @@ export class TitheBreakdownConfigurationService {
         409,
         "Tithe breakdown config name already exists",
       );
+    }
+
+    if (data.percentage !== undefined) {
+      await this.ensurePercentageLimit(data.percentage, id);
     }
 
     const updated = await prisma.titheBreakdownConfig.update({

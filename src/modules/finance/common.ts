@@ -61,7 +61,11 @@ export type PercentageConfigPayload = BaseConfigPayload & {
   percentage?: number;
 };
 
-export type FinancialPayload = Prisma.JsonObject;
+export type FinancialPayload = Prisma.JsonObject & {
+  metaData: Prisma.JsonObject & {
+    periodDate: string;
+  };
+};
 
 export const validateBasePayload = (
   body: unknown,
@@ -136,7 +140,42 @@ export const validateFinancialPayload = (body: unknown): FinancialPayload => {
     );
   }
 
-  return body as Prisma.JsonObject;
+  const payload = body as Record<string, unknown>;
+  const metaData = payload.metaData;
+
+  if (typeof metaData !== "object" || metaData === null || Array.isArray(metaData)) {
+    throw new FinanceHttpError(
+      422,
+      "metaData is required and must be a JSON object",
+    );
+  }
+
+  const periodDate = (metaData as { periodDate?: unknown }).periodDate;
+
+  if (!isNonEmptyString(periodDate)) {
+    throw new FinanceHttpError(
+      422,
+      "metaData.periodDate is required and must be a non-empty string",
+    );
+  }
+
+  const trimmedPeriodDate = periodDate.trim();
+  const periodDateRegex = /^\d{4}-(0[1-9]|1[0-2])$/;
+
+  if (!periodDateRegex.test(trimmedPeriodDate)) {
+    throw new FinanceHttpError(
+      422,
+      "metaData.periodDate must be in YYYY-MM format",
+    );
+  }
+
+  return {
+    ...(payload as Prisma.JsonObject),
+    metaData: {
+      ...(metaData as Prisma.JsonObject),
+      periodDate: trimmedPeriodDate,
+    },
+  } as FinancialPayload;
 };
 
 export const resolveFinanceError = (
@@ -149,11 +188,27 @@ export const resolveFinanceError = (
 
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
     if (error.code === "P2002") {
-      return new FinanceHttpError(409, "A config with this name already exists");
+      const target = error.meta?.target;
+      const targetText = Array.isArray(target)
+        ? target.join(",")
+        : String(target ?? "");
+
+      if (targetText.includes("periodDate")) {
+        return new FinanceHttpError(
+          409,
+          "A financial record already exists for this period date",
+        );
+      }
+
+      if (targetText.includes("name")) {
+        return new FinanceHttpError(409, "A config with this name already exists");
+      }
+
+      return new FinanceHttpError(409, "A record with this value already exists");
     }
 
     if (error.code === "P2025") {
-      return new FinanceHttpError(404, "Config not found");
+      return new FinanceHttpError(404, "Record not found");
     }
   }
 
