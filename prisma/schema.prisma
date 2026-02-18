@@ -1004,6 +1004,7 @@ model titheBreakdownConfig {
 
 model financials {
   id        String   @id @default(cuid())
+  periodDate String? @unique
   payload   Json
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
