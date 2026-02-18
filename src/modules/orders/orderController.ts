@@ -120,7 +120,19 @@ export class OrderController {
       const { Data } = req.body;
       console.log(`Call Back ${Data}`);
       console.log(JSON.stringify(Data, null, 2));
-      const status = Data.Status === "Success" ? "success" : "failed";
+      const hubtelStatus = String(Data?.Status || "")
+        .trim()
+        .toLowerCase();
+      const status =
+        ["paid", "success", "successful", "completed", "complete"].includes(
+          hubtelStatus,
+        )
+          ? "success"
+          : ["failed", "failure", "cancelled", "canceled", "declined"].includes(
+                hubtelStatus,
+              )
+            ? "failed"
+            : "pending";
 
       const result = await orderService.updateOrderStatusByHubtel(
         Data.ClientReference,
@@ -192,6 +204,25 @@ export class OrderController {
       return res.status(400).json({
         success: false,
         message: error.message || "Failed to create order",
+      });
+    }
+  }
+
+  async reconcilePendingHubtelPayments(req: Request, res: Response) {
+    try {
+      const limit = Number(req.query.limit ?? 100);
+      const safeLimit = Number.isNaN(limit) ? 100 : Math.min(Math.max(limit, 1), 500);
+      const result = await orderService.reconcilePendingHubtelPayments(safeLimit);
+
+      return res.status(200).json({
+        success: true,
+        message: "Pending Hubtel payments reconciled",
+        data: result,
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        success: false,
+        message: error.message || "Failed to reconcile pending Hubtel payments",
       });
     }
   }

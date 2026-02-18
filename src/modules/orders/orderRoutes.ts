@@ -580,5 +580,9 @@ orderRouter.get(
  */
 
 orderRouter.post("/reinitiate-payment", orderController.reinitiatePayment);
+orderRouter.post(
+  "/reconcile-hubtel-pending-payments",
+  orderController.reconcilePendingHubtelPayments,
+);
 
 export default orderRouter;
