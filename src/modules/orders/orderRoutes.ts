@@ -30,10 +30,6 @@ const orderController = new OrderController();
  *               total_amount:
  *                 type: number
  *                 example: 5000
- *               reference:
- *                 type: string
- *                 nullable: true
- *                 description: Existing order id/order_number/reference to retry Hubtel payment without creating a new order
  *               payment_type:
  *                 type: string
  *                 example: "paystack"
@@ -582,6 +578,41 @@ orderRouter.get(
  *                   type: string
  *                   example: "Failed to create order"
  */
+
+/**
+ * @swagger
+ * /orders/retry-payment:
+ *   post:
+ *     summary: Retry Hubtel payment for an existing order
+ *     tags: [Orders]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - order_token
+ *               - return_url
+ *               - cancellation_url
+ *             properties:
+ *               order_token:
+ *                 type: string
+ *                 description: Existing order id, order_number, or reference
+ *                 example: "#WWM-20260218-000005"
+ *               return_url:
+ *                 type: string
+ *                 format: uri
+ *               cancellation_url:
+ *                 type: string
+ *                 format: uri
+ *     responses:
+ *       201:
+ *         description: Payment retried successfully
+ *       400:
+ *         description: Failed to retry payment
+ */
+orderRouter.post("/retry-payment", orderController.retryPayment);
 
 orderRouter.post("/reinitiate-payment", orderController.reinitiatePayment);
 orderRouter.post(

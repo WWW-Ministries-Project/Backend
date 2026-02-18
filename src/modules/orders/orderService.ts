@@ -27,7 +27,6 @@ export class OrderService {
   async create(data: {
     user_id?: number | null | string;
     total_amount: number | string;
-    reference?: string | null;
     payment_type: "paystack" | "hubtel" | null;
     return_url: string | null;
     cancellation_url: string | null;
@@ -55,14 +54,6 @@ export class OrderService {
   }) {
     if (data.payment_type === "hubtel") {
       this.validateHubtelRedirectUrls(data.return_url, data.cancellation_url);
-      const retryOrder = await this.findOrderForHubtelRetry(data);
-      if (retryOrder) {
-        return this.reinitiatePayment(
-          retryOrder.id,
-          data.return_url,
-          data.cancellation_url,
-        );
-      }
     }
 
     // Step 1: Create order + items + billing info
@@ -111,6 +102,27 @@ export class OrderService {
         updated_order,
       };
     }
+  }
+
+  async retryHubtelPayment(
+    orderToken: string | null | undefined,
+    return_url: string | null,
+    cancellation_url: string | null,
+  ) {
+    if (!orderToken?.trim()) {
+      throw new Error("order_token is required");
+    }
+
+    const order = await this.findOrderByRetryToken(orderToken);
+    if (!order) {
+      throw new Error("Order not found");
+    }
+
+    if (order.payment_status === "success") {
+      throw new Error("Paid order cannot be reinitiated");
+    }
+
+    return this.reinitiatePayment(order.id, return_url, cancellation_url);
   }
 
   async reinitiatePayment(
@@ -511,89 +523,6 @@ export class OrderService {
     }
   }
 
-  private async findOrderForHubtelRetry(data: {
-    user_id?: number | null | string;
-    total_amount: number | string;
-    reference?: string | null;
-    return_url: string | null;
-    cancellation_url: string | null;
-    billing: {
-      first_name: string;
-      last_name: string;
-      email: string;
-      phone_number: string;
-      country: string;
-      country_code: string;
-    };
-    items: {
-      market_id?: number | string;
-      name: string;
-      id: string;
-      price_amount: number;
-      price_currency: string;
-      quantity: number;
-      product_type: string;
-      product_category: string;
-      image_url: string;
-      color: string;
-      size: string;
-    }[];
-  }) {
-    // Explicit retry: allow client to pass an existing order reference/order number/id.
-    if (data.reference) {
-      const explicitOrder = await this.findOrderByRetryToken(data.reference);
-      if (explicitOrder && explicitOrder.payment_status !== "success") {
-        return explicitOrder;
-      }
-    }
-
-    // Implicit retry fallback: reuse the latest recent pending order with matching cart+billing.
-    const totalAmount = parseFloat(data.total_amount.toString());
-    const userId =
-      data.user_id === null || data.user_id === undefined || data.user_id === ""
-        ? undefined
-        : Number(data.user_id);
-    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
-
-    const recentPendingOrders = await prisma.orders.findMany({
-      where: {
-        payment_status: "pending",
-        total_amount: totalAmount,
-        created_at: { gte: twoHoursAgo },
-        ...(Number.isFinite(userId)
-          ? { user_id: userId }
-          : {
-              billing_details: {
-                is: {
-                  email: data.billing.email,
-                  phone_number: data.billing.phone_number,
-                },
-              },
-            }),
-      },
-      orderBy: { id: "desc" },
-      take: 5,
-      include: {
-        items: true,
-        billing_details: true,
-      },
-    });
-
-    const incomingBillingKey = this.getBillingKey(data.billing);
-    const incomingItemsKey = this.getIncomingItemsKey(data.items);
-
-    return (
-      recentPendingOrders.find((order) => {
-        const orderBillingKey = this.getBillingKey(order.billing_details);
-        const orderItemsKey = this.getStoredItemsKey(order.items);
-        return (
-          orderBillingKey === incomingBillingKey &&
-          orderItemsKey === incomingItemsKey
-        );
-      }) || null
-    );
-  }
-
   private async findOrderByRetryToken(token: string) {
     const cleanedToken = token.trim();
 
@@ -611,92 +540,6 @@ export class OrderService {
       },
       include: { items: true, billing_details: true },
     });
-  }
-
-  private getBillingKey(billing: {
-    first_name?: string;
-    last_name?: string;
-    email?: string;
-    phone_number?: string;
-    country?: string;
-    country_code?: string;
-  } | null) {
-    if (!billing) return "";
-    return [
-      (billing.first_name || "").trim().toLowerCase(),
-      (billing.last_name || "").trim().toLowerCase(),
-      (billing.email || "").trim().toLowerCase(),
-      (billing.phone_number || "").trim(),
-      (billing.country || "").trim().toLowerCase(),
-      (billing.country_code || "").trim().toLowerCase(),
-    ].join("|");
-  }
-
-  private getIncomingItemsKey(
-    items: {
-      market_id?: number | string;
-      name: string;
-      id: string;
-      price_amount: number;
-      price_currency: string;
-      quantity: number;
-      product_type: string;
-      product_category: string;
-      image_url: string;
-      color: string;
-      size: string;
-    }[],
-  ) {
-    return items
-      .map((item) =>
-        [
-          String(Number(item.id)),
-          String(Number(item.market_id)),
-          (item.name || "").trim().toLowerCase(),
-          Number(item.price_amount).toFixed(4),
-          (item.price_currency || "").trim().toUpperCase(),
-          String(item.quantity),
-          (item.product_type || "").trim().toLowerCase(),
-          (item.product_category || "").trim().toLowerCase(),
-          (item.color || "").trim().toLowerCase(),
-          (item.size || "").trim().toLowerCase(),
-        ].join("|"),
-      )
-      .sort()
-      .join("::");
-  }
-
-  private getStoredItemsKey(
-    items: {
-      product_id: number | null;
-      market_id: number | null;
-      name: string;
-      price_amount: number;
-      price_currency: string;
-      quantity: number;
-      product_type: string;
-      product_category: string;
-      color: string;
-      size: string;
-    }[],
-  ) {
-    return items
-      .map((item) =>
-        [
-          String(item.product_id ?? ""),
-          String(item.market_id ?? ""),
-          (item.name || "").trim().toLowerCase(),
-          Number(item.price_amount).toFixed(4),
-          (item.price_currency || "").trim().toUpperCase(),
-          String(item.quantity),
-          (item.product_type || "").trim().toLowerCase(),
-          (item.product_category || "").trim().toLowerCase(),
-          (item.color || "").trim().toLowerCase(),
-          (item.size || "").trim().toLowerCase(),
-        ].join("|"),
-      )
-      .sort()
-      .join("::");
   }
 
   private normalizeHubtelStatus(

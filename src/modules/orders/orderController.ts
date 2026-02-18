@@ -208,6 +208,26 @@ export class OrderController {
     }
   }
 
+  async retryPayment(req: Request, res: Response) {
+    try {
+      const { id, return_url, cancellation_url } = req.body;
+      const order = await orderService.retryHubtelPayment(
+        id,
+        return_url,
+        cancellation_url,
+      );
+      return res.status(201).json({
+        message: "Payment retried successfully",
+        data: order,
+      });
+    } catch (error: any) {
+      return res.status(400).json({
+        success: false,
+        message: error.message || "Failed to retry payment",
+      });
+    }
+  }
+
   async reconcilePendingHubtelPayments(req: Request, res: Response) {
     try {
       const limit = Number(req.query.limit ?? 100);
