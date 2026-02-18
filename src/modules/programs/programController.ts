@@ -121,7 +121,19 @@ export class ProgramController {
 
   async getAllProgramForMember(req: Request, res: Response) {
     try {
-      const programs = await programService.getAllProgramForMember();
+      const rawUserId = req.query.userId;
+      let userId: number | undefined = undefined;
+
+      if (rawUserId !== undefined) {
+        userId = Number(rawUserId);
+        if (!Number.isInteger(userId) || userId <= 0) {
+          return res.status(400).json({
+            message: "userId must be a positive integer",
+          });
+        }
+      }
+
+      const programs = await programService.getAllProgramForMember(userId);
       return res
         .status(200)
         .json({ message: "Program successfully", data: programs });
