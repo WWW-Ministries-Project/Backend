@@ -61,6 +61,8 @@ export type PercentageConfigPayload = BaseConfigPayload & {
   percentage?: number;
 };
 
+export type FinancialPayload = Prisma.JsonObject;
+
 export const validateBasePayload = (
   body: unknown,
   options?: { percentageAllowed?: boolean },
@@ -124,6 +126,17 @@ export const validateBasePayload = (
       description: (payload.description as string).trim(),
     }),
   };
+};
+
+export const validateFinancialPayload = (body: unknown): FinancialPayload => {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    throw new FinanceHttpError(
+      422,
+      "Invalid request payload. Expected a JSON object",
+    );
+  }
+
+  return body as Prisma.JsonObject;
 };
 
 export const resolveFinanceError = (
