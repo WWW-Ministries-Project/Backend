@@ -1002,6 +1002,13 @@ model titheBreakdownConfig {
   updatedAt   DateTime @updatedAt
 }
 
+model financials {
+  id        String   @id @default(cuid())
+  payload   Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
 model availability {
   id                     Int            @id @default(autoincrement())
   day                    String

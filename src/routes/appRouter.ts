@@ -24,6 +24,7 @@ import receiptConfigRouter from "../modules/finance/ReceiptConfig/route";
 import bankAccountConfigRouter from "../modules/finance/BankAccountConfig/route";
 import paymentConfigRouter from "../modules/finance/PaymentConfig/route";
 import titheBreakdownConfigRouter from "../modules/finance/TitheBreakdownConfig/route";
+import financialsRouter from "../modules/finance/Financials/route";
 dotenv.config();
 
 export const appRouter = Router();
@@ -50,3 +51,4 @@ appRouter.use("/receiptconfig", receiptConfigRouter);
 appRouter.use("/paymentconfig", paymentConfigRouter);
 appRouter.use("/bankaccountconfig", bankAccountConfigRouter);
 appRouter.use("/tithebreakdownconfig", titheBreakdownConfigRouter);
+appRouter.use("/financials", financialsRouter);
