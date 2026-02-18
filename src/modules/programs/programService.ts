@@ -3,7 +3,7 @@ import { prisma } from "../../Models/context";
 import { toCapitalizeEachWord } from "../../utils";
 
 export class ProgramService {
-  async getAllProgramForMember() {
+  async getAllProgramForMember(userId?: number) {
     const programs = await prisma.program.findMany({
       where: {
         completed: false,
@@ -36,7 +36,7 @@ export class ProgramService {
       },
     });
 
-    return programs
+    const formattedPrograms = programs
       .map((program) => {
         // Pick preferred cohort: ongoing first, otherwise upcoming
         const ongoingCohort = program.cohorts.find(
@@ -76,6 +76,41 @@ export class ProgramService {
         };
       })
       .filter(Boolean); // remove nulls
+
+    if (!userId) return formattedPrograms;
+
+    const enrollments = await prisma.enrollment.findMany({
+      where: {
+        user_id: userId,
+        course: {
+          cohort: {
+            programId: {
+              in: formattedPrograms.map((program: any) => program.id),
+            },
+          },
+        },
+      },
+      select: {
+        course: {
+          select: {
+            cohort: {
+              select: {
+                programId: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const enrolledProgramIds = new Set(
+      enrollments.map((enrollment) => enrollment.course.cohort.programId),
+    );
+
+    return formattedPrograms.map((program: any) => ({
+      ...program,
+      enrolled: enrolledProgramIds.has(program.id),
+    }));
   }
 
   // Helpers to parse schedule string into meetingDays/meetingTime
