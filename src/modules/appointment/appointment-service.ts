@@ -92,9 +92,14 @@ function parseDateInput(dateValue?: string) {
 }
 
 function resolvestaffId(payload: any) {
-  const staffId = Number(payload.userId ?? payload.staffId ?? payload.staffId);
+  const staffId = Number(
+    payload.userId ??
+      payload.staffId ??
+      payload.attendeeId ??
+      payload.attendee_id,
+  );
   if (!Number.isInteger(staffId) || staffId <= 0) {
-    throw new Error("staffId (or userId/staffId) must be a valid number");
+    throw new Error("staffId (or userId/attendeeId) must be a valid number");
   }
   return staffId;
 }
@@ -116,20 +121,59 @@ function resolveRequesterId(payload: any, required = false) {
   return requesterId;
 }
 
+function firstValidString(...values: unknown[]) {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return undefined;
+}
+
+function hasSessionInput(payload: any) {
+  return (
+    payload?.session !== undefined ||
+    payload?.start !== undefined ||
+    payload?.startTime !== undefined ||
+    payload?.start_time !== undefined ||
+    payload?.from !== undefined ||
+    payload?.end !== undefined ||
+    payload?.endTime !== undefined ||
+    payload?.end_time !== undefined ||
+    payload?.to !== undefined
+  );
+}
+
 function resolveSession(payload: any) {
-  if (
-    !payload?.session ||
-    typeof payload.session.start !== "string" ||
-    !payload.session.start.trim() ||
-    typeof payload.session.end !== "string" ||
-    !payload.session.end.trim()
-  ) {
+  const start = firstValidString(
+    payload?.session?.start,
+    payload?.session?.startTime,
+    payload?.session?.start_time,
+    payload?.session?.from,
+    payload?.start,
+    payload?.startTime,
+    payload?.start_time,
+    payload?.from,
+  );
+
+  const end = firstValidString(
+    payload?.session?.end,
+    payload?.session?.endTime,
+    payload?.session?.end_time,
+    payload?.session?.to,
+    payload?.end,
+    payload?.endTime,
+    payload?.end_time,
+    payload?.to,
+  );
+
+  if (!start || !end) {
     throw new Error("session with valid start and end is required");
   }
 
   return {
-    start: payload.session.start.trim(),
-    end: payload.session.end.trim(),
+    start,
+    end,
   };
 }
 
@@ -910,7 +954,8 @@ export const AppointmentService = {
     const nextstaffId =
       payload.userId !== undefined ||
       payload.staffId !== undefined ||
-      payload.staffId !== undefined
+      payload.attendeeId !== undefined ||
+      payload.attendee_id !== undefined
         ? resolvestaffId(payload)
         : existing.userId;
     const nextRequesterId =
@@ -918,7 +963,7 @@ export const AppointmentService = {
         ? resolveRequesterId(payload, true)
         : existing.requesterId;
 
-    const nextSession = payload.session
+    const nextSession = hasSessionInput(payload)
       ? resolveSession(payload)
       : {
           start: existing.startTime,
