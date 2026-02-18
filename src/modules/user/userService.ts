@@ -4,6 +4,25 @@ import axios from "axios";
 import { applicationLiveTemplate } from "../../utils/mail_templates/applicationLiveTemplate";
 
 export class UserService {
+  private normalizeOptionalEmail(email?: string | null) {
+    const normalizedEmail = String(email || "")
+      .trim()
+      .toLowerCase();
+
+    return normalizedEmail || null;
+  }
+
+  private isRealEmail(email?: string | null) {
+    const normalizedEmail = this.normalizeOptionalEmail(email);
+    if (!normalizedEmail) return false;
+
+    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return (
+      emailPattern.test(normalizedEmail) &&
+      !normalizedEmail.endsWith("@temp.com")
+    );
+  }
+
   async registerUser(userData: any) {
     const {
       personal_info: {
@@ -60,10 +79,13 @@ export class UserService {
       department_positions,
     } = userData;
 
-    // Generate email if not provided
-    let userEmail =
-      email?.trim().toLowerCase() ||
-      `${first_name.toLowerCase()}${last_name.toLowerCase()}_${Date.now()}@temp.com`;
+    const isLoginUser =
+      is_user === true || is_user === "true" || is_user === 1 || is_user === "1";
+    const userEmail = this.normalizeOptionalEmail(email);
+
+    if (isLoginUser && !this.isRealEmail(userEmail)) {
+      throw new Error("A valid non-temporary email is required for login users.");
+    }
 
     // Hash password for all users
     const hashedPassword = await hashPassword(password || "123456");
@@ -86,7 +108,7 @@ export class UserService {
         ),
         email: userEmail,
         password: hashedPassword,
-        is_user,
+        is_user: isLoginUser,
         is_active: false,
         status,
         department_id: departmentId,
@@ -106,7 +128,7 @@ export class UserService {
             primary_number,
             country_code,
             member_since: member_since ? new Date(member_since) : null,
-            email,
+            email: userEmail,
             country: resident_country,
             state_region,
             city,
@@ -201,9 +223,7 @@ export class UserService {
               name: toCapitalizeEachWord(
                 `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
               ),
-              email:
-                member.email ||
-                `${member.first_name.toLowerCase()}_${member.last_name.toLowerCase()}_${Date.now()}@temp.com`,
+              email: this.normalizeOptionalEmail(member.email),
               is_user: false,
               is_active: true,
               membership_type: primaryUser.membership_type || "IN_HOUSE",
@@ -276,9 +296,7 @@ export class UserService {
                 name: toCapitalizeEachWord(
                   `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
                 ),
-                email:
-                  member.email ||
-                  `${member.first_name.toLowerCase()}_${member.last_name.toLowerCase()}_${Date.now()}@temp.com`,
+                email: this.normalizeOptionalEmail(member.email),
                 parent_id: primaryUser.id, // biological / primary
                 is_user: false,
                 is_active: true,
@@ -326,9 +344,7 @@ export class UserService {
               name: toCapitalizeEachWord(
                 `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
               ),
-              email:
-                member.email ||
-                `${member.first_name.toLowerCase()}_${member.last_name.toLowerCase()}_${Date.now()}@temp.com`,
+              email: this.normalizeOptionalEmail(member.email),
               is_user: false,
               is_active: true,
               user_info: {
@@ -405,7 +421,7 @@ export class UserService {
               name: toCapitalizeEachWord(
                 `${child.first_name} ${child.other_name || ""} ${child.last_name}`.trim(),
               ),
-              email: `${child.first_name.toLowerCase()}_${child.last_name.toLowerCase()}_${Date.now()}@temp.com`,
+              email: this.normalizeOptionalEmail(child.email),
               is_user: false,
               is_active: true,
               parent_id: parentObj.id,
@@ -968,6 +984,7 @@ export class UserService {
       recipients = await prisma.user.findMany({
         where: {
           email: { in: emails },
+          is_user: true,
         },
         select: {
           email: true,
@@ -978,6 +995,7 @@ export class UserService {
       recipients = await prisma.user.findMany({
         where: {
           email: { not: null },
+          is_user: true,
         },
         select: {
           email: true,
@@ -991,7 +1009,13 @@ export class UserService {
     const loginLink = process.env.PLATFORM_LOGIN;
     const guestLink = process.env.GUEST_ORDER_LINK;
 
-    const emailPromises = recipients.map(async (user: any) => {
+    const realRecipients = recipients.filter(
+      (user) =>
+        Boolean(user.email) &&
+        !String(user.email).toLowerCase().endsWith("@temp.com"),
+    );
+
+    const emailPromises = realRecipients.map(async (user: any) => {
       try {
         sendEmail(
           applicationLiveTemplate(

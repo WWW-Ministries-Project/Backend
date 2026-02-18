@@ -58,6 +58,10 @@ programRouter.get(
   "/user-enrollment/:id",
   enrollmentController.getEnrollmentByUser,
 );
+programRouter.get(
+  "/user-enrollment",
+  enrollmentController.getEnrollmentByUser,
+);
 programRouter.get("/progress", enrollmentController.getProgressReport);
 programRouter.put(
   "/progress-update",

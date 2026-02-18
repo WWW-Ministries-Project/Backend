@@ -144,7 +144,15 @@ export class AppointmentController {
    */
   async bookNow(req: Request, res: Response) {
     try {
-      const newBooking = await AppointmentService.createAppointment(req.body);
+      const requesterId = Number((req as any).user?.id);
+      if (!Number.isInteger(requesterId) || requesterId <= 0) {
+        return res.status(401).json({ error: "Unauthorized user" });
+      }
+
+      const newBooking = await AppointmentService.createAppointment(
+        req.body,
+        requesterId,
+      );
       res.status(201).json({
         message: "Appointment booked successfully",
         data: newBooking,

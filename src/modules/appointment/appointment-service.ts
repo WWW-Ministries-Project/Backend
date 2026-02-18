@@ -40,6 +40,13 @@ const WEEK_DAYS = [
   "saturday",
 ];
 
+type RequesterDetails = {
+  id: number;
+  name: string;
+  email: string | null;
+  position: string | null;
+};
+
 function normalizeWeekDay(value: string) {
   const normalized = value.trim().toLowerCase();
   if (!WEEK_DAYS.includes(normalized)) {
@@ -214,18 +221,26 @@ function normalizeStatus(value: string) {
   return parsed as appointment_status;
 }
 
-function mapAppointmentOutput(appointment: any) {
+function mapAppointmentOutput(
+  appointment: any,
+  requester: RequesterDetails | null = null,
+) {
   return {
     id: appointment.id,
     staffId: appointment.userId,
     attendeeName: appointment.user?.name ?? null,
     position: appointment.user?.position?.name ?? null,
-    requester: {
-      requesterId: appointment.requesterId ?? null,
-      fullName: appointment.fullName,
-      email: appointment.email,
-      phone: appointment.phone,
-    },
+    requester:
+      appointment.requesterId !== null && appointment.requesterId !== undefined
+        ? {
+            id: appointment.requesterId,
+            requesterId: appointment.requesterId,
+            name: requester?.name ?? null,
+            fullName: requester?.name ?? null,
+            email: requester?.email ?? null,
+            position: requester?.position ?? null,
+          }
+        : null,
     requesterId: appointment.requesterId ?? null,
     // backward compatible fields
     fullName: appointment.fullName,
@@ -241,6 +256,84 @@ function mapAppointmentOutput(appointment: any) {
     status: appointment.status,
     createdAt: appointment.createdAt,
   };
+}
+
+async function validateRequesterExists(requesterId: number) {
+  const requester = await prisma.user.findUnique({
+    where: { id: requesterId },
+    select: { id: true },
+  });
+
+  if (!requester) {
+    throw new Error("Requester user not found");
+  }
+}
+
+async function getRequesterMap(
+  requesterIds: Array<number | null | undefined>,
+): Promise<Map<number, RequesterDetails>> {
+  const uniqueRequesterIds = Array.from(
+    new Set(
+      requesterIds.filter(
+        (id): id is number => Number.isInteger(id) && Number(id) > 0,
+      ),
+    ),
+  );
+
+  if (uniqueRequesterIds.length === 0) {
+    return new Map();
+  }
+
+  const requesters = await prisma.user.findMany({
+    where: {
+      id: {
+        in: uniqueRequesterIds,
+      },
+    },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      position: {
+        select: {
+          name: true,
+        },
+      },
+    },
+  });
+
+  return new Map(
+    requesters.map((requester) => [
+      requester.id,
+      {
+        id: requester.id,
+        name: requester.name,
+        email: requester.email ?? null,
+        position: requester.position?.name ?? null,
+      },
+    ]),
+  );
+}
+
+async function mapAppointmentsOutput(appointments: any[]) {
+  const requesterMap = await getRequesterMap(
+    appointments.map((appointment) => appointment.requesterId),
+  );
+
+  return appointments.map((appointment) =>
+    mapAppointmentOutput(
+      appointment,
+      requesterMap.get(appointment.requesterId) ?? null,
+    ),
+  );
+}
+
+async function mapAppointmentWithRequester(appointment: any) {
+  const requesterMap = await getRequesterMap([appointment.requesterId]);
+  return mapAppointmentOutput(
+    appointment,
+    requesterMap.get(appointment.requesterId) ?? null,
+  );
 }
 
 function mapAvailabilityPayload(records: any[]) {
@@ -415,10 +508,13 @@ async function validateBookingWindow(params: {
 
 export const AppointmentService = {
   // CREATE APPOINTMENT (With Overbooking Protection)
-  async createAppointment(payload: any) {
+  async createAppointment(payload: any, requesterId: number) {
     const { fullName, email, phone, purpose, note } = payload;
     const staffId = resolvestaffId(payload);
-    const requesterId = resolveRequesterId(payload, true);
+    if (!Number.isInteger(requesterId) || requesterId <= 0) {
+      throw new Error("requesterId must be a valid number");
+    }
+    await validateRequesterExists(requesterId);
     const session = resolveSession(payload);
 
     if (!payload?.date || typeof payload.date !== "string") {
@@ -448,7 +544,7 @@ export const AppointmentService = {
       include: appointmentInclude,
     });
 
-    return mapAppointmentOutput(created);
+    return mapAppointmentWithRequester(created);
   },
 
   // SET AVAILABILITY
@@ -923,7 +1019,7 @@ export const AppointmentService = {
       orderBy: [{ date: "asc" }, { startTime: "asc" }],
     });
 
-    return bookings.map(mapAppointmentOutput);
+    return mapAppointmentsOutput(bookings);
   },
 
   // FETCH APPOINTMENT BOOKING BY ID
@@ -937,7 +1033,7 @@ export const AppointmentService = {
       throw new Error("Appointment not found");
     }
 
-    return mapAppointmentOutput(booking);
+    return mapAppointmentWithRequester(booking);
   },
 
   // UPDATE APPOINTMENT BOOKING
@@ -962,6 +1058,18 @@ export const AppointmentService = {
       payload.requesterId !== undefined || payload.requestedBy !== undefined
         ? resolveRequesterId(payload, true)
         : existing.requesterId;
+    if (
+      payload.requesterId !== undefined ||
+      payload.requestedBy !== undefined
+    ) {
+      if (
+        nextRequesterId === undefined ||
+        nextRequesterId === null
+      ) {
+        throw new Error("requesterId is required");
+      }
+      await validateRequesterExists(nextRequesterId);
+    }
 
     const nextSession = hasSessionInput(payload)
       ? resolveSession(payload)
@@ -1013,7 +1121,7 @@ export const AppointmentService = {
       include: appointmentInclude,
     });
 
-    return mapAppointmentOutput(updated);
+    return mapAppointmentWithRequester(updated);
   },
 
   // DELETE APPOINTMENT BOOKING
@@ -1028,7 +1136,7 @@ export const AppointmentService = {
     }
 
     await prisma.appointment.delete({ where: { id } });
-    return mapAppointmentOutput(booking);
+    return mapAppointmentWithRequester(booking);
   },
 
   // FETCH BY STAFF
@@ -1039,7 +1147,7 @@ export const AppointmentService = {
       orderBy: [{ date: "asc" }, { startTime: "asc" }],
     });
 
-    return bookings.map(mapAppointmentOutput);
+    return mapAppointmentsOutput(bookings);
   },
 
   // FETCH BY CLIENT
@@ -1050,7 +1158,7 @@ export const AppointmentService = {
       orderBy: [{ date: "asc" }, { startTime: "asc" }],
     });
 
-    return bookings.map(mapAppointmentOutput);
+    return mapAppointmentsOutput(bookings);
   },
 
   // UPDATE STATUS
@@ -1061,6 +1169,6 @@ export const AppointmentService = {
       include: appointmentInclude,
     });
 
-    return mapAppointmentOutput(updated);
+    return mapAppointmentWithRequester(updated);
   },
 };

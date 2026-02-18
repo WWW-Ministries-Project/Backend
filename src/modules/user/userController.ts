@@ -24,6 +24,25 @@ const userService = new UserService();
 const courseService = new CourseService();
 const lifeCenterService = new LifeCenterService();
 
+const normalizeOptionalEmail = (email?: string | null) => {
+  const normalizedEmail = String(email || "")
+    .trim()
+    .toLowerCase();
+
+  return normalizedEmail || null;
+};
+
+const isRealEmail = (email?: string | null) => {
+  const normalizedEmail = normalizeOptionalEmail(email);
+  if (!normalizedEmail) return false;
+
+  const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  return (
+    emailPattern.test(normalizedEmail) &&
+    !normalizedEmail.endsWith("@temp.com")
+  );
+};
+
 export const landingPage = async (req: Request, res: Response) => {
   res.send(
     // `<h1>Welcome to World Wide Word Ministries Backend Server🔥🎉💒</h1>`
@@ -109,14 +128,31 @@ export const registerUser = async (req: Request, res: Response) => {
       is_user,
     } = req.body;
 
-    const existance = await prisma.user.findUnique({
-      where: { email },
-    });
+    const normalizedEmail = normalizeOptionalEmail(email);
+    const isLoginUser =
+      is_user === true || is_user === "true" || is_user === 1 || is_user === "1";
+
+    if (isLoginUser && !isRealEmail(normalizedEmail)) {
+      return res.status(400).json({
+        message:
+          "A valid non-temporary email is required when creating a login user.",
+        data: null,
+      });
+    }
+
+    const existance = normalizedEmail
+      ? await prisma.user.findUnique({
+          where: { email: normalizedEmail },
+        })
+      : null;
 
     if (existance) {
       return res
         .status(404)
-        .json({ message: "User exist with this email " + email, data: null });
+        .json({
+          message: "User exist with this email " + normalizedEmail,
+          data: null,
+        });
     }
 
     const response = await userService.registerUser(req.body);
@@ -135,6 +171,11 @@ export const registerUser = async (req: Request, res: Response) => {
 export const updateUser = async (req: Request, res: Response) => {
   try {
     const { user_id } = req.query;
+    const contactInfoPayload = req.body?.contact_info || {};
+    const hasEmailField = Object.prototype.hasOwnProperty.call(
+      contactInfoPayload,
+      "email",
+    );
     const {
       personal_info: {
         title,
@@ -193,14 +234,47 @@ export const updateUser = async (req: Request, res: Response) => {
       return res.status(400).json({ message: "User not found", data: null });
     }
 
+    const existingEmail = normalizeOptionalEmail(userExists?.email);
+    const incomingEmail = normalizeOptionalEmail(email);
+    const nextIsUser =
+      typeof is_user === "boolean"
+        ? is_user
+        : is_user === "true" || is_user === "1"
+          ? true
+          : is_user === "false" || is_user === "0"
+            ? false
+          : userExists?.is_user;
+    const nextEmail = hasEmailField ? incomingEmail : existingEmail;
+
+    if (nextIsUser && !isRealEmail(nextEmail)) {
+      return res.status(400).json({
+        message:
+          "A valid non-temporary email is required for users with login access.",
+        data: null,
+      });
+    }
+
+    if (hasEmailField && incomingEmail && incomingEmail !== existingEmail) {
+      const emailExists = await prisma.user.findUnique({
+        where: { email: incomingEmail },
+      });
+
+      if (emailExists) {
+        return res.status(409).json({
+          message: "User exist with this email " + incomingEmail,
+          data: null,
+        });
+      }
+    }
+
     const updatedUser = await prisma.user.update({
       where: { id: Number(user_id) },
       data: {
         name: `${first_name || userExists?.user_info?.first_name} ${
           other_name || userExists?.user_info?.other_name || ""
         } ${last_name || userExists?.user_info?.last_name}`.trim(),
-        email: email || userExists?.email,
-        is_user: typeof is_user === "boolean" ? is_user : userExists?.is_user,
+        email: hasEmailField ? incomingEmail : userExists?.email,
+        is_user: nextIsUser,
         status: status || userExists?.status,
         position_id: Number(position_id) || userExists?.position_id,
         department_id: Number(department_id) || userExists?.department_id,
@@ -216,7 +290,7 @@ export const updateUser = async (req: Request, res: Response) => {
             marital_status,
             nationality,
             photo: picture.src,
-            email,
+            email: hasEmailField ? incomingEmail : undefined,
             country: resident_country,
             state_region,
             city,
@@ -301,6 +375,7 @@ async function updateFamilyMembers(family: any[], primaryUser: any) {
     if (!spouseKeywords.includes(member.relation.toLowerCase())) continue;
 
     if (member.user_id) {
+      const hasEmailField = Object.prototype.hasOwnProperty.call(member, "email");
       // UPDATE EXISTING SPOUSE
       spouseUser = await prisma.user.update({
         where: { id: Number(member.user_id) },
@@ -308,7 +383,7 @@ async function updateFamilyMembers(family: any[], primaryUser: any) {
           name: toCapitalizeEachWord(
             `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
           ),
-          email: member.email,
+          ...(hasEmailField ? { email: normalizeOptionalEmail(member.email) } : {}),
           user_info: {
             upsert: {
               create: {
@@ -342,9 +417,7 @@ async function updateFamilyMembers(family: any[], primaryUser: any) {
           name: toCapitalizeEachWord(
             `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
           ),
-          email:
-            member.email ||
-            `${member.first_name.toLowerCase()}_${member.last_name.toLowerCase()}_${Date.now()}@temp.com`,
+          email: normalizeOptionalEmail(member.email),
           is_user: false,
           is_active: true,
           user_info: {
@@ -406,13 +479,19 @@ async function updateFamilyMembers(family: any[], primaryUser: any) {
       }
 
       if (member.user_id) {
+        const hasEmailField = Object.prototype.hasOwnProperty.call(
+          member,
+          "email",
+        );
         familyUser = await prisma.user.update({
           where: { id: Number(member.user_id) },
           data: {
             name: toCapitalizeEachWord(
               `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
             ),
-            email: member.email,
+            ...(hasEmailField
+              ? { email: normalizeOptionalEmail(member.email) }
+              : {}),
             user_info: {
               upsert: {
                 create: {
@@ -457,9 +536,7 @@ async function updateFamilyMembers(family: any[], primaryUser: any) {
               name: toCapitalizeEachWord(
                 `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
               ),
-              email:
-                member.email ||
-                `${member.first_name.toLowerCase()}_${member.last_name.toLowerCase()}_${Date.now()}@temp.com`,
+              email: normalizeOptionalEmail(member.email),
               parent_id: primaryUser.id,
               is_user: false,
               is_active: true,
@@ -507,9 +584,7 @@ async function updateFamilyMembers(family: any[], primaryUser: any) {
             name: toCapitalizeEachWord(
               `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
             ),
-            email:
-              member.email ||
-              `${member.first_name.toLowerCase()}_${member.last_name.toLowerCase()}_${Date.now()}@temp.com`,
+            email: normalizeOptionalEmail(member.email),
             is_user: false,
             is_active: true,
             user_info: {
