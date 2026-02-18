@@ -1,99 +1,127 @@
-// import { prisma } from "../../../Models/context";
+import { prisma } from "../../../Models/context";
+import { BaseConfigPayload, FinanceHttpError, PaginationQuery } from "../common";
 
-// interface CreateReceiptConfigValues {
-//   name: string;
-//   description: string;
-// }
+type ReceiptConfigEntity = {
+  id: string;
+  name: string;
+  description: string | null;
+};
 
-// export class receiptConfigurationService {
-//   /**
-//    * Create a new finance config
-//    */
+export class ReceiptConfigurationService {
+  private mapResponse(config: {
+    id: string;
+    name: string;
+    description: string | null;
+  }): ReceiptConfigEntity {
+    return {
+      id: config.id,
+      name: config.name,
+      description: config.description,
+    };
+  }
 
-//   async create(data: CreateReceiptConfigValues) {
-//     const config = await prisma.receiptConfig.create({
-//       data: {
-//         name: data.name,
-//         description: data.description,
-//       },
-//     });
+  async create(data: BaseConfigPayload): Promise<ReceiptConfigEntity> {
+    const existing = await prisma.receiptConfig.findFirst({
+      where: { name: data.name },
+      select: { id: true },
+    });
 
-//     return this.mapResponse(config);
-//   }
+    if (existing) {
+      throw new FinanceHttpError(409, "Receipt config name already exists");
+    }
 
-//   /**
-//    * Fetch all finance configs
-//    */
-//   async findAll() {
-//     const configs = await prisma.receiptConfig.findMany({
-//       orderBy: { createdAt: 'desc' },
-//     });
+    const created = await prisma.receiptConfig.create({
+      data: {
+        name: data.name,
+        ...(data.description !== undefined && { description: data.description }),
+      },
+      select: {
+        id: true,
+        name: true,
+        description: true,
+      },
+    });
 
-//     return configs.map(this.mapResponse);
-//   }
+    return this.mapResponse(created);
+  }
 
-//   /**
-//    * Fetch a single finance config by ID
-//    */
-//   async findById(id: string) {
-//     const config = await prisma.receiptConfig.findUnique({
-//       where: { id },
-//     });
+  async findAll(pagination: PaginationQuery): Promise<{
+    data: ReceiptConfigEntity[];
+    total: number;
+  }> {
+    const [total, configs] = await Promise.all([
+      prisma.receiptConfig.count(),
+      prisma.receiptConfig.findMany({
+        orderBy: { createdAt: "desc" },
+        skip: pagination.skip,
+        take: pagination.take,
+        select: {
+          id: true,
+          name: true,
+          description: true,
+        },
+      }),
+    ]);
 
-//     if (!config) {
-//       throw new Error('Finance configuration not found');
-//     }
+    return {
+      total,
+      data: configs.map((config) => this.mapResponse(config)),
+    };
+  }
 
-//     return this.mapResponse(config);
-//   }
+  async update(id: string, data: BaseConfigPayload): Promise<ReceiptConfigEntity> {
+    const existing = await prisma.receiptConfig.findUnique({
+      where: { id },
+      select: { id: true },
+    });
 
-//   /**
-//    * Update a finance config
-//    */
-//   async update(id: string, data: Partial<CreateReceiptConfigValues>) {
-//     // Ensure record exists
-//     await this.findById(id);
+    if (!existing) {
+      throw new FinanceHttpError(404, "Receipt config not found");
+    }
 
-//     const updated = await prisma.receiptConfig.update({
-//       where: { id },
-//       data: {
-//         ...(data.name !== undefined && { name: data.name }),
-//         ...(data.description !== undefined && {
-//           description: data.description,
-//         }),
-//       },
-//     });
+    const duplicate = await prisma.receiptConfig.findFirst({
+      where: {
+        name: data.name,
+        id: { not: id },
+      },
+      select: { id: true },
+    });
 
-//     return this.mapResponse(updated);
-//   }
+    if (duplicate) {
+      throw new FinanceHttpError(409, "Receipt config name already exists");
+    }
 
-//   /**
-//    * Delete a finance config
-//    */
-//   async delete(id: string) {
-//     // Ensure record exists
-//     await this.findById(id);
+    const updated = await prisma.receiptConfig.update({
+      where: { id },
+      data: {
+        name: data.name,
+        ...(data.description !== undefined && { description: data.description }),
+      },
+      select: {
+        id: true,
+        name: true,
+        description: true,
+      },
+    });
 
-//     await prisma.receiptConfig.delete({
-//       where: { id },
-//     });
+    return this.mapResponse(updated);
+  }
 
-//     return {
-//       message: 'Finance configuration deleted successfully',
-//       id,
-//     };
-//   }
+  async delete(id: string): Promise<{ id: string; deleted: true }> {
+    const existing = await prisma.receiptConfig.findUnique({
+      where: { id },
+      select: { id: true },
+    });
 
-//   /**
-//    * Normalize DB response
-//    */
-//   private mapResponse(config: any) {
-//     return {
-//       id: config.id,
-//       name: config.name,
-//       description: config.description,
-//       createdAt: config.createdAt,
-//       updatedAt: config.updatedAt,
-//     };
-//   }
-// }
+    if (!existing) {
+      throw new FinanceHttpError(404, "Receipt config not found");
+    }
+
+    await prisma.receiptConfig.delete({ where: { id } });
+
+    return {
+      id,
+      deleted: true,
+    };
+  }
+}
