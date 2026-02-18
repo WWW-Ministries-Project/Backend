@@ -441,49 +441,61 @@ export class OrderService {
 
           //   return endDate > now;
           // })
-          .map((item: any) => ({
-            id: item.id,
-            order_id: item.order_id,
-            name: item.name,
-            market_id: item.market_id,
-            market_name: item.market?.name,
-            market_status:
-              new Date(item.market?.end_date) > new Date() ? "Ended" : "Active",
-            product_id: item.product_id,
-            price_amount: item.price_amount,
-            price_currency: item.price_currency,
-            quantity: item.quantity,
-            product_type: item.product_type,
-            product_category: item.product_category,
-            image_url: item.image_url,
-            color: item.color,
-            size: item.size,
+          .map((item: any) => {
+            const marketEndDate = item.market?.end_date
+              ? new Date(item.market.end_date)
+              : null;
+            const hasValidEndDate =
+              marketEndDate !== null && !Number.isNaN(marketEndDate.getTime());
+            const marketStatus =
+              !hasValidEndDate || marketEndDate > new Date()
+                ? "Active"
+                : "Ended";
 
-            // Order fields
-            order_number: order.order_number,
-            payment_status: order.payment_status,
-            reference: order.reference,
+            return {
+              id: item.id,
+              order_id: item.order_id,
+              name: item.name,
+              market_id: item.market_id,
+              market_name: item.market?.name,
+              market_status: marketStatus,
+              product_id: item.product_id,
+              price_amount: item.price_amount,
+              price_currency: item.price_currency,
+              quantity: item.quantity,
+              product_type: item.product_type,
+              product_category: item.product_category,
+              image_url: item.image_url,
+              color: item.color,
+              size: item.size,
 
-            // Flattened product fields
-            product_name: item.product?.name,
-            product_description: item.product?.description,
-            product_colours: item.product?.colours,
-            product_status: item.product?.status,
-            product_price_amount: item.product?.price_amount,
-            product_price_currency: item.product?.price_currency,
-            product_market_id: item.product?.market_id,
+              // Order fields
+              order_number: order.order_number,
+              payment_status: order.payment_status,
+              reference: order.reference,
+              created_at: order.created_at,
 
-            // Flattened billing details
-            first_name: billingDetails?.first_name,
-            last_name: billingDetails?.last_name,
-            email: billingDetails?.email,
-            phone_number: billingDetails?.phone_number,
-            country: billingDetails?.country,
-            country_code: billingDetails?.country_code,
+              // Flattened product fields
+              product_name: item.product?.name,
+              product_description: item.product?.description,
+              product_colours: item.product?.colours,
+              product_status: item.product?.status,
+              product_price_amount: item.product?.price_amount,
+              product_price_currency: item.product?.price_currency,
+              product_market_id: item.product?.market_id,
 
-            // Computed field
-            total_amount: item.price_amount * item.quantity,
-          }))
+              // Flattened billing details
+              first_name: billingDetails?.first_name,
+              last_name: billingDetails?.last_name,
+              email: billingDetails?.email,
+              phone_number: billingDetails?.phone_number,
+              country: billingDetails?.country,
+              country_code: billingDetails?.country_code,
+
+              // Computed field
+              total_amount: item.price_amount * item.quantity,
+            };
+          })
       );
     });
   }
