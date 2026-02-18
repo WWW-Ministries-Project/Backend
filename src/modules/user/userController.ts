@@ -1255,6 +1255,40 @@ export const getUser = async (req: Request, res: Response) => {
         department: true,
         position: true,
         access: true,
+        enrollments: {
+          select: {
+            id: true,
+            enrolledAt: true,
+            completed: true,
+            completedAt: true,
+            course: {
+              select: {
+                cohort: {
+                  select: {
+                    id: true,
+                    name: true,
+                    status: true,
+                    program: {
+                      select: {
+                        id: true,
+                        title: true,
+                      },
+                    },
+                  },
+                },
+                instructor: {
+                  select: {
+                    id: true,
+                    name: true,
+                  },
+                },
+              },
+            },
+          },
+          orderBy: {
+            enrolledAt: "desc",
+          },
+        },
       },
     });
 
@@ -1376,7 +1410,7 @@ export const getUser = async (req: Request, res: Response) => {
     /* =========================
        7️⃣ BUILD RESPONSE
     ========================== */
-    const { user_info, department_positions, ...rest } = response;
+    const { user_info, department_positions, enrollments, ...rest } = response;
 
     const user: any = {
       ...rest,
@@ -1414,6 +1448,46 @@ export const getUser = async (req: Request, res: Response) => {
         position_name: dp.position?.name ?? null,
       }));
     }
+
+    const enrolledPrograms = (enrollments || []).map((enrollment: any) => {
+      const completed = Boolean(enrollment.completed);
+
+      return {
+        enrollment_id: enrollment.id,
+        enrolled_at: enrollment.enrolledAt,
+        program: {
+          id: enrollment.course?.cohort?.program?.id ?? null,
+          name: enrollment.course?.cohort?.program?.title ?? null,
+        },
+        cohort: {
+          id: enrollment.course?.cohort?.id ?? null,
+          name: enrollment.course?.cohort?.name ?? null,
+          status: enrollment.course?.cohort?.status ?? null,
+        },
+        facilitator: {
+          id: enrollment.course?.instructor?.id ?? null,
+          name: enrollment.course?.instructor?.name ?? null,
+        },
+        status: {
+          completed,
+          label: completed ? "COMPLETED" : "IN_PROGRESS",
+          completed_at: enrollment.completedAt ?? null,
+        },
+      };
+    });
+
+    const completedPrograms = enrolledPrograms.filter(
+      (program: any) => program.status.completed,
+    ).length;
+
+    user.enrolled_programs = {
+      summary: {
+        total: enrolledPrograms.length,
+        completed: completedPrograms,
+        in_progress: enrolledPrograms.length - completedPrograms,
+      },
+      items: enrolledPrograms,
+    };
 
     return res.status(200).json({
       message: "Operation Successful",
