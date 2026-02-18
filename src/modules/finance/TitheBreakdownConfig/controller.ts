@@ -5,15 +5,15 @@ import {
   sendFinanceError,
   validateBasePayload,
 } from "../common";
-import { PaymentConfigurationService } from "./service";
+import { TitheBreakdownConfigurationService } from "./service";
 
-const paymentConfigService = new PaymentConfigurationService();
+const titheBreakdownConfigService = new TitheBreakdownConfigurationService();
 
-export class PaymentConfigController {
+export class TitheBreakdownConfigController {
   async create(req: Request, res: Response): Promise<Response> {
     try {
-      const payload = validateBasePayload(req.body);
-      const config = await paymentConfigService.create(payload);
+      const payload = validateBasePayload(req.body, { percentageAllowed: true });
+      const config = await titheBreakdownConfigService.create(payload);
 
       return res.status(201).json({
         message: "Saved successfully",
@@ -27,7 +27,7 @@ export class PaymentConfigController {
   async findAll(req: Request, res: Response): Promise<Response> {
     try {
       const pagination = parsePagination(req);
-      const result = await paymentConfigService.findAll(pagination);
+      const result = await titheBreakdownConfigService.findAll(pagination);
 
       return res.status(200).json({
         message: "Success",
@@ -46,8 +46,8 @@ export class PaymentConfigController {
   async update(req: Request, res: Response): Promise<Response> {
     try {
       const id = parseIdFromQuery(req);
-      const payload = validateBasePayload(req.body);
-      const updatedConfig = await paymentConfigService.update(id, payload);
+      const payload = validateBasePayload(req.body, { percentageAllowed: true });
+      const updatedConfig = await titheBreakdownConfigService.update(id, payload);
 
       return res.status(200).json({
         message: "Saved successfully",
@@ -61,7 +61,7 @@ export class PaymentConfigController {
   async delete(req: Request, res: Response): Promise<Response> {
     try {
       const id = parseIdFromQuery(req);
-      const deleted = await paymentConfigService.delete(id);
+      const deleted = await titheBreakdownConfigService.delete(id);
 
       return res.status(200).json({
         message: "Deleted successfully",

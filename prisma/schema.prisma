@@ -968,6 +968,40 @@ model AnnualTheme {
   @@unique([year])
 }
 
+model receiptConfig {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model paymentConfig {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model bankAccountConfig {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  percentage  Float?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model titheBreakdownConfig {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  percentage  Float?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
 model availability {
   id                     Int            @id @default(autoincrement())
   day                    String
