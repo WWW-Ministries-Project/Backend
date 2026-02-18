@@ -197,7 +197,7 @@ export class OrderController {
         cancellation_url,
       );
       return res.status(201).json({
-        message: "Order created successfully",
+        message: "Payment reinitiated successfully",
         data: order,
       });
     } catch (error: any) {

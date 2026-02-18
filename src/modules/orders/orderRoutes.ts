@@ -30,6 +30,10 @@ const orderController = new OrderController();
  *               total_amount:
  *                 type: number
  *                 example: 5000
+ *               reference:
+ *                 type: string
+ *                 nullable: true
+ *                 description: Existing order id/order_number/reference to retry Hubtel payment without creating a new order
  *               payment_type:
  *                 type: string
  *                 example: "paystack"
