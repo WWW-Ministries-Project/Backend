@@ -162,7 +162,10 @@ export class AppointmentController {
   async getBookings(req: Request, res: Response) {
     try {
       const staffIdRaw =
-        req.query.staffId ?? req.query.staffId ?? req.query.userId;
+        req.query.staffId ??
+        req.query.userId ??
+        req.query.attendeeId ??
+        req.query.attendee_id;
       const requesterIdRaw = req.query.requesterId ?? req.query.requestedBy;
       const email =
         typeof req.query.email === "string" ? req.query.email : undefined;
