@@ -11,14 +11,14 @@ export const eventRouter = Router();
 
 eventRouter.get(
   "/get-event",
-  [protect, permissions.can_view_events],
+  [protect],
   eventContoller.getEvent,
 );
 
-eventRouter.get("/list-events", eventContoller.listEvents);
+eventRouter.get("/list-events", [protect], eventContoller.listEvents);
 eventRouter.get(
   "/list-events-light",
-  [protect, permissions.can_view_events],
+  [protect],
   eventContoller.listEventsLight,
 );
 eventRouter.get("/events-stats", [protect], eventContoller.eventStats);
@@ -50,11 +50,23 @@ eventRouter.delete(
 eventRouter.post("/sign-attendance", eventContoller.eventAttendance);
 eventRouter.get("/search-user", eventContoller.searchUser1);
 
-eventRouter.post("/create-event-type", eventContoller.createEventType);
-eventRouter.put("/update-event-type", eventContoller.updateEventType);
-eventRouter.get("/get-event-type", eventContoller.getEventType);
-eventRouter.get("/get-event-types", eventContoller.getEventTypes);
-eventRouter.delete("/delete-event-type", eventContoller.deleteEventType);
+eventRouter.post(
+  "/create-event-type",
+  [protect, permissions.can_manage_events],
+  eventContoller.createEventType,
+);
+eventRouter.put(
+  "/update-event-type",
+  [protect, permissions.can_manage_events],
+  eventContoller.updateEventType,
+);
+eventRouter.get("/get-event-type", [protect], eventContoller.getEventType);
+eventRouter.get("/get-event-types", [protect], eventContoller.getEventTypes);
+eventRouter.delete(
+  "/delete-event-type",
+  [protect, permissions.can_delete_events],
+  eventContoller.deleteEventType,
+);
 
 eventRouter.post("/register", eventContoller.register);
 eventRouter.get(
@@ -69,28 +81,48 @@ eventRouter.get(
 /**
  * Create attendance summary
  */
-eventRouter.post("/church-attendance", eventContoller.createAttendanceSummary);
+eventRouter.post(
+  "/church-attendance",
+  [protect, permissions.can_manage_church_attendance],
+  eventContoller.createAttendanceSummary,
+);
 
 /**
  * Get all attendance summaries
  * Optional query params: ?eventId=&date=
  */
-eventRouter.get("/church-attendance", eventContoller.getAttendances);
+eventRouter.get(
+  "/church-attendance",
+  [protect, permissions.can_view_church_attendance],
+  eventContoller.getAttendances,
+);
 
 /**
  * Get attendance summary by ID
  * Uses query param ?id=
  */
-eventRouter.get("/church-attendance/by-id", eventContoller.getAttendanceById);
+eventRouter.get(
+  "/church-attendance/by-id",
+  [protect, permissions.can_view_church_attendance],
+  eventContoller.getAttendanceById,
+);
 
 /**
  * Update attendance summary by ID
  * Uses URL param :id
  */
-eventRouter.put("/church-attendance", eventContoller.updateAttendance);
+eventRouter.put(
+  "/church-attendance",
+  [protect, permissions.can_manage_church_attendance],
+  eventContoller.updateAttendance,
+);
 
 /**
  * Delete attendance summary by ID
  * Uses URL param :id
  */
-eventRouter.delete("/church-attendance", eventContoller.deleteAttendance);
+eventRouter.delete(
+  "/church-attendance",
+  [protect, permissions.can_delete_church_attendance],
+  eventContoller.deleteAttendance,
+);

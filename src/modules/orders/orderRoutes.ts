@@ -1,8 +1,11 @@
 import { Router } from "express";
 import { OrderController } from "./orderController";
+import { Permissions } from "../../middleWare/authorization";
 
 const orderRouter = Router();
 const orderController = new OrderController();
+const permissions = new Permissions();
+const protect = permissions.protect;
 
 /**
  * @swagger
@@ -69,7 +72,11 @@ const orderController = new OrderController();
  *       400:
  *         description: Failed to create order
  */
-orderRouter.post("/create-order", orderController.create);
+orderRouter.post(
+  "/create-order",
+  [protect, permissions.can_create_order_scoped],
+  orderController.create,
+);
 
 /**
  * @swagger
@@ -81,7 +88,11 @@ orderRouter.post("/create-order", orderController.create);
  *       200:
  *         description: List of orders
  */
-orderRouter.get("/get-all-orders", orderController.findAll);
+orderRouter.get(
+  "/get-all-orders",
+  [protect, permissions.can_view_marketplace],
+  orderController.findAll,
+);
 
 /**
  * @swagger
@@ -102,7 +113,11 @@ orderRouter.get("/get-all-orders", orderController.findAll);
  *       404:
  *         description: Order not found
  */
-orderRouter.get("/get-order-by-id", orderController.findOne);
+orderRouter.get(
+  "/get-order-by-id",
+  [protect, permissions.can_view_orders_scoped],
+  orderController.findOne,
+);
 
 /**
  * @swagger
@@ -123,7 +138,11 @@ orderRouter.get("/get-order-by-id", orderController.findOne);
  *       404:
  *         description: No orders found for this user
  */
-orderRouter.get("/get-orders-by-user", orderController.findByUserId);
+orderRouter.get(
+  "/get-orders-by-user",
+  [protect, permissions.can_view_orders_scoped],
+  orderController.findByUserId,
+);
 
 /**
  * @swagger
@@ -144,7 +163,11 @@ orderRouter.get("/get-orders-by-user", orderController.findByUserId);
  *       404:
  *         description: No orders found for this marketplace
  */
-orderRouter.get("/get-orders-by-market", orderController.findByMarketplaceId);
+orderRouter.get(
+  "/get-orders-by-market",
+  [protect, permissions.can_view_marketplace],
+  orderController.findByMarketplaceId,
+);
 
 /**
  * @swagger
@@ -188,7 +211,11 @@ orderRouter.get("/get-orders-by-market", orderController.findByMarketplaceId);
  *                   type: string
  *                   example: "Payment verification failed"
  */
-orderRouter.get("/verify-payment", orderController.verifyPayment);
+orderRouter.get(
+  "/verify-payment",
+  [protect, permissions.can_view_orders_scoped],
+  orderController.verifyPayment,
+);
 
 /**
  * @swagger
@@ -347,6 +374,7 @@ orderRouter.post("/hubtel-payment-webhook", orderController.hubtelWebhook);
 
 orderRouter.get(
   "/confirm-transaction-status",
+  [protect, permissions.can_manage_marketplace],
   orderController.confirmTransaction,
 );
 /**
@@ -494,6 +522,7 @@ orderRouter.get(
 
 orderRouter.get(
   "/confirm-transaction-status-by-id",
+  [protect, permissions.can_manage_marketplace],
   orderController.confirmTransactionById,
 );
 
@@ -612,11 +641,20 @@ orderRouter.get(
  *       400:
  *         description: Failed to retry payment
  */
-orderRouter.post("/retry-payment", orderController.retryPayment);
+orderRouter.post(
+  "/retry-payment",
+  [protect, permissions.can_manage_marketplace],
+  orderController.retryPayment,
+);
 
-orderRouter.post("/reinitiate-payment", orderController.reinitiatePayment);
+orderRouter.post(
+  "/reinitiate-payment",
+  [protect, permissions.can_manage_marketplace],
+  orderController.reinitiatePayment,
+);
 orderRouter.post(
   "/reconcile-hubtel-pending-payments",
+  [protect, permissions.can_manage_marketplace],
   orderController.reconcilePendingHubtelPayments,
 );
 

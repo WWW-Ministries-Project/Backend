@@ -168,7 +168,7 @@ assetRouter.post(
  */
 assetRouter.get(
   "/list-assets",
-  [protect, permissions.can_view_asset],
+  [protect, permissions.can_view_assets_scoped],
   listAssets,
 );
 
@@ -190,7 +190,11 @@ assetRouter.get(
  *       200:
  *         description: Asset details
  */
-assetRouter.get("/get-asset", [protect, permissions.can_view_asset], getAsset);
+assetRouter.get(
+  "/get-asset",
+  [protect, permissions.can_view_assets_scoped],
+  getAsset,
+);
 
 /**
  * @swagger

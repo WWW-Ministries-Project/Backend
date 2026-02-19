@@ -34,6 +34,7 @@ export class AppointmentController {
   async getAvailability(req: Request, res: Response) {
     try {
       const { userId } = req.query;
+      const appointmentScope = (req as any).appointmentScope;
 
       if (userId !== undefined) {
         const parsed = Number(userId);
@@ -44,6 +45,7 @@ export class AppointmentController {
 
       const data = await AppointmentService.getAllAvailability(
         userId !== undefined ? Number(userId) : undefined,
+        appointmentScope,
       );
 
       res.status(200).json({
@@ -125,7 +127,9 @@ export class AppointmentController {
    */
   async getAvailabilityStatus(req: Request, res: Response) {
     try {
-      const data = await AppointmentService.getAvailabilityWithSessionStatus();
+      const appointmentScope = (req as any).appointmentScope;
+      const data =
+        await AppointmentService.getAvailabilityWithSessionStatus(appointmentScope);
 
       res.status(200).json({
         message: "Availability status fetched successfully",
@@ -169,6 +173,7 @@ export class AppointmentController {
    */
   async getBookings(req: Request, res: Response) {
     try {
+      const appointmentScope = (req as any).appointmentScope;
       const staffIdRaw =
         req.query.staffId ??
         req.query.userId ??
@@ -208,7 +213,7 @@ export class AppointmentController {
         email,
         status,
         date,
-      });
+      }, appointmentScope);
 
       res.status(200).json({
         message: "Bookings fetched successfully",
@@ -312,11 +317,15 @@ export class AppointmentController {
    */
   async getStaffBookings(req: Request, res: Response) {
     try {
+      const appointmentScope = (req as any).appointmentScope;
       const { userId } = req.query;
       if (!userId) {
         return res.status(400).json({ error: "userId is required in query" });
       }
-      const data = await AppointmentService.getByStaff(Number(userId));
+      const data = await AppointmentService.getByStaff(
+        Number(userId),
+        appointmentScope,
+      );
       res.json(data);
     } catch (error) {
       res.status(500).json({ error: "Error fetching bookings" });
@@ -329,11 +338,15 @@ export class AppointmentController {
    */
   async getClientBookings(req: Request, res: Response) {
     try {
+      const appointmentScope = (req as any).appointmentScope;
       const { email } = req.query;
       if (!email) {
         return res.status(400).json({ error: "email is required in query" });
       }
-      const data = await AppointmentService.getByClientEmail(String(email));
+      const data = await AppointmentService.getByClientEmail(
+        String(email),
+        appointmentScope,
+      );
       res.json(data);
     } catch (error) {
       res.status(500).json({ error: "Error fetching user appointments" });

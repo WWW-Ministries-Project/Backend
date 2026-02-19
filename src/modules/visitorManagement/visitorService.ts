@@ -209,14 +209,20 @@ export class VisitorService {
       })),
     };
   }
-  async getAllVisitors(query: {
-    search?: string;
-    createdMonth?: string;
-    visitMonth?: string;
-    eventId?: string;
-    page?: string;
-    limit?: string;
-  }) {
+  async getAllVisitors(
+    query: {
+      search?: string;
+      createdMonth?: string;
+      visitMonth?: string;
+      eventId?: string;
+      page?: string;
+      limit?: string;
+    },
+    scope?: {
+      mode?: "all" | "responsible";
+      memberId?: number;
+    },
+  ) {
     const {
       search,
       createdMonth,
@@ -268,11 +274,15 @@ export class VisitorService {
       };
     }
 
-    /* 🔢 TOTAL COUNT */
-    const total = await prisma.visitor.count({ where });
+    const shouldScopeByResponsibleMember =
+      scope?.mode === "responsible" &&
+      Number.isInteger(Number(scope?.memberId)) &&
+      Number(scope?.memberId) > 0;
+    const scopedResponsibleMemberId = shouldScopeByResponsibleMember
+      ? Number(scope?.memberId)
+      : null;
 
-    /* 📦 DATA QUERY */
-    const visitors = await prisma.visitor.findMany({
+    const rawVisitors = await prisma.visitor.findMany({
       where,
       include: {
         visits: {
@@ -294,11 +304,20 @@ export class VisitorService {
         },
       },
       orderBy: { createdAt: "desc" },
-      skip,
-      take: pageSize,
     });
 
-    const data = visitors.map(({ visits, followUps, ...visitor }) => ({
+    const visitors = shouldScopeByResponsibleMember
+      ? rawVisitors.filter((visitor) =>
+          parseResponsibleMemberIds(visitor.responsibleMembers, {
+            strict: false,
+          }).includes(scopedResponsibleMemberId as number),
+        )
+      : rawVisitors;
+
+    const total = visitors.length;
+    const paginatedVisitors = visitors.slice(skip, skip + pageSize);
+
+    const data = paginatedVisitors.map(({ visits, followUps, ...visitor }) => ({
       ...visitor,
       responsibleMembers: parseResponsibleMemberIds(
         visitor.responsibleMembers,
