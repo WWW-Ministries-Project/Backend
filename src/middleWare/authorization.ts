@@ -324,6 +324,9 @@ export class Permissions {
     if (!context) return;
 
     const targetUserId = this.getTargetUserId(req);
+    const isSingleProfileRoute = String((req as any).originalUrl || req.path || "")
+      .toLowerCase()
+      .includes("get-user");
     const canViewAll =
       context.isPrivilegedUser &&
       hasActionPermission(context.permissions, "Members", "view");
@@ -344,7 +347,9 @@ export class Permissions {
       return next();
     }
 
-    if (!targetUserId || targetUserId !== context.userId) {
+    const resolvedTargetUserId =
+      targetUserId || (isSingleProfileRoute ? context.userId : null);
+    if (!resolvedTargetUserId || resolvedTargetUserId !== context.userId) {
       return this.unauthorized(res, errorMessage);
     }
 
@@ -882,9 +887,31 @@ export class Permissions {
       }
     }
 
+    const orderNumber =
+      typeof req.query?.order_number === "string"
+        ? String(req.query.order_number).trim()
+        : "";
+    if (orderNumber) {
+      const order = await prisma.orders.findFirst({
+        where: { order_number: orderNumber },
+        select: { user_id: true },
+      });
+      if (order && order.user_id !== context.userId) {
+        return this.unauthorized(res, errorMessage);
+      }
+    }
+
     const queryUserId = toPositiveInt(req.query?.user_id);
     if (queryUserId && queryUserId !== context.userId) {
       return this.unauthorized(res, errorMessage);
+    }
+
+    const routeKey = String((req as any).originalUrl || req.path || "").toLowerCase();
+    if (!queryUserId && routeKey.includes("get-orders-by-user")) {
+      (req as any).query = {
+        ...(req as any).query,
+        user_id: String(context.userId),
+      };
     }
 
     (req as any).orderScope = { mode: "own", userId: context.userId };

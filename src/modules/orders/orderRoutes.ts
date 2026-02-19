@@ -211,7 +211,11 @@ orderRouter.get(
  *                   type: string
  *                   example: "Payment verification failed"
  */
-orderRouter.get("/verify-payment", [protect], orderController.verifyPayment);
+orderRouter.get(
+  "/verify-payment",
+  [protect, permissions.can_view_orders_scoped],
+  orderController.verifyPayment,
+);
 
 /**
  * @swagger
