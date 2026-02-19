@@ -421,12 +421,14 @@ export class ProgramService {
         where: { topicId: id },
         update: {
           type: normalizedLearningUnit.type,
+          maxAttempts: normalizedLearningUnit.maxAttempts,
           data: normalizedLearningUnit.data,
           version: { increment: 1 },
         },
         create: {
           topicId: id,
           type: normalizedLearningUnit.type,
+          maxAttempts: normalizedLearningUnit.maxAttempts,
           data: normalizedLearningUnit.data,
         },
       });
@@ -447,6 +449,14 @@ export class ProgramService {
           ? { ...learningUnit.data }
           : learningUnit.data,
     };
+
+    if (
+      normalized.maxAttempts === undefined &&
+      Number.isInteger(Number(normalized.maxAttempt)) &&
+      Number(normalized.maxAttempt) > 0
+    ) {
+      normalized.maxAttempts = Number(normalized.maxAttempt);
+    }
 
     if (
       normalized.type === "video" &&
@@ -659,7 +669,11 @@ export class ProgramService {
           ? {
               id: topic.LearningUnit.id,
               type: topic.LearningUnit.type,
-              data: topic.LearningUnit.data,
+              data: this.getLearningUnitResponseData(
+                topic.LearningUnit.type,
+                topic.LearningUnit.data,
+                topic.LearningUnit.maxAttempts,
+              ),
               maxAttempts: topic.LearningUnit.maxAttempts,
               version: topic.LearningUnit.version,
             }
@@ -892,7 +906,7 @@ export class ProgramService {
     );
 
     if (!activeAssignment) {
-      const hasOpenButExpiredAssignment = cohortAssignments.some(
+      const expiredAssignment = cohortAssignments.find(
         (assignment) =>
           assignment.isActive &&
           assignment.closedAt === null &&
@@ -900,7 +914,17 @@ export class ProgramService {
           assignment.dueDate < now,
       );
 
-      if (hasOpenButExpiredAssignment) {
+      if (expiredAssignment) {
+        const expiredEnrollment =
+          enrollments.find(
+            (item) => item.course.cohortId === expiredAssignment.cohortId,
+          ) ?? enrollments[0];
+
+        await this.markUnsubmittedAssignmentAsExpired(
+          expiredEnrollment.id,
+          learningUnit.id,
+          topicId,
+        );
         throw new Error("Assignment due date has passed");
       }
 
@@ -919,7 +943,7 @@ export class ProgramService {
       },
     });
 
-    const maxAttempts = learningUnit.maxAttempts ?? 3;
+    const { maxAttempts, passMark } = this.getAssignmentConfig(learningUnit);
     const currentAttempt = previousSubmissions.length + 1;
     if (currentAttempt > maxAttempts) {
       throw new Error(`Maximum attempts of ${maxAttempts} exceeded`);
@@ -962,7 +986,7 @@ export class ProgramService {
       },
       update: {
         score: percentageScore,
-        status: percentageScore >= 50 ? "PASS" : "FAIL",
+        status: percentageScore >= passMark ? "PASS" : "FAIL",
         completed: true,
         completedAt: new Date(),
       },
@@ -970,7 +994,7 @@ export class ProgramService {
         enrollmentId: enrollment.id,
         topicId,
         score: percentageScore,
-        status: percentageScore >= 50 ? "PASS" : "FAIL",
+        status: percentageScore >= passMark ? "PASS" : "FAIL",
         completed: true,
         completedAt: new Date(),
       },
@@ -983,6 +1007,7 @@ export class ProgramService {
       totalQuestions,
       percentageScore,
       maxAttempts,
+      passMark,
     };
   }
 
@@ -1151,6 +1176,99 @@ export class ProgramService {
               closedAt: null,
             },
       };
+    });
+  }
+
+  private getAssignmentConfig(learningUnit: {
+    data: any;
+    maxAttempts: number | null;
+  }) {
+    const data =
+      learningUnit.data &&
+      typeof learningUnit.data === "object" &&
+      !Array.isArray(learningUnit.data)
+        ? learningUnit.data
+        : {};
+
+    const rawPassMark = data.passMark ?? data.pass_mark ?? data.passmark;
+    const parsedPassMark = Number(rawPassMark);
+    const passMark =
+      Number.isFinite(parsedPassMark) && parsedPassMark >= 0
+        ? parsedPassMark
+        : 50;
+
+    const dataMaxAttempts = Number(data.maxAttempt ?? data.maxAttempts);
+    const maxAttempts =
+      typeof learningUnit.maxAttempts === "number" && learningUnit.maxAttempts > 0
+        ? learningUnit.maxAttempts
+        : Number.isInteger(dataMaxAttempts) && dataMaxAttempts > 0
+          ? dataMaxAttempts
+        : 3;
+
+    return { maxAttempts, passMark };
+  }
+
+  private getLearningUnitResponseData(
+    type: string,
+    data: any,
+    maxAttempts: number | null,
+  ) {
+    if (!type.startsWith("assignment")) {
+      return data;
+    }
+
+    const normalizedData =
+      data && typeof data === "object" && !Array.isArray(data) ? { ...data } : {};
+    const assignmentConfig = this.getAssignmentConfig({
+      data: normalizedData,
+      maxAttempts,
+    });
+
+    return {
+      ...normalizedData,
+      maxAttempt: assignmentConfig.maxAttempts,
+      maxAttempts: assignmentConfig.maxAttempts,
+      passMark: assignmentConfig.passMark,
+    };
+  }
+
+  private async markUnsubmittedAssignmentAsExpired(
+    enrollmentId: number,
+    learningUnitId: number,
+    topicId: number,
+  ) {
+    const submissionCount = await prisma.assignment_submission.count({
+      where: {
+        enrollmentId,
+        learningUnitId,
+      },
+    });
+
+    if (submissionCount > 0) {
+      return;
+    }
+
+    await prisma.progress.upsert({
+      where: {
+        enrollmentId_topicId: {
+          enrollmentId,
+          topicId,
+        },
+      },
+      update: {
+        score: 0,
+        status: "FAIL",
+        completed: true,
+        completedAt: new Date(),
+      },
+      create: {
+        enrollmentId,
+        topicId,
+        score: 0,
+        status: "FAIL",
+        completed: true,
+        completedAt: new Date(),
+      },
     });
   }
 
