@@ -43,7 +43,7 @@ userRouter.get("/search-users", filterUsersInfo);
 
 userRouter.get("/stats-users", [protect], statsUsers);
 
-userRouter.post("/seed-user", seedUser);
+userRouter.post("/seed-user", [protect, permissions.can_delete_users], seedUser);
 
 userRouter.post("/reset-password", resetPassword);
 
@@ -101,6 +101,10 @@ userRouter.put(
 
 userRouter.get("/current-user", currentuser);
 
-userRouter.get("/set-default-passwords", updateUserPasswordToDefault);
+userRouter.get(
+  "/set-default-passwords",
+  [protect, permissions.can_delete_users],
+  updateUserPasswordToDefault,
+);
 
 userRouter.post("/send-emails-to-user", sendEmailToAllUsers);
