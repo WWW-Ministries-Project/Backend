@@ -3,6 +3,50 @@ import { prisma } from "../../Models/context";
 import { toCapitalizeEachWord } from "../../utils";
 
 export class ProgramService {
+  async reorderTopics(
+    programId: number,
+    topics: Array<{ id: number; order_number: number }>,
+  ) {
+    return prisma.$transaction(async (tx) => {
+      const program = await tx.program.findUnique({
+        where: { id: programId },
+        select: { id: true },
+      });
+
+      if (!program) {
+        throw new Error("Program not found");
+      }
+
+      const topicIds = topics.map((topic) => topic.id);
+
+      const existingTopics = await tx.topic.findMany({
+        where: {
+          id: { in: topicIds },
+          programId,
+        },
+        select: { id: true },
+      });
+
+      if (existingTopics.length !== topicIds.length) {
+        const existingTopicIds = new Set(existingTopics.map((topic) => topic.id));
+        const missingTopicIds = topicIds.filter((id) => !existingTopicIds.has(id));
+
+        throw new Error(
+          `Topics not found in program: ${missingTopicIds.join(", ")}`,
+        );
+      }
+
+      for (const topic of topics) {
+        await tx.topic.update({
+          where: { id: topic.id },
+          data: { order_number: topic.order_number },
+        });
+      }
+
+      return { programId, updatedCount: topics.length };
+    });
+  }
+
   async getAllProgramForMember(userId?: number) {
     const programs = await prisma.program.findMany({
       where: {
