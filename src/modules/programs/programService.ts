@@ -298,7 +298,8 @@ export class ProgramService {
     description: string,
     learningUnit: any,
   ) {
-    this.validateLearningUnit(learningUnit);
+    const normalizedLearningUnit = this.normalizeLearningUnit(learningUnit);
+    this.validateLearningUnit(normalizedLearningUnit);
 
     return prisma.$transaction(async (tx) => {
       const lastTopic = await tx.topic.findFirst({
@@ -321,9 +322,9 @@ export class ProgramService {
       await tx.learningUnit.create({
         data: {
           topicId: topic.id,
-          type: learningUnit.type,
-          maxAttempts: learningUnit.maxAttempts,
-          data: learningUnit.data,
+          type: normalizedLearningUnit.type,
+          maxAttempts: normalizedLearningUnit.maxAttempts,
+          data: normalizedLearningUnit.data,
         },
       });
 
@@ -358,7 +359,8 @@ export class ProgramService {
     description: string,
     learningUnit: any,
   ) {
-    this.validateLearningUnit(learningUnit);
+    const normalizedLearningUnit = this.normalizeLearningUnit(learningUnit);
+    this.validateLearningUnit(normalizedLearningUnit);
 
     return prisma.$transaction(async (tx) => {
       // 1️⃣ Update topic
@@ -374,19 +376,65 @@ export class ProgramService {
       await tx.learningUnit.upsert({
         where: { topicId: id },
         update: {
-          type: learningUnit.type,
-          data: learningUnit.data,
+          type: normalizedLearningUnit.type,
+          data: normalizedLearningUnit.data,
           version: { increment: 1 },
         },
         create: {
           topicId: id,
-          type: learningUnit.type,
-          data: learningUnit.data,
+          type: normalizedLearningUnit.type,
+          data: normalizedLearningUnit.data,
         },
       });
 
       return topic;
     });
+  }
+
+  private normalizeLearningUnit(learningUnit: any) {
+    if (!learningUnit || typeof learningUnit !== "object") {
+      return learningUnit;
+    }
+
+    const normalized = {
+      ...learningUnit,
+      data:
+        learningUnit.data && typeof learningUnit.data === "object"
+          ? { ...learningUnit.data }
+          : learningUnit.data,
+    };
+
+    if (
+      normalized.type === "video" &&
+      normalized.data &&
+      typeof normalized.data === "object" &&
+      !normalized.data.url &&
+      normalized.data.value
+    ) {
+      normalized.data.url = normalized.data.value;
+    }
+
+    if (
+      normalized.type === "live" &&
+      normalized.data &&
+      typeof normalized.data === "object" &&
+      !normalized.data.meetingLink &&
+      normalized.data.value
+    ) {
+      normalized.data.meetingLink = normalized.data.value;
+    }
+
+    if (
+      normalized.type === "in-person" &&
+      normalized.data &&
+      typeof normalized.data === "object" &&
+      !normalized.data.venue &&
+      normalized.data.value
+    ) {
+      normalized.data.venue = normalized.data.value;
+    }
+
+    return normalized;
   }
 
   async deleteTopic(topicId: number) {
