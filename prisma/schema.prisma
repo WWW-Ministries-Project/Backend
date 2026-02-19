@@ -659,6 +659,7 @@ model visitor {
   howHeard         String?
   consentToContact Boolean          @default(false)
   membershipWish   Boolean          @default(false)
+  responsibleMembers Json?
   visits           visit[]
   followUps        follow_up[]
   prayerRequests   prayer_request[]

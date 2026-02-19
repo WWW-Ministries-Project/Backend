@@ -5,6 +5,8 @@ import { toSentenceCase } from "../../utils";
 
 const userService = new UserService();
 const visitService = new VisitService();
+const RESPONSIBLE_MEMBERS_VALIDATION_MESSAGE =
+  "responsibleMembers must be an array of valid member ids.";
 
 const normalizeOptionalEmail = (email?: string | null) => {
   const normalizedEmail = String(email || "")
@@ -25,7 +27,73 @@ const isRealEmail = (email?: string | null) => {
   );
 };
 
+const hasOwnProperty = (obj: unknown, key: string) =>
+  !!obj &&
+  typeof obj === "object" &&
+  Object.prototype.hasOwnProperty.call(obj, key);
+
+const parseResponsibleMemberIds = (
+  responsibleMembers: unknown,
+  options: { strict?: boolean } = {},
+) => {
+  const { strict = true } = options;
+
+  if (responsibleMembers === null || responsibleMembers === undefined) {
+    return [];
+  }
+
+  if (!Array.isArray(responsibleMembers)) {
+    if (strict) {
+      throw new Error(RESPONSIBLE_MEMBERS_VALIDATION_MESSAGE);
+    }
+    return [];
+  }
+
+  const parsedMemberIds = responsibleMembers.map((memberId) => Number(memberId));
+  const hasInvalidMemberIds = parsedMemberIds.some(
+    (memberId) => !Number.isInteger(memberId) || memberId <= 0,
+  );
+
+  if (strict && hasInvalidMemberIds) {
+    throw new Error(RESPONSIBLE_MEMBERS_VALIDATION_MESSAGE);
+  }
+
+  return Array.from(
+    new Set(
+      parsedMemberIds.filter(
+        (memberId) => Number.isInteger(memberId) && memberId > 0,
+      ),
+    ),
+  );
+};
+
 export class VisitorService {
+  private async validateResponsibleMemberIds(responsibleMembers: unknown) {
+    const memberIds = parseResponsibleMemberIds(responsibleMembers);
+
+    if (!memberIds.length) {
+      return [];
+    }
+
+    const existingMembers = await prisma.user.findMany({
+      where: {
+        id: { in: memberIds },
+      },
+      select: { id: true },
+    });
+
+    const existingMemberIdSet = new Set(existingMembers.map((member) => member.id));
+    const missingMemberIds = memberIds.filter((id) => !existingMemberIdSet.has(id));
+
+    if (missingMemberIds.length) {
+      throw new Error(
+        `Invalid responsibleMembers member ids: ${missingMemberIds.join(", ")}`,
+      );
+    }
+
+    return memberIds;
+  }
+
   async deleteVisitor(id: number) {
     return await prisma.visitor.delete({
       where: { id },
@@ -40,6 +108,10 @@ export class VisitorService {
       membershipWish,
       event,
     } = body;
+    const hasResponsibleMembers = hasOwnProperty(body, "responsibleMembers");
+    const responsibleMembers = hasResponsibleMembers
+      ? await this.validateResponsibleMemberIds(body.responsibleMembers)
+      : undefined;
 
     const visitorData = {
       title: personal_info.title,
@@ -59,6 +131,7 @@ export class VisitorService {
       consentToContact:
         consentToContact === "true" || consentToContact === true,
       membershipWish: membershipWish === "true" || membershipWish === true,
+      ...(hasResponsibleMembers ? { responsibleMembers } : {}),
       // is_member is not included here; optionally set it if needed
     };
 
@@ -67,7 +140,13 @@ export class VisitorService {
       data: visitorData,
     });
 
-    return updatedVisitor;
+    return {
+      ...updatedVisitor,
+      responsibleMembers: parseResponsibleMemberIds(
+        updatedVisitor.responsibleMembers,
+        { strict: false },
+      ),
+    };
   }
   async getVisitorById(id: number) {
     const visitor = await prisma.visitor.findUnique({
@@ -115,6 +194,9 @@ export class VisitorService {
 
     return {
       ...visitor,
+      responsibleMembers: parseResponsibleMemberIds(visitor.responsibleMembers, {
+        strict: false,
+      }),
       visits: visitor.visits.map(({ event, ...v }) => ({
         ...v,
         eventId: event?.event.id,
@@ -218,6 +300,10 @@ export class VisitorService {
 
     const data = visitors.map(({ visits, followUps, ...visitor }) => ({
       ...visitor,
+      responsibleMembers: parseResponsibleMemberIds(
+        visitor.responsibleMembers,
+        { strict: false },
+      ),
       eventId: visits[0]?.event?.event.id || null,
       eventName: visits[0]?.event?.event.event_name || null,
       visitCount: visits.length,
@@ -246,6 +332,10 @@ export class VisitorService {
       consentToContact,
       membershipWish,
     } = body;
+    const hasResponsibleMembers = hasOwnProperty(body, "responsibleMembers");
+    const responsibleMembers = hasResponsibleMembers
+      ? await this.validateResponsibleMemberIds(body.responsibleMembers)
+      : [];
 
     const visitDate = new Date(visit.date);
     const email = contact_info.email;
@@ -275,13 +365,29 @@ export class VisitorService {
         );
       }
 
+      const updatedExistingVisitor = hasResponsibleMembers
+        ? await prisma.visitor.update({
+            where: { id: existingVisitor.id },
+            data: { responsibleMembers },
+          })
+        : existingVisitor;
+
       const newVisit = await visitService.createVisit({
         visitorId: existingVisitor.id,
         date: visitDate,
         eventId: event_id,
       });
 
-      return { visitor: existingVisitor, createdVisit: newVisit };
+      return {
+        visitor: {
+          ...updatedExistingVisitor,
+          responsibleMembers: parseResponsibleMemberIds(
+            updatedExistingVisitor.responsibleMembers,
+            { strict: false },
+          ),
+        },
+        createdVisit: newVisit,
+      };
     }
 
     // Prepare new visitor data
@@ -303,6 +409,7 @@ export class VisitorService {
       consentToContact:
         consentToContact === "true" || consentToContact === true,
       membershipWish: membershipWish === "true" || membershipWish === true,
+      responsibleMembers,
       is_member: false,
     };
 
@@ -316,7 +423,16 @@ export class VisitorService {
       eventId: event_id,
     });
 
-    return { visitor: createdVisitor, createdVisit: newVisit };
+    return {
+      visitor: {
+        ...createdVisitor,
+        responsibleMembers: parseResponsibleMemberIds(
+          createdVisitor.responsibleMembers,
+          { strict: false },
+        ),
+      },
+      createdVisit: newVisit,
+    };
   }
 
   private getMonthRange(month: string) {
