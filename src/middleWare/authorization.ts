@@ -416,87 +416,187 @@ export class Permissions {
     return next();
   };
 
-  can_view_visitors_scoped = async (
-    req: Request,
-    res: Response,
-    next: NextFunction,
-  ) => {
-    const errorMessage = "Not authorized to view visitors";
-    const context = await this.getAccessContext(req, res, errorMessage);
-    if (!context) return;
+  private getExplicitVisitorId(req: Request | any) {
+    return (
+      toPositiveInt(req.body?.visitorId) ||
+      toPositiveInt(req.body?.visitor_id) ||
+      toPositiveInt(req.query?.visitorId) ||
+      toPositiveInt(req.query?.visitor_id) ||
+      toPositiveInt(req.params?.visitorId) ||
+      toPositiveInt(req.params?.visitor_id)
+    );
+  }
 
-    const canViewAll =
-      context.isPrivilegedUser &&
-      hasActionPermission(context.permissions, "Visitors", "view");
-    const visitorId =
+  private getResourceId(req: Request | any) {
+    return (
       toPositiveInt(req.query?.id) ||
       toPositiveInt(req.params?.id) ||
-      toPositiveInt(req.body?.id);
+      toPositiveInt(req.body?.id)
+    );
+  }
 
-    if (canViewAll) {
-      (req as any).visitorScope = { mode: "all" };
-      return next();
+  private async resolveVisitorIdFromResourceId(
+    resource: "visitor" | "visit" | "follow_up" | "prayer_request",
+    resourceId: number,
+  ) {
+    if (resource === "visitor") {
+      return resourceId;
     }
 
-    if (!visitorId) {
+    if (resource === "visit") {
+      const visit = await prisma.visit.findUnique({
+        where: { id: resourceId },
+        select: { visitorId: true },
+      });
+      return toPositiveInt(visit?.visitorId);
+    }
+
+    if (resource === "follow_up") {
+      const followUp = await prisma.follow_up.findUnique({
+        where: { id: resourceId },
+        select: { visitorId: true },
+      });
+      return toPositiveInt(followUp?.visitorId);
+    }
+
+    const prayerRequest = await prisma.prayer_request.findUnique({
+      where: { id: resourceId },
+      select: { visitorId: true },
+    });
+    return toPositiveInt(prayerRequest?.visitorId);
+  }
+
+  private async resolveVisitorTargetId(
+    req: Request,
+    options: {
+      resource: "visitor" | "visit" | "follow_up" | "prayer_request";
+      queryIdIsVisitorId?: boolean;
+    },
+  ) {
+    const explicitVisitorId = this.getExplicitVisitorId(req);
+    if (explicitVisitorId) {
+      return explicitVisitorId;
+    }
+
+    if (options.queryIdIsVisitorId) {
+      const queryVisitorId =
+        toPositiveInt(req.query?.id) || toPositiveInt(req.params?.id);
+      if (queryVisitorId) {
+        return queryVisitorId;
+      }
+    }
+
+    const resourceId = this.getResourceId(req);
+    if (!resourceId) {
+      return null;
+    }
+
+    return this.resolveVisitorIdFromResourceId(options.resource, resourceId);
+  }
+
+  private visitorScopedPermission = (
+    action: "view" | "manage",
+    errorMessage: string,
+    options: {
+      resource: "visitor" | "visit" | "follow_up" | "prayer_request";
+      allowResponsibleList?: boolean;
+      queryIdIsVisitorId?: boolean;
+    },
+  ) => {
+    return async (req: Request, res: Response, next: NextFunction) => {
+      const context = await this.getAccessContext(req, res, errorMessage);
+      if (!context) return;
+
+      const canAccessAll =
+        context.isPrivilegedUser &&
+        hasActionPermission(context.permissions, "Visitors", action);
+      const visitorId = await this.resolveVisitorTargetId(req, {
+        resource: options.resource,
+        queryIdIsVisitorId: options.queryIdIsVisitorId,
+      });
+
+      if (canAccessAll) {
+        (req as any).visitorScope = { mode: "all" };
+        return next();
+      }
+
+      if (!visitorId) {
+        if (action === "view" && options.allowResponsibleList) {
+          (req as any).visitorScope = {
+            mode: "responsible",
+            memberId: context.userId,
+          };
+          return next();
+        }
+        return this.unauthorized(res, errorMessage);
+      }
+
+      const visitor = await prisma.visitor.findUnique({
+        where: { id: visitorId },
+        select: { id: true, responsibleMembers: true },
+      });
+      if (!visitor) return next();
+
+      const responsibleMembers = parseResponsibleMembers(visitor.responsibleMembers);
+      if (!responsibleMembers.includes(context.userId)) {
+        return this.unauthorized(res, errorMessage);
+      }
+
       (req as any).visitorScope = {
         mode: "responsible",
         memberId: context.userId,
       };
       return next();
-    }
-
-    const visitor = await prisma.visitor.findUnique({
-      where: { id: visitorId },
-      select: { id: true, responsibleMembers: true },
-    });
-    if (!visitor) return next();
-
-    const responsibleMembers = parseResponsibleMembers(visitor.responsibleMembers);
-    if (!responsibleMembers.includes(context.userId)) {
-      return this.unauthorized(res, errorMessage);
-    }
-
-    (req as any).visitorScope = {
-      mode: "responsible",
-      memberId: context.userId,
     };
-    return next();
   };
 
-  can_manage_visitors_scoped = async (
-    req: Request,
-    res: Response,
-    next: NextFunction,
-  ) => {
-    const errorMessage = "Not authorized to update visitors";
-    const context = await this.getAccessContext(req, res, errorMessage);
-    if (!context) return;
+  can_view_visitors_scoped = this.visitorScopedPermission(
+    "view",
+    "Not authorized to view visitors",
+    { resource: "visitor", allowResponsibleList: true },
+  );
 
-    const canManageAll =
-      context.isPrivilegedUser &&
-      hasActionPermission(context.permissions, "Visitors", "manage");
-    const visitorId =
-      toPositiveInt(req.query?.id) ||
-      toPositiveInt(req.params?.id) ||
-      toPositiveInt(req.body?.id);
+  can_manage_visitors_scoped = this.visitorScopedPermission(
+    "manage",
+    "Not authorized to update visitors",
+    { resource: "visitor" },
+  );
 
-    if (canManageAll) return next();
-    if (!visitorId) return this.unauthorized(res, errorMessage);
+  can_view_visitor_visits_scoped = this.visitorScopedPermission(
+    "view",
+    "Not authorized to view visits",
+    { resource: "visit", allowResponsibleList: true },
+  );
 
-    const visitor = await prisma.visitor.findUnique({
-      where: { id: visitorId },
-      select: { id: true, responsibleMembers: true },
-    });
-    if (!visitor) return next();
+  can_manage_visitor_visits_scoped = this.visitorScopedPermission(
+    "manage",
+    "Not authorized to update visits",
+    { resource: "visit" },
+  );
 
-    const responsibleMembers = parseResponsibleMembers(visitor.responsibleMembers);
-    if (!responsibleMembers.includes(context.userId)) {
-      return this.unauthorized(res, errorMessage);
-    }
+  can_view_visitor_followups_scoped = this.visitorScopedPermission(
+    "view",
+    "Not authorized to view follow ups",
+    { resource: "follow_up", allowResponsibleList: true },
+  );
 
-    return next();
-  };
+  can_manage_visitor_followups_scoped = this.visitorScopedPermission(
+    "manage",
+    "Not authorized to update follow ups",
+    { resource: "follow_up" },
+  );
+
+  can_view_visitor_prayer_requests_scoped = this.visitorScopedPermission(
+    "view",
+    "Not authorized to view prayer requests",
+    { resource: "prayer_request", allowResponsibleList: true },
+  );
+
+  can_manage_visitor_prayer_requests_scoped = this.visitorScopedPermission(
+    "manage",
+    "Not authorized to update prayer requests",
+    { resource: "prayer_request" },
+  );
 
   can_delete_visitors_scoped = this.checkPermission(
     "Visitors",

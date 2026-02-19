@@ -29,7 +29,8 @@ export class FollowUPController {
 
   async getAllFollowUps(req: Request, res: Response) {
     try {
-      const follows = await follow_up.getAllFollowUps();
+      const visitorScope = (req as any).visitorScope;
+      const follows = await follow_up.getAllFollowUps(visitorScope);
       return res.status(200).json({ data: follows });
     } catch (error: any) {
       return res

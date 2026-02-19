@@ -1,5 +1,25 @@
 import { prisma } from "../../Models/context";
 
+const toPositiveInt = (value: any) => {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return null;
+  }
+  return parsed;
+};
+
+const parseResponsibleMembers = (responsibleMembers: any): number[] => {
+  if (!Array.isArray(responsibleMembers)) {
+    return [];
+  }
+
+  const ids = responsibleMembers
+    .map((memberId) => toPositiveInt(memberId))
+    .filter((memberId): memberId is number => Boolean(memberId));
+
+  return Array.from(new Set(ids));
+};
+
 export class FollowUpService {
   async createFollowUp(data: any) {
     const followUpData = {
@@ -13,8 +33,37 @@ export class FollowUpService {
     return await prisma.follow_up.create({ data: followUpData });
   }
 
-  async getAllFollowUps() {
-    return await prisma.follow_up.findMany();
+  async getAllFollowUps(scope?: {
+    mode?: "all" | "responsible";
+    memberId?: number;
+  }) {
+    const shouldScopeByResponsibleMember =
+      scope?.mode === "responsible" &&
+      Number.isInteger(Number(scope?.memberId)) &&
+      Number(scope?.memberId) > 0;
+    const scopedResponsibleMemberId = shouldScopeByResponsibleMember
+      ? Number(scope?.memberId)
+      : null;
+
+    const followUps = await prisma.follow_up.findMany({
+      include: {
+        visitor: {
+          select: {
+            responsibleMembers: true,
+          },
+        },
+      },
+    });
+
+    const filteredFollowUps = shouldScopeByResponsibleMember
+      ? followUps.filter((followUp) =>
+          parseResponsibleMembers(followUp.visitor?.responsibleMembers).includes(
+            scopedResponsibleMemberId as number,
+          ),
+        )
+      : followUps;
+
+    return filteredFollowUps.map(({ visitor, ...followUp }) => followUp);
   }
 
   async getFollowUpById(id: number) {
