@@ -11,6 +11,12 @@ export class VisitorController {
         .status(201)
         .json({ message: "Visitor Added", data: newVisitor });
     } catch (error: any) {
+      if (String(error?.message || "").includes("responsibleMembers")) {
+        return res
+          .status(400)
+          .json({ message: "Error creating visitor", error: error.message });
+      }
+
       return res
         .status(500)
         .json({ message: "Error creating visitor", error: error.message });
@@ -56,6 +62,12 @@ export class VisitorController {
         .status(200)
         .json({ message: "Visitor updated", data: updatedProgram });
     } catch (error: any) {
+      if (String(error?.message || "").includes("responsibleMembers")) {
+        return res
+          .status(400)
+          .json({ message: "Error updating visitor", error: error.message });
+      }
+
       return res
         .status(500)
         .json({ message: "Error updating visitor", error: error.message });
