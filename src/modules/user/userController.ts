@@ -1073,6 +1073,10 @@ export const ListUsers = async (req: Request, res: Response) => {
   const pageNum = parseInt(page as string, 10);
   const pageSize = parseInt(take as string, 10);
   const skip = (pageNum - 1) * pageSize;
+  const memberScope = (req as any).memberScope;
+  const excludedMemberIds: number[] = Array.isArray(memberScope?.exclusions)
+    ? memberScope.exclusions
+    : [];
 
   try {
     const departments = await prisma.department.findMany({
@@ -1092,6 +1096,9 @@ export const ListUsers = async (req: Request, res: Response) => {
     if (membership_type) whereFilter.membership_type = membership_type;
     if (typeof name === "string" && name.trim()) {
       whereFilter.name = { contains: name.trim() };
+    }
+    if (excludedMemberIds.length > 0) {
+      whereFilter.id = { notIn: excludedMemberIds };
     }
 
     const total = await prisma.user.count({ where: whereFilter });
@@ -1167,10 +1174,22 @@ export const ListUsers = async (req: Request, res: Response) => {
 };
 export const ListUsersLight = async (req: Request, res: Response) => {
   try {
+    const memberScope = (req as any).memberScope;
+    const excludedMemberIds: number[] = Array.isArray(memberScope?.exclusions)
+      ? memberScope.exclusions
+      : [];
     const users = await prisma.user.findMany({
       orderBy: {
         name: "asc",
       },
+      where:
+        excludedMemberIds.length > 0
+          ? {
+              id: {
+                notIn: excludedMemberIds,
+              },
+            }
+          : undefined,
       select: {
         id: true,
         name: true,
@@ -1197,6 +1216,10 @@ export const filterUsersInfo = async (req: Request, res: Response) => {
   } = req.query;
 
   try {
+    const memberScope = (req as any).memberScope;
+    const excludedMemberIds: number[] = Array.isArray(memberScope?.exclusions)
+      ? memberScope.exclusions
+      : [];
     // Convert pagination params to numbers
     const pageNum = parseInt(page as string, 10) || 1;
     const limitNum = parseInt(take as string, 10) || 10;
@@ -1217,6 +1240,11 @@ export const filterUsersInfo = async (req: Request, res: Response) => {
 
     if (ministry_worker !== undefined) {
       filters.is_user = ministry_worker === "true";
+    }
+    if (excludedMemberIds.length > 0) {
+      filters.id = {
+        notIn: excludedMemberIds,
+      };
     }
 
     // Fetch total count for pagination info
@@ -1257,6 +1285,16 @@ export const filterUsersInfo = async (req: Request, res: Response) => {
 
 export const getUser = async (req: Request, res: Response) => {
   const { user_id } = req.query;
+  const fallbackUserId = Number((req as any).user?.id);
+  const resolvedUserId =
+    Number.isInteger(Number(user_id)) && Number(user_id) > 0
+      ? Number(user_id)
+      : Number.isInteger(fallbackUserId) && fallbackUserId > 0
+        ? fallbackUserId
+        : null;
+  if (!resolvedUserId) {
+    return res.status(400).json({ message: "Invalid or missing user_id" });
+  }
 
   const siblingsKeywords = [
     "sibling",
@@ -1272,7 +1310,7 @@ export const getUser = async (req: Request, res: Response) => {
 
   try {
     const response: any = await prisma.user.findUnique({
-      where: { id: Number(user_id) },
+      where: { id: resolvedUserId },
 
       include: {
         user_info: {

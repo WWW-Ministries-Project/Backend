@@ -33,13 +33,25 @@ dotenv.config();
 
 export const userRouter = Router();
 
-userRouter.get("/get-user", getUser);
+userRouter.get("/get-user", [protect, permissions.can_view_member_details], getUser);
 
-userRouter.get("/list-users", ListUsers);
+userRouter.get(
+  "/list-users",
+  [protect, permissions.can_view_member_details],
+  ListUsers,
+);
 
-userRouter.get("/list-users-light", ListUsersLight);
+userRouter.get(
+  "/list-users-light",
+  [protect, permissions.can_view_member_details],
+  ListUsersLight,
+);
 
-userRouter.get("/search-users", filterUsersInfo);
+userRouter.get(
+  "/search-users",
+  [protect, permissions.can_view_member_details],
+  filterUsersInfo,
+);
 
 userRouter.get("/stats-users", [protect], statsUsers);
 
@@ -56,23 +68,23 @@ userRouter.post("/login", login);
 userRouter.post("/register", registerUser);
 userRouter.put(
   "/update-user",
-  [protect, permissions.can_Manage_Members],
+  [protect, permissions.can_manage_member_details],
   updateUser,
 );
 
 userRouter.put(
   "/update-user-status",
-  [protect, permissions.can_Manage_Members],
+  [protect, permissions.can_manage_member_details],
   updateUserSatus,
 );
 userRouter.delete(
   "/delete-user",
-  [protect, permissions.can_delete_users],
+  [protect, permissions.can_delete_member_details],
   deleteUser,
 );
 userRouter.put(
   "/activate-account",
-  [protect, permissions.can_Manage_Members],
+  [protect, permissions.can_manage_member_details],
   activateAccount,
 );
 userRouter.get("/get-user-email", getUserByEmailPhone);
@@ -81,13 +93,13 @@ userRouter.get("/", landingPage);
 
 userRouter.put(
   "/update-member-status",
-  [protect, permissions.can_Manage_Members],
+  [protect, permissions.can_manage_member_details],
   convertMemeberToConfirmedMember,
 );
 
 userRouter.put(
   "/link-spouses",
-  [protect, permissions.can_Manage_Members],
+  [protect, permissions.can_manage_member_details],
   linkSpouses,
 );
 
@@ -95,7 +107,7 @@ userRouter.get("/get-user-family", getUserFamily);
 
 userRouter.put(
   "/link-children",
-  [protect, permissions.can_Manage_Members],
+  [protect, permissions.can_manage_member_details],
   linkChildren,
 );
 
@@ -103,7 +115,7 @@ userRouter.get("/current-user", currentuser);
 
 userRouter.get(
   "/set-default-passwords",
-  [protect, permissions.can_delete_users],
+  [protect, permissions.can_delete_member_details],
   updateUserPasswordToDefault,
 );
 

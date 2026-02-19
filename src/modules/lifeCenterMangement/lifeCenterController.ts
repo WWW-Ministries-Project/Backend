@@ -6,15 +6,18 @@ const lifeCenterService = new LifeCenterService();
 export class LifeCenterController {
   async mylifecenter(req: Request, res: Response) {
     try {
-      const { user_id } = req.query;
-
-      // Validate ID
-      if (!user_id || isNaN(parseInt(user_id as string))) {
+      const authenticatedUserId = Number((req as any).user?.id);
+      const requestedUserId = Number(req.query?.user_id);
+      const userId =
+        Number.isInteger(authenticatedUserId) && authenticatedUserId > 0
+          ? authenticatedUserId
+          : requestedUserId;
+      if (!Number.isInteger(userId) || userId <= 0) {
         return res.status(400).json({ message: "Invalid or missing user_id" });
       }
 
       const lifeCenter = await lifeCenterService.getMyLifeCenter(
-        Number(user_id),
+        Number(userId),
       );
 
       if (!lifeCenter) {
@@ -66,11 +69,18 @@ export class LifeCenterController {
 
   async getAllLifeCenters(req: Request, res: Response) {
     try {
-      const { id } = req.query;
+      const lifeCenterScope = (req as any).lifeCenterScope;
       const lifeCenters = await lifeCenterService.getAllLifeCenters();
+      const scopedLifeCenters =
+        lifeCenterScope?.mode === "member" &&
+        Array.isArray(lifeCenterScope?.lifeCenterIds)
+          ? lifeCenters.filter((lifeCenter) =>
+              lifeCenterScope.lifeCenterIds.includes(lifeCenter.id),
+            )
+          : lifeCenters;
       return res
         .status(200)
-        .json({ message: "Operation sucessful", data: lifeCenters });
+        .json({ message: "Operation sucessful", data: scopedLifeCenters });
     } catch (error: any) {
       return res
         .status(500)
@@ -81,8 +91,17 @@ export class LifeCenterController {
   async getLifeCenterById(req: Request, res: Response) {
     try {
       const { id } = req.query;
+      const parsedId = Number(id);
+      const lifeCenterScope = (req as any).lifeCenterScope;
+      if (
+        lifeCenterScope?.mode === "member" &&
+        Array.isArray(lifeCenterScope?.lifeCenterIds) &&
+        !lifeCenterScope.lifeCenterIds.includes(parsedId)
+      ) {
+        return res.status(401).json({ message: "Not authorized to view life center" });
+      }
 
-      const lifeCenter = await lifeCenterService.getLifeCenterById(Number(id));
+      const lifeCenter = await lifeCenterService.getLifeCenterById(parsedId);
       if (!lifeCenter)
         return res.status(404).json({ message: "life center not found" });
 
@@ -218,9 +237,18 @@ export class LifeCenterController {
   async getAllLifeCenterMembers(req: Request, res: Response) {
     try {
       const { id } = req.query;
+      const parsedId = Number(id);
+      const lifeCenterScope = (req as any).lifeCenterScope;
+      if (
+        lifeCenterScope?.mode === "member" &&
+        Array.isArray(lifeCenterScope?.lifeCenterIds) &&
+        !lifeCenterScope.lifeCenterIds.includes(parsedId)
+      ) {
+        return res.status(401).json({ message: "Not authorized to view members" });
+      }
 
       const members = await lifeCenterService.getAllLifeCenterMembers(
-        Number(id),
+        parsedId,
       );
 
       res.status(201).json({ message: "Operation successfull", data: members });
@@ -232,6 +260,7 @@ export class LifeCenterController {
   async getSouls(req: Request, res: Response) {
     try {
       const { lifeCenterId, wonById } = req.query;
+      const lifeCenterScope = (req as any).lifeCenterScope;
 
       const filter: {
         lifeCenterId?: number;
@@ -241,9 +270,31 @@ export class LifeCenterController {
       if (lifeCenterId) filter.lifeCenterId = Number(lifeCenterId);
       if (wonById) filter.wonById = Number(wonById);
 
-      const souls = await lifeCenterService.getSouls(filter);
+      if (
+        lifeCenterScope?.mode === "member" &&
+        Array.isArray(lifeCenterScope?.lifeCenterIds)
+      ) {
+        const requestedLifeCenterId = filter.lifeCenterId;
+        if (
+          requestedLifeCenterId &&
+          !lifeCenterScope.lifeCenterIds.includes(requestedLifeCenterId)
+        ) {
+          return res
+            .status(401)
+            .json({ message: "Not authorized to view soul won data" });
+        }
+      }
 
-      res.status(200).json({ message: "Operation successful", data: souls });
+      const souls = await lifeCenterService.getSouls(filter);
+      const scopedSouls =
+        lifeCenterScope?.mode === "member" &&
+        Array.isArray(lifeCenterScope?.lifeCenterIds)
+          ? souls.filter((soul: any) =>
+              lifeCenterScope.lifeCenterIds.includes(soul.lifeCenterId),
+            )
+          : souls;
+
+      res.status(200).json({ message: "Operation successful", data: scopedSouls });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -252,8 +303,18 @@ export class LifeCenterController {
   async getSoul(req: Request, res: Response) {
     try {
       const { id } = req.query;
+      const lifeCenterScope = (req as any).lifeCenterScope;
 
       const soul = await lifeCenterService.getSoul(Number(id));
+      if (
+        lifeCenterScope?.mode === "member" &&
+        Array.isArray(lifeCenterScope?.lifeCenterIds) &&
+        !lifeCenterScope.lifeCenterIds.includes(Number((soul as any)?.lifeCenterId))
+      ) {
+        return res
+          .status(401)
+          .json({ message: "Not authorized to view soul won data" });
+      }
 
       const returningSoul = {
         ...soul,
@@ -285,6 +346,7 @@ export class LifeCenterController {
 
   async createSoulWon(req: Request, res: Response) {
     try {
+      const lifeCenterScope = (req as any).lifeCenterScope;
       const {
         title,
         first_name,
@@ -298,6 +360,15 @@ export class LifeCenterController {
         wonById,
         lifeCenterId,
       } = req.body;
+      if (
+        lifeCenterScope?.mode === "member" &&
+        Array.isArray(lifeCenterScope?.lifeCenterIds) &&
+        !lifeCenterScope.lifeCenterIds.includes(Number(lifeCenterId))
+      ) {
+        return res
+          .status(401)
+          .json({ message: "Not authorized to manage this life center" });
+      }
 
       const newSoul = await lifeCenterService.createSoulWon({
         title,
@@ -344,6 +415,7 @@ export class LifeCenterController {
   }
   async updateSoulWon(req: Request, res: Response) {
     try {
+      const lifeCenterScope = (req as any).lifeCenterScope;
       const { id } = req.query;
       if (!id) return res.status(400).json({ message: "Missing soul ID" });
 
@@ -360,6 +432,31 @@ export class LifeCenterController {
         wonById,
         lifeCenterId,
       } = req.body;
+
+      if (
+        lifeCenterScope?.mode === "member" &&
+        Array.isArray(lifeCenterScope?.lifeCenterIds)
+      ) {
+        const targetLifeCenterId = Number(lifeCenterId);
+        if (Number.isInteger(targetLifeCenterId) && targetLifeCenterId > 0) {
+          if (!lifeCenterScope.lifeCenterIds.includes(targetLifeCenterId)) {
+            return res
+              .status(401)
+              .json({ message: "Not authorized to manage this life center" });
+          }
+        } else {
+          const existingSoul = await lifeCenterService.getSoul(Number(id));
+          if (
+            !lifeCenterScope.lifeCenterIds.includes(
+              Number((existingSoul as any)?.lifeCenterId),
+            )
+          ) {
+            return res
+              .status(401)
+              .json({ message: "Not authorized to manage this life center" });
+          }
+        }
+      }
 
       const updated = await lifeCenterService.updateSoulWon(Number(id), {
         title,

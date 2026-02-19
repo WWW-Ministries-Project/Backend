@@ -47,6 +47,12 @@ type RequesterDetails = {
   position: string | null;
 };
 
+type AppointmentScope = {
+  mode?: "all" | "own";
+  userId?: number;
+  excludedAttendeeIds?: number[];
+};
+
 function normalizeWeekDay(value: string) {
   const normalized = value.trim().toLowerCase();
   if (!WEEK_DAYS.includes(normalized)) {
@@ -631,9 +637,24 @@ export const AppointmentService = {
   },
 
   // FETCH ALL AVAILABILITY (OPTIONAL STAFF FILTER)
-  async getAllAvailability(userId?: number) {
+  async getAllAvailability(userId?: number, scope?: AppointmentScope) {
+    const excludedAttendeeIds =
+      scope?.mode === "all" ? scope?.excludedAttendeeIds || [] : [];
+    const where: any = {};
+
+    if (scope?.mode === "own" && scope?.userId) {
+      where.userId = scope.userId;
+    } else if (userId !== undefined) {
+      if (excludedAttendeeIds.includes(userId)) {
+        return [];
+      }
+      where.userId = userId;
+    } else if (excludedAttendeeIds.length > 0) {
+      where.userId = { notIn: excludedAttendeeIds };
+    }
+
     const availability = await prisma.availability.findMany({
-      where: userId ? { userId } : undefined,
+      where: Object.keys(where).length ? where : undefined,
       include: availabilityInclude,
       orderBy: [{ userId: "asc" }, { day: "asc" }, { startTime: "asc" }],
     });
@@ -782,8 +803,18 @@ export const AppointmentService = {
   },
 
   // FETCH AVAILABILITY WITH SLOT/SESSION STATUS TAGS (ALL DAYS)
-  async getAvailabilityWithSessionStatus() {
+  async getAvailabilityWithSessionStatus(scope?: AppointmentScope) {
+    const excludedAttendeeIds =
+      scope?.mode === "all" ? scope?.excludedAttendeeIds || [] : [];
+    const availabilityWhere: any = {};
+    if (scope?.mode === "own" && scope?.userId) {
+      availabilityWhere.userId = scope.userId;
+    } else if (excludedAttendeeIds.length > 0) {
+      availabilityWhere.userId = { notIn: excludedAttendeeIds };
+    }
+
     const allAvailabilities = await prisma.availability.findMany({
+      where: Object.keys(availabilityWhere).length ? availabilityWhere : undefined,
       include: availabilityInclude,
       orderBy: [{ userId: "asc" }, { day: "asc" }, { startTime: "asc" }],
     });
@@ -980,38 +1011,61 @@ export const AppointmentService = {
   },
 
   // FETCH ALL APPOINTMENT BOOKINGS
-  async getAllBookings(filters: {
-    staffId?: number;
-    requesterId?: number;
-    email?: string;
-    status?: string;
-    date?: string;
-  }) {
-    const where: any = {};
+  async getAllBookings(
+    filters: {
+      staffId?: number;
+      requesterId?: number;
+      email?: string;
+      status?: string;
+      date?: string;
+    },
+    scope?: AppointmentScope,
+  ) {
+    const whereAnd: any[] = [];
 
     if (filters.staffId !== undefined) {
-      where.userId = filters.staffId;
+      whereAnd.push({ userId: filters.staffId });
     }
 
     if (filters.requesterId !== undefined) {
-      where.requesterId = filters.requesterId;
+      whereAnd.push({ requesterId: filters.requesterId });
     }
 
     if (filters.email) {
-      where.email = filters.email.trim();
+      whereAnd.push({ email: filters.email.trim() });
     }
 
     if (filters.status) {
-      where.status = normalizeStatus(filters.status);
+      whereAnd.push({ status: normalizeStatus(filters.status) });
     }
 
     if (filters.date) {
       const { dayStart, dayEnd } = parseDateInput(filters.date);
-      where.date = {
-        gte: dayStart,
-        lte: dayEnd,
-      };
+      whereAnd.push({
+        date: {
+          gte: dayStart,
+          lte: dayEnd,
+        },
+      });
     }
+
+    if (scope?.mode === "own" && scope?.userId) {
+      whereAnd.push({
+        OR: [{ requesterId: scope.userId }, { userId: scope.userId }],
+      });
+    } else if (
+      scope?.mode === "all" &&
+      Array.isArray(scope?.excludedAttendeeIds) &&
+      scope.excludedAttendeeIds.length > 0
+    ) {
+      whereAnd.push({
+        userId: {
+          notIn: scope.excludedAttendeeIds,
+        },
+      });
+    }
+
+    const where = whereAnd.length > 0 ? { AND: whereAnd } : undefined;
 
     const bookings = await prisma.appointment.findMany({
       where,
@@ -1140,25 +1194,13 @@ export const AppointmentService = {
   },
 
   // FETCH BY STAFF
-  async getByStaff(userId: number) {
-    const bookings = await prisma.appointment.findMany({
-      where: { userId },
-      include: appointmentInclude,
-      orderBy: [{ date: "asc" }, { startTime: "asc" }],
-    });
-
-    return mapAppointmentsOutput(bookings);
+  async getByStaff(userId: number, scope?: AppointmentScope) {
+    return AppointmentService.getAllBookings({ staffId: userId }, scope);
   },
 
   // FETCH BY CLIENT
-  async getByClientEmail(email?: string) {
-    const bookings = await prisma.appointment.findMany({
-      where: { email },
-      include: appointmentInclude,
-      orderBy: [{ date: "asc" }, { startTime: "asc" }],
-    });
-
-    return mapAppointmentsOutput(bookings);
+  async getByClientEmail(email?: string, scope?: AppointmentScope) {
+    return AppointmentService.getAllBookings({ email }, scope);
   },
 
   // UPDATE STATUS

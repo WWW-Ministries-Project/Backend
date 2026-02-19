@@ -20,6 +20,17 @@ const REQUIRED_PERMISSION_KEYS = [
   "Life Center",
 ];
 
+const OPTIONAL_PERMISSION_KEYS = [
+  "Visitors",
+  "Appointments",
+  "Church_Attendance",
+  "Theme",
+  "Financials",
+  "Marketplace",
+  "School_of_ministry",
+  "Settings",
+];
+
 const PERMISSION_KEY_NORMALIZER: Record<string, string> = {
   Members: "Members",
   Departments: "Departments",
@@ -32,6 +43,56 @@ const PERMISSION_KEY_NORMALIZER: Record<string, string> = {
   Requisitions: "Requisition",
   Program: "Program",
   "Life Center": "Life Center",
+  Visitors: "Visitors",
+  Appointments: "Appointments",
+  "Church Attendance": "Church_Attendance",
+  Church_Attendance: "Church_Attendance",
+  Theme: "Theme",
+  Financials: "Financials",
+  Marketplace: "Marketplace",
+  School_of_ministry: "School_of_ministry",
+  "School of ministry": "School_of_ministry",
+  Settings: "Settings",
+};
+
+const ALLOWED_PERMISSION_KEYS = [
+  ...REQUIRED_PERMISSION_KEYS,
+  ...OPTIONAL_PERMISSION_KEYS,
+];
+
+const normalizeExclusions = (payload: any) => {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return null;
+  }
+
+  const normalized: Record<string, number[]> = {};
+  for (const [rawKey, rawValue] of Object.entries(payload)) {
+    const normalizedKey =
+      PERMISSION_KEY_NORMALIZER[String(rawKey).trim()] || String(rawKey).trim();
+    if (!ALLOWED_PERMISSION_KEYS.includes(normalizedKey)) {
+      continue;
+    }
+
+    if (!Array.isArray(rawValue)) {
+      return null;
+    }
+
+    const ids = Array.from(
+      new Set(
+        rawValue
+          .map((value) => Number(value))
+          .filter((value) => Number.isInteger(value) && value > 0),
+      ),
+    );
+
+    if (ids.length !== rawValue.length) {
+      return null;
+    }
+
+    normalized[normalizedKey] = ids;
+  }
+
+  return normalized;
 };
 
 const normalizePermissionPayload = (payload: any) => {
@@ -39,12 +100,34 @@ const normalizePermissionPayload = (payload: any) => {
     return null;
   }
 
-  const normalized: Record<string, string> = {};
+  const normalized: Record<string, any> = {};
+  const exclusionPayload =
+    payload?.Exclusions ||
+    payload?.exclusions ||
+    payload?.exclusion_list ||
+    payload?.exclusionList;
+
+  if (exclusionPayload !== undefined) {
+    const normalizedExclusions = normalizeExclusions(exclusionPayload);
+    if (!normalizedExclusions) {
+      return null;
+    }
+    normalized.Exclusions = normalizedExclusions;
+  }
+
   for (const [rawKey, rawValue] of Object.entries(payload)) {
+    if (
+      ["Exclusions", "exclusions", "exclusion_list", "exclusionList"].includes(
+        String(rawKey),
+      )
+    ) {
+      continue;
+    }
+
     const normalizedKey =
       PERMISSION_KEY_NORMALIZER[String(rawKey).trim()] || String(rawKey).trim();
 
-    if (!REQUIRED_PERMISSION_KEYS.includes(normalizedKey)) {
+    if (!ALLOWED_PERMISSION_KEYS.includes(normalizedKey)) {
       continue;
     }
 

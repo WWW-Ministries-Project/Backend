@@ -15,14 +15,34 @@ const followUpController = new FollowUPController();
 const prayerRequestController = new PrayerRequestController();
 
 //visitor routes
-visitorRouter.post("/visitors", visitorController.createVisitor);
-visitorRouter.get("/visitors", visitorController.getAllVisitors);
-visitorRouter.get("/visitor", visitorController.getVisitorsById);
-visitorRouter.put("/visitor", visitorController.updateVisitor);
-visitorRouter.delete("/visitor", visitorController.deleteVisitor);
+visitorRouter.post(
+  "/visitors",
+  [protect, permissions.can_manage_visitors_scoped],
+  visitorController.createVisitor,
+);
+visitorRouter.get(
+  "/visitors",
+  [protect, permissions.can_view_visitors_scoped],
+  visitorController.getAllVisitors,
+);
+visitorRouter.get(
+  "/visitor",
+  [protect, permissions.can_view_visitors_scoped],
+  visitorController.getVisitorsById,
+);
+visitorRouter.put(
+  "/visitor",
+  [protect, permissions.can_manage_visitors_scoped],
+  visitorController.updateVisitor,
+);
+visitorRouter.delete(
+  "/visitor",
+  [protect, permissions.can_delete_visitors_scoped],
+  visitorController.deleteVisitor,
+);
 visitorRouter.post(
   "/convert-to-member",
-  [protect, permissions.can_Manage_Members],
+  [protect, permissions.can_manage_member_details],
   visitorController.convertVisitorToMember,
 );
 
