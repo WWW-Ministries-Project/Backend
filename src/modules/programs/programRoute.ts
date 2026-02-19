@@ -114,5 +114,6 @@ programRouter.get("/topic", programController.getTopic);
 programRouter.get("/topics", programController.getAllTopics);
 
 programRouter.put("/complete-topic", programController.completeTopic);
+programRouter.put("/reorder-topics", programController.reorderTopics);
 
 export default programRouter;

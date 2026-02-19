@@ -3,6 +3,86 @@ import { ProgramService } from "./programService";
 
 const programService = new ProgramService();
 export class ProgramController {
+  async reorderTopics(req: Request, res: Response) {
+    try {
+      const { programId, topics } = req.body;
+
+      if (!Number.isInteger(programId) || programId <= 0) {
+        return res.status(400).json({
+          success: false,
+          message: "programId must be a positive integer",
+        });
+      }
+
+      if (!Array.isArray(topics) || topics.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "topics must be a non-empty array",
+        });
+      }
+
+      const hasInvalidTopicPayload = topics.some(
+        (topic: any) =>
+          !Number.isInteger(topic?.id) ||
+          topic.id <= 0 ||
+          !Number.isInteger(topic?.order_number) ||
+          topic.order_number <= 0,
+      );
+
+      if (hasInvalidTopicPayload) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Each topic must include a positive integer id and order_number",
+        });
+      }
+
+      const topicIds = topics.map((topic: any) => topic.id);
+      const orderNumbers = topics.map((topic: any) => topic.order_number);
+
+      if (new Set(topicIds).size !== topicIds.length) {
+        return res.status(400).json({
+          success: false,
+          message: "topics must not contain duplicate ids",
+        });
+      }
+
+      if (new Set(orderNumbers).size !== orderNumbers.length) {
+        return res.status(400).json({
+          success: false,
+          message: "topics must not contain duplicate order_number values",
+        });
+      }
+
+      const result = await programService.reorderTopics(programId, topics);
+
+      return res.status(200).json({
+        success: true,
+        data: result,
+      });
+    } catch (error: any) {
+      if (error?.message === "Program not found") {
+        return res.status(404).json({
+          success: false,
+          message: error.message,
+        });
+      }
+
+      if (error?.message?.startsWith("Topics not found in program:")) {
+        return res.status(400).json({
+          success: false,
+          message: error.message,
+        });
+      }
+
+      return res.status(500).json({
+        success: false,
+        message: "Error reordering topics",
+        error: error.message,
+      });
+    }
+  }
+
   async createProgram(req: Request, res: Response) {
     try {
       const newProgram = await programService.createProgram(req.body);
@@ -307,6 +387,26 @@ export class ProgramController {
   async submitMCQAssignment(req: Request, res: Response) {
     try {
       const { userId, programId, topicId, answers } = req.body;
+
+      if (
+        !Number.isInteger(Number(userId)) ||
+        Number(userId) <= 0 ||
+        !Number.isInteger(Number(programId)) ||
+        Number(programId) <= 0 ||
+        !Number.isInteger(Number(topicId)) ||
+        Number(topicId) <= 0
+      ) {
+        return res.status(400).json({
+          message: "userId, programId and topicId must be positive integers",
+        });
+      }
+
+      if (!answers || typeof answers !== "object" || Array.isArray(answers)) {
+        return res.status(400).json({
+          message: "answers must be a key-value object",
+        });
+      }
+
       const result = await programService.submitMCQAssignment(
         Number(userId),
         Number(programId),
@@ -317,6 +417,50 @@ export class ProgramController {
         .status(200)
         .json({ message: "MCQ Assignment submitted", data: result });
     } catch (error: any) {
+      const notFoundErrors = [
+        "No MCQ assignment found for this topic",
+        "User is not enrolled in this program",
+      ];
+
+      const badRequestErrors = [
+        "Topic does not belong to the provided program",
+        "Assignment questions are not configured",
+      ];
+
+      const forbiddenErrors = [
+        "Assignment has not been activated for your cohort",
+        "Assignment is not active for your cohort",
+        "Assignment due date has passed",
+      ];
+
+      if (notFoundErrors.includes(error?.message)) {
+        return res.status(404).json({
+          message: error.message,
+          error: error.message,
+        });
+      }
+
+      if (badRequestErrors.includes(error?.message)) {
+        return res.status(400).json({
+          message: error.message,
+          error: error.message,
+        });
+      }
+
+      if (forbiddenErrors.includes(error?.message)) {
+        return res.status(403).json({
+          message: error.message,
+          error: error.message,
+        });
+      }
+
+      if (error?.message?.startsWith("Maximum attempts of")) {
+        return res.status(409).json({
+          message: error.message,
+          error: error.message,
+        });
+      }
+
       return res.status(500).json({
         message: "Error submitting MCQ assignment",
         error: error.message,

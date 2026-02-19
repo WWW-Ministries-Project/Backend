@@ -3,6 +3,50 @@ import { prisma } from "../../Models/context";
 import { toCapitalizeEachWord } from "../../utils";
 
 export class ProgramService {
+  async reorderTopics(
+    programId: number,
+    topics: Array<{ id: number; order_number: number }>,
+  ) {
+    return prisma.$transaction(async (tx) => {
+      const program = await tx.program.findUnique({
+        where: { id: programId },
+        select: { id: true },
+      });
+
+      if (!program) {
+        throw new Error("Program not found");
+      }
+
+      const topicIds = topics.map((topic) => topic.id);
+
+      const existingTopics = await tx.topic.findMany({
+        where: {
+          id: { in: topicIds },
+          programId,
+        },
+        select: { id: true },
+      });
+
+      if (existingTopics.length !== topicIds.length) {
+        const existingTopicIds = new Set(existingTopics.map((topic) => topic.id));
+        const missingTopicIds = topicIds.filter((id) => !existingTopicIds.has(id));
+
+        throw new Error(
+          `Topics not found in program: ${missingTopicIds.join(", ")}`,
+        );
+      }
+
+      for (const topic of topics) {
+        await tx.topic.update({
+          where: { id: topic.id },
+          data: { order_number: topic.order_number },
+        });
+      }
+
+      return { programId, updatedCount: topics.length };
+    });
+  }
+
   async getAllProgramForMember(userId?: number) {
     const programs = await prisma.program.findMany({
       where: {
@@ -298,7 +342,8 @@ export class ProgramService {
     description: string,
     learningUnit: any,
   ) {
-    this.validateLearningUnit(learningUnit);
+    const normalizedLearningUnit = this.normalizeLearningUnit(learningUnit);
+    this.validateLearningUnit(normalizedLearningUnit);
 
     return prisma.$transaction(async (tx) => {
       const lastTopic = await tx.topic.findFirst({
@@ -321,9 +366,9 @@ export class ProgramService {
       await tx.learningUnit.create({
         data: {
           topicId: topic.id,
-          type: learningUnit.type,
-          maxAttempts: learningUnit.maxAttempts,
-          data: learningUnit.data,
+          type: normalizedLearningUnit.type,
+          maxAttempts: normalizedLearningUnit.maxAttempts,
+          data: normalizedLearningUnit.data,
         },
       });
 
@@ -358,7 +403,8 @@ export class ProgramService {
     description: string,
     learningUnit: any,
   ) {
-    this.validateLearningUnit(learningUnit);
+    const normalizedLearningUnit = this.normalizeLearningUnit(learningUnit);
+    this.validateLearningUnit(normalizedLearningUnit);
 
     return prisma.$transaction(async (tx) => {
       // 1️⃣ Update topic
@@ -374,19 +420,65 @@ export class ProgramService {
       await tx.learningUnit.upsert({
         where: { topicId: id },
         update: {
-          type: learningUnit.type,
-          data: learningUnit.data,
+          type: normalizedLearningUnit.type,
+          data: normalizedLearningUnit.data,
           version: { increment: 1 },
         },
         create: {
           topicId: id,
-          type: learningUnit.type,
-          data: learningUnit.data,
+          type: normalizedLearningUnit.type,
+          data: normalizedLearningUnit.data,
         },
       });
 
       return topic;
     });
+  }
+
+  private normalizeLearningUnit(learningUnit: any) {
+    if (!learningUnit || typeof learningUnit !== "object") {
+      return learningUnit;
+    }
+
+    const normalized = {
+      ...learningUnit,
+      data:
+        learningUnit.data && typeof learningUnit.data === "object"
+          ? { ...learningUnit.data }
+          : learningUnit.data,
+    };
+
+    if (
+      normalized.type === "video" &&
+      normalized.data &&
+      typeof normalized.data === "object" &&
+      !normalized.data.url &&
+      normalized.data.value
+    ) {
+      normalized.data.url = normalized.data.value;
+    }
+
+    if (
+      normalized.type === "live" &&
+      normalized.data &&
+      typeof normalized.data === "object" &&
+      !normalized.data.meetingLink &&
+      normalized.data.value
+    ) {
+      normalized.data.meetingLink = normalized.data.value;
+    }
+
+    if (
+      normalized.type === "in-person" &&
+      normalized.data &&
+      typeof normalized.data === "object" &&
+      !normalized.data.venue &&
+      normalized.data.value
+    ) {
+      normalized.data.venue = normalized.data.value;
+    }
+
+    return normalized;
   }
 
   async deleteTopic(topicId: number) {
@@ -508,6 +600,9 @@ export class ProgramService {
           },
         },
       },
+      orderBy: {
+        enrolledAt: "desc",
+      },
       include: {
         progress: true,
         course: {
@@ -542,9 +637,13 @@ export class ProgramService {
     }
 
     const program = enrollment.course.cohort.program;
+    const cohortId = enrollment.course.cohort.id;
 
     const topics = program.topics.map((topic) => {
-      const activation = topic.LearningUnit?.cohortAssignments[0] ?? null;
+      const activation =
+        topic.LearningUnit?.cohortAssignments.find(
+          (assignment) => assignment.cohortId === cohortId,
+        ) ?? null;
       const progress = enrollment.progress.find((p) => p.topicId === topic.id);
 
       return {
@@ -573,7 +672,7 @@ export class ProgramService {
               closedAt: activation.closedAt,
             }
           : {
-              isActive: true,
+              isActive: false,
               activatedAt: null,
               dueDate: null,
               closedAt: null,
@@ -729,13 +828,22 @@ export class ProgramService {
   ) {
     const learningUnit = await prisma.learningUnit.findUnique({
       where: { topicId },
+      include: {
+        topic: {
+          select: { programId: true },
+        },
+      },
     });
 
     if (!learningUnit || !learningUnit.type.startsWith("assignment")) {
       throw new Error("No MCQ assignment found for this topic");
     }
 
-    const enrollment = await prisma.enrollment.findFirst({
+    if (learningUnit.topic.programId !== programId) {
+      throw new Error("Topic does not belong to the provided program");
+    }
+
+    const enrollments = await prisma.enrollment.findMany({
       where: {
         user_id: userId,
         course: {
@@ -743,6 +851,9 @@ export class ProgramService {
             programId,
           },
         },
+      },
+      orderBy: {
+        enrolledAt: "desc",
       },
       include: {
         course: {
@@ -753,23 +864,53 @@ export class ProgramService {
       },
     });
 
-    if (!enrollment) {
+    if (enrollments.length === 0) {
       throw new Error("User is not enrolled in this program");
     }
 
-    const cohortAssignment = await prisma.cohort_assignment.findFirst({
+    const cohortIds = [...new Set(enrollments.map((item) => item.course.cohortId))];
+
+    const cohortAssignments = await prisma.cohort_assignment.findMany({
       where: {
-        cohortId: enrollment.course.cohortId,
+        cohortId: { in: cohortIds },
         learningUnitId: learningUnit.id,
-        isActive: true,
-        closedAt: null,
-        OR: [{ dueDate: null }, { dueDate: { gte: new Date() } }],
       },
+      orderBy: [{ activatedAt: "desc" }, { id: "desc" }],
     });
 
-    if (!cohortAssignment) {
+    if (cohortAssignments.length === 0) {
+      throw new Error("Assignment has not been activated for your cohort");
+    }
+
+    const now = new Date();
+
+    const activeAssignment = cohortAssignments.find(
+      (assignment) =>
+        assignment.isActive &&
+        assignment.closedAt === null &&
+        (!assignment.dueDate || assignment.dueDate >= now),
+    );
+
+    if (!activeAssignment) {
+      const hasOpenButExpiredAssignment = cohortAssignments.some(
+        (assignment) =>
+          assignment.isActive &&
+          assignment.closedAt === null &&
+          assignment.dueDate !== null &&
+          assignment.dueDate < now,
+      );
+
+      if (hasOpenButExpiredAssignment) {
+        throw new Error("Assignment due date has passed");
+      }
+
       throw new Error("Assignment is not active for your cohort");
     }
+
+    const enrollment =
+      enrollments.find(
+        (item) => item.course.cohortId === activeAssignment.cohortId,
+      ) ?? enrollments[0];
 
     const previousSubmissions = await prisma.assignment_submission.findMany({
       where: {
@@ -785,6 +926,10 @@ export class ProgramService {
     }
 
     const questions = (learningUnit?.data as any)?.questions as any[];
+    if (!Array.isArray(questions) || questions.length === 0) {
+      throw new Error("Assignment questions are not configured");
+    }
+
     let score = 0;
 
     for (const question of questions) {
@@ -800,7 +945,8 @@ export class ProgramService {
       data: {
         enrollmentId: enrollment.id,
         learningUnitId: learningUnit.id,
-        content: JSON.stringify(answers),
+        content: answers,
+        attempt: currentAttempt,
         status: "GRADED",
         score,
         gradedAt: new Date(),
