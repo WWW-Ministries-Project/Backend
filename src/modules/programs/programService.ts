@@ -600,6 +600,9 @@ export class ProgramService {
           },
         },
       },
+      orderBy: {
+        enrolledAt: "desc",
+      },
       include: {
         progress: true,
         course: {
@@ -634,9 +637,13 @@ export class ProgramService {
     }
 
     const program = enrollment.course.cohort.program;
+    const cohortId = enrollment.course.cohort.id;
 
     const topics = program.topics.map((topic) => {
-      const activation = topic.LearningUnit?.cohortAssignments[0] ?? null;
+      const activation =
+        topic.LearningUnit?.cohortAssignments.find(
+          (assignment) => assignment.cohortId === cohortId,
+        ) ?? null;
       const progress = enrollment.progress.find((p) => p.topicId === topic.id);
 
       return {
@@ -665,7 +672,7 @@ export class ProgramService {
               closedAt: activation.closedAt,
             }
           : {
-              isActive: true,
+              isActive: false,
               activatedAt: null,
               dueDate: null,
               closedAt: null,
@@ -821,13 +828,22 @@ export class ProgramService {
   ) {
     const learningUnit = await prisma.learningUnit.findUnique({
       where: { topicId },
+      include: {
+        topic: {
+          select: { programId: true },
+        },
+      },
     });
 
     if (!learningUnit || !learningUnit.type.startsWith("assignment")) {
       throw new Error("No MCQ assignment found for this topic");
     }
 
-    const enrollment = await prisma.enrollment.findFirst({
+    if (learningUnit.topic.programId !== programId) {
+      throw new Error("Topic does not belong to the provided program");
+    }
+
+    const enrollments = await prisma.enrollment.findMany({
       where: {
         user_id: userId,
         course: {
@@ -835,6 +851,9 @@ export class ProgramService {
             programId,
           },
         },
+      },
+      orderBy: {
+        enrolledAt: "desc",
       },
       include: {
         course: {
@@ -845,23 +864,53 @@ export class ProgramService {
       },
     });
 
-    if (!enrollment) {
+    if (enrollments.length === 0) {
       throw new Error("User is not enrolled in this program");
     }
 
-    const cohortAssignment = await prisma.cohort_assignment.findFirst({
+    const cohortIds = [...new Set(enrollments.map((item) => item.course.cohortId))];
+
+    const cohortAssignments = await prisma.cohort_assignment.findMany({
       where: {
-        cohortId: enrollment.course.cohortId,
+        cohortId: { in: cohortIds },
         learningUnitId: learningUnit.id,
-        isActive: true,
-        closedAt: null,
-        OR: [{ dueDate: null }, { dueDate: { gte: new Date() } }],
       },
+      orderBy: [{ activatedAt: "desc" }, { id: "desc" }],
     });
 
-    if (!cohortAssignment) {
+    if (cohortAssignments.length === 0) {
+      throw new Error("Assignment has not been activated for your cohort");
+    }
+
+    const now = new Date();
+
+    const activeAssignment = cohortAssignments.find(
+      (assignment) =>
+        assignment.isActive &&
+        assignment.closedAt === null &&
+        (!assignment.dueDate || assignment.dueDate >= now),
+    );
+
+    if (!activeAssignment) {
+      const hasOpenButExpiredAssignment = cohortAssignments.some(
+        (assignment) =>
+          assignment.isActive &&
+          assignment.closedAt === null &&
+          assignment.dueDate !== null &&
+          assignment.dueDate < now,
+      );
+
+      if (hasOpenButExpiredAssignment) {
+        throw new Error("Assignment due date has passed");
+      }
+
       throw new Error("Assignment is not active for your cohort");
     }
+
+    const enrollment =
+      enrollments.find(
+        (item) => item.course.cohortId === activeAssignment.cohortId,
+      ) ?? enrollments[0];
 
     const previousSubmissions = await prisma.assignment_submission.findMany({
       where: {
@@ -877,6 +926,10 @@ export class ProgramService {
     }
 
     const questions = (learningUnit?.data as any)?.questions as any[];
+    if (!Array.isArray(questions) || questions.length === 0) {
+      throw new Error("Assignment questions are not configured");
+    }
+
     let score = 0;
 
     for (const question of questions) {
@@ -892,7 +945,8 @@ export class ProgramService {
       data: {
         enrollmentId: enrollment.id,
         learningUnitId: learningUnit.id,
-        content: JSON.stringify(answers),
+        content: answers,
+        attempt: currentAttempt,
         status: "GRADED",
         score,
         gradedAt: new Date(),

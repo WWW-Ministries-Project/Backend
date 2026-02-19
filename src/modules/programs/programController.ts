@@ -387,6 +387,26 @@ export class ProgramController {
   async submitMCQAssignment(req: Request, res: Response) {
     try {
       const { userId, programId, topicId, answers } = req.body;
+
+      if (
+        !Number.isInteger(Number(userId)) ||
+        Number(userId) <= 0 ||
+        !Number.isInteger(Number(programId)) ||
+        Number(programId) <= 0 ||
+        !Number.isInteger(Number(topicId)) ||
+        Number(topicId) <= 0
+      ) {
+        return res.status(400).json({
+          message: "userId, programId and topicId must be positive integers",
+        });
+      }
+
+      if (!answers || typeof answers !== "object" || Array.isArray(answers)) {
+        return res.status(400).json({
+          message: "answers must be a key-value object",
+        });
+      }
+
       const result = await programService.submitMCQAssignment(
         Number(userId),
         Number(programId),
@@ -397,6 +417,50 @@ export class ProgramController {
         .status(200)
         .json({ message: "MCQ Assignment submitted", data: result });
     } catch (error: any) {
+      const notFoundErrors = [
+        "No MCQ assignment found for this topic",
+        "User is not enrolled in this program",
+      ];
+
+      const badRequestErrors = [
+        "Topic does not belong to the provided program",
+        "Assignment questions are not configured",
+      ];
+
+      const forbiddenErrors = [
+        "Assignment has not been activated for your cohort",
+        "Assignment is not active for your cohort",
+        "Assignment due date has passed",
+      ];
+
+      if (notFoundErrors.includes(error?.message)) {
+        return res.status(404).json({
+          message: error.message,
+          error: error.message,
+        });
+      }
+
+      if (badRequestErrors.includes(error?.message)) {
+        return res.status(400).json({
+          message: error.message,
+          error: error.message,
+        });
+      }
+
+      if (forbiddenErrors.includes(error?.message)) {
+        return res.status(403).json({
+          message: error.message,
+          error: error.message,
+        });
+      }
+
+      if (error?.message?.startsWith("Maximum attempts of")) {
+        return res.status(409).json({
+          message: error.message,
+          error: error.message,
+        });
+      }
+
       return res.status(500).json({
         message: "Error submitting MCQ assignment",
         error: error.message,
