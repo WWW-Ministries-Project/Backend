@@ -62,6 +62,6 @@ requisitionRouter.delete(
 );
 requisitionRouter.get(
   "/staff-requisition",
-  [permissions.can_manage_requisitions],
+  [permissions.protect, permissions.can_manage_requisitions],
   wrappedControllers.staffRequestHandler,
 );

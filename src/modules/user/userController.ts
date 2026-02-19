@@ -43,6 +43,12 @@ const isRealEmail = (email?: string | null) => {
   );
 };
 
+const canRunSensitiveUserOps = () => {
+  const isProduction = process.env.NODE_ENV === "production";
+  const allowSensitiveOps = process.env.ALLOW_ADMIN_UTIL_ENDPOINTS === "true";
+  return !isProduction || allowSensitiveOps;
+};
+
 export const landingPage = async (req: Request, res: Response) => {
   res.send(
     // `<h1>Welcome to World Wide Word Ministries Backend Server🔥🎉💒</h1>`
@@ -245,6 +251,7 @@ export const updateUser = async (req: Request, res: Response) => {
             ? false
           : userExists?.is_user;
     const nextEmail = hasEmailField ? incomingEmail : existingEmail;
+    const nextAccessLevelId = nextIsUser ? userExists?.access_level_id : null;
 
     if (nextIsUser && !isRealEmail(nextEmail)) {
       return res.status(400).json({
@@ -275,6 +282,7 @@ export const updateUser = async (req: Request, res: Response) => {
         } ${last_name || userExists?.user_info?.last_name}`.trim(),
         email: hasEmailField ? incomingEmail : userExists?.email,
         is_user: nextIsUser,
+        access_level_id: nextAccessLevelId,
         status: status || userExists?.status,
         position_id: Number(position_id) || userExists?.position_id,
         department_id: Number(department_id) || userExists?.department_id,
@@ -761,12 +769,18 @@ export const deleteUser = async (req: Request, res: Response) => {
 export const login = async (req: Request, res: Response) => {
   const { email, password } = req.body;
   try {
+    const normalizedEmail = normalizeOptionalEmail(email);
+    if (!isRealEmail(normalizedEmail)) {
+      return res.status(400).json({
+        message: "A valid non-temporary email is required for login.",
+        data: null,
+      });
+    }
+    const loginEmail = normalizedEmail as string;
+
     const existance: any = await prisma.user.findUnique({
       where: {
-        email,
-        // AND: {
-        //     is_user: true, taking this one out because everyone can log in
-        // },
+        email: loginEmail,
       },
       select: {
         id: true,
@@ -775,6 +789,7 @@ export const login = async (req: Request, res: Response) => {
         password: true,
         is_active: true,
         is_user: true,
+        access_level_id: true,
         membership_type: true,
         department_positions: {
           include: {
@@ -809,25 +824,38 @@ export const login = async (req: Request, res: Response) => {
       });
     }
 
+    if (!existance.password) {
+      return res
+        .status(401)
+        .json({ message: "Invalid Credentials", data: null });
+    }
+
     const department: string[] = existance.department_positions.map(
-      (dept: any) => dept.department.name,
-    );
-    const ministry_worker: boolean =
-      Boolean(existance.access) && existance.is_user;
+      (dept: any) => dept.department?.name,
+    ).filter(Boolean);
+
+    const ministry_worker = Boolean(existance.is_user);
+    const user_category =
+      ministry_worker && Boolean(existance.access_level_id) ? "admin" : "member";
+    const tokenPermissions =
+      user_category === "admin" ? existance.access?.permissions || {} : null;
+
     const life_center_leader: boolean = await checkIfLifeCenterLeader(
       existance.id,
     );
     const instructor: boolean = await courseService.checkIfInstructor(
       existance.id,
     );
-    if (await comparePassword(password, existance?.password)) {
+
+    if (await comparePassword(String(password || ""), existance.password)) {
       const token = JWT.sign(
         {
           id: existance.id,
           name: existance.name,
           email: existance.email,
           ministry_worker: ministry_worker,
-          permissions: existance.access?.permissions,
+          user_category,
+          permissions: tokenPermissions,
           profile_img: existance.user_info?.photo,
           membership_type: existance.membership_type || null,
           department,
@@ -998,6 +1026,13 @@ export const activateAccount = async (req: Request, res: Response) => {
 };
 
 export const seedUser = async (req: Request, res: Response) => {
+  if (!canRunSensitiveUserOps()) {
+    return res.status(403).json({
+      message: "This endpoint is disabled in production.",
+      data: null,
+    });
+  }
+
   try {
     const response = await prisma.user.create({
       data: {
@@ -1837,6 +1872,13 @@ export const updateUserPasswordToDefault = async (
   req: Request,
   res: Response,
 ) => {
+  if (!canRunSensitiveUserOps()) {
+    return res.status(403).json({
+      message: "This endpoint is disabled in production.",
+      data: null,
+    });
+  }
+
   try {
     const data = await userService.updateUserPasswordToDefault();
 

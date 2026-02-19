@@ -1,11 +1,32 @@
 import { Request, Response, NextFunction } from "express";
 
 import JWT from "jsonwebtoken";
+import { prisma } from "../Models/context";
 
 // Define permission levels and common messages
 const VIEW_PERMISSIONS = ["Can_View", "Can_Manage", "Super_Admin"];
 const MANAGE_PERMISSIONS = ["Can_Manage", "Super_Admin"];
 const ADMIN_PERMISSIONS = ["Super_Admin"];
+const PERMISSION_KEY_ALIASES: Record<string, string[]> = {
+  Access_rights: ["Access_rights", "Access rights"],
+  Requisition: ["Requisition", "Requisitions"],
+};
+
+const resolvePermissionValue = (permissions: any, permissionType: string) => {
+  if (!permissions || typeof permissions !== "object") {
+    return null;
+  }
+
+  const aliasKeys = PERMISSION_KEY_ALIASES[permissionType] || [permissionType];
+  for (const key of aliasKeys) {
+    const value = permissions?.[key];
+    if (typeof value === "string") {
+      return value;
+    }
+  }
+
+  return null;
+};
 
 export class Permissions {
   // Keep the protect method as is
@@ -36,41 +57,83 @@ export class Permissions {
     action: "view" | "manage" | "admin",
     errorMessage: string,
   ) => {
-    return (req: Request, res: Response, next: NextFunction) => {
+    return async (req: Request, res: Response, next: NextFunction) => {
       const token: any = req.headers["authorization"]?.split(" ")[1];
+      if (!token) {
+        return res
+          .status(401)
+          .json({ message: "Not authorized. Token not found", data: null });
+      }
 
+      let decoded: any;
       try {
-        const decoded = JWT.verify(
+        decoded = JWT.verify(
           token,
           process.env.JWT_SECRET as string,
         ) as any;
-        const permission = decoded.permissions?.[permissionType];
-        let allowedPermissions;
-
-        // Select appropriate permission level based on action
-        if (action === "view") {
-          allowedPermissions = VIEW_PERMISSIONS; // Can_View, Can_Manage, Super_Admin
-        } else if (action === "manage") {
-          allowedPermissions = MANAGE_PERMISSIONS; // Can_Manage, Super_Admin
-        } else {
-          allowedPermissions = ADMIN_PERMISSIONS; // Super_Admin only
-        }
-
-        if (allowedPermissions.includes(permission)) {
-          // For requisitions middleware, we need to set the user
-          if (permissionType === "Requisition") {
-            (req as any).user = decoded;
-          }
-          next();
-        } else {
-          return res.status(401).json({ message: errorMessage, data: null });
-        }
       } catch (error) {
         return res.status(401).json({
           message: "Session Expired",
           data: null,
         });
       }
+
+      const userId = Number(decoded?.id);
+      if (!Number.isFinite(userId) || userId <= 0) {
+        return res.status(401).json({ message: errorMessage, data: null });
+      }
+
+      let currentUser: any;
+      try {
+        currentUser = await prisma.user.findUnique({
+          where: { id: userId },
+          select: {
+            id: true,
+            is_user: true,
+            access_level_id: true,
+            access: {
+              select: {
+                permissions: true,
+              },
+            },
+          },
+        });
+      } catch (error) {
+        return res.status(401).json({ message: errorMessage, data: null });
+      }
+
+      const isAdminUser = Boolean(
+        currentUser?.is_user && currentUser?.access_level_id && currentUser?.access,
+      );
+      if (!isAdminUser) {
+        return res.status(401).json({ message: errorMessage, data: null });
+      }
+
+      const livePermissions = currentUser?.access?.permissions || {};
+      const permission = resolvePermissionValue(livePermissions, permissionType);
+
+      let allowedPermissions;
+
+      // Select appropriate permission level based on action
+      if (action === "view") {
+        allowedPermissions = VIEW_PERMISSIONS; // Can_View, Can_Manage, Super_Admin
+      } else if (action === "manage") {
+        allowedPermissions = MANAGE_PERMISSIONS; // Can_Manage, Super_Admin
+      } else {
+        allowedPermissions = ADMIN_PERMISSIONS; // Super_Admin only
+      }
+
+      if (permission && allowedPermissions.includes(permission)) {
+        (req as any).user = {
+          ...decoded,
+          permissions: livePermissions,
+          ministry_worker: Boolean(currentUser?.is_user),
+          user_category: "admin",
+        };
+        return next();
+      }
+
+      return res.status(401).json({ message: errorMessage, data: null });
     };
   };
 
@@ -190,7 +253,7 @@ export class Permissions {
 
   // Requisitions
   can_view_requisitions = this.checkPermission(
-    "Requisitions",
+    "Requisition",
     "view",
     "Not authorized to view requisitions",
   );
