@@ -1212,20 +1212,12 @@ export const ListUsers = async (req: Request, res: Response) => {
             primary_number: true,
             title: true,
             photo: true,
+            country: true,
+            member_since: true,
             marital_status: true,
             work_info: {
               select: {
                 employment_status: true,
-              },
-            },
-          },
-        },
-        department: {
-          select: {
-            department_info: {
-              select: {
-                id: true,
-                name: true,
               },
             },
           },
@@ -1258,6 +1250,13 @@ export const ListUsers = async (req: Request, res: Response) => {
     });
 
     const usersWithDeptName = users.map((user: any) => {
+      const departmentIdsFromPositions = Array.from(
+        new Set(
+          (user.department_positions || [])
+            .map((entry: any) => entry?.department?.id ?? entry?.department_id)
+            .filter((value: number | undefined): value is number => Number.isInteger(value)),
+        ),
+      );
       const departmentNamesFromPositions = Array.from(
         new Set(
           (user.department_positions || [])
@@ -1266,11 +1265,13 @@ export const ListUsers = async (req: Request, res: Response) => {
         ),
       );
 
+      const primaryDepartmentId = user.department_id || departmentIdsFromPositions[0] || null;
       const primaryDepartmentName =
-        departmentMap.get(user.department_id) || departmentNamesFromPositions[0] || null;
+        departmentMap.get(primaryDepartmentId) || departmentNamesFromPositions[0] || null;
 
       return {
         ...user,
+        department_id: primaryDepartmentId,
         department_name: primaryDepartmentName,
         department_names: departmentNamesFromPositions,
         department_positions: (user.department_positions || []).map((entry: any) => ({
@@ -1293,6 +1294,7 @@ export const ListUsers = async (req: Request, res: Response) => {
           ...flatInfo,
           marital_status: flatInfo?.marital_status ?? null,
           employment_status: workInfo?.employment_status ?? null,
+          date_joined: flatInfo?.member_since ?? rest?.created_at ?? null,
         };
       });
     };
