@@ -67,6 +67,14 @@ const parseResponsibleMemberIds = (
   );
 };
 
+const getResponsibleMemberNames = (
+  memberIds: number[],
+  userMap: Record<number, string>,
+) =>
+  memberIds
+    .map((memberId) => userMap[memberId])
+    .filter((name): name is string => Boolean(name));
+
 export class VisitorService {
   private async validateResponsibleMemberIds(responsibleMembers: unknown) {
     const memberIds = parseResponsibleMemberIds(responsibleMembers);
@@ -175,15 +183,25 @@ export class VisitorService {
 
     if (!visitor) return null;
 
+    const responsibleMemberIds = parseResponsibleMemberIds(
+      visitor.responsibleMembers,
+      {
+        strict: false,
+      },
+    );
+
     // Get unique assignedTo user IDs
     const assignedToIds = Array.from(
       new Set(visitor.followUps.map((f) => f.assignedTo).filter(Boolean)),
     ) as number[];
+    const userIds = Array.from(
+      new Set([...assignedToIds, ...responsibleMemberIds]),
+    ) as number[];
 
     // Fetch corresponding user names
-    const users = assignedToIds.length
+    const users = userIds.length
       ? await prisma.user.findMany({
-          where: { id: { in: assignedToIds } },
+          where: { id: { in: userIds } },
           select: { id: true, name: true },
         })
       : [];
@@ -194,9 +212,11 @@ export class VisitorService {
 
     return {
       ...visitor,
-      responsibleMembers: parseResponsibleMemberIds(visitor.responsibleMembers, {
-        strict: false,
-      }),
+      responsibleMembers: responsibleMemberIds,
+      responsibleMembersNames: getResponsibleMemberNames(
+        responsibleMemberIds,
+        userMap,
+      ),
       visits: visitor.visits.map(({ event, ...v }) => ({
         ...v,
         eventId: event?.event.id,
@@ -316,21 +336,47 @@ export class VisitorService {
 
     const total = visitors.length;
     const paginatedVisitors = visitors.slice(skip, skip + pageSize);
+    const allResponsibleMemberIds = Array.from(
+      new Set(
+        paginatedVisitors.flatMap((visitor) =>
+          parseResponsibleMemberIds(visitor.responsibleMembers, {
+            strict: false,
+          }),
+        ),
+      ),
+    );
+    const responsibleMembers = allResponsibleMemberIds.length
+      ? await prisma.user.findMany({
+          where: { id: { in: allResponsibleMemberIds } },
+          select: { id: true, name: true },
+        })
+      : [];
+    const responsibleMemberMap = Object.fromEntries(
+      responsibleMembers.map((member) => [member.id, member.name]),
+    );
 
-    const data = paginatedVisitors.map(({ visits, followUps, ...visitor }) => ({
-      ...visitor,
-      responsibleMembers: parseResponsibleMemberIds(
+    const data = paginatedVisitors.map(({ visits, followUps, ...visitor }) => {
+      const responsibleMemberIds = parseResponsibleMemberIds(
         visitor.responsibleMembers,
         { strict: false },
-      ),
-      eventId: visits[0]?.event?.event.id || null,
-      eventName: visits[0]?.event?.event.event_name || null,
-      visitCount: visits.length,
-      followUp:
-        followUps.length > 0
-          ? followUps[followUps.length - 1].status
-          : "No Follow Ups Yet",
-    }));
+      );
+
+      return {
+        ...visitor,
+        responsibleMembers: responsibleMemberIds,
+        responsibleMembersNames: getResponsibleMemberNames(
+          responsibleMemberIds,
+          responsibleMemberMap,
+        ),
+        eventId: visits[0]?.event?.event.id || null,
+        eventName: visits[0]?.event?.event.event_name || null,
+        visitCount: visits.length,
+        followUp:
+          followUps.length > 0
+            ? followUps[followUps.length - 1].status
+            : "No Follow Ups Yet",
+      };
+    });
 
     return {
       data,

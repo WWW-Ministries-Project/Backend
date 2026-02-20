@@ -6,6 +6,7 @@ const ALLOWED_PERMISSION_VALUES = new Set([
   "Can_View",
   "Can_Manage",
   "Super_Admin",
+  "No_Access",
 ]);
 
 const REQUIRED_PERMISSION_KEYS = [
@@ -59,6 +60,127 @@ const ALLOWED_PERMISSION_KEYS = [
   ...REQUIRED_PERMISSION_KEYS,
   ...OPTIONAL_PERMISSION_KEYS,
 ];
+
+const toPositiveInt = (value: any) => {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return null;
+  }
+  return parsed;
+};
+
+const getExclusionSource = (permissions: any) => {
+  if (!permissions || typeof permissions !== "object" || Array.isArray(permissions)) {
+    return null;
+  }
+
+  const candidates = [
+    permissions?.Exclusions,
+    permissions?.exclusions,
+    permissions?.exclusion_list,
+    permissions?.exclusionList,
+  ];
+
+  for (const candidate of candidates) {
+    if (candidate && typeof candidate === "object" && !Array.isArray(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
+};
+
+const normalizeExclusionMap = (permissions: any) => {
+  const source = getExclusionSource(permissions);
+  if (!source) return {} as Record<string, number[]>;
+
+  const normalized: Record<string, number[]> = {};
+  for (const [rawKey, rawValue] of Object.entries(source)) {
+    const normalizedKey =
+      PERMISSION_KEY_NORMALIZER[String(rawKey).trim()] || String(rawKey).trim();
+    if (!ALLOWED_PERMISSION_KEYS.includes(normalizedKey)) continue;
+    if (!Array.isArray(rawValue)) continue;
+
+    const ids = Array.from(
+      new Set(
+        rawValue
+          .map((value) => toPositiveInt(value))
+          .filter((value): value is number => Boolean(value)),
+      ),
+    );
+
+    normalized[normalizedKey] = ids;
+  }
+
+  return normalized;
+};
+
+const buildFullName = (user: any) => {
+  const firstName = String(user?.user_info?.first_name || "").trim();
+  const lastName = String(user?.user_info?.last_name || "").trim();
+  const fullName = `${firstName} ${lastName}`.trim();
+  if (fullName) return fullName;
+
+  const fallbackName = String(user?.name || "").trim();
+  return fallbackName || null;
+};
+
+const enrichAccessLevelWithExclusions = async (payload: any) => {
+  if (!payload) return payload;
+
+  const rows = Array.isArray(payload) ? payload : [payload];
+  const exclusionMaps = rows.map((row) => normalizeExclusionMap(row?.permissions));
+
+  const allExcludedUserIds = Array.from(
+    new Set(
+      exclusionMaps.flatMap((map) =>
+        Object.values(map).flatMap((ids) => ids),
+      ),
+    ),
+  );
+
+  const users = allExcludedUserIds.length
+    ? await prisma.user.findMany({
+        where: {
+          id: { in: allExcludedUserIds },
+        },
+        select: {
+          id: true,
+          name: true,
+          user_info: {
+            select: {
+              first_name: true,
+              last_name: true,
+            },
+          },
+        },
+      })
+    : [];
+
+  const userNameMap = new Map<number, string | null>(
+    users.map((user) => [user.id, buildFullName(user)]),
+  );
+
+  const enriched = rows.map((row, index) => {
+    const exclusionMap = exclusionMaps[index];
+    const exclusionUsers = Object.fromEntries(
+      Object.entries(exclusionMap).map(([domainKey, ids]) => [
+        domainKey,
+        ids.map((userId) => ({
+          id: userId,
+          full_name: userNameMap.get(userId) || null,
+        })),
+      ]),
+    );
+
+    return {
+      ...row,
+      exclusion_users: exclusionUsers,
+    };
+  });
+
+  return Array.isArray(payload) ? enriched : enriched[0];
+};
 
 const normalizeExclusions = (payload: any) => {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
@@ -255,10 +377,11 @@ export const createAccessLevel = async (req: Request, res: Response) => {
         },
       },
     });
+    const enrichedData = await enrichAccessLevelWithExclusions(data);
 
     res
       .status(200)
-      .json({ message: "Access Level Created Succesfully", data: data });
+      .json({ message: "Access Level Created Succesfully", data: enrichedData });
   } catch (error: any) {
     return res
       .status(500)
@@ -360,9 +483,10 @@ export const updateAccessLevel = async (req: Request, res: Response) => {
         },
       });
     }
+    const enrichedResponse = await enrichAccessLevelWithExclusions(response);
     res
       .status(200)
-      .json({ message: "Access Level updated Succesfully", data: response });
+      .json({ message: "Access Level updated Succesfully", data: enrichedResponse });
   } catch (error: any) {
     return res
       .status(500)
@@ -394,7 +518,8 @@ export const listAllAccessLevel = async (req: Request, res: Response) => {
         },
       },
     });
-    res.status(200).json({ message: "Operation successful", data: data });
+    const enrichedData = await enrichAccessLevelWithExclusions(data);
+    res.status(200).json({ message: "Operation successful", data: enrichedData });
   } catch (error: any) {
     return res
       .status(500)
@@ -433,7 +558,8 @@ export const getAccessLevel = async (req: Request, res: Response) => {
         },
       },
     });
-    res.status(200).json({ message: "Operation successful", data: data });
+    const enrichedData = await enrichAccessLevelWithExclusions(data);
+    res.status(200).json({ message: "Operation successful", data: enrichedData });
   } catch (error: any) {
     return res
       .status(500)
