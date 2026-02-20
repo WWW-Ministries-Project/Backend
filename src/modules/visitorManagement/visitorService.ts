@@ -67,13 +67,24 @@ const parseResponsibleMemberIds = (
   );
 };
 
+type ResponsibleMemberDetails = {
+  userId: number;
+  name: string;
+};
+
 const getResponsibleMemberNames = (
   memberIds: number[],
   userMap: Record<number, string>,
 ) =>
   memberIds
-    .map((memberId) => userMap[memberId])
-    .filter((name): name is string => Boolean(name));
+    .map((memberId) => ({
+      userId: memberId,
+      name: userMap[memberId],
+    }))
+    .filter(
+      (member): member is ResponsibleMemberDetails =>
+        typeof member.name === "string" && member.name.length > 0,
+    );
 
 export class VisitorService {
   private async validateResponsibleMemberIds(responsibleMembers: unknown) {
@@ -320,7 +331,7 @@ export class VisitorService {
           },
         },
         followUps: {
-          orderBy: { createdAt: "asc" },
+          orderBy: [{ date: "desc" }, { createdAt: "desc" }],
         },
       },
       orderBy: { createdAt: "desc" },
@@ -371,10 +382,7 @@ export class VisitorService {
         eventId: visits[0]?.event?.event.id || null,
         eventName: visits[0]?.event?.event.event_name || null,
         visitCount: visits.length,
-        followUp:
-          followUps.length > 0
-            ? followUps[followUps.length - 1].status
-            : "No Follow Ups Yet",
+        followUp: followUps[0]?.date || null,
       };
     });
 
