@@ -359,7 +359,7 @@ export class eventManagement {
                 gte: new Date(
                   `${date1.getFullYear()}-${
                     date1.getMonth() + 1
-                  }-${date1.getDay()}`,
+                  }-${date1.getDate()}`,
                 ),
               },
             },
@@ -1307,8 +1307,38 @@ export class eventManagement {
       const { eventId, date } = req.query;
 
       const filter = {} as any;
-      if (eventId) filter.event_mgt_id = Number(eventId);
-      if (date) filter.attendance_date = new Date(date as string);
+      if (eventId) {
+        const parsedEventId = Number(eventId);
+        if (Number.isNaN(parsedEventId)) {
+          return res.status(400).json({
+            success: false,
+            message: "eventId must be a valid number",
+          });
+        }
+        filter.event_mgt_id = parsedEventId;
+      }
+
+      if (date) {
+        const parsedDate = new Date(String(date));
+        if (Number.isNaN(parsedDate.getTime())) {
+          return res.status(400).json({
+            success: false,
+            message: "date must be a valid date",
+          });
+        }
+
+        // Accept date-based analytics at day granularity while still allowing
+        // event-based filtering in the same query.
+        const startOfDay = new Date(parsedDate);
+        startOfDay.setHours(0, 0, 0, 0);
+        const endOfDay = new Date(startOfDay);
+        endOfDay.setDate(endOfDay.getDate() + 1);
+
+        filter.date = {
+          gte: startOfDay,
+          lt: endOfDay,
+        };
+      }
 
       const records = await prisma.event_attendance_summary.findMany({
         where: filter,
