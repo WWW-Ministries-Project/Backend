@@ -14,8 +14,8 @@ V1 constraints:
 
 ## Base URL
 Use your deployed API origin, for example:
-- `https://wwm-bk.supadealz.shop`
-- local: `http://localhost:8080`
+- `https://dev.worldwidewordministries.org`
+
 
 All endpoints below are relative to this base.
 

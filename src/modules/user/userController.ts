@@ -1169,7 +1169,15 @@ export const ListUsers = async (req: Request, res: Response) => {
 
     if (is_active !== undefined) whereFilter.is_active = is_active;
     if (is_user !== undefined) whereFilter.is_user = isUser;
-    if (department_id) whereFilter.department_id = Number(department_id);
+    if (department_id) {
+      const parsedDepartmentId = Number(department_id);
+      if (!Number.isNaN(parsedDepartmentId) && parsedDepartmentId > 0) {
+        whereFilter.OR = [
+          { department_id: parsedDepartmentId },
+          { department_positions: { some: { department_id: parsedDepartmentId } } },
+        ];
+      }
+    }
     if (membership_type) whereFilter.membership_type = membership_type;
     if (typeof name === "string" && name.trim()) {
       whereFilter.name = { contains: name.trim() };
@@ -1204,6 +1212,12 @@ export const ListUsers = async (req: Request, res: Response) => {
             primary_number: true,
             title: true,
             photo: true,
+            marital_status: true,
+            work_info: {
+              select: {
+                employment_status: true,
+              },
+            },
           },
         },
         department: {
@@ -1222,19 +1236,65 @@ export const ListUsers = async (req: Request, res: Response) => {
             name: true,
           },
         },
+        department_positions: {
+          select: {
+            department_id: true,
+            position_id: true,
+            department: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+            position: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+          },
+        },
       },
     });
 
-    const usersWithDeptName = users.map((user: any) => ({
-      ...user,
-      department_name: departmentMap.get(user.department_id) || null,
-    }));
+    const usersWithDeptName = users.map((user: any) => {
+      const departmentNamesFromPositions = Array.from(
+        new Set(
+          (user.department_positions || [])
+            .map((entry: any) => entry?.department?.name)
+            .filter((value: string | undefined): value is string => Boolean(value)),
+        ),
+      );
+
+      const primaryDepartmentName =
+        departmentMap.get(user.department_id) || departmentNamesFromPositions[0] || null;
+
+      return {
+        ...user,
+        department_name: primaryDepartmentName,
+        department_names: departmentNamesFromPositions,
+        department_positions: (user.department_positions || []).map((entry: any) => ({
+          department_id: entry?.department?.id ?? entry?.department_id ?? null,
+          department_name: entry?.department?.name ?? null,
+          position_id: entry?.position?.id ?? entry?.position_id ?? null,
+          position_name: entry?.position?.name ?? null,
+        })),
+      };
+    });
 
     const destructure = (data: any[]) => {
-      return data.map(({ user_info, ...rest }) => ({
-        ...rest,
-        ...user_info,
-      }));
+      return data.map(({ user_info, ...rest }) => {
+        const info = user_info || {};
+        const workInfo = info.work_info || null;
+        const { work_info, ...flatInfo } = info;
+
+        return {
+          ...rest,
+          ...flatInfo,
+          marital_status: flatInfo?.marital_status ?? null,
+          employment_status: workInfo?.employment_status ?? null,
+        };
+      });
     };
 
     res.status(200).json({
