@@ -144,6 +144,7 @@ Useful query params on `/appointment/bookings`:
 - `GET /program/programs`
 - `GET /program/cohorts`
 - `GET /program/cohort-courses?cohortId=<id>`
+- `GET /program/courses?page=1&take=4000` (all courses, optional pagination)
 - `GET /program/user-enrollment?userId=<id>` or `/program/user-enrollment/:id`
 - `GET /program/assignment-results?topicId=<id>&cohortId=<id>&programId=<id>`
 
@@ -366,4 +367,3 @@ curl -H "Authorization: Bearer <JWT>" \
 curl -H "Authorization: Bearer <JWT>" \
   "<BASE_URL>/appointment/bookings?date=2026-02-20"
 ```
-

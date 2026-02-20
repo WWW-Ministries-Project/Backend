@@ -35,9 +35,20 @@ export class CourseService {
     });
   }
 
-  async getAllCourses(cohortId: number) {
+  async getAllCourses(filters?: {
+    cohortId?: number;
+    page?: number;
+    take?: number;
+  }) {
+    const where = filters?.cohortId ? { cohortId: filters.cohortId } : undefined;
+    const shouldPaginate =
+      typeof filters?.page === "number" && typeof filters?.take === "number";
+    const skip = shouldPaginate ? (filters.page! - 1) * filters.take! : undefined;
+
     return await prisma.course.findMany({
-      where: { cohortId },
+      where,
+      skip,
+      take: shouldPaginate ? filters?.take : undefined,
       include: {
         instructor: {
           select: {

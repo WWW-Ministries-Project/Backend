@@ -120,6 +120,7 @@ Attendance analytics filtering supports:
 - `GET /program/programs`
 - `GET /program/cohorts`
 - `GET /program/cohort-courses`
+- `GET /program/courses` (alias; supports optional `page`/`take` and optional `cohortId`)
 - `GET /program/user-enrollment`
 - `GET /program/assignment-results`
 

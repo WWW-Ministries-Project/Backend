@@ -27,8 +27,43 @@ export class CourseController {
 
   async getAllCourses(req: Request, res: Response) {
     try {
-      const { cohortId } = req.query;
-      const courses = await courseService.getAllCourses(Number(cohortId));
+      const cohortIdRaw = req.query.cohortId;
+      const pageRaw = req.query.page;
+      const takeRaw = req.query.take;
+
+      let cohortId: number | undefined;
+      if (cohortIdRaw !== undefined) {
+        const parsedCohortId = Number(cohortIdRaw);
+        if (!Number.isInteger(parsedCohortId) || parsedCohortId <= 0) {
+          return res
+            .status(400)
+            .json({ message: "Invalid cohortId. It must be a positive integer." });
+        }
+        cohortId = parsedCohortId;
+      }
+
+      let page: number | undefined;
+      let take: number | undefined;
+      if (pageRaw !== undefined || takeRaw !== undefined) {
+        const parsedPage = Number(pageRaw ?? 1);
+        const parsedTake = Number(takeRaw ?? 10);
+
+        if (
+          !Number.isInteger(parsedPage) ||
+          parsedPage <= 0 ||
+          !Number.isInteger(parsedTake) ||
+          parsedTake <= 0
+        ) {
+          return res.status(400).json({
+            message: "Invalid page/take. Both must be positive integers.",
+          });
+        }
+
+        page = parsedPage;
+        take = parsedTake;
+      }
+
+      const courses = await courseService.getAllCourses({ cohortId, page, take });
       return res.status(200).json({ data: courses });
     } catch (error: any) {
       return res

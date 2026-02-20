@@ -77,6 +77,7 @@ programRouter.post(
   courseController.createCourse,
 );
 programRouter.get("/cohort-courses", [protect], courseController.getAllCourses);
+programRouter.get("/courses", [protect], courseController.getAllCourses);
 programRouter.get("/course", [protect], courseController.getCourseById);
 programRouter.put(
   "/course",

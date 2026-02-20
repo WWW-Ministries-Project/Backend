@@ -1,4 +1,4 @@
-import Router from "express";
+import Router, { type Request, type Response } from "express";
 import * as dotenv from "dotenv";
 import {
   departmentRouter,
@@ -25,9 +25,14 @@ import bankAccountConfigRouter from "../modules/finance/BankAccountConfig/route"
 import paymentConfigRouter from "../modules/finance/PaymentConfig/route";
 import titheBreakdownConfigRouter from "../modules/finance/TitheBreakdownConfig/route";
 import financialsRouter from "../modules/finance/Financials/route";
+import { FollowUPController } from "../modules/visitorManagement/followUpController";
+import { Permissions } from "../middleWare/authorization";
 dotenv.config();
 
 export const appRouter = Router();
+const permissions = new Permissions();
+const protect = permissions.protect;
+const followUpController = new FollowUPController();
 
 appRouter.get("/", landingPage);
 appRouter.use("/user", userRouter);
@@ -52,3 +57,22 @@ appRouter.use("/paymentconfig", paymentConfigRouter);
 appRouter.use("/bankaccountconfig", bankAccountConfigRouter);
 appRouter.use("/tithebreakdownconfig", titheBreakdownConfigRouter);
 appRouter.use("/financials", financialsRouter);
+
+// Backward-compatible aliases used by some clients.
+appRouter.get(
+  "/followup",
+  [protect, permissions.can_view_visitor_followups_scoped],
+  (req: Request, res: Response) => {
+    if (req.query?.id !== undefined) {
+      return followUpController.getFollowUpById(req, res);
+    }
+
+    return followUpController.getAllFollowUps(req, res);
+  },
+);
+
+appRouter.get(
+  "/followups",
+  [protect, permissions.can_view_visitor_followups_scoped],
+  followUpController.getAllFollowUps,
+);
