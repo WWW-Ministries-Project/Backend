@@ -274,6 +274,116 @@ export const updateUser = async (req: Request, res: Response) => {
       }
     }
 
+    const hasValue = (value: any) =>
+      value !== undefined && value !== null && String(value).trim() !== "";
+
+    const hasEmergencyContactPayload =
+      hasValue(emergency_contact_name) ||
+      hasValue(emergency_contact_relation) ||
+      hasValue(emergency_country_code) ||
+      hasValue(emergency_phone_number);
+
+    const hasWorkInfoPayload =
+      hasValue(work_name) ||
+      hasValue(work_industry) ||
+      hasValue(work_position) ||
+      hasValue(school_name);
+
+    if (!userExists?.user_info) {
+      return res.status(400).json({
+        message:
+          "User profile details are missing. Please complete personal information first.",
+        data: null,
+      });
+    }
+
+    const userInfoUpdateData: any = {
+      title,
+      first_name,
+      last_name,
+      other_name,
+      date_of_birth: date_of_birth ? new Date(date_of_birth) : undefined,
+      gender,
+      marital_status,
+      nationality,
+      photo: picture.src,
+      email: hasEmailField ? incomingEmail : undefined,
+      country: resident_country,
+      state_region,
+      city,
+      country_code,
+      primary_number,
+      member_since: member_since ? new Date(member_since) : undefined,
+    };
+
+    if (hasEmergencyContactPayload) {
+      if (userExists.user_info.emergency_contact) {
+        userInfoUpdateData.emergency_contact = {
+          update: {
+            name: emergency_contact_name,
+            relation: emergency_contact_relation,
+            country_code: emergency_country_code,
+            phone_number: emergency_phone_number,
+          },
+        };
+      } else {
+        if (
+          !hasValue(emergency_contact_name) ||
+          !hasValue(emergency_contact_relation) ||
+          !hasValue(emergency_phone_number)
+        ) {
+          return res.status(400).json({
+            message:
+              "Emergency contact name, relation, and phone number are required to add an emergency contact.",
+            data: null,
+          });
+        }
+
+        userInfoUpdateData.emergency_contact = {
+          create: {
+            name: emergency_contact_name,
+            relation: emergency_contact_relation,
+            country_code: emergency_country_code,
+            phone_number: emergency_phone_number,
+          },
+        };
+      }
+    }
+
+    if (hasWorkInfoPayload) {
+      if (userExists.user_info.work_info) {
+        userInfoUpdateData.work_info = {
+          update: {
+            name_of_institution: work_name,
+            industry: work_industry,
+            position: work_position,
+            school_name,
+          },
+        };
+      } else {
+        if (
+          !hasValue(work_name) ||
+          !hasValue(work_industry) ||
+          !hasValue(work_position)
+        ) {
+          return res.status(400).json({
+            message:
+              "Work name, industry, and position are required to add work information.",
+            data: null,
+          });
+        }
+
+        userInfoUpdateData.work_info = {
+          create: {
+            name_of_institution: work_name,
+            industry: work_industry,
+            position: work_position,
+            school_name,
+          },
+        };
+      }
+    }
+
     const updatedUser = await prisma.user.update({
       where: { id: Number(user_id) },
       data: {
@@ -288,40 +398,7 @@ export const updateUser = async (req: Request, res: Response) => {
         department_id: Number(department_id) || userExists?.department_id,
         membership_type: membership_type || userExists?.membership_type,
         user_info: {
-          update: {
-            title,
-            first_name,
-            last_name,
-            other_name,
-            date_of_birth: date_of_birth ? new Date(date_of_birth) : undefined,
-            gender,
-            marital_status,
-            nationality,
-            photo: picture.src,
-            email: hasEmailField ? incomingEmail : undefined,
-            country: resident_country,
-            state_region,
-            city,
-            country_code,
-            primary_number,
-            member_since: member_since ? new Date(member_since) : undefined,
-            emergency_contact: {
-              update: {
-                name: emergency_contact_name,
-                relation: emergency_contact_relation,
-                country_code: emergency_country_code,
-                phone_number: emergency_phone_number,
-              },
-            },
-            work_info: {
-              update: {
-                name_of_institution: work_name,
-                industry: work_industry,
-                position: work_position,
-                school_name,
-              },
-            },
-          },
+          update: userInfoUpdateData,
         },
       },
       include: {
@@ -1486,8 +1563,9 @@ export const getUser = async (req: Request, res: Response) => {
     const { user_info, department_positions, enrollments, ...rest } = response;
 
     const user: any = {
+      ...(user_info || {}),
       ...rest,
-      ...user_info,
+      email: user_info?.email ?? rest.email ?? null,
     };
 
     user.family = [
