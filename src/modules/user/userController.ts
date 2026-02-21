@@ -1851,7 +1851,9 @@ export const getUserByEmailPhone = async (req: Request, res: Response) => {
 
     // If cohortId is passed, get courses
     if (cohortId) {
-      courses = await courseService.getAllCourses(Number(cohortId));
+      courses = await courseService.getAllCourses({
+        cohortId: Number(cohortId),
+      });
     }
 
     // If no params were passed

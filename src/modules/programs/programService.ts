@@ -252,6 +252,314 @@ export class ProgramService {
     });
   }
 
+  private getEnrollmentCompletionStatus(
+    progress: Array<{ status: string; completed: boolean | null }>,
+    totalTopics: number,
+    enrollmentCompleted?: boolean | null,
+  ) {
+    const completedTopics = progress.filter(
+      (item) => item.completed || item.status === "PASS",
+    ).length;
+    const normalizedTotalTopics = totalTopics > 0 ? totalTopics : progress.length;
+    const percent =
+      normalizedTotalTopics > 0
+        ? Number(((completedTopics / normalizedTotalTopics) * 100).toFixed(1))
+        : 0;
+
+    let status = "NOT_STARTED";
+    if (
+      enrollmentCompleted === true ||
+      (normalizedTotalTopics > 0 && completedTopics >= normalizedTotalTopics)
+    ) {
+      status = "COMPLETED";
+    } else if (completedTopics > 0) {
+      status = "IN_PROGRESS";
+    }
+
+    return {
+      status,
+      percent,
+      completedTopics,
+      totalTopics: normalizedTotalTopics,
+    };
+  }
+
+  async getAllProgramsWithEnrolledMembersAndCompletion() {
+    const programs = await prisma.program.findMany({
+      include: {
+        topics: {
+          orderBy: {
+            order_number: "asc",
+          },
+          include: {
+            LearningUnit: true,
+          },
+        },
+        prerequisitePrograms: {
+          select: {
+            prerequisiteId: true,
+            prerequisite: true,
+          },
+        },
+        cohorts: {
+          include: {
+            courses: {
+              include: {
+                instructor: {
+                  select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    member_id: true,
+                    user_info: {
+                      select: {
+                        first_name: true,
+                        last_name: true,
+                        primary_number: true,
+                        country_code: true,
+                        photo: true,
+                      },
+                    },
+                  },
+                },
+                enrollments: {
+                  include: {
+                    user: {
+                      select: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        member_id: true,
+                        is_active: true,
+                        membership_type: true,
+                        user_info: {
+                          select: {
+                            first_name: true,
+                            last_name: true,
+                            other_name: true,
+                            primary_number: true,
+                            country_code: true,
+                            photo: true,
+                            country: true,
+                            state_region: true,
+                            city: true,
+                            member_since: true,
+                          },
+                        },
+                      },
+                    },
+                    progress: {
+                      select: {
+                        id: true,
+                        topicId: true,
+                        score: true,
+                        status: true,
+                        completed: true,
+                        completedAt: true,
+                        notes: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+    });
+
+    return programs.map((program) => {
+      const totalTopics = program.topics.length;
+      const instructorMap = new Map<number, any>();
+      const enrolledMemberMap = new Map<number, any>();
+      let totalEnrollments = 0;
+
+      const cohorts = program.cohorts.map((cohort) => {
+        const courses = cohort.courses.map((course) => {
+          if (course.instructor?.id) {
+            const existingInstructor = instructorMap.get(course.instructor.id);
+            const courseItem = {
+              id: course.id,
+              name: course.name,
+              cohort_id: cohort.id,
+              cohort_name: cohort.name,
+            };
+
+            if (existingInstructor) {
+              existingInstructor.courses.push(courseItem);
+            } else {
+              instructorMap.set(course.instructor.id, {
+                ...course.instructor,
+                courses: [courseItem],
+              });
+            }
+          }
+
+          const enrollments = course.enrollments.map((enrollment) => {
+            totalEnrollments += 1;
+            const completion = this.getEnrollmentCompletionStatus(
+              enrollment.progress,
+              totalTopics,
+              enrollment.completed,
+            );
+
+            if (enrollment.user?.id) {
+              const existingMember = enrolledMemberMap.get(enrollment.user.id);
+              const enrollmentSummary = {
+                enrollment_id: enrollment.id,
+                course_id: course.id,
+                course_name: course.name,
+                cohort_id: cohort.id,
+                cohort_name: cohort.name,
+                enrolled_at: enrollment.enrolledAt,
+                completed_at: enrollment.completedAt,
+                completion_status: completion.status,
+                completion_percent: completion.percent,
+                completed_topics: completion.completedTopics,
+                total_topics: completion.totalTopics,
+              };
+
+              if (existingMember) {
+                existingMember.enrollments.push(enrollmentSummary);
+              } else {
+                enrolledMemberMap.set(enrollment.user.id, {
+                  member: enrollment.user,
+                  enrollments: [enrollmentSummary],
+                });
+              }
+            }
+
+            return {
+              ...enrollment,
+              completion_status: completion.status,
+              completion_percent: completion.percent,
+              completed_topics: completion.completedTopics,
+              total_topics: completion.totalTopics,
+            };
+          });
+
+          return {
+            ...course,
+            enrollments,
+          };
+        });
+
+        return {
+          ...cohort,
+          courses,
+        };
+      });
+
+      const instructors = Array.from(instructorMap.values()).map((instructor) => ({
+        ...instructor,
+        courses: instructor.courses.sort(
+          (a: { id: number }, b: { id: number }) => a.id - b.id,
+        ),
+      }));
+
+      const enrolled_members = Array.from(enrolledMemberMap.values()).map(
+        (memberEntry) => {
+          const enrollments = memberEntry.enrollments.sort(
+            (
+              a: { enrolled_at: Date | null },
+              b: { enrolled_at: Date | null },
+            ) => {
+              const aTime = a.enrolled_at ? new Date(a.enrolled_at).getTime() : 0;
+              const bTime = b.enrolled_at ? new Date(b.enrolled_at).getTime() : 0;
+              return bTime - aTime;
+            },
+          );
+
+          const bestCompletionPercent = enrollments.reduce(
+            (maxValue: number, enrollmentItem: { completion_percent: number }) =>
+              Math.max(maxValue, enrollmentItem.completion_percent || 0),
+            0,
+          );
+          const hasCompleted = enrollments.some(
+            (enrollmentItem: { completion_status: string }) =>
+              enrollmentItem.completion_status === "COMPLETED",
+          );
+
+          let overallStatus = "NOT_STARTED";
+          if (hasCompleted || bestCompletionPercent >= 100) {
+            overallStatus = "COMPLETED";
+          } else if (bestCompletionPercent > 0) {
+            overallStatus = "IN_PROGRESS";
+          }
+
+          const fullNameFromInfo = [
+            memberEntry.member?.user_info?.first_name,
+            memberEntry.member?.user_info?.last_name,
+          ]
+            .filter(Boolean)
+            .join(" ")
+            .trim();
+          const fullName =
+            fullNameFromInfo || memberEntry.member?.name || "Unknown";
+
+          return {
+            ...memberEntry.member,
+            user_id: memberEntry.member?.id ?? null,
+            full_name: fullName,
+            status: overallStatus.toLowerCase(),
+            completion_percentage: Number(bestCompletionPercent.toFixed(1)),
+            completion: {
+              status: overallStatus,
+              percent: Number(bestCompletionPercent.toFixed(1)),
+              enrolled_courses_count: enrollments.length,
+              completed_courses_count: enrollments.filter(
+                (enrollmentItem: { completion_status: string }) =>
+                  enrollmentItem.completion_status === "COMPLETED",
+              ).length,
+              latest_enrolled_at: enrollments[0]?.enrolled_at ?? null,
+            },
+            enrollments,
+          };
+        },
+      );
+
+      return {
+        ...program,
+        program_details: {
+          id: program.id,
+          title: program.title,
+          description: program.description,
+          member_required: program.member_required,
+          leader_required: program.leader_required,
+          ministry_required: program.ministry_required,
+          completed: program.completed,
+          createdAt: program.createdAt,
+          updatedAt: program.updatedAt,
+        },
+        cohorts,
+        instructors,
+        enrolled_members,
+        enrollment_summary: {
+          total_topics: totalTopics,
+          total_cohorts: cohorts.length,
+          total_courses: cohorts.reduce(
+            (sum: number, cohort) => sum + cohort.courses.length,
+            0,
+          ),
+          total_enrollments: totalEnrollments,
+          total_enrolled_members: enrolled_members.length,
+          completed_members: enrolled_members.filter(
+            (member) => member.completion.status === "COMPLETED",
+          ).length,
+          in_progress_members: enrolled_members.filter(
+            (member) => member.completion.status === "IN_PROGRESS",
+          ).length,
+          not_started_members: enrolled_members.filter(
+            (member) => member.completion.status === "NOT_STARTED",
+          ).length,
+        },
+      };
+    });
+  }
+
   async getAllTopics() {
     return await prisma.topic.findMany({
       include: {

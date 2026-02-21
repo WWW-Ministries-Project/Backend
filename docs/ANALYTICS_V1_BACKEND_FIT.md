@@ -118,8 +118,10 @@ Attendance analytics filtering supports:
 
 ### School of Ministry
 - `GET /program/programs`
+- `GET /program/programs-full-details` (full details + instructors + enrolled members + completion metrics)
 - `GET /program/cohorts`
 - `GET /program/cohort-courses`
+- `GET /program/courses` (alias; supports optional `page`/`take` and optional `cohortId`)
 - `GET /program/user-enrollment`
 - `GET /program/assignment-results`
 

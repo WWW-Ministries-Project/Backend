@@ -19,6 +19,11 @@ programRouter.post(
   programController.createProgram,
 );
 programRouter.get("/programs", [protect], programController.getAllPrograms);
+programRouter.get(
+  "/programs-full-details",
+  [protect],
+  programController.getAllProgramsFullDetailsWithEnrollments,
+);
 programRouter.get("/program", [protect], programController.getProgramById);
 programRouter.put(
   "/program",
@@ -77,6 +82,7 @@ programRouter.post(
   courseController.createCourse,
 );
 programRouter.get("/cohort-courses", [protect], courseController.getAllCourses);
+programRouter.get("/courses", [protect], courseController.getAllCourses);
 programRouter.get("/course", [protect], courseController.getCourseById);
 programRouter.put(
   "/course",
