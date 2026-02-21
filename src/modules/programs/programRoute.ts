@@ -19,6 +19,11 @@ programRouter.post(
   programController.createProgram,
 );
 programRouter.get("/programs", [protect], programController.getAllPrograms);
+programRouter.get(
+  "/programs-full-details",
+  [protect],
+  programController.getAllProgramsFullDetailsWithEnrollments,
+);
 programRouter.get("/program", [protect], programController.getProgramById);
 programRouter.put(
   "/program",

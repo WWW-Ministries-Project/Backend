@@ -107,6 +107,19 @@ export class ProgramController {
     }
   }
 
+  async getAllProgramsFullDetailsWithEnrollments(req: Request, res: Response) {
+    try {
+      const programs =
+        await programService.getAllProgramsWithEnrolledMembersAndCompletion();
+      return res.status(200).json({ data: programs });
+    } catch (error: any) {
+      return res.status(500).json({
+        message: "Error fetching full programs with enrollment status",
+        error: error.message,
+      });
+    }
+  }
+
   async getProgramById(req: Request, res: Response) {
     try {
       const { id } = req.query;

@@ -142,11 +142,24 @@ Useful query params on `/appointment/bookings`:
 
 ## School of Ministry
 - `GET /program/programs`
+- `GET /program/programs-full-details` (full program details + instructors + enrolled members + completion status)
 - `GET /program/cohorts`
 - `GET /program/cohort-courses?cohortId=<id>`
 - `GET /program/courses?page=1&take=4000` (all courses, optional pagination)
 - `GET /program/user-enrollment?userId=<id>` or `/program/user-enrollment/:id`
 - `GET /program/assignment-results?topicId=<id>&cohortId=<id>&programId=<id>`
+
+### `GET /program/programs-full-details` response highlights
+- `program_details.member_required`
+- `program_details.leader_required`
+- `program_details.ministry_required`
+- `program_details.completed`
+- `enrolled_members[]` includes:
+  - `full_name`
+  - `user_id`
+  - `status` (`completed` | `in_progress` | `not_started`)
+  - `completion_percentage`
+  - plus detailed `completion` and `enrollments`
 
 ---
 
