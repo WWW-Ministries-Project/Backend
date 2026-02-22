@@ -414,6 +414,13 @@ export class ProgramService {
                 course_name: course.name,
                 cohort_id: cohort.id,
                 cohort_name: cohort.name,
+                instructor: course.instructor
+                  ? {
+                      id: course.instructor.id,
+                      name: course.instructor.name,
+                      email: course.instructor.email,
+                    }
+                  : null,
                 enrolled_at: enrollment.enrolledAt,
                 completed_at: enrollment.completedAt,
                 completion_status: completion.status,
@@ -499,12 +506,52 @@ export class ProgramService {
             .trim();
           const fullName =
             fullNameFromInfo || memberEntry.member?.name || "Unknown";
+          const latestEnrollment = enrollments[0] ?? null;
+          const latestCompletedEnrollment =
+            enrollments.find(
+              (enrollmentItem: { completed_at: Date | null }) =>
+                enrollmentItem.completed_at !== null,
+            ) ?? null;
+          const memberInstructors = Array.from(
+            new Map(
+              enrollments
+                .filter(
+                  (enrollmentItem: {
+                    instructor: { id: number | null } | null;
+                  }) => enrollmentItem.instructor?.id,
+                )
+                .map(
+                  (enrollmentItem: {
+                    instructor: {
+                      id: number;
+                      name: string | null;
+                      email: string | null;
+                    };
+                  }) => [enrollmentItem.instructor.id, enrollmentItem.instructor],
+                ),
+            ).values(),
+          );
 
           return {
             ...memberEntry.member,
             user_id: memberEntry.member?.id ?? null,
             full_name: fullName,
             status: overallStatus.toLowerCase(),
+            cohort: latestEnrollment
+              ? {
+                  id: latestEnrollment.cohort_id,
+                  name: latestEnrollment.cohort_name,
+                }
+              : null,
+            class: latestEnrollment
+              ? {
+                  id: latestEnrollment.course_id,
+                  name: latestEnrollment.course_name,
+                }
+              : null,
+            instructors: memberInstructors,
+            date_enrolled: latestEnrollment?.enrolled_at ?? null,
+            date_completed: latestCompletedEnrollment?.completed_at ?? null,
             completion_percentage: Number(bestCompletionPercent.toFixed(1)),
             completion: {
               status: overallStatus,
