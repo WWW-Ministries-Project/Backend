@@ -2,7 +2,7 @@ import { generateQR, generateRecurringDates } from "../../utils";
 import { prisma } from "../../Models/context";
 import { Request, Response } from "express";
 import * as dotenv from "dotenv";
-import { addDays } from "date-fns";
+import { addDays, addMonths, startOfMonth } from "date-fns";
 
 dotenv.config();
 
@@ -27,6 +27,71 @@ const selectQuery = {
 };
 
 export class eventManagement {
+  private getStartOfToday() {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  }
+
+  private getMonthDateRange(month: any, year: any) {
+    const hasMonth = month !== undefined && month !== null && month !== "";
+    const hasYear = year !== undefined && year !== null && year !== "";
+
+    if (!hasMonth || !hasYear) {
+      return null;
+    }
+
+    const parsedMonth = Number(month);
+    const parsedYear = Number(year);
+
+    if (
+      !Number.isInteger(parsedMonth) ||
+      parsedMonth < 1 ||
+      parsedMonth > 12 ||
+      !Number.isInteger(parsedYear) ||
+      parsedYear <= 0
+    ) {
+      return null;
+    }
+
+    const startOfMonth = new Date(parsedYear, parsedMonth - 1, 1);
+    const startOfNextMonth = new Date(parsedYear, parsedMonth, 1);
+
+    return {
+      gte: startOfMonth,
+      lt: startOfNextMonth,
+    };
+  }
+
+  private getRollingWindowDateRange(page: number = 1) {
+    const safePage = Math.max(page, 1);
+    const startOfToday = this.getStartOfToday();
+    const firstPageEndExclusive = startOfMonth(addMonths(startOfToday, 4));
+
+    if (safePage === 1) {
+      return {
+        gte: startOfToday,
+        lt: firstPageEndExclusive,
+      };
+    }
+
+    const rangeStart = addMonths(firstPageEndExclusive, (safePage - 2) * 3);
+    const rangeEnd = addMonths(rangeStart, 3);
+
+    return {
+      gte: rangeStart,
+      lt: rangeEnd,
+    };
+  }
+
+  private resolveStartDateRange(month: any, year: any, page: number = 1) {
+    const monthRange = this.getMonthDateRange(month, year);
+    if (monthRange) {
+      return monthRange;
+    }
+
+    return this.getRollingWindowDateRange(page);
+  }
+
   createEvent = async (req: Request, res: Response) => {
     try {
       const data = req.body;
@@ -186,78 +251,131 @@ export class eventManagement {
         take = 10,
       }: any = req.query;
 
-      const pageNum = parseInt(page, 10) || 1;
-      const pageSize = parseInt(take, 10) || 10;
+      const pageNum = Math.max(parseInt(page, 10) || 1, 1);
+      const pageSize = Math.max(parseInt(take, 10) || 10, 1);
       const skip = (pageNum - 1) * pageSize;
+      const monthRange = this.getMonthDateRange(month, year);
+      const startDateRange = this.resolveStartDateRange(month, year, pageNum);
 
       let whereClause: any = {
         event_type,
         event_status,
+        start_date: startDateRange,
       };
 
-      if (month && year) {
-        const startOfMonth = new Date(year, month - 1, 1);
-        const startOfNextMonth = new Date(year, month, 1);
-
-        whereClause.AND = [
-          { start_date: { gte: startOfMonth } },
-          { end_date: { lt: startOfNextMonth } },
-        ];
-      }
-
-      const totalCount = await prisma.event_mgt.count({ where: whereClause });
-
-      const data = await prisma.event_mgt.findMany({
-        where: whereClause,
-        orderBy: {
-          start_date: "asc",
-        },
-        skip,
-        take: pageSize,
-        select: {
-          id: true,
-          poster: true,
-          start_date: true,
-          end_date: true,
-          start_time: true,
-          end_time: true,
-          qr_code: true,
-          location: true,
-          description: true,
-          created_by: true,
-          event_type: true,
-          event_status: true,
-          event: {
-            select: {
-              event_name: true,
-              id: true,
-            },
+      const querySelect = {
+        id: true,
+        poster: true,
+        start_date: true,
+        end_date: true,
+        start_time: true,
+        end_time: true,
+        qr_code: true,
+        location: true,
+        description: true,
+        created_by: true,
+        event_type: true,
+        event_status: true,
+        event: {
+          select: {
+            event_name: true,
+            id: true,
           },
-          event_attendance: {
-            select: {
-              created_at: true,
-              user: {
-                select: {
-                  user_info: {
-                    select: {
-                      user: {
-                        select: {
-                          name: true,
-                          membership_type: true,
-                        },
+        },
+        event_attendance: {
+          select: {
+            created_at: true,
+            user: {
+              select: {
+                user_info: {
+                  select: {
+                    user: {
+                      select: {
+                        name: true,
+                        membership_type: true,
                       },
-                      first_name: true,
-                      last_name: true,
-                      other_name: true,
-                      primary_number: true,
                     },
+                    first_name: true,
+                    last_name: true,
+                    other_name: true,
+                    primary_number: true,
                   },
                 },
               },
             },
           },
         },
-      });
+      };
+
+      let totalCount = 0;
+      let totalPages = 0;
+      let responsePageSize = pageSize;
+      let data: any[] = [];
+
+      if (monthRange) {
+        totalCount = await prisma.event_mgt.count({ where: whereClause });
+
+        data = await prisma.event_mgt.findMany({
+          where: whereClause,
+          orderBy: {
+            start_date: "asc",
+          },
+          skip,
+          take: pageSize,
+          select: querySelect,
+        });
+
+        totalPages = Math.ceil(totalCount / pageSize);
+      } else {
+        responsePageSize = 3;
+
+        totalCount = await prisma.event_mgt.count({ where: whereClause });
+
+        data = await prisma.event_mgt.findMany({
+          where: whereClause,
+          orderBy: {
+            start_date: "asc",
+          },
+          select: querySelect,
+        });
+
+        const startOfToday = this.getStartOfToday();
+        const latestEvent = await prisma.event_mgt.findFirst({
+          where: {
+            event_type,
+            event_status,
+            start_date: {
+              gte: startOfToday,
+            },
+          },
+          orderBy: {
+            start_date: "desc",
+          },
+          select: {
+            start_date: true,
+          },
+        });
+
+        if (latestEvent?.start_date) {
+          const latestStartDate = new Date(latestEvent.start_date);
+          const firstPageEndExclusive = startOfMonth(addMonths(startOfToday, 4));
+
+          if (latestStartDate < firstPageEndExclusive) {
+            totalPages = 1;
+          } else {
+            const latestMonthStart = startOfMonth(latestStartDate);
+            const diffInMonths =
+              (latestMonthStart.getFullYear() -
+                firstPageEndExclusive.getFullYear()) *
+                12 +
+              (latestMonthStart.getMonth() - firstPageEndExclusive.getMonth());
+
+            totalPages = 2 + Math.floor(diffInMonths / 3);
+          }
+        } else {
+          totalPages = 0;
+        }
+      }
 
       const flat_data = data.map((event) => ({
         ...event,
@@ -270,8 +388,8 @@ export class eventManagement {
         message: "Operation successful",
         total: totalCount,
         current_page: pageNum,
-        page_size: pageSize,
-        totalPages: Math.ceil(totalCount / pageSize),
+        page_size: responsePageSize,
+        totalPages,
         data: flat_data,
       });
     } catch (error: any) {
@@ -286,20 +404,13 @@ export class eventManagement {
     try {
       const { month, year, event_type, event_status }: any = req.query;
 
+      const startDateRange = this.resolveStartDateRange(month, year);
+
       let whereClause: any = {
         event_type,
         event_status,
+        start_date: startDateRange,
       };
-
-      if (month && year) {
-        const startOfMonth = new Date(year, month - 1, 1);
-        const startOfNextMonth = new Date(year, month, 1);
-
-        whereClause.AND = [
-          { start_date: { gte: startOfMonth } },
-          { end_date: { lt: startOfNextMonth } },
-        ];
-      }
 
       const data = await prisma.event_mgt.findMany({
         where: whereClause,
