@@ -25,8 +25,14 @@ export class CohortService {
     return cohorts.map(addDeadlineFlag);
   }
 
-  async getAllCohorts() {
+  async getAllCohorts(filters?: { page?: number; take?: number }) {
+    const shouldPaginate =
+      typeof filters?.page === "number" && typeof filters?.take === "number";
+    const skip = shouldPaginate ? (filters.page! - 1) * filters.take! : undefined;
+
     const cohorts = await prisma.cohort.findMany({
+      skip,
+      take: shouldPaginate ? filters?.take : undefined,
       include: { program: true, courses: true },
     });
     return cohorts.map(addDeadlineFlag);
