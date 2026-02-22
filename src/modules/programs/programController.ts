@@ -98,7 +98,31 @@ export class ProgramController {
 
   async getAllPrograms(req: Request, res: Response) {
     try {
-      const programs = await programService.getAllPrograms();
+      const pageRaw = req.query.page;
+      const takeRaw = req.query.take;
+
+      let page: number | undefined;
+      let take: number | undefined;
+      if (pageRaw !== undefined || takeRaw !== undefined) {
+        const parsedPage = Number(pageRaw ?? 1);
+        const parsedTake = Number(takeRaw ?? 10);
+
+        if (
+          !Number.isInteger(parsedPage) ||
+          parsedPage <= 0 ||
+          !Number.isInteger(parsedTake) ||
+          parsedTake <= 0
+        ) {
+          return res.status(400).json({
+            message: "Invalid page/take. Both must be positive integers.",
+          });
+        }
+
+        page = parsedPage;
+        take = parsedTake;
+      }
+
+      const programs = await programService.getAllPrograms({ page, take });
       return res.status(200).json({ data: programs });
     } catch (error: any) {
       return res
