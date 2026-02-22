@@ -248,20 +248,27 @@ export class eventManagement {
         event_type,
         event_status,
         page = 1,
-        take = 10,
+        take,
       }: any = req.query;
 
       const pageNum = Math.max(parseInt(page, 10) || 1, 1);
       const pageSize = Math.max(parseInt(take, 10) || 10, 1);
       const skip = (pageNum - 1) * pageSize;
+      const hasTakeParam =
+        take !== undefined && take !== null && `${take}`.trim() !== "";
       const monthRange = this.getMonthDateRange(month, year);
-      const startDateRange = this.resolveStartDateRange(month, year, pageNum);
+      const useRollingWindow = !monthRange && !hasTakeParam;
 
       let whereClause: any = {
         event_type,
         event_status,
-        start_date: startDateRange,
       };
+
+      if (monthRange) {
+        whereClause.start_date = monthRange;
+      } else if (useRollingWindow) {
+        whereClause.start_date = this.resolveStartDateRange(month, year, pageNum);
+      }
 
       const querySelect = {
         id: true,
@@ -326,7 +333,7 @@ export class eventManagement {
         });
 
         totalPages = Math.ceil(totalCount / pageSize);
-      } else {
+      } else if (useRollingWindow) {
         responsePageSize = 3;
 
         totalCount = await prisma.event_mgt.count({ where: whereClause });
@@ -375,6 +382,20 @@ export class eventManagement {
         } else {
           totalPages = 0;
         }
+      } else {
+        totalCount = await prisma.event_mgt.count({ where: whereClause });
+
+        data = await prisma.event_mgt.findMany({
+          where: whereClause,
+          orderBy: {
+            start_date: "asc",
+          },
+          skip,
+          take: pageSize,
+          select: querySelect,
+        });
+
+        totalPages = Math.ceil(totalCount / pageSize);
       }
 
       const flat_data = data.map((event) => ({
