@@ -248,6 +248,7 @@ export class VisitorService {
       eventId?: string;
       page?: string;
       limit?: string;
+      take?: string;
     },
     scope?: {
       mode?: "all" | "responsible";
@@ -261,10 +262,20 @@ export class VisitorService {
       eventId,
       page = "1",
       limit = "10",
+      take,
     } = query;
 
-    const pageNumber = Math.max(Number(page), 1);
-    const pageSize = Math.max(Number(limit), 1);
+    const parsedPageNumber = Number(page);
+    const pageNumber =
+      Number.isInteger(parsedPageNumber) && parsedPageNumber > 0
+        ? parsedPageNumber
+        : 1;
+    const resolvedTake = take ?? limit;
+    const parsedPageSize = Number(resolvedTake);
+    const pageSize =
+      Number.isInteger(parsedPageSize) && parsedPageSize > 0
+        ? parsedPageSize
+        : 10;
     const skip = (pageNumber - 1) * pageSize;
 
     const where: any = {};
@@ -392,6 +403,7 @@ export class VisitorService {
         total,
         page: pageNumber,
         limit: pageSize,
+        take: pageSize,
         totalPages: Math.ceil(total / pageSize),
       },
     };

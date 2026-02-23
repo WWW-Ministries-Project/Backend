@@ -159,6 +159,11 @@ Useful query params on `/appointment/bookings`:
   - `user_id`
   - `status` (`completed` | `in_progress` | `not_started`)
   - `completion_percentage`
+  - `cohort`
+  - `class`
+  - `instructors`
+  - `date_enrolled`
+  - `date_completed`
   - plus detailed `completion` and `enrollments`
 
 ---
