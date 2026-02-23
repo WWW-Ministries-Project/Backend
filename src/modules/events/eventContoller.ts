@@ -164,7 +164,6 @@ export class eventManagement {
   updateEvent = async (req: Request, res: Response) => {
     try {
       const {
-        id,
         start_date,
         end_date,
         start_time,
@@ -178,9 +177,35 @@ export class eventManagement {
         updated_by,
       } = req.body;
 
+      const rawId = req.body?.id ?? req.query?.id;
+      const eventId = Number(Array.isArray(rawId) ? rawId[0] : rawId);
+
+      if (!Number.isInteger(eventId) || eventId <= 0) {
+        return res.status(400).json({
+          message: "A valid event id is required",
+          data: null,
+        });
+      }
+
+      const parsedStartDate = start_date ? new Date(start_date) : null;
+      if (start_date && Number.isNaN(parsedStartDate?.getTime())) {
+        return res.status(400).json({
+          message: "Invalid start_date",
+          data: null,
+        });
+      }
+
+      const parsedEndDate = end_date ? new Date(end_date) : null;
+      if (end_date && Number.isNaN(parsedEndDate?.getTime())) {
+        return res.status(400).json({
+          message: "Invalid end_date",
+          data: null,
+        });
+      }
+
       const existance = await prisma.event_mgt.findUnique({
         where: {
-          id,
+          id: eventId,
         },
         select: selectQuery,
       });
@@ -191,12 +216,12 @@ export class eventManagement {
 
       const response = await prisma.event_mgt.update({
         where: {
-          id,
+          id: eventId,
         },
         data: {
-          start_date: start_date ? new Date(start_date) : existance.start_date,
-          end_date: end_date ? new Date(end_date) : existance.end_date,
-          start_time: start_time ? start_date : existance.start_date,
+          start_date: parsedStartDate ?? existance.start_date,
+          end_date: parsedEndDate ?? existance.end_date,
+          start_time: start_time ? start_time : existance.start_time,
           end_time: end_time ? end_time : existance.end_time,
           location: location ? location : existance.location,
           description: description ? description : existance.description,
