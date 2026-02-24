@@ -155,6 +155,7 @@ export const updateRequestReturnValue = (
       position: updatedRequest.user?.position?.name || null,
     },
     request_approvals: updatedRequest.request_approvals,
+    approval_instances: updatedRequest.approval_instances || [],
     request_comments: updatedRequest.request_comments || null,
     currency: updatedRequest.currency || null,
     products: updatedRequest.products || [],

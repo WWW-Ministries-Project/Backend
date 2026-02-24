@@ -2,9 +2,13 @@ import Router from "express";
 import * as dotenv from "dotenv";
 import {} from "../../utils/";
 import {
+  saveRequisitionApprovalConfigHandler,
+  getRequisitionApprovalConfigHandler,
   createRequisitionHandler,
   listRequisitionHandler,
   getRequisitionHandler,
+  requisitionApprovalActionHandler,
+  submitRequisitionHandler,
   updateRequisitionHandler,
   deleteRequisitionHandler,
   userRequisitionsHandler,
@@ -20,9 +24,13 @@ dotenv.config();
 export const requisitionRouter = Router();
 
 const requisitionControllers = {
+  saveRequisitionApprovalConfigHandler,
+  getRequisitionApprovalConfigHandler,
   createRequisitionHandler,
   listRequisitionHandler,
   getRequisitionHandler,
+  requisitionApprovalActionHandler,
+  submitRequisitionHandler,
   updateRequisitionHandler,
   deleteRequisitionHandler,
   userRequisitionsHandler,
@@ -36,8 +44,28 @@ const wrappedControllers = wrapControllersWithLogger(
 );
 
 requisitionRouter.post(
+  "/upsert-approval-config",
+  [permissions.protect, permissions.can_manage_requisitions],
+  wrappedControllers.saveRequisitionApprovalConfigHandler,
+);
+requisitionRouter.get(
+  "/get-approval-config",
+  [permissions.protect, permissions.can_view_requisitions],
+  wrappedControllers.getRequisitionApprovalConfigHandler,
+);
+requisitionRouter.post(
   "/create-requisition",
   wrappedControllers.createRequisitionHandler,
+);
+requisitionRouter.post(
+  "/submit-requisition",
+  [permissions.protect],
+  wrappedControllers.submitRequisitionHandler,
+);
+requisitionRouter.post(
+  "/approval-action",
+  [permissions.protect, permissions.can_manage_requisitions],
+  wrappedControllers.requisitionApprovalActionHandler,
 );
 requisitionRouter.get(
   "/list-requisition",

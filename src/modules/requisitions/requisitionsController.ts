@@ -1,14 +1,22 @@
 import { Request, Response } from "express";
 import {
+  actionRequisitionApproval,
   createRequisition,
+  fetchRequisitionApprovalConfig,
   listRequisition,
   getRequisition,
+  saveRequisitionApprovalConfig,
+  submitRequisition,
   updateRequisition,
   deleteRequisition,
   getmyRequisition,
   getStaffRequisition,
 } from "./requisition-service";
-import { RequisitionInterface } from "../../interfaces/requisitions-interface";
+import {
+  RequisitionApprovalActionPayload,
+  RequisitionApprovalConfigPayload,
+  RequisitionInterface,
+} from "../../interfaces/requisitions-interface";
 import {
   InputValidationError,
   NotFoundError,
@@ -26,6 +34,32 @@ export const createRequisitionHandler = async (req: Request, res: Response) => {
     data: createdRequisition,
   });
 };
+
+export const saveRequisitionApprovalConfigHandler = async (
+  req: Request,
+  res: Response,
+) => {
+  const payload = req.body as RequisitionApprovalConfigPayload;
+  const user = (req as any).user;
+
+  const response = await saveRequisitionApprovalConfig(payload, user?.id);
+  res.status(200).json({
+    message: "Saved successfully",
+    data: response,
+  });
+};
+
+export const getRequisitionApprovalConfigHandler = async (
+  req: Request,
+  res: Response,
+) => {
+  const response = await fetchRequisitionApprovalConfig();
+  res.status(200).json({
+    message: "Operation successful",
+    data: response,
+  });
+};
+
 export const updateRequisitionHandler = async (req: Request, res: Response) => {
   const requisitionData: Partial<RequisitionInterface> = req.body;
 
@@ -38,6 +72,32 @@ export const updateRequisitionHandler = async (req: Request, res: Response) => {
   res.status(201).json({
     message: "Requisition updated successfully",
     data: updatedRequisition,
+  });
+};
+
+export const submitRequisitionHandler = async (req: Request, res: Response) => {
+  const user = (req as any).user;
+  const requisitionId =
+    req.body?.requisition_id || req.body?.id || req.query?.id;
+  const response = await submitRequisition(requisitionId, user);
+
+  res.status(200).json({
+    message: "Requisition submitted successfully",
+    data: response,
+  });
+};
+
+export const requisitionApprovalActionHandler = async (
+  req: Request,
+  res: Response,
+) => {
+  const payload = req.body as RequisitionApprovalActionPayload;
+  const user = (req as any).user;
+
+  const response = await actionRequisitionApproval(payload, user);
+  res.status(200).json({
+    message: "Operation successful",
+    data: response,
   });
 };
 

@@ -2,7 +2,11 @@ import Joi from "joi";
 import fs from "fs/promises";
 import path from "path";
 import { prisma } from "../../Models/context";
-import { RequisitionInterface } from "../../interfaces/requisitions-interface";
+import {
+  RequisitionApprovalActionPayload,
+  RequisitionApprovalConfigPayload,
+  RequisitionInterface,
+} from "../../interfaces/requisitions-interface";
 import {
   calculateTotalCost,
   checkPermissions,
@@ -10,12 +14,23 @@ import {
   updateDataPayload,
   updateRequestReturnValue,
 } from "./requsition-helpers";
-import { RequestApprovalStatus } from "@prisma/client";
+import {
+  RequestApprovalStatus,
+  RequisitionApprovalInstanceStatus,
+} from "@prisma/client";
 import { cloudinary } from "../../utils";
 import {
   InputValidationError,
   NotFoundError,
+  UnauthorizedError,
 } from "../../utils/custom-error-handlers";
+import {
+  buildRequisitionApprovalSnapshotTx,
+  getRequisitionApprovalConfig,
+  processRequisitionApprovalAction,
+  upsertRequisitionApprovalConfig,
+  validateApprovalActionPayload,
+} from "./requisition-approval-workflow";
 
 const UPLOADS_DIR = path.resolve(process.cwd(), "uploads");
 
@@ -121,39 +136,6 @@ const deleteAttachmentImages = async (attachmentUrls: string[] = []) => {
   );
 };
 
-const resolveCreateApprovalState = async (data: RequisitionInterface) => {
-  const isRequesterSigned = Boolean(data.user_sign?.trim());
-  const fallbackStatus = isRequesterSigned
-    ? RequestApprovalStatus.Awaiting_HOD_Approval
-    : RequestApprovalStatus.Draft;
-  const baseStatus = data.approval_status || fallbackStatus;
-
-  const department = await prisma.department.findUnique({
-    where: { id: data.department_id },
-    select: { department_head: true },
-  });
-
-  const isRequesterHOD = department?.department_head === data.user_id;
-  const shouldAutoApproveByHOD =
-    isRequesterHOD && isRequesterSigned;
-
-  const requestApprovalStatus = shouldAutoApproveByHOD
-    ? RequestApprovalStatus.Awaiting_Executive_Pastor_Approval
-    : baseStatus;
-
-  return {
-    requestApprovalStatus,
-    approvalData: {
-      hod_user_id: shouldAutoApproveByHOD ? data.user_id : null,
-      hod_approved: shouldAutoApproveByHOD,
-      hod_approval_date: shouldAutoApproveByHOD ? new Date() : null,
-      hod_sign: shouldAutoApproveByHOD ? data.user_sign || null : null,
-      ps_user_id: null,
-      ps_approval_date: null,
-    },
-  };
-};
-
 const mapRequestToSummary = (request: {
   id: number;
   user_id: number;
@@ -220,58 +202,69 @@ export const createRequisition = async (data: RequisitionInterface) => {
   }
 
   const requestId = await generateRequestId();
-  const { requestApprovalStatus, approvalData } =
-    await resolveCreateApprovalState(data);
+  const shouldSubmit = Boolean(data.user_sign?.trim());
 
-  const createdRequest = await prisma.request.create({
-    data: {
-      request_id: requestId,
-      user_sign: data.user_sign,
-      user_id: data.user_id,
-      department_id: data.department_id,
-      event_id: data.event_id,
-      requisition_date: new Date(data.request_date),
-      request_approval_status: requestApprovalStatus,
-      currency: data.currency,
-
-      // Create the products related to the request
-      products: data.products?.length
-        ? {
-            create: data.products.map((product) => ({
-              name: product.name,
-              unitPrice: product.unitPrice,
-              quantity: product.quantity,
-            })),
-          }
-        : undefined,
-      request_approvals: {
-        create: approvalData,
-      },
-      // Create the attachments list for the request, if provided
-      attachmentsList: data.attachmentLists?.length
-        ? {
-            create: data.attachmentLists.map((attachment) => ({
-              URL: attachment.URL,
-            })),
-          }
-        : undefined,
-    },
-    include: {
-      products: true,
-      attachmentsList: true,
-      request_comments: true,
-    },
-  });
-
-  if (data.comment) {
-    await prisma.request_comments.create({
+  const createdRequest = await prisma.$transaction(async (tx) => {
+    const request = await tx.request.create({
       data: {
-        request_id: createdRequest.id,
-        comment: data.comment,
-        user_id: createdRequest.user_id,
+        request_id: requestId,
+        user_sign: data.user_sign,
+        user_id: data.user_id,
+        department_id: data.department_id,
+        event_id: data.event_id,
+        requisition_date: new Date(data.request_date as string),
+        request_approval_status: RequestApprovalStatus.Draft,
+        currency: data.currency,
+
+        // Create the products related to the request
+        products: data.products?.length
+          ? {
+              create: data.products.map((product) => ({
+                name: product.name,
+                unitPrice: product.unitPrice,
+                quantity: product.quantity,
+              })),
+            }
+          : undefined,
+        request_approvals: {
+          create: {},
+        },
+        // Create the attachments list for the request, if provided
+        attachmentsList: data.attachmentLists?.length
+          ? {
+              create: data.attachmentLists.map((attachment) => ({
+                URL: attachment.URL,
+              })),
+            }
+          : undefined,
+      },
+      select: {
+        id: true,
+        user_id: true,
+        department_id: true,
       },
     });
-  }
+
+    if (data.comment) {
+      await tx.request_comments.create({
+        data: {
+          request_id: request.id,
+          comment: data.comment,
+          user_id: request.user_id,
+        },
+      });
+    }
+
+    if (shouldSubmit) {
+      await buildRequisitionApprovalSnapshotTx(tx, {
+        requestId: request.id,
+        requesterId: request.user_id,
+        fallbackDepartmentId: request.department_id,
+      });
+    }
+
+    return request;
+  });
 
   return getRequisition(createdRequest.id);
 };
@@ -296,7 +289,13 @@ export const updateRequisition = async (
 
   const { id: token_user_id } = user;
 
-  const [findRequest, existingApproval, existingAttachments, existingProducts] =
+  const [
+    findRequest,
+    existingApproval,
+    existingAttachments,
+    existingProducts,
+    existingApprovalInstance,
+  ] =
     await prisma.$transaction([
       prisma.request.findUnique({
         where: { id: data.id },
@@ -312,6 +311,10 @@ export const updateRequisition = async (
         where: { request_id: data.id },
         select: { id: true },
       }),
+      prisma.requisition_approval_instances.findFirst({
+        where: { request_id: data.id },
+        select: { id: true },
+      }),
     ]);
 
   if (!findRequest) {
@@ -322,6 +325,35 @@ export const updateRequisition = async (
     user,
     findRequest.user_id,
   );
+
+  const hasApprovalWorkflow = Boolean(existingApprovalInstance);
+  const isSignedAction = Boolean(data.user_sign?.trim());
+
+  if (hasApprovalWorkflow && !isMember && isSignedAction) {
+    const action =
+      data.approval_status === RequestApprovalStatus.REJECTED
+        ? "REJECT"
+        : "APPROVE";
+
+    await processRequisitionApprovalAction({
+      requisitionId: data.id,
+      actorUserId: token_user_id,
+      action,
+      ...(data.comment && { comment: data.comment }),
+    });
+
+    if (data.comment) {
+      await prisma.request_comments.create({
+        data: {
+          request_id: data.id,
+          comment: data.comment,
+          user_id: token_user_id,
+        },
+      });
+    }
+
+    return getRequisition(data.id);
+  }
 
   const incomingAttachments = data.attachmentLists || [];
   const incomingProducts = data.products || [];
@@ -362,71 +394,90 @@ export const updateRequisition = async (
     isMember,
   );
 
+  const shouldSubmitByRequester =
+    isMember &&
+    isSignedAction &&
+    !hasApprovalWorkflow &&
+    findRequest.request_approval_status === RequestApprovalStatus.Draft;
+  const effectiveRequestApprovalStatus = shouldSubmitByRequester
+    ? findRequest.request_approval_status
+    : requestApprovalStatus;
+
   // Build the update payload
   const updateData = updateDataPayload(
     data,
     isMember,
-    requestApprovalStatus,
+    effectiveRequestApprovalStatus,
     productsToUpdate,
     newProducts,
     attachmentsToUpdate,
     newAttachments,
   );
 
-  if (existingApproval) {
-    await prisma.request_approvals.update({
-      where: { request_id: data.id },
-      data: {
-        ...approvalData,
-      },
-    });
-  } else {
-    await prisma.request_approvals.create({
-      data: {
-        request_id: data.id,
-        ...approvalData,
-      },
-    });
-  }
-
-  if (data.comment) {
-    const commentData = {
-      request_id: data.id,
-      comment: data.comment,
-      user_id: token_user_id,
-    };
-
-    if (data.comment_id) {
-      // Update existing comment
-      await prisma.request_comments.update({
-        where: { id: data.comment_id },
-        data: { comment: data.comment },
+  await prisma.$transaction(async (tx) => {
+    if (existingApproval) {
+      await tx.request_approvals.update({
+        where: { request_id: data.id },
+        data: {
+          ...approvalData,
+        },
       });
     } else {
-      // Create new comment
-      await prisma.request_comments.create({ data: commentData });
+      await tx.request_approvals.create({
+        data: {
+          request_id: data.id,
+          ...approvalData,
+        },
+      });
     }
-  }
 
-  // Update the requisition
-  await prisma.request.update({
-    where: { id: data.id },
-    data: updateData,
+    if (data.comment) {
+      const commentData = {
+        request_id: data.id,
+        comment: data.comment,
+        user_id: token_user_id,
+      };
+
+      if (data.comment_id) {
+        // Update existing comment
+        await tx.request_comments.update({
+          where: { id: data.comment_id },
+          data: { comment: data.comment },
+        });
+      } else {
+        // Create new comment
+        await tx.request_comments.create({ data: commentData });
+      }
+    }
+
+    // Update the requisition
+    await tx.request.update({
+      where: { id: data.id },
+      data: updateData,
+    });
+
+    // Delete omitted requested items
+    if (productsToDelete.length) {
+      await tx.requested_item.deleteMany({
+        where: { id: { in: productsToDelete.map((product) => product.id) } },
+      });
+    }
+
+    // Delete omitted attachments
+    if (attachmentsToDelete.length) {
+      await tx.request_attachment.deleteMany({
+        where: { id: { in: attachmentsToDelete.map((attachment) => attachment.id) } },
+      });
+    }
+
+    if (shouldSubmitByRequester) {
+      await buildRequisitionApprovalSnapshotTx(tx, {
+        requestId: data.id as number,
+        requesterId: findRequest.user_id,
+        fallbackDepartmentId: findRequest.department_id,
+      });
+    }
   });
-
-  // Delete omitted requested items
-  if (productsToDelete.length) {
-    await prisma.requested_item.deleteMany({
-      where: { id: { in: productsToDelete.map((product) => product.id) } },
-    });
-  }
-
-  // Delete omitted attachments
-  if (attachmentsToDelete.length) {
-    await prisma.request_attachment.deleteMany({
-      where: { id: { in: attachmentsToDelete.map((attachment) => attachment.id) } },
-    });
-  }
 
   // Return the latest record shape after deletions.
   return getRequisition(data.id);
@@ -491,6 +542,89 @@ export const getmyRequisition = async (id: any) => {
   });
 };
 
+export const saveRequisitionApprovalConfig = async (
+  payload: RequisitionApprovalConfigPayload,
+  actorUserId?: number,
+) => {
+  return upsertRequisitionApprovalConfig(payload, actorUserId);
+};
+
+export const fetchRequisitionApprovalConfig = async () => {
+  return getRequisitionApprovalConfig();
+};
+
+export const submitRequisition = async (requisitionId: unknown, user: any) => {
+  const parsedId = Number(requisitionId);
+  if (!Number.isInteger(parsedId) || parsedId <= 0) {
+    throw new InputValidationError("A valid requisition id is required");
+  }
+
+  const requesterId = Number(user?.id);
+  if (!Number.isInteger(requesterId) || requesterId <= 0) {
+    throw new UnauthorizedError("Authenticated user not found");
+  }
+
+  await prisma.$transaction(async (tx) => {
+    const requisition = await tx.request.findUnique({
+      where: {
+        id: parsedId,
+      },
+      select: {
+        id: true,
+        user_id: true,
+        department_id: true,
+      },
+    });
+
+    if (!requisition) {
+      throw new NotFoundError("Requisition not found");
+    }
+
+    if (requisition.user_id !== requesterId) {
+      throw new UnauthorizedError("Only the requester can submit this requisition");
+    }
+
+    await buildRequisitionApprovalSnapshotTx(tx, {
+      requestId: requisition.id,
+      requesterId: requisition.user_id,
+      fallbackDepartmentId: requisition.department_id,
+    });
+  });
+
+  return getRequisition(parsedId);
+};
+
+export const actionRequisitionApproval = async (
+  payload: RequisitionApprovalActionPayload,
+  user: any,
+) => {
+  const actorUserId = Number(user?.id);
+  if (!Number.isInteger(actorUserId) || actorUserId <= 0) {
+    throw new UnauthorizedError("Authenticated user not found");
+  }
+
+  const validated = validateApprovalActionPayload(payload);
+
+  await processRequisitionApprovalAction({
+    requisitionId: validated.requisitionId,
+    actorUserId,
+    action: validated.action,
+    comment: validated.comment,
+  });
+
+  if (validated.comment) {
+    await prisma.request_comments.create({
+      data: {
+        request_id: validated.requisitionId,
+        comment: validated.comment,
+        user_id: actorUserId,
+      },
+    });
+  }
+
+  return getRequisition(validated.requisitionId);
+};
+
 export const getStaffRequisition = async (user: any) => {
   const { id, permissions } = user;
 
@@ -498,43 +632,27 @@ export const getStaffRequisition = async (user: any) => {
   const isHOD = permissions.Requisition === "Can_Manage";
   const isPastor = permissions.Requisition === "Super_Admin";
 
-  let requisitions;
-
-  if (isHOD) {
-    const findDepartment = await prisma.user_departments.findUnique({
-      where: {
-        user_id: id,
-      },
-      include: {
-        department_info: true,
-      },
-    });
-
-    requisitions = await getRequisitionSummaryFromRequests({
-      department_id: findDepartment?.department_id as any,
-      request_approval_status: {
-        in: [
-          RequestApprovalStatus.Awaiting_HOD_Approval,
-          RequestApprovalStatus.APPROVED,
-          RequestApprovalStatus.REJECTED,
-        ],
-      },
-    });
+  if (!isHOD && !isPastor) {
+    return [];
   }
 
-  if (isPastor) {
-    requisitions = await getRequisitionSummaryFromRequests({
-      request_approval_status: {
-        in: [
-          RequestApprovalStatus.Awaiting_Executive_Pastor_Approval,
-          RequestApprovalStatus.APPROVED,
-          RequestApprovalStatus.REJECTED,
-        ],
+  return getRequisitionSummaryFromRequests({
+    OR: [
+      {
+        approval_instances: {
+          some: {
+            approver_user_id: id,
+            status: RequisitionApprovalInstanceStatus.PENDING,
+          },
+        },
       },
-    });
-  }
-
-  return requisitions || [];
+      {
+        request_approval_status: {
+          in: [RequestApprovalStatus.APPROVED, RequestApprovalStatus.REJECTED],
+        },
+      },
+    ],
+  });
 };
 
 export const getRequisition = async (id: any) => {
@@ -559,6 +677,11 @@ export const getRequisition = async (id: any) => {
             ps_user: {
               select: { name: true, position: { select: { name: true } } },
             },
+          },
+        },
+        approval_instances: {
+          orderBy: {
+            step_order: "asc",
           },
         },
         user: {
