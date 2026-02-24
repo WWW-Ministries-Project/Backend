@@ -1,13 +1,8 @@
-enum RequestApprovalStatus {
-  Draft = "Draft",
-  Awaiting_HOD_Approval = "Awaiting_HOD_Approval",
-  APPROVED = "APPROVED",
-  REJECTED = "REJECTED",
-}
+import { RequestApprovalStatus } from "@prisma/client";
 
 // Interface for individual product items
 export interface RequestedItem {
-  id: number;
+  id?: number;
   name: string;
   unitPrice: number;
   quantity: number;
@@ -15,28 +10,28 @@ export interface RequestedItem {
 
 // Interface for individual attachments
 export interface RequestAttachment {
-  id: number;
+  id?: number;
   URL: string;
 }
 
 // Main interface for requisition
 export interface RequisitionInterface {
-  id: number;
-  requester_name: string;
-  comment: string;
-  comment_id: number;
-  request_date: string;
+  id?: number;
+  requester_name?: string;
+  comment?: string;
+  comment_id?: number;
+  request_date?: string;
   department_id: number;
   event_id: number;
   currency: string;
-  approval_status: RequestApprovalStatus;
+  approval_status?: RequestApprovalStatus;
   user_id: number;
   products: RequestedItem[];
-  attachmentLists: RequestAttachment[];
-  user_sign: string;
-  hod_sign: string;
-  ps_sign: string;
-  fnc_sign: string;
+  attachmentLists?: RequestAttachment[];
+  user_sign?: string;
+  hod_sign?: string;
+  ps_sign?: string;
+  fnc_sign?: string;
 }
 
 export interface RequestApprovals {

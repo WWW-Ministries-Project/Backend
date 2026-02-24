@@ -32,6 +32,20 @@ export class eventManagement {
     return new Date(now.getFullYear(), now.getMonth(), now.getDate());
   }
 
+  private getWeekDayNumber(dateValue: Date | string | null | undefined) {
+    if (!dateValue) {
+      return null;
+    }
+
+    const parsedDate = new Date(dateValue);
+    if (Number.isNaN(parsedDate.getTime())) {
+      return null;
+    }
+
+    const weekDay = parsedDate.getUTCDay();
+    return weekDay === 0 ? 7 : weekDay;
+  }
+
   private getMonthDateRange(month: any, year: any) {
     const hasMonth = month !== undefined && month !== null && month !== "";
     const hasYear = year !== undefined && year !== null && year !== "";
@@ -102,13 +116,33 @@ export class eventManagement {
       let { start_date, end_date, day_event, repetitive, recurring } = req.body;
 
       if (day_event === "multi" && repetitive === "no") {
-        end_date = addDays(new Date(start_date), Number(recurring?.daysOfWeek));
-        const data2 = generateRecurringDates(start_date, end_date, recurring);
+        const hasWeekDayList = Array.isArray(recurring?.daysOfWeek);
+        const legacyDaysSpan = Number(recurring?.daysOfWeek);
+        const hasLegacyDaysSpan =
+          !hasWeekDayList &&
+          Number.isInteger(legacyDaysSpan) &&
+          legacyDaysSpan > 0;
+
+        const effectiveEndDate = hasLegacyDaysSpan
+          ? addDays(new Date(start_date), legacyDaysSpan - 1)
+          : end_date ?? start_date;
+
+        const data2 = generateRecurringDates(
+          start_date,
+          effectiveEndDate,
+          recurring,
+        );
+        if (!data2.length) {
+          return res.status(400).json({
+            message: "No event dates generated for the provided payload",
+          });
+        }
+
         for (const new_date of data2) {
           const eventId = await this.createEventController({
             ...data,
             start_date: new_date,
-            end_date,
+            end_date: effectiveEndDate,
           });
           createdEventIds.push(eventId);
         }
@@ -119,7 +153,18 @@ export class eventManagement {
         });
         createdEventIds.push(eventId);
       } else if (day_event === "one" && repetitive === "yes") {
-        const data2 = generateRecurringDates(start_date, end_date, recurring);
+        const recurrenceEndDate = end_date ?? start_date;
+        const data2 = generateRecurringDates(
+          start_date,
+          recurrenceEndDate,
+          recurring,
+        );
+        if (!data2.length) {
+          return res.status(400).json({
+            message: "No recurring event dates generated for the given payload",
+          });
+        }
+
         for (const new_date of data2) {
           const eventId = await this.createEventController({
             ...data,
@@ -128,7 +173,18 @@ export class eventManagement {
           createdEventIds.push(eventId);
         }
       } else if (day_event === "multi" && repetitive === "yes") {
-        const data2 = generateRecurringDates(start_date, end_date, recurring);
+        const recurrenceEndDate = end_date ?? start_date;
+        const data2 = generateRecurringDates(
+          start_date,
+          recurrenceEndDate,
+          recurring,
+        );
+        if (!data2.length) {
+          return res.status(400).json({
+            message: "No recurring event dates generated for the given payload",
+          });
+        }
+
         for (const new_date of data2) {
           const eventId = await this.createEventController({
             ...data,
@@ -427,6 +483,7 @@ export class eventManagement {
         ...event,
         event_name_id: event?.event.id,
         event_name: event?.event.event_name,
+        day_of_week: this.getWeekDayNumber(event?.start_date),
         event: null,
       }));
 
@@ -486,9 +543,10 @@ export class eventManagement {
       const flat_data = data.map((e) => {
         const { event, ...rest } = e;
         return {
-          ...event,
+          ...rest,
           event_name_id: event.id,
           event_name: event.event_name,
+          day_of_week: this.getWeekDayNumber(rest.start_date),
         };
       });
 
@@ -573,6 +631,7 @@ export class eventManagement {
         ...event,
         event_name_id: event?.event.id,
         event_name: event?.event.event_name,
+        day_of_week: this.getWeekDayNumber(event?.start_date),
       }));
       res.status(200).json({
         message: "Operation successful",
@@ -702,6 +761,7 @@ export class eventManagement {
       const flat_data = {
         ...response,
         event_name: response?.event.event_name,
+        day_of_week: this.getWeekDayNumber(response?.start_date),
         event: null,
       };
       res
@@ -1001,6 +1061,7 @@ export class eventManagement {
         ...event,
         event_name: event.event?.event_name ?? null,
         event_name_id: event.event?.id ?? null,
+        day_of_week: this.getWeekDayNumber(event.start_date),
         event: undefined, // remove nested `event`
       }));
 
