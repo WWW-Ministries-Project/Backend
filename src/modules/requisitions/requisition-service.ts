@@ -154,6 +154,48 @@ const resolveCreateApprovalState = async (data: RequisitionInterface) => {
   };
 };
 
+const mapRequestToSummary = (request: {
+  id: number;
+  user_id: number;
+  request_id: string;
+  requisition_date: Date;
+  request_approval_status: RequestApprovalStatus;
+  department_id: number;
+  products: { name: string; unitPrice: number; quantity: number }[];
+}) => ({
+  requisition_id: request.id,
+  user_id: request.user_id,
+  generated_id: request.request_id,
+  product_names: request.products.map((product) => product.name),
+  date_created: request.requisition_date,
+  approval_status: request.request_approval_status,
+  total_amount: request.products.reduce(
+    (sum, product) => sum + product.unitPrice * product.quantity,
+    0,
+  ),
+  department_id: request.department_id,
+});
+
+const getRequisitionSummaryFromRequests = async (where?: any) => {
+  const requests = await prisma.request.findMany({
+    where,
+    include: {
+      products: {
+        select: {
+          name: true,
+          unitPrice: true,
+          quantity: true,
+        },
+      },
+    },
+    orderBy: {
+      id: "desc",
+    },
+  });
+
+  return requests.map(mapRequestToSummary);
+};
+
 /**
  * Generates the next request ID.
  * @returns {Promise<string>} The next request ID in the format "RQ-0001"
@@ -435,24 +477,18 @@ export const deleteRequisition = async (id: any) => {
 };
 
 export const listRequisition = async () => {
-  const response = await prisma.requisition_summary.findMany({
-    orderBy: {
-      requisition_id: "desc",
-    },
-  });
-  return response;
+  return getRequisitionSummaryFromRequests();
 };
 
 export const getmyRequisition = async (id: any) => {
-  const response = await prisma.requisition_summary.findMany({
-    where: {
-      user_id: parseInt(id),
-    },
-    orderBy: {
-      requisition_id: "desc",
-    },
+  const userId = Number(id);
+  if (!Number.isInteger(userId) || userId <= 0) {
+    throw new InputValidationError("A valid user ID is required");
+  }
+
+  return getRequisitionSummaryFromRequests({
+    user_id: userId,
   });
-  return response;
 };
 
 export const getStaffRequisition = async (user: any) => {
@@ -474,26 +510,26 @@ export const getStaffRequisition = async (user: any) => {
       },
     });
 
-    requisitions = await prisma.requisition_summary.findMany({
-      where: {
-        AND: [
-          {
-            department_id: findDepartment?.department_id as any,
-            approval_status: {
-              in: ["Awaiting_HOD_Approval", "APPROVED", "REJECTED"],
-            },
-          },
+    requisitions = await getRequisitionSummaryFromRequests({
+      department_id: findDepartment?.department_id as any,
+      request_approval_status: {
+        in: [
+          RequestApprovalStatus.Awaiting_HOD_Approval,
+          RequestApprovalStatus.APPROVED,
+          RequestApprovalStatus.REJECTED,
         ],
       },
     });
   }
 
   if (isPastor) {
-    requisitions = await prisma.requisition_summary.findMany({
-      where: {
-        approval_status: {
-          in: ["Awaiting_Executive_Pastor_Approval", "APPROVED", "REJECTED"],
-        },
+    requisitions = await getRequisitionSummaryFromRequests({
+      request_approval_status: {
+        in: [
+          RequestApprovalStatus.Awaiting_Executive_Pastor_Approval,
+          RequestApprovalStatus.APPROVED,
+          RequestApprovalStatus.REJECTED,
+        ],
       },
     });
   }
