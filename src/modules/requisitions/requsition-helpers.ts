@@ -1,34 +1,48 @@
 import { RequestApprovalStatus, requested_item } from "@prisma/client";
-import { RequisitionInterface } from "../../interfaces/requisitions-interface";
+import {
+  RequestAttachment,
+  RequisitionInterface,
+  RequestedItem,
+} from "../../interfaces/requisitions-interface";
 import { UnauthorizedError } from "../../utils/custom-error-handlers";
 
-export const mapProducts = (products: RequisitionInterface["products"]) =>
-  products?.map((product) => ({
-    where: { id: product.id },
-    update: {
-      name: product.name,
-      unitPrice: product.unitPrice,
-      quantity: product.quantity,
-    },
-    create: {
-      name: product.name,
-      unitPrice: product.unitPrice,
-      quantity: product.quantity,
-    },
-  }));
+export const mapProducts = (products: RequestedItem[] = []) =>
+  products
+    .filter(
+      (product): product is RequestedItem & { id: number } =>
+        typeof product.id === "number",
+    )
+    .map((product) => ({
+      where: { id: product.id },
+      update: {
+        name: product.name,
+        unitPrice: product.unitPrice,
+        quantity: product.quantity,
+      },
+      create: {
+        name: product.name,
+        unitPrice: product.unitPrice,
+        quantity: product.quantity,
+      },
+    }));
 
 export const mapAttachments = (
-  attachments: RequisitionInterface["attachmentLists"],
+  attachments: RequestAttachment[] = [],
 ) =>
-  attachments?.map((attachment) => ({
-    where: { id: attachment.id },
-    update: {
-      URL: attachment.URL,
-    },
-    create: {
-      URL: attachment.URL,
-    },
-  }));
+  attachments
+    .filter(
+      (attachment): attachment is RequestAttachment & { id: number } =>
+        typeof attachment.id === "number",
+    )
+    .map((attachment) => ({
+      where: { id: attachment.id },
+      update: {
+        URL: attachment.URL,
+      },
+      create: {
+        URL: attachment.URL,
+      },
+    }));
 
 export const calculateTotalCost = (
   products: requested_item[] | undefined,
@@ -53,12 +67,44 @@ export const checkPermissions = (user: any, requisitionUserId: number) => {
 };
 
 export const updateDataPayload = (
-  data: any,
-  { isMember }: any,
-  requestApprovalStatus: any,
-  attachmentsToUpdate: any,
-  newAttachments: any,
+  data: Partial<RequisitionInterface>,
+  isMember: boolean,
+  requestApprovalStatus: RequestApprovalStatus | undefined,
+  productsToUpdate: RequestedItem[],
+  newProducts: RequestedItem[],
+  attachmentsToUpdate: RequestAttachment[],
+  newAttachments: RequestAttachment[],
 ) => {
+  const productUpsert = mapProducts(productsToUpdate);
+  const attachmentUpsert = mapAttachments(attachmentsToUpdate);
+  const productCreate = newProducts.map((product) => ({
+    name: product.name,
+    unitPrice: product.unitPrice,
+    quantity: product.quantity,
+  }));
+  const attachmentCreate = newAttachments.map((attachment) => ({
+    URL: attachment.URL,
+  }));
+
+  const productsPayload = data.products
+    ? {
+        ...(productUpsert.length ? { upsert: productUpsert } : {}),
+        ...(productCreate.length ? { create: productCreate } : {}),
+      }
+    : undefined;
+
+  const attachmentsPayload = data.attachmentLists
+    ? {
+        ...(attachmentUpsert.length ? { upsert: attachmentUpsert } : {}),
+        ...(attachmentCreate.length ? { create: attachmentCreate } : {}),
+      }
+    : undefined;
+
+  const hasProductsPayload =
+    !!productsPayload && Object.keys(productsPayload).length > 0;
+  const hasAttachmentsPayload =
+    !!attachmentsPayload && Object.keys(attachmentsPayload).length > 0;
+
   return {
     user_id: data.user_id,
     user_sign: isMember ? data.user_sign : undefined,
@@ -69,15 +115,8 @@ export const updateDataPayload = (
       : undefined,
     request_approval_status: requestApprovalStatus,
     currency: data.currency,
-    products: data.products
-      ? { upsert: mapProducts(data.products) }
-      : undefined,
-    attachmentsList: {
-      upsert: mapAttachments(attachmentsToUpdate),
-      create: newAttachments.map((attachment: any) => ({
-        URL: attachment.URL,
-      })),
-    },
+    products: hasProductsPayload ? productsPayload : undefined,
+    attachmentsList: hasAttachmentsPayload ? attachmentsPayload : undefined,
   };
 };
 
@@ -86,6 +125,19 @@ export const updateRequestReturnValue = (
   totalCost: any,
 ) => {
   return {
+    id: updatedRequest.id,
+    requester_name: updatedRequest.user?.name || null,
+    department_id:
+      updatedRequest.department_id ?? updatedRequest.department?.id ?? null,
+    event_id: updatedRequest.event_id ?? updatedRequest.event?.id ?? null,
+    request_date: updatedRequest.requisition_date || null,
+    approval_status: updatedRequest.request_approval_status || null,
+    user_id: updatedRequest.user_id ?? null,
+    user_sign: updatedRequest.user_sign || null,
+    comment:
+      updatedRequest.request_comments?.[
+        updatedRequest.request_comments.length - 1
+      ]?.comment || null,
     summary: {
       requisition_id: updatedRequest.id,
       user_sign: updatedRequest.user_sign,

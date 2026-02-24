@@ -1,4 +1,6 @@
 import Joi from "joi";
+import fs from "fs/promises";
+import path from "path";
 import { prisma } from "../../Models/context";
 import { RequisitionInterface } from "../../interfaces/requisitions-interface";
 import {
@@ -9,10 +11,148 @@ import {
   updateRequestReturnValue,
 } from "./requsition-helpers";
 import { RequestApprovalStatus } from "@prisma/client";
+import { cloudinary } from "../../utils";
 import {
   InputValidationError,
   NotFoundError,
 } from "../../utils/custom-error-handlers";
+
+const UPLOADS_DIR = path.resolve(process.cwd(), "uploads");
+
+const getCloudinaryPublicIdFromUrl = (attachmentUrl: string): string | null => {
+  if (!attachmentUrl) return null;
+
+  try {
+    const parsedUrl = new URL(attachmentUrl);
+    if (!parsedUrl.hostname.includes("res.cloudinary.com")) {
+      return null;
+    }
+
+    const uploadIndex = parsedUrl.pathname.indexOf("/upload/");
+    if (uploadIndex < 0) {
+      return null;
+    }
+
+    let publicIdPath = parsedUrl.pathname.slice(uploadIndex + "/upload/".length);
+    publicIdPath = publicIdPath.replace(/^v\d+\//, "");
+
+    const segments = publicIdPath.split("/").filter(Boolean);
+    if (!segments.length) {
+      return null;
+    }
+
+    // Cloudinary URLs can have transformations before the version/public-id.
+    while (
+      segments.length > 1 &&
+      segments[0].includes(",") &&
+      !segments[0].startsWith("v")
+    ) {
+      segments.shift();
+    }
+
+    if (segments[0] && /^v\d+$/.test(segments[0])) {
+      segments.shift();
+    }
+
+    if (!segments.length) {
+      return null;
+    }
+
+    const lastSegment = segments[segments.length - 1];
+    segments[segments.length - 1] = lastSegment.replace(/\.[^/.]+$/, "");
+
+    const publicId = segments.join("/");
+    return publicId || null;
+  } catch (error) {
+    return null;
+  }
+};
+
+const getLocalAttachmentPath = (attachmentUrl: string): string | null => {
+  if (!attachmentUrl) return null;
+
+  const resolveUploadsPath = (candidate: string) => {
+    const resolved = path.resolve(process.cwd(), candidate.replace(/^\/+/, ""));
+    return resolved.startsWith(UPLOADS_DIR) ? resolved : null;
+  };
+
+  try {
+    const parsedUrl = new URL(attachmentUrl);
+    const decodedPath = decodeURIComponent(parsedUrl.pathname || "");
+    if (decodedPath.includes("/uploads/")) {
+      return resolveUploadsPath(decodedPath);
+    }
+    return null;
+  } catch (error) {
+    if (
+      attachmentUrl.startsWith("uploads/") ||
+      attachmentUrl.startsWith("/uploads/")
+    ) {
+      return resolveUploadsPath(attachmentUrl);
+    }
+
+    if (
+      path.isAbsolute(attachmentUrl) &&
+      attachmentUrl.startsWith(UPLOADS_DIR)
+    ) {
+      return attachmentUrl;
+    }
+
+    return null;
+  }
+};
+
+const deleteAttachmentImages = async (attachmentUrls: string[] = []) => {
+  const uniqueUrls = Array.from(new Set(attachmentUrls.filter(Boolean)));
+
+  await Promise.allSettled(
+    uniqueUrls.map(async (attachmentUrl) => {
+      const publicId = getCloudinaryPublicIdFromUrl(attachmentUrl);
+      if (publicId) {
+        await cloudinary.uploader.destroy(publicId);
+        return;
+      }
+
+      const localAttachmentPath = getLocalAttachmentPath(attachmentUrl);
+      if (localAttachmentPath) {
+        await fs.unlink(localAttachmentPath);
+      }
+    }),
+  );
+};
+
+const resolveCreateApprovalState = async (data: RequisitionInterface) => {
+  const isRequesterSigned = Boolean(data.user_sign?.trim());
+  const fallbackStatus = isRequesterSigned
+    ? RequestApprovalStatus.Awaiting_HOD_Approval
+    : RequestApprovalStatus.Draft;
+  const baseStatus = data.approval_status || fallbackStatus;
+
+  const department = await prisma.department.findUnique({
+    where: { id: data.department_id },
+    select: { department_head: true },
+  });
+
+  const isRequesterHOD = department?.department_head === data.user_id;
+  const shouldAutoApproveByHOD =
+    isRequesterHOD && isRequesterSigned;
+
+  const requestApprovalStatus = shouldAutoApproveByHOD
+    ? RequestApprovalStatus.Awaiting_Executive_Pastor_Approval
+    : baseStatus;
+
+  return {
+    requestApprovalStatus,
+    approvalData: {
+      hod_user_id: shouldAutoApproveByHOD ? data.user_id : null,
+      hod_approved: shouldAutoApproveByHOD,
+      hod_approval_date: shouldAutoApproveByHOD ? new Date() : null,
+      hod_sign: shouldAutoApproveByHOD ? data.user_sign || null : null,
+      ps_user_id: null,
+      ps_approval_date: null,
+    },
+  };
+};
 
 /**
  * Generates the next request ID.
@@ -33,7 +173,13 @@ export const generateRequestId = async (): Promise<string> => {
  * @returns {Promise<RequisitionInterface>} The newly created requisition.
  */
 export const createRequisition = async (data: RequisitionInterface) => {
+  if (!data.request_date) {
+    throw new InputValidationError("Request date is required.");
+  }
+
   const requestId = await generateRequestId();
+  const { requestApprovalStatus, approvalData } =
+    await resolveCreateApprovalState(data);
 
   const createdRequest = await prisma.request.create({
     data: {
@@ -43,26 +189,21 @@ export const createRequisition = async (data: RequisitionInterface) => {
       department_id: data.department_id,
       event_id: data.event_id,
       requisition_date: new Date(data.request_date),
-      request_approval_status: data.user_sign
-        ? RequestApprovalStatus.Awaiting_HOD_Approval
-        : data.approval_status,
+      request_approval_status: requestApprovalStatus,
       currency: data.currency,
 
       // Create the products related to the request
-      products: {
-        create: data.products.map((product) => ({
-          name: product.name,
-          unitPrice: product.unitPrice,
-          quantity: product.quantity,
-        })),
-      },
+      products: data.products?.length
+        ? {
+            create: data.products.map((product) => ({
+              name: product.name,
+              unitPrice: product.unitPrice,
+              quantity: product.quantity,
+            })),
+          }
+        : undefined,
       request_approvals: {
-        create: {
-          hod_user_id: null,
-          hod_approval_date: null,
-          ps_user_id: null,
-          ps_approval_date: null,
-        },
+        create: approvalData,
       },
       // Create the attachments list for the request, if provided
       attachmentsList: data.attachmentLists?.length
@@ -81,7 +222,7 @@ export const createRequisition = async (data: RequisitionInterface) => {
   });
 
   if (data.comment) {
-    return await prisma.request_comments.create({
+    await prisma.request_comments.create({
       data: {
         request_id: createdRequest.id,
         comment: data.comment,
@@ -90,7 +231,7 @@ export const createRequisition = async (data: RequisitionInterface) => {
     });
   }
 
-  return createdRequest;
+  return getRequisition(createdRequest.id);
 };
 
 /**
@@ -113,7 +254,7 @@ export const updateRequisition = async (
 
   const { id: token_user_id } = user;
 
-  const [findRequest, existingApproval, existingAttachments] =
+  const [findRequest, existingApproval, existingAttachments, existingProducts] =
     await prisma.$transaction([
       prisma.request.findUnique({
         where: { id: data.id },
@@ -122,6 +263,10 @@ export const updateRequisition = async (
         where: { request_id: data.id },
       }),
       prisma.request_attachment.findMany({
+        where: { request_id: data.id },
+        select: { id: true },
+      }),
+      prisma.requested_item.findMany({
         where: { request_id: data.id },
         select: { id: true },
       }),
@@ -136,18 +281,36 @@ export const updateRequisition = async (
     findRequest.user_id,
   );
 
-  // Fetch existing attachments for the requisition
-
   const incomingAttachments = data.attachmentLists || [];
+  const incomingProducts = data.products || [];
+
   const newAttachments = incomingAttachments.filter(
-    (attachment) => !attachment.hasOwnProperty("id"),
+    (attachment) => typeof attachment.id !== "number",
   );
   const attachmentsToUpdate = incomingAttachments.filter((attachment) =>
+    typeof attachment.id === "number" &&
     existingAttachments.some((ea) => ea.id === attachment.id),
   );
-  const attachmentsToDelete = existingAttachments.filter(
-    (ea) => !incomingAttachments.some((ia) => ia.id === ea.id),
+  const attachmentsToDelete = data.attachmentLists
+    ? existingAttachments.filter(
+        (ea) => !incomingAttachments.some((ia) => ia.id === ea.id),
+      )
+    : [];
+
+  const newProducts = incomingProducts.filter(
+    (product) => typeof product.id !== "number",
   );
+  const productsToUpdate = incomingProducts.filter(
+    (product) =>
+      typeof product.id === "number" &&
+      existingProducts.some((existingProduct) => existingProduct.id === product.id),
+  );
+  const productsToDelete = data.products
+    ? existingProducts.filter(
+        (existingProduct) =>
+          !incomingProducts.some((incomingProduct) => incomingProduct.id === existingProduct.id),
+      )
+    : [];
 
   const { requestApprovalStatus, approvalData } = getApprovalData(
     data,
@@ -162,6 +325,8 @@ export const updateRequisition = async (
     data,
     isMember,
     requestApprovalStatus,
+    productsToUpdate,
+    newProducts,
     attachmentsToUpdate,
     newAttachments,
   );
@@ -202,44 +367,27 @@ export const updateRequisition = async (
   }
 
   // Update the requisition
-  const updatedRequest = await prisma.request.update({
+  await prisma.request.update({
     where: { id: data.id },
     data: updateData,
-    include: {
-      products: true,
-      attachmentsList: true,
-      department: true,
-      event: true,
-      request_approvals: {
-        include: {
-          hod_user: {
-            select: { name: true, position: { select: { name: true } } },
-          },
-          ps_user: {
-            select: { name: true, position: { select: { name: true } } },
-          },
-        },
-      },
-      user: { include: { position: true } },
-      request_comments: {
-        include: {
-          request_comment_user: {
-            select: { name: true },
-          },
-        },
-      },
-    },
   });
+
+  // Delete omitted requested items
+  if (productsToDelete.length) {
+    await prisma.requested_item.deleteMany({
+      where: { id: { in: productsToDelete.map((product) => product.id) } },
+    });
+  }
 
   // Delete omitted attachments
-  await prisma.request_attachment.deleteMany({
-    where: { id: { in: attachmentsToDelete.map((a) => a.id) } },
-  });
+  if (attachmentsToDelete.length) {
+    await prisma.request_attachment.deleteMany({
+      where: { id: { in: attachmentsToDelete.map((attachment) => attachment.id) } },
+    });
+  }
 
-  // Calculate total cost
-  const totalCost = calculateTotalCost(updatedRequest.products);
-
-  return updateRequestReturnValue(updatedRequest, totalCost);
+  // Return the latest record shape after deletions.
+  return getRequisition(data.id);
 };
 
 /**
@@ -253,34 +401,35 @@ export const deleteRequisition = async (id: any) => {
   }).validateAsync({ id });
 
   const parsedId = parseInt(id);
-
-  const result = await prisma.$transaction(async (prisma) => {
-    const requisition = await prisma.request.findUnique({
-      where: { id: parsedId },
-      include: {
-        products: true,
-        attachmentsList: true,
-      },
-    });
-
-    if (!requisition) {
-      throw new NotFoundError(`Requisition with ID ${id} not found.`);
-    }
-
-    const deleteProducts = prisma.requested_item.deleteMany({
-      where: { request_id: parsedId },
-    });
-
-    const deleteAttachments = prisma.request_attachment.deleteMany({
-      where: { request_id: parsedId },
-    });
-
-    const deleteRequisition = prisma.request.delete({
-      where: { id: parsedId },
-    });
-
-    await Promise.all([deleteProducts, deleteAttachments, deleteRequisition]);
+  const requisition = await prisma.request.findUnique({
+    where: { id: parsedId },
+    include: {
+      products: true,
+      attachmentsList: true,
+    },
   });
+
+  if (!requisition) {
+    throw new NotFoundError(`Requisition with ID ${id} not found.`);
+  }
+
+  const attachmentUrls = requisition.attachmentsList.map(
+    (attachment) => attachment.URL,
+  );
+
+  const result = await prisma.$transaction([
+    prisma.requested_item.deleteMany({
+      where: { request_id: parsedId },
+    }),
+    prisma.request_attachment.deleteMany({
+      where: { request_id: parsedId },
+    }),
+    prisma.request.delete({
+      where: { id: parsedId },
+    }),
+  ]);
+
+  await deleteAttachmentImages(attachmentUrls);
 
   return result;
 };
@@ -391,10 +540,7 @@ export const getRequisition = async (id: any) => {
     }
 
     // Calculate total_cost
-    const totalCost =
-      response.products?.reduce((sum, product) => {
-        return sum + product.unitPrice * product.quantity;
-      }, 0) || 0;
+    const totalCost = calculateTotalCost(response.products);
 
     // Transform the response into the desired shape
     return updateRequestReturnValue(response, totalCost);
