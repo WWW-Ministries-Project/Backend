@@ -350,6 +350,7 @@ model request {
   products                requested_item[]      @relation("ProductRequest")
   user_sign               String?
   request_comments        request_comments[]
+  approval_instances      requisition_approval_instances[]
 
   @@index([user_id], map: "request_user_id_fkey")
   @@index([department_id], map: "request_department_id_fkey")
@@ -419,6 +420,66 @@ model request_approvals {
   request           request?  @relation(fields: [request_id], references: [id])
   hod_user          user?     @relation("hod_user", fields: [hod_user_id], references: [id])
   ps_user           user?     @relation("ps_user", fields: [ps_user_id], references: [id])
+}
+
+model requisition_approval_configs {
+  id         Int                                    @id @default(autoincrement())
+  module     RequisitionApprovalModule              @unique
+  is_active  Boolean                                @default(true)
+  created_by Int?
+  updated_by Int?
+  created_at DateTime                               @default(now())
+  updated_at DateTime                               @updatedAt
+  requesters requisition_approval_config_requesters[]
+  steps      requisition_approval_config_steps[]
+  instances  requisition_approval_instances[]
+}
+
+model requisition_approval_config_requesters {
+  id        Int                         @id @default(autoincrement())
+  config_id Int
+  user_id   Int
+  config    requisition_approval_configs @relation(fields: [config_id], references: [id], onDelete: Cascade)
+
+  @@unique([config_id, user_id])
+  @@index([user_id])
+}
+
+model requisition_approval_config_steps {
+  id         Int                         @id @default(autoincrement())
+  config_id  Int
+  step_order Int
+  step_type  RequisitionApproverType
+  position_id Int?
+  user_id    Int?
+  config     requisition_approval_configs @relation(fields: [config_id], references: [id], onDelete: Cascade)
+
+  @@unique([config_id, step_order])
+  @@index([position_id])
+  @@index([user_id])
+}
+
+model requisition_approval_instances {
+  id               Int                              @id @default(autoincrement())
+  request_id       Int
+  config_id        Int
+  step_order       Int
+  step_type        RequisitionApproverType
+  approver_user_id Int
+  position_id      Int?
+  configured_user_id Int?
+  status           RequisitionApprovalInstanceStatus @default(WAITING)
+  acted_by_user_id Int?
+  acted_at         DateTime?
+  comment          String?
+  created_at       DateTime                         @default(now())
+  updated_at       DateTime                         @updatedAt
+  config           requisition_approval_configs     @relation(fields: [config_id], references: [id], onDelete: Cascade)
+  request          request                           @relation(fields: [request_id], references: [id], onDelete: Cascade)
+
+  @@unique([request_id, step_order])
+  @@index([approver_user_id])
+  @@index([status])
 }
 
 model program {
@@ -603,6 +664,23 @@ enum RequestApprovalStatus {
   Draft
   Awaiting_HOD_Approval
   Awaiting_Executive_Pastor_Approval
+  APPROVED
+  REJECTED
+}
+
+enum RequisitionApprovalModule {
+  REQUISITION
+}
+
+enum RequisitionApproverType {
+  HEAD_OF_DEPARTMENT
+  POSITION
+  SPECIFIC_PERSON
+}
+
+enum RequisitionApprovalInstanceStatus {
+  WAITING
+  PENDING
   APPROVED
   REJECTED
 }

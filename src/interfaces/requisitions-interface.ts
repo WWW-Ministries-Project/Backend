@@ -48,3 +48,29 @@ export interface RequestApprovals {
   ps_approval_date?: Date | null;
   ps_comment: string | null;
 }
+
+export type RequisitionApprovalModuleType = "REQUISITION";
+export type RequisitionApproverTypeValue =
+  | "HEAD_OF_DEPARTMENT"
+  | "POSITION"
+  | "SPECIFIC_PERSON";
+
+export interface RequisitionApprovalConfigApprover {
+  order: number;
+  type: RequisitionApproverTypeValue;
+  position_id?: number;
+  user_id?: number;
+}
+
+export interface RequisitionApprovalConfigPayload {
+  module: RequisitionApprovalModuleType;
+  requester_user_ids: number[];
+  approvers: RequisitionApprovalConfigApprover[];
+  is_active?: boolean;
+}
+
+export interface RequisitionApprovalActionPayload {
+  requisition_id: number;
+  action: "APPROVE" | "REJECT";
+  comment?: string;
+}
