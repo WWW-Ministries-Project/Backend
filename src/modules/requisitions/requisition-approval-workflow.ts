@@ -47,6 +47,15 @@ type ApprovalAction = RequisitionApprovalActionPayload["action"];
 type ApprovalWorkflowTx = Prisma.TransactionClient;
 
 const REQUISITION_MODULE = RequisitionApprovalModule.REQUISITION;
+const REQUISITION_PERMISSION_KEYS = ["Requisition", "Requisitions"];
+const REQUISITION_MANAGE_PERMISSION_VALUES = ["Can_Manage", "Super_Admin"];
+
+const REQUISITION_APPROVAL_TABLE_NAMES = [
+  "requisition_approval_configs",
+  "requisition_approval_config_requesters",
+  "requisition_approval_config_steps",
+  "requisition_approval_instances",
+];
 
 const toPositiveInt = (value: unknown): number | null => {
   const parsed = Number(value);
@@ -54,6 +63,80 @@ const toPositiveInt = (value: unknown): number | null => {
     return null;
   }
   return parsed;
+};
+
+const isPermissionObject = (
+  value: Prisma.JsonValue | null | undefined,
+): value is Prisma.JsonObject => {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+};
+
+const hasRequisitionManagePermission = (
+  permissions: Prisma.JsonValue | null | undefined,
+): boolean => {
+  if (!isPermissionObject(permissions)) {
+    return false;
+  }
+
+  for (const key of REQUISITION_PERMISSION_KEYS) {
+    const value = permissions[key];
+    if (
+      typeof value === "string" &&
+      REQUISITION_MANAGE_PERMISSION_VALUES.includes(value)
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+};
+
+export const isRequisitionApprovalTableMissingError = (
+  error: unknown,
+): boolean => {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError)) {
+    return false;
+  }
+
+  if (error.code !== "P2021") {
+    return false;
+  }
+
+  const tableFromMeta =
+    typeof error.meta?.table === "string" ? error.meta.table : "";
+  const fullMessage = `${error.message} ${tableFromMeta}`;
+
+  return REQUISITION_APPROVAL_TABLE_NAMES.some((tableName) =>
+    fullMessage.includes(tableName),
+  );
+};
+
+const getAutoRequesterUserIdsTx = async (
+  tx: ApprovalWorkflowTx,
+): Promise<number[]> => {
+  const users = await tx.user.findMany({
+    where: {
+      NOT: {
+        is_active: false,
+      },
+    },
+    select: {
+      id: true,
+      access: {
+        select: {
+          permissions: true,
+        },
+      },
+    },
+  });
+
+  return users
+    .filter((user) => hasRequisitionManagePermission(user.access?.permissions))
+    .map((user) => user.id);
+};
+
+const mergeUniqueIds = (ids: number[]): number[] => {
+  return Array.from(new Set(ids));
 };
 
 const toTrimmedOptionalString = (value: unknown): string | undefined => {
@@ -329,10 +412,19 @@ const mapConfigResponse = (config: {
     position_id: number | null;
     user_id: number | null;
   }>;
+  effectiveRequesterUserIds?: number[];
 }): RequisitionApprovalConfigResponse => {
+  const configuredRequesterIds = config.requesters.map(
+    (requester) => requester.user_id,
+  );
+  const requesterUserIds = mergeUniqueIds([
+    ...configuredRequesterIds,
+    ...(config.effectiveRequesterUserIds || []),
+  ]);
+
   return {
     module: config.module,
-    requester_user_ids: config.requesters.map((requester) => requester.user_id),
+    requester_user_ids: requesterUserIds,
     approvers: config.steps.map((step) => ({
       order: step.step_order,
       type: step.step_type,
@@ -347,64 +439,86 @@ const getConfigByModuleTx = async (
   tx: ApprovalWorkflowTx,
   module: RequisitionApprovalModule,
 ): Promise<RequisitionApprovalConfigResponse | null> => {
-  const config = await tx.requisition_approval_configs.findUnique({
-    where: {
-      module,
-    },
-    include: {
-      requesters: {
-        orderBy: {
-          user_id: "asc",
+  let config;
+  try {
+    config = await tx.requisition_approval_configs.findUnique({
+      where: {
+        module,
+      },
+      include: {
+        requesters: {
+          orderBy: {
+            user_id: "asc",
+          },
+          select: {
+            user_id: true,
+          },
         },
-        select: {
-          user_id: true,
+        steps: {
+          orderBy: {
+            step_order: "asc",
+          },
+          select: {
+            step_order: true,
+            step_type: true,
+            position_id: true,
+            user_id: true,
+          },
         },
       },
-      steps: {
-        orderBy: {
-          step_order: "asc",
-        },
-        select: {
-          step_order: true,
-          step_type: true,
-          position_id: true,
-          user_id: true,
-        },
-      },
-    },
-  });
+    });
+  } catch (error) {
+    if (isRequisitionApprovalTableMissingError(error)) {
+      return null;
+    }
+    throw error;
+  }
 
   if (!config) {
     return null;
   }
 
-  return mapConfigResponse(config);
+  const autoRequesterUserIds = await getAutoRequesterUserIdsTx(tx);
+  return mapConfigResponse({
+    ...config,
+    effectiveRequesterUserIds: autoRequesterUserIds,
+  });
 };
 
 const getActiveConfigForSubmissionTx = async (tx: ApprovalWorkflowTx) => {
-  const config = await tx.requisition_approval_configs.findUnique({
-    where: {
-      module: REQUISITION_MODULE,
-    },
-    include: {
-      requesters: {
-        select: {
-          user_id: true,
+  let config;
+  try {
+    config = await tx.requisition_approval_configs.findUnique({
+      where: {
+        module: REQUISITION_MODULE,
+      },
+      include: {
+        requesters: {
+          select: {
+            user_id: true,
+          },
+        },
+        steps: {
+          select: {
+            step_order: true,
+            step_type: true,
+            position_id: true,
+            user_id: true,
+          },
+          orderBy: {
+            step_order: "asc",
+          },
         },
       },
-      steps: {
-        select: {
-          step_order: true,
-          step_type: true,
-          position_id: true,
-          user_id: true,
-        },
-        orderBy: {
-          step_order: "asc",
-        },
-      },
-    },
-  });
+    });
+  } catch (error) {
+    if (isRequisitionApprovalTableMissingError(error)) {
+      throw new InputValidationError(
+        "Requisition approval workflow tables are missing. Run database migrations first.",
+      );
+    }
+    throw error;
+  }
 
   if (!config || !config.is_active) {
     throw new InputValidationError(
@@ -412,7 +526,13 @@ const getActiveConfigForSubmissionTx = async (tx: ApprovalWorkflowTx) => {
     );
   }
 
-  if (!config.requesters.length) {
+  const autoRequesterUserIds = await getAutoRequesterUserIdsTx(tx);
+  const effectiveRequesterUserIds = mergeUniqueIds([
+    ...config.requesters.map((requester) => requester.user_id),
+    ...autoRequesterUserIds,
+  ]);
+
+  if (!effectiveRequesterUserIds.length) {
     throw new InputValidationError(
       "Active requisition approval config has no requester_user_ids",
     );
@@ -424,7 +544,10 @@ const getActiveConfigForSubmissionTx = async (tx: ApprovalWorkflowTx) => {
     );
   }
 
-  return config;
+  return {
+    ...config,
+    effective_requester_user_ids: effectiveRequesterUserIds,
+  };
 };
 
 const resolveHeadOfDepartmentApproverUserId = async (
@@ -588,65 +711,74 @@ export const upsertRequisitionApprovalConfig = async (
 ): Promise<RequisitionApprovalConfigResponse> => {
   const normalizedPayload = normalizeConfigPayload(payload);
 
-  return prisma.$transaction(async (tx) => {
-    await verifyConfigReferences(tx, normalizedPayload);
+  try {
+    return await prisma.$transaction(async (tx) => {
+      await verifyConfigReferences(tx, normalizedPayload);
 
-    const config = await tx.requisition_approval_configs.upsert({
-      where: {
-        module: normalizedPayload.module,
-      },
-      update: {
-        is_active: normalizedPayload.isActive,
-        updated_by: actorUserId,
-      },
-      create: {
-        module: normalizedPayload.module,
-        is_active: normalizedPayload.isActive,
-        created_by: actorUserId,
-        updated_by: actorUserId,
-      },
-      select: {
-        id: true,
-      },
+      const config = await tx.requisition_approval_configs.upsert({
+        where: {
+          module: normalizedPayload.module,
+        },
+        update: {
+          is_active: normalizedPayload.isActive,
+          updated_by: actorUserId,
+        },
+        create: {
+          module: normalizedPayload.module,
+          is_active: normalizedPayload.isActive,
+          created_by: actorUserId,
+          updated_by: actorUserId,
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      await tx.requisition_approval_config_requesters.deleteMany({
+        where: {
+          config_id: config.id,
+        },
+      });
+
+      await tx.requisition_approval_config_steps.deleteMany({
+        where: {
+          config_id: config.id,
+        },
+      });
+
+      await tx.requisition_approval_config_requesters.createMany({
+        data: normalizedPayload.requesterUserIds.map((userId) => ({
+          config_id: config.id,
+          user_id: userId,
+        })),
+      });
+
+      await tx.requisition_approval_config_steps.createMany({
+        data: normalizedPayload.approvers.map((step) => ({
+          config_id: config.id,
+          step_order: step.order,
+          step_type: step.type,
+          position_id: step.positionId,
+          user_id: step.userId,
+        })),
+      });
+
+      const updatedConfig = await getConfigByModuleTx(tx, normalizedPayload.module);
+
+      if (!updatedConfig) {
+        throw new NotFoundError("Unable to load requisition approval config");
+      }
+
+      return updatedConfig;
     });
-
-    await tx.requisition_approval_config_requesters.deleteMany({
-      where: {
-        config_id: config.id,
-      },
-    });
-
-    await tx.requisition_approval_config_steps.deleteMany({
-      where: {
-        config_id: config.id,
-      },
-    });
-
-    await tx.requisition_approval_config_requesters.createMany({
-      data: normalizedPayload.requesterUserIds.map((userId) => ({
-        config_id: config.id,
-        user_id: userId,
-      })),
-    });
-
-    await tx.requisition_approval_config_steps.createMany({
-      data: normalizedPayload.approvers.map((step) => ({
-        config_id: config.id,
-        step_order: step.order,
-        step_type: step.type,
-        position_id: step.positionId,
-        user_id: step.userId,
-      })),
-    });
-
-    const updatedConfig = await getConfigByModuleTx(tx, normalizedPayload.module);
-
-    if (!updatedConfig) {
-      throw new NotFoundError("Unable to load requisition approval config");
+  } catch (error) {
+    if (isRequisitionApprovalTableMissingError(error)) {
+      throw new InputValidationError(
+        "Requisition approval workflow tables are missing. Run database migrations first.",
+      );
     }
-
-    return updatedConfig;
-  });
+    throw error;
+  }
 };
 
 export const buildRequisitionApprovalSnapshotTx = async (
@@ -659,25 +791,36 @@ export const buildRequisitionApprovalSnapshotTx = async (
 ): Promise<void> => {
   const { requestId, requesterId, fallbackDepartmentId } = args;
 
-  const [existingRequest, existingInstances] = await Promise.all([
-    tx.request.findUnique({
-      where: {
-        id: requestId,
-      },
-      select: {
-        id: true,
-      },
-    }),
-    tx.requisition_approval_instances.findMany({
-      where: {
-        request_id: requestId,
-      },
-      select: {
-        id: true,
-      },
-      take: 1,
-    }),
-  ]);
+  let existingRequest;
+  let existingInstances: Array<{ id: number }> = [];
+  try {
+    [existingRequest, existingInstances] = await Promise.all([
+      tx.request.findUnique({
+        where: {
+          id: requestId,
+        },
+        select: {
+          id: true,
+        },
+      }),
+      tx.requisition_approval_instances.findMany({
+        where: {
+          request_id: requestId,
+        },
+        select: {
+          id: true,
+        },
+        take: 1,
+      }),
+    ]);
+  } catch (error) {
+    if (isRequisitionApprovalTableMissingError(error)) {
+      throw new InputValidationError(
+        "Requisition approval workflow tables are missing. Run database migrations first.",
+      );
+    }
+    throw error;
+  }
 
   if (!existingRequest) {
     throw new NotFoundError("Requisition not found");
@@ -691,8 +834,8 @@ export const buildRequisitionApprovalSnapshotTx = async (
 
   const config = await getActiveConfigForSubmissionTx(tx);
 
-  const requesterAllowed = config.requesters.some(
-    (requester) => requester.user_id === requesterId,
+  const requesterAllowed = config.effective_requester_user_ids.includes(
+    requesterId,
   );
 
   if (!requesterAllowed) {
@@ -791,140 +934,244 @@ export const processRequisitionApprovalAction = async (args: {
 }): Promise<void> => {
   const { requisitionId, actorUserId, action, comment } = args;
 
-  await prisma.$transaction(async (tx) => {
-    const request = await tx.request.findUnique({
-      where: {
-        id: requisitionId,
-      },
-      select: {
-        id: true,
-        request_approval_status: true,
-      },
-    });
+  try {
+    await prisma.$transaction(async (tx) => {
+      const request = await tx.request.findUnique({
+        where: {
+          id: requisitionId,
+        },
+        select: {
+          id: true,
+          request_approval_status: true,
+        },
+      });
 
-    if (!request) {
-      throw new NotFoundError("Requisition not found");
-    }
+      if (!request) {
+        throw new NotFoundError("Requisition not found");
+      }
 
-    if (request.request_approval_status === RequestApprovalStatus.APPROVED) {
-      throw new InputValidationError("Requisition is already approved");
-    }
+      if (request.request_approval_status === RequestApprovalStatus.APPROVED) {
+        throw new InputValidationError("Requisition is already approved");
+      }
 
-    if (request.request_approval_status === RequestApprovalStatus.REJECTED) {
-      throw new InputValidationError("Requisition is already rejected");
-    }
+      if (request.request_approval_status === RequestApprovalStatus.REJECTED) {
+        throw new InputValidationError("Requisition is already rejected");
+      }
 
-    const currentPendingStep = await tx.requisition_approval_instances.findFirst({
-      where: {
-        request_id: requisitionId,
-        status: RequisitionApprovalInstanceStatus.PENDING,
-      },
-      orderBy: {
-        step_order: "asc",
-      },
-      select: {
-        id: true,
-        approver_user_id: true,
-        step_order: true,
-      },
-    });
+      const currentPendingStep = await tx.requisition_approval_instances.findFirst({
+        where: {
+          request_id: requisitionId,
+          status: RequisitionApprovalInstanceStatus.PENDING,
+        },
+        orderBy: {
+          step_order: "asc",
+        },
+        select: {
+          id: true,
+          approver_user_id: true,
+          step_order: true,
+        },
+      });
 
-    if (!currentPendingStep) {
-      throw new InputValidationError(
-        "No pending approval step found for this requisition",
-      );
-    }
+      if (!currentPendingStep) {
+        throw new InputValidationError(
+          "No pending approval step found for this requisition",
+        );
+      }
 
-    if (currentPendingStep.approver_user_id !== actorUserId) {
-      throw new UnauthorizedError(
-        "You are not the assigned approver for the current step",
-      );
-    }
+      if (currentPendingStep.approver_user_id !== actorUserId) {
+        throw new UnauthorizedError(
+          "You are not the assigned approver for the current step",
+        );
+      }
 
-    const actionData = {
-      acted_by_user_id: actorUserId,
-      acted_at: new Date(),
-      ...(comment !== undefined && { comment }),
-    };
+      const actionData = {
+        acted_by_user_id: actorUserId,
+        acted_at: new Date(),
+        ...(comment !== undefined && { comment }),
+      };
 
-    if (action === "REJECT") {
+      if (action === "REJECT") {
+        await tx.requisition_approval_instances.update({
+          where: {
+            id: currentPendingStep.id,
+          },
+          data: {
+            status: RequisitionApprovalInstanceStatus.REJECTED,
+            ...actionData,
+          },
+        });
+
+        await tx.request.update({
+          where: {
+            id: requisitionId,
+          },
+          data: {
+            request_approval_status: RequestApprovalStatus.REJECTED,
+          },
+        });
+
+        return;
+      }
+
       await tx.requisition_approval_instances.update({
         where: {
           id: currentPendingStep.id,
         },
         data: {
-          status: RequisitionApprovalInstanceStatus.REJECTED,
+          status: RequisitionApprovalInstanceStatus.APPROVED,
           ...actionData,
         },
       });
+
+      const nextStep = await tx.requisition_approval_instances.findFirst({
+        where: {
+          request_id: requisitionId,
+          status: RequisitionApprovalInstanceStatus.WAITING,
+          step_order: {
+            gt: currentPendingStep.step_order,
+          },
+        },
+        orderBy: {
+          step_order: "asc",
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      if (nextStep) {
+        await tx.requisition_approval_instances.update({
+          where: {
+            id: nextStep.id,
+          },
+          data: {
+            status: RequisitionApprovalInstanceStatus.PENDING,
+          },
+        });
+
+        await tx.request.update({
+          where: {
+            id: requisitionId,
+          },
+          data: {
+            request_approval_status: RequestApprovalStatus.Awaiting_HOD_Approval,
+          },
+        });
+
+        return;
+      }
 
       await tx.request.update({
         where: {
           id: requisitionId,
         },
         data: {
-          request_approval_status: RequestApprovalStatus.REJECTED,
+          request_approval_status: RequestApprovalStatus.APPROVED,
         },
       });
+    });
+  } catch (error) {
+    if (isRequisitionApprovalTableMissingError(error)) {
+      throw new InputValidationError(
+        "Requisition approval workflow tables are missing. Run database migrations first.",
+      );
+    }
+    throw error;
+  }
+};
 
-      return;
+export const canUserManageRequisitionByApproverRole = async (
+  userId: number,
+): Promise<boolean> => {
+  if (!Number.isInteger(userId) || userId <= 0) {
+    return false;
+  }
+
+  try {
+    const [activeConfig, userRecord, pendingAssignment] = await prisma.$transaction([
+      prisma.requisition_approval_configs.findUnique({
+        where: {
+          module: REQUISITION_MODULE,
+        },
+        select: {
+          is_active: true,
+          steps: {
+            select: {
+              step_type: true,
+              position_id: true,
+              user_id: true,
+            },
+          },
+        },
+      }),
+      prisma.user.findUnique({
+        where: {
+          id: userId,
+        },
+        select: {
+          position_id: true,
+        },
+      }),
+      prisma.requisition_approval_instances.findFirst({
+        where: {
+          approver_user_id: userId,
+          status: RequisitionApprovalInstanceStatus.PENDING,
+        },
+        select: {
+          id: true,
+        },
+      }),
+    ]);
+
+    if (pendingAssignment) {
+      return true;
     }
 
-    await tx.requisition_approval_instances.update({
-      where: {
-        id: currentPendingStep.id,
-      },
-      data: {
-        status: RequisitionApprovalInstanceStatus.APPROVED,
-        ...actionData,
-      },
-    });
+    if (!activeConfig || !activeConfig.is_active) {
+      return false;
+    }
 
-    const nextStep = await tx.requisition_approval_instances.findFirst({
+    const hasSpecificPersonStep = activeConfig.steps.some(
+      (step) =>
+        step.step_type === RequisitionApproverType.SPECIFIC_PERSON &&
+        step.user_id === userId,
+    );
+    if (hasSpecificPersonStep) {
+      return true;
+    }
+
+    const hasPositionStep = activeConfig.steps.some(
+      (step) =>
+        step.step_type === RequisitionApproverType.POSITION &&
+        step.position_id !== null &&
+        step.position_id === userRecord?.position_id,
+    );
+    if (hasPositionStep) {
+      return true;
+    }
+
+    const hasHeadOfDepartmentStep = activeConfig.steps.some(
+      (step) => step.step_type === RequisitionApproverType.HEAD_OF_DEPARTMENT,
+    );
+    if (!hasHeadOfDepartmentStep) {
+      return false;
+    }
+
+    const isDepartmentHead = await prisma.department.findFirst({
       where: {
-        request_id: requisitionId,
-        status: RequisitionApprovalInstanceStatus.WAITING,
-        step_order: {
-          gt: currentPendingStep.step_order,
-        },
-      },
-      orderBy: {
-        step_order: "asc",
+        department_head: userId,
       },
       select: {
         id: true,
       },
     });
 
-    if (nextStep) {
-      await tx.requisition_approval_instances.update({
-        where: {
-          id: nextStep.id,
-        },
-        data: {
-          status: RequisitionApprovalInstanceStatus.PENDING,
-        },
-      });
-
-      await tx.request.update({
-        where: {
-          id: requisitionId,
-        },
-        data: {
-          request_approval_status: RequestApprovalStatus.Awaiting_HOD_Approval,
-        },
-      });
-
-      return;
+    return Boolean(isDepartmentHead);
+  } catch (error) {
+    if (isRequisitionApprovalTableMissingError(error)) {
+      return false;
     }
-
-    await tx.request.update({
-      where: {
-        id: requisitionId,
-      },
-      data: {
-        request_approval_status: RequestApprovalStatus.APPROVED,
-      },
-    });
-  });
+    throw error;
+  }
 };

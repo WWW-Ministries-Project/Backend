@@ -15,6 +15,7 @@ import {
   updateRequestReturnValue,
 } from "./requsition-helpers";
 import {
+  Prisma,
   RequestApprovalStatus,
   RequisitionApprovalInstanceStatus,
 } from "@prisma/client";
@@ -27,6 +28,7 @@ import {
 import {
   buildRequisitionApprovalSnapshotTx,
   getRequisitionApprovalConfig,
+  isRequisitionApprovalTableMissingError,
   processRequisitionApprovalAction,
   upsertRequisitionApprovalConfig,
   validateApprovalActionPayload,
@@ -158,24 +160,268 @@ const mapRequestToSummary = (request: {
   department_id: request.department_id,
 });
 
+const stripApprovalInstanceFilters = (value: any): any => {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => stripApprovalInstanceFilters(item))
+      .filter((item) => item !== undefined);
+  }
+
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+
+  const output: Record<string, any> = {};
+  for (const [key, nestedValue] of Object.entries(value)) {
+    if (key === "approval_instances") {
+      continue;
+    }
+
+    const transformed = stripApprovalInstanceFilters(nestedValue);
+    if (transformed === undefined) {
+      continue;
+    }
+    if (
+      Array.isArray(transformed) &&
+      ["OR", "AND", "NOT"].includes(key) &&
+      !transformed.length
+    ) {
+      continue;
+    }
+    output[key] = transformed;
+  }
+
+  return Object.keys(output).length ? output : undefined;
+};
+
+const isMissingWorkflowTablesError = (error: unknown): boolean => {
+  return (
+    isRequisitionApprovalTableMissingError(error) ||
+    (error instanceof InputValidationError &&
+      error.message.includes("workflow tables are missing"))
+  );
+};
+
 const getRequisitionSummaryFromRequests = async (where?: any) => {
-  const requests = await prisma.request.findMany({
-    where,
-    include: {
-      products: {
-        select: {
-          name: true,
-          unitPrice: true,
-          quantity: true,
+  let requests;
+  try {
+    requests = await prisma.request.findMany({
+      where,
+      include: {
+        products: {
+          select: {
+            name: true,
+            unitPrice: true,
+            quantity: true,
+          },
         },
       },
+      orderBy: {
+        id: "desc",
+      },
+    });
+  } catch (error) {
+    if (!isMissingWorkflowTablesError(error)) {
+      throw error;
+    }
+
+    const fallbackWhere = stripApprovalInstanceFilters(where);
+    requests = await prisma.request.findMany({
+      where: fallbackWhere,
+      include: {
+        products: {
+          select: {
+            name: true,
+            unitPrice: true,
+            quantity: true,
+          },
+        },
+      },
+      orderBy: {
+        id: "desc",
+      },
+    });
+  }
+
+  return requests.map(mapRequestToSummary);
+};
+
+const resolveLegacySubmissionState = async (
+  tx: Prisma.TransactionClient,
+  payload: {
+    requesterId: number;
+    departmentId: number;
+    userSign?: string;
+  },
+) => {
+  const { requesterId, departmentId, userSign } = payload;
+  const department = await tx.department.findUnique({
+    where: { id: departmentId },
+    select: { department_head: true },
+  });
+
+  const shouldAutoApproveByHOD =
+    Boolean(userSign?.trim()) && department?.department_head === requesterId;
+
+  return {
+    requestApprovalStatus: shouldAutoApproveByHOD
+      ? RequestApprovalStatus.Awaiting_Executive_Pastor_Approval
+      : RequestApprovalStatus.Awaiting_HOD_Approval,
+    approvalData: {
+      hod_user_id: shouldAutoApproveByHOD ? requesterId : null,
+      hod_approved: shouldAutoApproveByHOD,
+      hod_approval_date: shouldAutoApproveByHOD ? new Date() : null,
+      hod_sign: shouldAutoApproveByHOD ? userSign || null : null,
+      ps_user_id: null,
+      ps_approved: false,
+      ps_approval_date: null,
+      ps_sign: null,
     },
-    orderBy: {
-      id: "desc",
+  };
+};
+
+const applyLegacySubmissionTx = async (
+  tx: Prisma.TransactionClient,
+  payload: {
+    requestId: number;
+    requesterId: number;
+    departmentId: number;
+    userSign?: string;
+  },
+) => {
+  const { requestApprovalStatus, approvalData } = await resolveLegacySubmissionState(
+    tx,
+    {
+      requesterId: payload.requesterId,
+      departmentId: payload.departmentId,
+      userSign: payload.userSign,
+    },
+  );
+
+  await tx.request.update({
+    where: { id: payload.requestId },
+    data: {
+      request_approval_status: requestApprovalStatus,
     },
   });
 
-  return requests.map(mapRequestToSummary);
+  await tx.request_approvals.upsert({
+    where: {
+      request_id: payload.requestId,
+    },
+    update: approvalData,
+    create: {
+      request_id: payload.requestId,
+      ...approvalData,
+    },
+  });
+};
+
+const processLegacyRequisitionApprovalAction = async (args: {
+  requisitionId: number;
+  actorUserId: number;
+  action: "APPROVE" | "REJECT";
+  actorPermission?: string;
+}): Promise<void> => {
+  const { requisitionId, actorUserId, action, actorPermission } = args;
+  const isHOD = actorPermission === "Can_Manage";
+  const isPastor = actorPermission === "Super_Admin";
+
+  await prisma.$transaction(async (tx) => {
+    const requisition = await tx.request.findUnique({
+      where: { id: requisitionId },
+      select: {
+        id: true,
+        request_approval_status: true,
+      },
+    });
+
+    if (!requisition) {
+      throw new NotFoundError("Requisition not found");
+    }
+
+    if (
+      requisition.request_approval_status === RequestApprovalStatus.APPROVED ||
+      requisition.request_approval_status === RequestApprovalStatus.REJECTED
+    ) {
+      throw new InputValidationError("Requisition is already closed");
+    }
+
+    if (action === "REJECT") {
+      if (!isHOD && !isPastor) {
+        throw new UnauthorizedError("You do not have approval rights for this requisition");
+      }
+
+      await tx.request.update({
+        where: { id: requisitionId },
+        data: { request_approval_status: RequestApprovalStatus.REJECTED },
+      });
+      return;
+    }
+
+    if (requisition.request_approval_status === RequestApprovalStatus.Awaiting_HOD_Approval) {
+      if (!isHOD && !isPastor) {
+        throw new UnauthorizedError("HOD approval permission is required");
+      }
+
+      await tx.request_approvals.upsert({
+        where: { request_id: requisitionId },
+        update: {
+          hod_user_id: actorUserId,
+          hod_approved: true,
+          hod_approval_date: new Date(),
+        },
+        create: {
+          request_id: requisitionId,
+          hod_user_id: actorUserId,
+          hod_approved: true,
+          hod_approval_date: new Date(),
+        },
+      });
+
+      await tx.request.update({
+        where: { id: requisitionId },
+        data: {
+          request_approval_status: RequestApprovalStatus.Awaiting_Executive_Pastor_Approval,
+        },
+      });
+      return;
+    }
+
+    if (
+      requisition.request_approval_status ===
+      RequestApprovalStatus.Awaiting_Executive_Pastor_Approval
+    ) {
+      if (!isPastor) {
+        throw new UnauthorizedError("Executive pastor approval permission is required");
+      }
+
+      await tx.request_approvals.upsert({
+        where: { request_id: requisitionId },
+        update: {
+          ps_user_id: actorUserId,
+          ps_approved: true,
+          ps_approval_date: new Date(),
+        },
+        create: {
+          request_id: requisitionId,
+          ps_user_id: actorUserId,
+          ps_approved: true,
+          ps_approval_date: new Date(),
+        },
+      });
+
+      await tx.request.update({
+        where: { id: requisitionId },
+        data: {
+          request_approval_status: RequestApprovalStatus.APPROVED,
+        },
+      });
+      return;
+    }
+
+    throw new InputValidationError("Requisition is not in an approvable state");
+  });
 };
 
 /**
@@ -242,6 +488,7 @@ export const createRequisition = async (data: RequisitionInterface) => {
         id: true,
         user_id: true,
         department_id: true,
+        user_sign: true,
       },
     });
 
@@ -256,11 +503,24 @@ export const createRequisition = async (data: RequisitionInterface) => {
     }
 
     if (shouldSubmit) {
-      await buildRequisitionApprovalSnapshotTx(tx, {
-        requestId: request.id,
-        requesterId: request.user_id,
-        fallbackDepartmentId: request.department_id,
-      });
+      try {
+        await buildRequisitionApprovalSnapshotTx(tx, {
+          requestId: request.id,
+          requesterId: request.user_id,
+          fallbackDepartmentId: request.department_id,
+        });
+      } catch (error) {
+        if (!isMissingWorkflowTablesError(error)) {
+          throw error;
+        }
+
+        await applyLegacySubmissionTx(tx, {
+          requestId: request.id,
+          requesterId: request.user_id,
+          departmentId: request.department_id,
+          userSign: data.user_sign,
+        });
+      }
     }
 
     return request;
@@ -294,7 +554,6 @@ export const updateRequisition = async (
     existingApproval,
     existingAttachments,
     existingProducts,
-    existingApprovalInstance,
   ] =
     await prisma.$transaction([
       prisma.request.findUnique({
@@ -311,11 +570,19 @@ export const updateRequisition = async (
         where: { request_id: data.id },
         select: { id: true },
       }),
-      prisma.requisition_approval_instances.findFirst({
-        where: { request_id: data.id },
-        select: { id: true },
-      }),
     ]);
+
+  let existingApprovalInstance: { id: number } | null = null;
+  try {
+    existingApprovalInstance = await prisma.requisition_approval_instances.findFirst({
+      where: { request_id: data.id },
+      select: { id: true },
+    });
+  } catch (error) {
+    if (!isMissingWorkflowTablesError(error)) {
+      throw error;
+    }
+  }
 
   if (!findRequest) {
     throw new NotFoundError("Requisition not found");
@@ -471,11 +738,24 @@ export const updateRequisition = async (
     }
 
     if (shouldSubmitByRequester) {
-      await buildRequisitionApprovalSnapshotTx(tx, {
-        requestId: data.id as number,
-        requesterId: findRequest.user_id,
-        fallbackDepartmentId: findRequest.department_id,
-      });
+      try {
+        await buildRequisitionApprovalSnapshotTx(tx, {
+          requestId: data.id as number,
+          requesterId: findRequest.user_id,
+          fallbackDepartmentId: findRequest.department_id,
+        });
+      } catch (error) {
+        if (!isMissingWorkflowTablesError(error)) {
+          throw error;
+        }
+
+        await applyLegacySubmissionTx(tx, {
+          requestId: data.id as number,
+          requesterId: findRequest.user_id,
+          departmentId: findRequest.department_id,
+          userSign: data.user_sign,
+        });
+      }
     }
   });
 
@@ -573,6 +853,7 @@ export const submitRequisition = async (requisitionId: unknown, user: any) => {
         id: true,
         user_id: true,
         department_id: true,
+        user_sign: true,
       },
     });
 
@@ -584,11 +865,24 @@ export const submitRequisition = async (requisitionId: unknown, user: any) => {
       throw new UnauthorizedError("Only the requester can submit this requisition");
     }
 
-    await buildRequisitionApprovalSnapshotTx(tx, {
-      requestId: requisition.id,
-      requesterId: requisition.user_id,
-      fallbackDepartmentId: requisition.department_id,
-    });
+    try {
+      await buildRequisitionApprovalSnapshotTx(tx, {
+        requestId: requisition.id,
+        requesterId: requisition.user_id,
+        fallbackDepartmentId: requisition.department_id,
+      });
+    } catch (error) {
+      if (!isMissingWorkflowTablesError(error)) {
+        throw error;
+      }
+
+      await applyLegacySubmissionTx(tx, {
+        requestId: requisition.id,
+        requesterId: requisition.user_id,
+        departmentId: requisition.department_id,
+        userSign: requisition.user_sign || undefined,
+      });
+    }
   });
 
   return getRequisition(parsedId);
@@ -605,12 +899,27 @@ export const actionRequisitionApproval = async (
 
   const validated = validateApprovalActionPayload(payload);
 
-  await processRequisitionApprovalAction({
-    requisitionId: validated.requisitionId,
-    actorUserId,
-    action: validated.action,
-    comment: validated.comment,
-  });
+  try {
+    await processRequisitionApprovalAction({
+      requisitionId: validated.requisitionId,
+      actorUserId,
+      action: validated.action,
+      comment: validated.comment,
+    });
+  } catch (error) {
+    const isMissingWorkflowTables = isMissingWorkflowTablesError(error);
+
+    if (!isMissingWorkflowTables) {
+      throw error;
+    }
+
+    await processLegacyRequisitionApprovalAction({
+      requisitionId: validated.requisitionId,
+      actorUserId,
+      action: validated.action,
+      actorPermission: user?.permissions?.Requisition,
+    });
+  }
 
   if (validated.comment) {
     await prisma.request_comments.create({
@@ -632,67 +941,146 @@ export const getStaffRequisition = async (user: any) => {
   const isHOD = permissions.Requisition === "Can_Manage";
   const isPastor = permissions.Requisition === "Super_Admin";
 
-  if (!isHOD && !isPastor) {
-    return [];
-  }
+  try {
+    const pendingAssignments = await prisma.requisition_approval_instances.findMany({
+      where: {
+        approver_user_id: id,
+        status: RequisitionApprovalInstanceStatus.PENDING,
+      },
+      select: {
+        request_id: true,
+      },
+    });
 
-  return getRequisitionSummaryFromRequests({
-    OR: [
-      {
-        approval_instances: {
-          some: {
-            approver_user_id: id,
-            status: RequisitionApprovalInstanceStatus.PENDING,
-          },
+    const pendingRequestIds = Array.from(
+      new Set(pendingAssignments.map((assignment) => assignment.request_id)),
+    );
+
+    if (!isHOD && !isPastor && !pendingRequestIds.length) {
+      return [];
+    }
+
+    return getRequisitionSummaryFromRequests({
+      OR: [
+        ...(pendingRequestIds.length
+          ? [
+              {
+                id: {
+                  in: pendingRequestIds,
+                },
+              },
+            ]
+          : []),
+        ...(isHOD || isPastor
+          ? [
+              {
+                request_approval_status: {
+                  in: [RequestApprovalStatus.APPROVED, RequestApprovalStatus.REJECTED],
+                },
+              },
+            ]
+          : []),
+      ],
+    });
+  } catch (error) {
+    if (!isMissingWorkflowTablesError(error)) {
+      throw error;
+    }
+
+    if (!isHOD && !isPastor) {
+      return [];
+    }
+
+    if (isHOD) {
+      const findDepartment = await prisma.user_departments.findUnique({
+        where: {
+          user_id: id,
         },
-      },
-      {
+        select: {
+          department_id: true,
+        },
+      });
+
+      return getRequisitionSummaryFromRequests({
+        department_id: findDepartment?.department_id as any,
         request_approval_status: {
-          in: [RequestApprovalStatus.APPROVED, RequestApprovalStatus.REJECTED],
+          in: [
+            RequestApprovalStatus.Awaiting_HOD_Approval,
+            RequestApprovalStatus.APPROVED,
+            RequestApprovalStatus.REJECTED,
+          ],
         },
+      });
+    }
+
+    return getRequisitionSummaryFromRequests({
+      request_approval_status: {
+        in: [
+          RequestApprovalStatus.Awaiting_Executive_Pastor_Approval,
+          RequestApprovalStatus.APPROVED,
+          RequestApprovalStatus.REJECTED,
+        ],
       },
-    ],
-  });
+    });
+  }
 };
 
 export const getRequisition = async (id: any) => {
   if (id) {
-    const response = await prisma.request.findUnique({
-      where: {
-        id: parseInt(id),
+    const buildInclude = (includeApprovalInstances: boolean) => ({
+      request_comments: {
+        include: { request_comment_user: { select: { name: true } } },
       },
-      include: {
-        request_comments: {
-          include: { request_comment_user: { select: { name: true } } },
-        },
-        attachmentsList: true,
-        products: true,
-        department: { select: { id: true, name: true } },
-        event: { select: { id: true } },
-        request_approvals: {
-          include: {
-            hod_user: {
-              select: { name: true, position: { select: { name: true } } },
-            },
-            ps_user: {
-              select: { name: true, position: { select: { name: true } } },
-            },
+      attachmentsList: true,
+      products: true,
+      department: { select: { id: true, name: true } },
+      event: { select: { id: true } },
+      request_approvals: {
+        include: {
+          hod_user: {
+            select: { name: true, position: { select: { name: true } } },
+          },
+          ps_user: {
+            select: { name: true, position: { select: { name: true } } },
           },
         },
+      },
+      ...(includeApprovalInstances && {
         approval_instances: {
           orderBy: {
-            step_order: "asc",
+            step_order: "asc" as const,
           },
         },
-        user: {
-          select: {
-            name: true,
-            email: true,
-            position: { select: { name: true } },
-          },
+      }),
+      user: {
+        select: {
+          name: true,
+          email: true,
+          position: { select: { name: true } },
         },
       },
     });
+
+    let response;
+    try {
+      response = await prisma.request.findUnique({
+        where: {
+          id: parseInt(id),
+        },
+        include: buildInclude(true),
+      });
+    } catch (error) {
+      if (!isMissingWorkflowTablesError(error)) {
+        throw error;
+      }
+
+      response = await prisma.request.findUnique({
+        where: {
+          id: parseInt(id),
+        },
+        include: buildInclude(false),
+      });
+    }
 
     if (!response) {
       throw new NotFoundError("Requisition not found");
