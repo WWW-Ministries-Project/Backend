@@ -258,10 +258,6 @@ const ensureRequisitionApprovalWorkflowTables = async (): Promise<void> => {
   }
 };
 
-export const ensureRequisitionApprovalWorkflowInfrastructure = async (): Promise<void> => {
-  await ensureRequisitionApprovalWorkflowTables();
-};
-
 const toTrimmedOptionalString = (value: unknown): string | undefined => {
   if (value === undefined || value === null) {
     return undefined;
