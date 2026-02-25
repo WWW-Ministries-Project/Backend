@@ -17,7 +17,6 @@ import {
 import {
   Prisma,
   RequestApprovalStatus,
-  RequisitionApprovalInstanceStatus,
 } from "@prisma/client";
 import { cloudinary } from "../../utils";
 import {
@@ -935,94 +934,11 @@ export const actionRequisitionApproval = async (
 };
 
 export const getStaffRequisition = async (user: any) => {
-  const { id, permissions } = user;
-
-  // Determine User Role
-  const isHOD = permissions.Requisition === "Can_Manage";
-  const isPastor = permissions.Requisition === "Super_Admin";
-
-  try {
-    const pendingAssignments = await prisma.requisition_approval_instances.findMany({
-      where: {
-        approver_user_id: id,
-        status: RequisitionApprovalInstanceStatus.PENDING,
-      },
-      select: {
-        request_id: true,
-      },
-    });
-
-    const pendingRequestIds = Array.from(
-      new Set(pendingAssignments.map((assignment) => assignment.request_id)),
-    );
-
-    if (!isHOD && !isPastor && !pendingRequestIds.length) {
-      return [];
-    }
-
-    return getRequisitionSummaryFromRequests({
-      OR: [
-        ...(pendingRequestIds.length
-          ? [
-              {
-                id: {
-                  in: pendingRequestIds,
-                },
-              },
-            ]
-          : []),
-        ...(isHOD || isPastor
-          ? [
-              {
-                request_approval_status: {
-                  in: [RequestApprovalStatus.APPROVED, RequestApprovalStatus.REJECTED],
-                },
-              },
-            ]
-          : []),
-      ],
-    });
-  } catch (error) {
-    if (!isMissingWorkflowTablesError(error)) {
-      throw error;
-    }
-
-    if (!isHOD && !isPastor) {
-      return [];
-    }
-
-    if (isHOD) {
-      const findDepartment = await prisma.user_departments.findUnique({
-        where: {
-          user_id: id,
-        },
-        select: {
-          department_id: true,
-        },
-      });
-
-      return getRequisitionSummaryFromRequests({
-        department_id: findDepartment?.department_id as any,
-        request_approval_status: {
-          in: [
-            RequestApprovalStatus.Awaiting_HOD_Approval,
-            RequestApprovalStatus.APPROVED,
-            RequestApprovalStatus.REJECTED,
-          ],
-        },
-      });
-    }
-
-    return getRequisitionSummaryFromRequests({
-      request_approval_status: {
-        in: [
-          RequestApprovalStatus.Awaiting_Executive_Pastor_Approval,
-          RequestApprovalStatus.APPROVED,
-          RequestApprovalStatus.REJECTED,
-        ],
-      },
-    });
-  }
+  return getRequisitionSummaryFromRequests({
+    request_approval_status: {
+      not: RequestApprovalStatus.Draft,
+    },
+  });
 };
 
 export const getRequisition = async (id: any) => {
