@@ -57,6 +57,8 @@ const REQUISITION_APPROVAL_TABLE_NAMES = [
   "requisition_approval_instances",
 ];
 
+let ensureWorkflowTablesPromise: Promise<void> | null = null;
+
 const toPositiveInt = (value: unknown): number | null => {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed <= 0) {
@@ -137,6 +139,123 @@ const getAutoRequesterUserIdsTx = async (
 
 const mergeUniqueIds = (ids: number[]): number[] => {
   return Array.from(new Set(ids));
+};
+
+const ensureRequisitionApprovalWorkflowTables = async (): Promise<void> => {
+  if (ensureWorkflowTablesPromise) {
+    return ensureWorkflowTablesPromise;
+  }
+
+  ensureWorkflowTablesPromise = (async () => {
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS \`requisition_approval_configs\` (
+        \`id\` INTEGER NOT NULL AUTO_INCREMENT,
+        \`module\` ENUM('REQUISITION') NOT NULL,
+        \`is_active\` BOOLEAN NOT NULL DEFAULT true,
+        \`created_by\` INTEGER NULL,
+        \`updated_by\` INTEGER NULL,
+        \`created_at\` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+        \`updated_at\` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+        UNIQUE INDEX \`requisition_approval_configs_module_key\`(\`module\`),
+        PRIMARY KEY (\`id\`)
+      ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+    `);
+
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS \`requisition_approval_config_requesters\` (
+        \`id\` INTEGER NOT NULL AUTO_INCREMENT,
+        \`config_id\` INTEGER NOT NULL,
+        \`user_id\` INTEGER NOT NULL,
+        UNIQUE INDEX \`requisition_approval_config_requesters_config_id_user_id_key\`(\`config_id\`, \`user_id\`),
+        INDEX \`requisition_approval_config_requesters_user_id_idx\`(\`user_id\`),
+        INDEX \`requisition_approval_config_requesters_config_id_idx\`(\`config_id\`),
+        PRIMARY KEY (\`id\`)
+      ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+    `);
+
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS \`requisition_approval_config_steps\` (
+        \`id\` INTEGER NOT NULL AUTO_INCREMENT,
+        \`config_id\` INTEGER NOT NULL,
+        \`step_order\` INTEGER NOT NULL,
+        \`step_type\` ENUM('HEAD_OF_DEPARTMENT', 'POSITION', 'SPECIFIC_PERSON') NOT NULL,
+        \`position_id\` INTEGER NULL,
+        \`user_id\` INTEGER NULL,
+        UNIQUE INDEX \`requisition_approval_config_steps_config_id_step_order_key\`(\`config_id\`, \`step_order\`),
+        INDEX \`requisition_approval_config_steps_position_id_idx\`(\`position_id\`),
+        INDEX \`requisition_approval_config_steps_user_id_idx\`(\`user_id\`),
+        INDEX \`requisition_approval_config_steps_config_id_idx\`(\`config_id\`),
+        PRIMARY KEY (\`id\`)
+      ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+    `);
+
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS \`requisition_approval_instances\` (
+        \`id\` INTEGER NOT NULL AUTO_INCREMENT,
+        \`request_id\` INTEGER NOT NULL,
+        \`config_id\` INTEGER NOT NULL,
+        \`step_order\` INTEGER NOT NULL,
+        \`step_type\` ENUM('HEAD_OF_DEPARTMENT', 'POSITION', 'SPECIFIC_PERSON') NOT NULL,
+        \`approver_user_id\` INTEGER NOT NULL,
+        \`position_id\` INTEGER NULL,
+        \`configured_user_id\` INTEGER NULL,
+        \`status\` ENUM('WAITING', 'PENDING', 'APPROVED', 'REJECTED') NOT NULL DEFAULT 'WAITING',
+        \`acted_by_user_id\` INTEGER NULL,
+        \`acted_at\` DATETIME(3) NULL,
+        \`comment\` VARCHAR(191) NULL,
+        \`created_at\` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+        \`updated_at\` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+        UNIQUE INDEX \`requisition_approval_instances_request_id_step_order_key\`(\`request_id\`, \`step_order\`),
+        INDEX \`requisition_approval_instances_approver_user_id_idx\`(\`approver_user_id\`),
+        INDEX \`requisition_approval_instances_status_idx\`(\`status\`),
+        INDEX \`requisition_approval_instances_config_id_idx\`(\`config_id\`),
+        PRIMARY KEY (\`id\`)
+      ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+    `);
+
+    // Best-effort FK wiring for environments where migrations were skipped.
+    try {
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE \`requisition_approval_config_requesters\`
+        ADD CONSTRAINT \`requisition_approval_config_requesters_config_id_fkey\`
+        FOREIGN KEY (\`config_id\`) REFERENCES \`requisition_approval_configs\`(\`id\`)
+        ON DELETE CASCADE ON UPDATE CASCADE;
+      `);
+    } catch (error) {}
+
+    try {
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE \`requisition_approval_config_steps\`
+        ADD CONSTRAINT \`requisition_approval_config_steps_config_id_fkey\`
+        FOREIGN KEY (\`config_id\`) REFERENCES \`requisition_approval_configs\`(\`id\`)
+        ON DELETE CASCADE ON UPDATE CASCADE;
+      `);
+    } catch (error) {}
+
+    try {
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE \`requisition_approval_instances\`
+        ADD CONSTRAINT \`requisition_approval_instances_config_id_fkey\`
+        FOREIGN KEY (\`config_id\`) REFERENCES \`requisition_approval_configs\`(\`id\`)
+        ON DELETE CASCADE ON UPDATE CASCADE;
+      `);
+    } catch (error) {}
+
+    try {
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE \`requisition_approval_instances\`
+        ADD CONSTRAINT \`requisition_approval_instances_request_id_fkey\`
+        FOREIGN KEY (\`request_id\`) REFERENCES \`request\`(\`id\`)
+        ON DELETE CASCADE ON UPDATE CASCADE;
+      `);
+    } catch (error) {}
+  })();
+
+  try {
+    await ensureWorkflowTablesPromise;
+  } finally {
+    ensureWorkflowTablesPromise = null;
+  }
 };
 
 const toTrimmedOptionalString = (value: unknown): string | undefined => {
@@ -711,8 +830,8 @@ export const upsertRequisitionApprovalConfig = async (
 ): Promise<RequisitionApprovalConfigResponse> => {
   const normalizedPayload = normalizeConfigPayload(payload);
 
-  try {
-    return await prisma.$transaction(async (tx) => {
+  const runUpsert = async () =>
+    prisma.$transaction(async (tx) => {
       await verifyConfigReferences(tx, normalizedPayload);
 
       const config = await tx.requisition_approval_configs.upsert({
@@ -771,13 +890,26 @@ export const upsertRequisitionApprovalConfig = async (
 
       return updatedConfig;
     });
+
+  try {
+    return await runUpsert();
   } catch (error) {
-    if (isRequisitionApprovalTableMissingError(error)) {
+    if (!isRequisitionApprovalTableMissingError(error)) {
+      throw error;
+    }
+
+    try {
+      await ensureRequisitionApprovalWorkflowTables();
+      return await runUpsert();
+    } catch (retryError) {
+      if (!isRequisitionApprovalTableMissingError(retryError)) {
+        throw retryError;
+      }
+
       throw new InputValidationError(
         "Requisition approval workflow tables are missing. Run database migrations first.",
       );
     }
-    throw error;
   }
 };
 
