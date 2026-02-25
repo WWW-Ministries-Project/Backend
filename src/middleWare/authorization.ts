@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from "express";
 
 import JWT from "jsonwebtoken";
 import { prisma } from "../Models/context";
+import { canUserManageRequisitionByApproverRole } from "../modules/requisitions/requisition-approval-workflow";
 
 const VIEW_PERMISSIONS = ["Can_View", "Can_Manage", "Super_Admin"];
 const MANAGE_PERMISSIONS = ["Can_Manage", "Super_Admin"];
@@ -308,6 +309,16 @@ export class Permissions {
         hasActionPermission(context.permissions, permissionType, action)
       ) {
         return next();
+      }
+
+      if (permissionType === "Requisition" && action === "manage") {
+        const canManageAsApprover = await canUserManageRequisitionByApproverRole(
+          context.userId,
+        );
+
+        if (canManageAsApprover) {
+          return next();
+        }
       }
 
       return res.status(401).json({ message: errorMessage, data: null });
