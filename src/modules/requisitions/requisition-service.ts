@@ -17,6 +17,7 @@ import {
 import {
   Prisma,
   RequestApprovalStatus,
+  RequisitionApprovalInstanceStatus,
 } from "@prisma/client";
 import { cloudinary } from "../../utils";
 import {
@@ -26,6 +27,7 @@ import {
 } from "../../utils/custom-error-handlers";
 import {
   buildRequisitionApprovalSnapshotTx,
+  ensureRequisitionApprovalWorkflowInfrastructure,
   getRequisitionApprovalConfig,
   isRequisitionApprovalTableMissingError,
   processRequisitionApprovalAction,
@@ -421,6 +423,267 @@ const processLegacyRequisitionApprovalAction = async (args: {
 
     throw new InputValidationError("Requisition is not in an approvable state");
   });
+};
+
+type LegacyApprovalState = {
+  hod_user_id: number | null;
+  hod_approval_date: Date | null;
+  hod_approved: boolean;
+  ps_user_id: number | null;
+  ps_approval_date: Date | null;
+  ps_approved: boolean;
+} | null;
+
+const resolveBackfilledStatuses = (args: {
+  totalSteps: number;
+  requisitionStatus: RequestApprovalStatus;
+  legacyApproval: LegacyApprovalState;
+}): RequisitionApprovalInstanceStatus[] => {
+  const { totalSteps, requisitionStatus, legacyApproval } = args;
+  if (totalSteps <= 0) {
+    return [];
+  }
+
+  if (requisitionStatus === RequestApprovalStatus.APPROVED) {
+    return Array.from(
+      { length: totalSteps },
+      () => RequisitionApprovalInstanceStatus.APPROVED,
+    );
+  }
+
+  if (requisitionStatus === RequestApprovalStatus.Awaiting_HOD_Approval) {
+    return Array.from({ length: totalSteps }, (_, index) =>
+      index === 0
+        ? RequisitionApprovalInstanceStatus.PENDING
+        : RequisitionApprovalInstanceStatus.WAITING,
+    );
+  }
+
+  if (
+    requisitionStatus === RequestApprovalStatus.Awaiting_Executive_Pastor_Approval
+  ) {
+    if (totalSteps === 1) {
+      return [RequisitionApprovalInstanceStatus.PENDING];
+    }
+
+    return Array.from({ length: totalSteps }, (_, index) => {
+      if (index === 0) return RequisitionApprovalInstanceStatus.APPROVED;
+      if (index === 1) return RequisitionApprovalInstanceStatus.PENDING;
+      return RequisitionApprovalInstanceStatus.WAITING;
+    });
+  }
+
+  // REJECTED
+  const legacyApprovedCount = legacyApproval?.ps_approved
+    ? 2
+    : legacyApproval?.hod_approved
+      ? 1
+      : 0;
+  const approvedCount = Math.min(legacyApprovedCount, totalSteps);
+  const rejectedIndex =
+    approvedCount >= totalSteps ? totalSteps - 1 : approvedCount;
+
+  return Array.from({ length: totalSteps }, (_, index) => {
+    if (index < approvedCount && index < rejectedIndex) {
+      return RequisitionApprovalInstanceStatus.APPROVED;
+    }
+    if (index === rejectedIndex) {
+      return RequisitionApprovalInstanceStatus.REJECTED;
+    }
+    return RequisitionApprovalInstanceStatus.WAITING;
+  });
+};
+
+const resolveBackfilledActorData = (args: {
+  stepIndex: number;
+  status: RequisitionApprovalInstanceStatus;
+  legacyApproval: LegacyApprovalState;
+}) => {
+  const { stepIndex, status, legacyApproval } = args;
+  const isFinalizedStep =
+    status === RequisitionApprovalInstanceStatus.APPROVED ||
+    status === RequisitionApprovalInstanceStatus.REJECTED;
+
+  if (!isFinalizedStep || !legacyApproval) {
+    return {
+      acted_by_user_id: null,
+      acted_at: null,
+    };
+  }
+
+  if (stepIndex === 0) {
+    return {
+      acted_by_user_id: legacyApproval.hod_user_id,
+      acted_at: legacyApproval.hod_approval_date,
+    };
+  }
+
+  if (stepIndex === 1) {
+    return {
+      acted_by_user_id: legacyApproval.ps_user_id,
+      acted_at: legacyApproval.ps_approval_date,
+    };
+  }
+
+  return {
+    acted_by_user_id: null,
+    acted_at: null,
+  };
+};
+
+const parseOptionalPositiveInt = (value: unknown): number | null => {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new InputValidationError("requisition_id must be a positive integer");
+  }
+  return parsed;
+};
+
+export const backfillRequisitionApprovalInstances = async (
+  requisitionIdInput?: unknown,
+) => {
+  const requisitionId = parseOptionalPositiveInt(requisitionIdInput);
+
+  try {
+    await ensureRequisitionApprovalWorkflowInfrastructure();
+  } catch (error) {
+    throw new InputValidationError(
+      "Unable to initialize requisition approval workflow tables. Run database migrations first.",
+    );
+  }
+
+  const whereClause: Prisma.requestWhereInput = {
+    request_approval_status: {
+      not: RequestApprovalStatus.Draft,
+    },
+    approval_instances: {
+      none: {},
+    },
+    ...(requisitionId ? { id: requisitionId } : {}),
+  };
+
+  const candidates = await prisma.request.findMany({
+    where: whereClause,
+    select: {
+      id: true,
+      user_id: true,
+      department_id: true,
+      request_approval_status: true,
+      request_approvals: {
+        select: {
+          hod_user_id: true,
+          hod_approval_date: true,
+          hod_approved: true,
+          ps_user_id: true,
+          ps_approval_date: true,
+          ps_approved: true,
+        },
+      },
+    },
+    orderBy: {
+      id: "asc",
+    },
+  });
+
+  const result = {
+    total_candidates: candidates.length,
+    backfilled: 0,
+    skipped: 0,
+    failed: 0,
+    errors: [] as Array<{ requisition_id: number; message: string }>,
+  };
+
+  for (const candidate of candidates) {
+    try {
+      await prisma.$transaction(async (tx) => {
+        const existingInstances = await tx.requisition_approval_instances.findMany({
+          where: {
+            request_id: candidate.id,
+          },
+          select: {
+            id: true,
+          },
+          take: 1,
+        });
+
+        if (existingInstances.length) {
+          result.skipped += 1;
+          return;
+        }
+
+        await buildRequisitionApprovalSnapshotTx(tx, {
+          requestId: candidate.id,
+          requesterId: candidate.user_id,
+          fallbackDepartmentId: candidate.department_id,
+        });
+
+        const createdInstances = await tx.requisition_approval_instances.findMany({
+          where: {
+            request_id: candidate.id,
+          },
+          select: {
+            id: true,
+            step_order: true,
+          },
+          orderBy: {
+            step_order: "asc",
+          },
+        });
+
+        const backfilledStatuses = resolveBackfilledStatuses({
+          totalSteps: createdInstances.length,
+          requisitionStatus: candidate.request_approval_status,
+          legacyApproval: candidate.request_approvals,
+        });
+
+        await Promise.all(
+          createdInstances.map((instance, index) => {
+            const nextStatus =
+              backfilledStatuses[index] || RequisitionApprovalInstanceStatus.WAITING;
+            const actorData = resolveBackfilledActorData({
+              stepIndex: index,
+              status: nextStatus,
+              legacyApproval: candidate.request_approvals,
+            });
+
+            return tx.requisition_approval_instances.update({
+              where: {
+                id: instance.id,
+              },
+              data: {
+                status: nextStatus,
+                acted_by_user_id: actorData.acted_by_user_id,
+                acted_at: actorData.acted_at,
+              },
+            });
+          }),
+        );
+
+        await tx.request.update({
+          where: {
+            id: candidate.id,
+          },
+          data: {
+            request_approval_status: candidate.request_approval_status,
+          },
+        });
+
+        result.backfilled += 1;
+      });
+    } catch (error: any) {
+      result.failed += 1;
+      result.errors.push({
+        requisition_id: candidate.id,
+        message: error?.message || "Backfill failed for requisition",
+      });
+    }
+  }
+
+  return result;
 };
 
 /**
