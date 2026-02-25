@@ -1,7 +1,6 @@
 import { Request, Response } from "express";
 import {
   actionRequisitionApproval,
-  backfillRequisitionApprovalInstances,
   createRequisition,
   fetchRequisitionApprovalConfig,
   listRequisition,
@@ -98,23 +97,6 @@ export const requisitionApprovalActionHandler = async (
   const response = await actionRequisitionApproval(payload, user);
   res.status(200).json({
     message: "Operation successful",
-    data: response,
-  });
-};
-
-export const backfillApprovalInstancesHandler = async (
-  req: Request,
-  res: Response,
-) => {
-  const requisitionId =
-    req.body?.requisition_id ??
-    req.query?.requisition_id ??
-    req.body?.id ??
-    req.query?.id;
-
-  const response = await backfillRequisitionApprovalInstances(requisitionId);
-  res.status(200).json({
-    message: "Backfill completed",
     data: response,
   });
 };
