@@ -2,6 +2,7 @@ import Router from "express";
 import * as dotenv from "dotenv";
 import {} from "../../utils/";
 import {
+  backfillApprovalInstancesHandler,
   saveRequisitionApprovalConfigHandler,
   getRequisitionApprovalConfigHandler,
   createRequisitionHandler,
@@ -24,6 +25,7 @@ dotenv.config();
 export const requisitionRouter = Router();
 
 const requisitionControllers = {
+  backfillApprovalInstancesHandler,
   saveRequisitionApprovalConfigHandler,
   getRequisitionApprovalConfigHandler,
   createRequisitionHandler,
@@ -47,6 +49,11 @@ requisitionRouter.post(
   "/upsert-approval-config",
   [permissions.protect, permissions.can_manage_requisitions],
   wrappedControllers.saveRequisitionApprovalConfigHandler,
+);
+requisitionRouter.post(
+  "/backfill-approval-instances",
+  [permissions.protect, permissions.can_manage_requisitions],
+  wrappedControllers.backfillApprovalInstancesHandler,
 );
 requisitionRouter.get(
   "/get-approval-config",
