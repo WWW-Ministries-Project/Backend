@@ -145,6 +145,7 @@ export const updateRequestReturnValue = (
 
   return {
     id: updatedRequest.id,
+    generated_id: updatedRequest.request_id || null,
     requester_name: updatedRequest.user?.name || null,
     department_id:
       updatedRequest.department_id ?? updatedRequest.department?.id ?? null,
