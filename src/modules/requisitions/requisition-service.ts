@@ -144,6 +144,11 @@ const mapRequestToSummary = (request: {
   requisition_date: Date;
   request_approval_status: RequestApprovalStatus;
   department_id: number;
+  department: { name: string };
+  user: {
+    name: string;
+    position: { name: string } | null;
+  };
   products: { name: string; unitPrice: number; quantity: number }[];
 }) => ({
   requisition_id: request.id,
@@ -157,6 +162,9 @@ const mapRequestToSummary = (request: {
     0,
   ),
   department_id: request.department_id,
+  requester_name: request.user.name,
+  requester_department: request.department.name,
+  requester_position: request.user.position?.name || null,
 });
 
 const stripApprovalInstanceFilters = (value: any): any => {
@@ -214,6 +222,21 @@ const getRequisitionSummaryFromRequests = async (where?: any) => {
             quantity: true,
           },
         },
+        user: {
+          select: {
+            name: true,
+            position: {
+              select: {
+                name: true,
+              },
+            },
+          },
+        },
+        department: {
+          select: {
+            name: true,
+          },
+        },
       },
       orderBy: {
         id: "desc",
@@ -233,6 +256,21 @@ const getRequisitionSummaryFromRequests = async (where?: any) => {
             name: true,
             unitPrice: true,
             quantity: true,
+          },
+        },
+        user: {
+          select: {
+            name: true,
+            position: {
+              select: {
+                name: true,
+              },
+            },
+          },
+        },
+        department: {
+          select: {
+            name: true,
           },
         },
       },
@@ -773,12 +811,20 @@ export const deleteRequisition = async (id: any) => {
     id: Joi.required(),
   }).validateAsync({ id });
 
-  const parsedId = parseInt(id);
+  const parsedId = parseInt(id, 10);
+  if (!Number.isInteger(parsedId) || parsedId <= 0) {
+    throw new InputValidationError("A valid requisition id is required");
+  }
+
   const requisition = await prisma.request.findUnique({
     where: { id: parsedId },
-    include: {
-      products: true,
-      attachmentsList: true,
+    select: {
+      id: true,
+      attachmentsList: {
+        select: {
+          URL: true,
+        },
+      },
     },
   });
 
