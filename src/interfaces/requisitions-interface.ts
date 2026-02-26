@@ -6,6 +6,7 @@ export interface RequestedItem {
   name: string;
   unitPrice: number;
   quantity: number;
+  image_url?: string | null;
 }
 
 // Interface for individual attachments

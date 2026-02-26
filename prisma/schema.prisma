@@ -400,6 +400,7 @@ model requested_item {
   name       String
   unitPrice  Float
   quantity   Int
+  image_url  String?
   request    request @relation("ProductRequest", fields: [request_id], references: [id])
 
   @@index([request_id], map: "requested_product_item_request_id_fkey")
