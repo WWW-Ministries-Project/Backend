@@ -43,7 +43,7 @@ userRouter.get(
 
 userRouter.get(
   "/list-users-light",
-  [protect, permissions.can_view_member_details],
+  [protect],
   ListUsersLight,
 );
 

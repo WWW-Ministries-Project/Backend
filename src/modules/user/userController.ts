@@ -1333,12 +1333,64 @@ export const ListUsersLight = async (req: Request, res: Response) => {
         id: true,
         name: true,
         email: true,
+        is_user: true,
+        department: {
+          select: {
+            department_info: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+          },
+        },
+        position: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+        department_positions: {
+          select: {
+            department: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+            position: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+          },
+          orderBy: {
+            id: "asc",
+          },
+        },
       },
     });
 
     res.status(200).json({
       message: "Operation Successful",
-      data: users,
+      data: users.map((user) => {
+        const fallbackDepartment = user.department_positions?.find(
+          (item) => item.department,
+        )?.department;
+        const fallbackPosition = user.department_positions?.find(
+          (item) => item.position,
+        )?.position;
+
+        return {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          ministry_worker: Boolean(user.is_user),
+          department: user.department?.department_info || fallbackDepartment || null,
+          position: user.position || fallbackPosition || null,
+        };
+      }),
     });
   } catch (error) {
     return res.status(500).json({ message: "Something Went Wrong", error });

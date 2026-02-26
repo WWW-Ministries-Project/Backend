@@ -232,7 +232,7 @@ positionRouter.delete(
  */
 positionRouter.get(
   "/list-positions",
-  [protect, permissions.can_view_positions],
+  [protect],
   listPositions,
 );
 
