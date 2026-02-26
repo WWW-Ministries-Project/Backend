@@ -1,4 +1,4 @@
-import { RequestApprovalStatus, requested_item } from "@prisma/client";
+import { RequestApprovalStatus } from "@prisma/client";
 import {
   RequestAttachment,
   RequisitionInterface,
@@ -47,7 +47,7 @@ export const mapAttachments = (
     }));
 
 export const calculateTotalCost = (
-  products: requested_item[] | undefined,
+  products: Array<{ unitPrice: number; quantity: number }> | undefined,
 ): number =>
   products?.reduce(
     (sum, product) => sum + product.unitPrice * product.quantity,
