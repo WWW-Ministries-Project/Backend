@@ -1330,7 +1330,7 @@ export class ProgramService {
       data: {
         enrollmentId: enrollment.id,
         learningUnitId: learningUnit.id,
-        content: answers,
+        content: JSON.stringify(answers),
         attempt: currentAttempt,
         status: "GRADED",
         score,

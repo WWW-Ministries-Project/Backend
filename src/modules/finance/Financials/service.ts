@@ -11,17 +11,29 @@ type FinancialEntity = {
 };
 
 export class FinancialsService {
+  private serializePayload(payload: FinancialPayload): string {
+    return JSON.stringify(payload);
+  }
+
+  private parsePayload(payload: string): Prisma.JsonValue {
+    try {
+      return JSON.parse(payload) as Prisma.JsonValue;
+    } catch (error) {
+      return payload;
+    }
+  }
+
   private mapResponse(financial: {
     id: string;
     periodDate: string | null;
-    payload: Prisma.JsonValue;
+    payload: string;
     createdAt: Date;
     updatedAt: Date;
   }): FinancialEntity {
     return {
       id: financial.id,
       periodDate: financial.periodDate,
-      payload: financial.payload,
+      payload: this.parsePayload(financial.payload),
       createdAt: financial.createdAt,
       updatedAt: financial.updatedAt,
     };
@@ -43,7 +55,7 @@ export class FinancialsService {
     }
 
     const created = await prisma.financials.create({
-      data: { payload, periodDate },
+      data: { payload: this.serializePayload(payload), periodDate },
       select: {
         id: true,
         periodDate: true,
@@ -130,7 +142,7 @@ export class FinancialsService {
 
     const updated = await prisma.financials.update({
       where: { id },
-      data: { payload, periodDate },
+      data: { payload: this.serializePayload(payload), periodDate },
       select: {
         id: true,
         periodDate: true,

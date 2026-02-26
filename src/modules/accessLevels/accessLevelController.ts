@@ -69,16 +69,49 @@ const toPositiveInt = (value: any) => {
   return parsed;
 };
 
+const parsePermissionsObject = (permissions: unknown): Record<string, any> | null => {
+  if (!permissions) return null;
+
+  if (typeof permissions === "string") {
+    const trimmedPermissions = permissions.trim();
+    if (!trimmedPermissions) return null;
+
+    try {
+      const parsedPermissions = JSON.parse(trimmedPermissions);
+      if (
+        parsedPermissions &&
+        typeof parsedPermissions === "object" &&
+        !Array.isArray(parsedPermissions)
+      ) {
+        return parsedPermissions as Record<string, any>;
+      }
+    } catch (error) {
+      return null;
+    }
+    return null;
+  }
+
+  if (
+    typeof permissions === "object" &&
+    !Array.isArray(permissions)
+  ) {
+    return permissions as Record<string, any>;
+  }
+
+  return null;
+};
+
 const getExclusionSource = (permissions: any) => {
-  if (!permissions || typeof permissions !== "object" || Array.isArray(permissions)) {
+  const parsedPermissions = parsePermissionsObject(permissions);
+  if (!parsedPermissions) {
     return null;
   }
 
   const candidates = [
-    permissions?.Exclusions,
-    permissions?.exclusions,
-    permissions?.exclusion_list,
-    permissions?.exclusionList,
+    parsedPermissions.Exclusions,
+    parsedPermissions.exclusions,
+    parsedPermissions.exclusion_list,
+    parsedPermissions.exclusionList,
   ];
 
   for (const candidate of candidates) {
@@ -163,6 +196,7 @@ const enrichAccessLevelWithExclusions = async (payload: any) => {
 
   const enriched = rows.map((row, index) => {
     const exclusionMap = exclusionMaps[index];
+    const parsedPermissions = parsePermissionsObject(row?.permissions);
     const exclusionUsers = Object.fromEntries(
       Object.entries(exclusionMap).map(([domainKey, ids]) => [
         domainKey,
@@ -175,6 +209,7 @@ const enrichAccessLevelWithExclusions = async (payload: any) => {
 
     return {
       ...row,
+      permissions: parsedPermissions || row?.permissions,
       exclusion_users: exclusionUsers,
     };
   });
@@ -342,7 +377,7 @@ export const createAccessLevel = async (req: Request, res: Response) => {
         name: toCapitalizeEachWord(name),
         description,
         created_by,
-        permissions: normalizedPermissions,
+        permissions: JSON.stringify(normalizedPermissions),
       },
     });
 
@@ -411,7 +446,9 @@ export const updateAccessLevel = async (req: Request, res: Response) => {
         data: null,
       });
     }
-    const permissionsForUpdate = normalizedPermissions || undefined;
+    const permissionsForUpdate = normalizedPermissions
+      ? JSON.stringify(normalizedPermissions)
+      : undefined;
 
     if (assigned_users !== undefined && !Array.isArray(assigned_users)) {
       return res.status(400).json({
