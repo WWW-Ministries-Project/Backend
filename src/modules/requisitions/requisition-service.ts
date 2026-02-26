@@ -995,7 +995,14 @@ export const getRequisition = async (id: any) => {
         include: { request_comment_user: { select: { name: true } } },
       },
       attachmentsList: true,
-      products: true,
+      products: {
+        select: {
+          id: true,
+          name: true,
+          unitPrice: true,
+          quantity: true,
+        },
+      },
       department: { select: { id: true, name: true } },
       event: {
         select: {
