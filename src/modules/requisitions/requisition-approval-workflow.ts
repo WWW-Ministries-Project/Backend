@@ -926,25 +926,24 @@ export const buildRequisitionApprovalSnapshotTx = async (
   let existingRequest;
   let existingInstances: Array<{ id: number }> = [];
   try {
-    [existingRequest, existingInstances] = await Promise.all([
-      tx.request.findUnique({
-        where: {
-          id: requestId,
-        },
-        select: {
-          id: true,
-        },
-      }),
-      tx.requisition_approval_instances.findMany({
-        where: {
-          request_id: requestId,
-        },
-        select: {
-          id: true,
-        },
-        take: 1,
-      }),
-    ]);
+    existingRequest = await tx.request.findUnique({
+      where: {
+        id: requestId,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    existingInstances = await tx.requisition_approval_instances.findMany({
+      where: {
+        request_id: requestId,
+      },
+      select: {
+        id: true,
+      },
+      take: 1,
+    });
   } catch (error) {
     if (isRequisitionApprovalTableMissingError(error)) {
       throw new InputValidationError(
@@ -976,29 +975,29 @@ export const buildRequisitionApprovalSnapshotTx = async (
     );
   }
 
-  const snapshotRows = await Promise.all(
-    config.steps.map(async (step, index) => {
-      const resolvedApproverUserId = await resolveApproverUserIdForStep(tx, {
-        step,
-        requesterId,
-        fallbackDepartmentId,
-      });
+  const snapshotRows = [];
+  for (let index = 0; index < config.steps.length; index += 1) {
+    const step = config.steps[index];
+    const resolvedApproverUserId = await resolveApproverUserIdForStep(tx, {
+      step,
+      requesterId,
+      fallbackDepartmentId,
+    });
 
-      return {
-        request_id: requestId,
-        config_id: config.id,
-        step_order: step.step_order,
-        step_type: step.step_type,
-        approver_user_id: resolvedApproverUserId,
-        position_id: step.position_id,
-        configured_user_id: step.user_id,
-        status:
-          index === 0
-            ? RequisitionApprovalInstanceStatus.PENDING
-            : RequisitionApprovalInstanceStatus.WAITING,
-      };
-    }),
-  );
+    snapshotRows.push({
+      request_id: requestId,
+      config_id: config.id,
+      step_order: step.step_order,
+      step_type: step.step_type,
+      approver_user_id: resolvedApproverUserId,
+      position_id: step.position_id,
+      configured_user_id: step.user_id,
+      status:
+        index === 0
+          ? RequisitionApprovalInstanceStatus.PENDING
+          : RequisitionApprovalInstanceStatus.WAITING,
+    });
+  }
 
   await tx.requisition_approval_instances.createMany({
     data: snapshotRows,

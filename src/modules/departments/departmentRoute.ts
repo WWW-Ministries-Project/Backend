@@ -220,7 +220,7 @@ departmentRouter.delete(
  */
 departmentRouter.get(
   "/list-departments",
-  [protect, permissions.can_view_department],
+  [protect],
   listDepartments,
 );
 /**

@@ -468,6 +468,7 @@ export const createRequisition = async (data: RequisitionInterface) => {
                 name: product.name,
                 unitPrice: product.unitPrice,
                 quantity: product.quantity,
+                image_url: product.image_url,
               })),
             }
           : undefined,
@@ -950,14 +951,13 @@ export const getRequisition = async (id: any) => {
       attachmentsList: true,
       products: true,
       department: { select: { id: true, name: true } },
-      event: { select: { id: true } },
-      request_approvals: {
-        include: {
-          hod_user: {
-            select: { name: true, position: { select: { name: true } } },
-          },
-          ps_user: {
-            select: { name: true, position: { select: { name: true } } },
+      event: {
+        select: {
+          id: true,
+          event: {
+            select: {
+              event_name: true,
+            },
           },
         },
       },
@@ -1000,6 +1000,42 @@ export const getRequisition = async (id: any) => {
 
     if (!response) {
       throw new NotFoundError("Requisition not found");
+    }
+
+    if (response.approval_instances?.length) {
+      const approverUserIds = Array.from(
+        new Set(
+          response.approval_instances
+            .flatMap((instance) => [instance.approver_user_id, instance.acted_by_user_id])
+            .filter((userId): userId is number => typeof userId === "number"),
+        ),
+      );
+
+      if (approverUserIds.length) {
+        const approvalUsers = await prisma.user.findMany({
+          where: {
+            id: {
+              in: approverUserIds,
+            },
+          },
+          select: {
+            id: true,
+            name: true,
+          },
+        });
+
+        const approvalUserMap = new Map(
+          approvalUsers.map((approvalUser) => [approvalUser.id, approvalUser.name]),
+        );
+
+        response.approval_instances = response.approval_instances.map((instance) => ({
+          ...instance,
+          approver_name: approvalUserMap.get(instance.approver_user_id) || null,
+          acted_by_name: instance.acted_by_user_id
+            ? approvalUserMap.get(instance.acted_by_user_id) || null
+            : null,
+        }));
+      }
     }
 
     // Calculate total_cost
