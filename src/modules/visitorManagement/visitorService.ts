@@ -32,6 +32,40 @@ const hasOwnProperty = (obj: unknown, key: string) =>
   typeof obj === "object" &&
   Object.prototype.hasOwnProperty.call(obj, key);
 
+const normalizeResponsibleMembersInput = (responsibleMembers: unknown): unknown[] => {
+  if (Array.isArray(responsibleMembers)) {
+    return responsibleMembers;
+  }
+
+  if (typeof responsibleMembers === "string") {
+    const trimmedMembers = responsibleMembers.trim();
+    if (!trimmedMembers) return [];
+
+    try {
+      const parsedMembers = JSON.parse(trimmedMembers);
+      if (Array.isArray(parsedMembers)) {
+        return parsedMembers;
+      }
+    } catch (error) {
+      return trimmedMembers
+        .split(",")
+        .map((member) => member.trim())
+        .filter(Boolean);
+    }
+  }
+
+  return [];
+};
+
+const serializeResponsibleMemberIds = (memberIds: number[]) =>
+  JSON.stringify(
+    Array.from(
+      new Set(
+        memberIds.filter((memberId) => Number.isInteger(memberId) && memberId > 0),
+      ),
+    ),
+  );
+
 const parseResponsibleMemberIds = (
   responsibleMembers: unknown,
   options: { strict?: boolean } = {},
@@ -42,14 +76,20 @@ const parseResponsibleMemberIds = (
     return [];
   }
 
-  if (!Array.isArray(responsibleMembers)) {
+  const normalizedMembers = normalizeResponsibleMembersInput(responsibleMembers);
+  if (!normalizedMembers.length) {
     if (strict) {
-      throw new Error(RESPONSIBLE_MEMBERS_VALIDATION_MESSAGE);
+      const isEmptyAllowed =
+        typeof responsibleMembers === "string" &&
+        responsibleMembers.trim().length === 0;
+      if (!isEmptyAllowed) {
+        throw new Error(RESPONSIBLE_MEMBERS_VALIDATION_MESSAGE);
+      }
     }
     return [];
   }
 
-  const parsedMemberIds = responsibleMembers.map((memberId) => Number(memberId));
+  const parsedMemberIds = normalizedMembers.map((memberId) => Number(memberId));
   const hasInvalidMemberIds = parsedMemberIds.some(
     (memberId) => !Number.isInteger(memberId) || memberId <= 0,
   );
@@ -150,7 +190,11 @@ export class VisitorService {
       consentToContact:
         consentToContact === "true" || consentToContact === true,
       membershipWish: membershipWish === "true" || membershipWish === true,
-      ...(hasResponsibleMembers ? { responsibleMembers } : {}),
+      ...(hasResponsibleMembers
+        ? {
+            responsibleMembers: serializeResponsibleMemberIds(responsibleMembers || []),
+          }
+        : {}),
       // is_member is not included here; optionally set it if needed
     };
 
@@ -453,7 +497,9 @@ export class VisitorService {
       const updatedExistingVisitor = hasResponsibleMembers
         ? await prisma.visitor.update({
             where: { id: existingVisitor.id },
-            data: { responsibleMembers },
+            data: {
+              responsibleMembers: serializeResponsibleMemberIds(responsibleMembers),
+            },
           })
         : existingVisitor;
 
@@ -494,7 +540,7 @@ export class VisitorService {
       consentToContact:
         consentToContact === "true" || consentToContact === true,
       membershipWish: membershipWish === "true" || membershipWish === true,
-      responsibleMembers,
+      responsibleMembers: serializeResponsibleMemberIds(responsibleMembers),
       is_member: false,
     };
 
