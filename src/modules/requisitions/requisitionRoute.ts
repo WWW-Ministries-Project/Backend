@@ -55,6 +55,7 @@ requisitionRouter.get(
 );
 requisitionRouter.post(
   "/create-requisition",
+  [permissions.protect],
   wrappedControllers.createRequisitionHandler,
 );
 requisitionRouter.post(
@@ -69,14 +70,17 @@ requisitionRouter.post(
 );
 requisitionRouter.get(
   "/list-requisition",
+  [permissions.protect],
   wrappedControllers.listRequisitionHandler,
 );
 requisitionRouter.get(
   "/my-requisitions",
+  [permissions.protect],
   wrappedControllers.userRequisitionsHandler,
 );
 requisitionRouter.get(
   "/get-requisition",
+  [permissions.protect],
   wrappedControllers.getRequisitionHandler,
 );
 requisitionRouter.put(
@@ -86,6 +90,7 @@ requisitionRouter.put(
 );
 requisitionRouter.delete(
   "/delete-requisition",
+  [permissions.protect],
   wrappedControllers.deleteRequisitionHandler,
 );
 requisitionRouter.get(

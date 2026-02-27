@@ -201,6 +201,67 @@ const stripApprovalInstanceFilters = (value: any): any => {
   return Object.keys(output).length ? output : undefined;
 };
 
+const parsePermissionObject = (permissions: any): Record<string, any> => {
+  if (!permissions) return {};
+
+  if (typeof permissions === "string") {
+    const trimmedPermissions = permissions.trim();
+    if (!trimmedPermissions) return {};
+
+    try {
+      const parsedPermissions = JSON.parse(trimmedPermissions);
+      if (
+        parsedPermissions &&
+        typeof parsedPermissions === "object" &&
+        !Array.isArray(parsedPermissions)
+      ) {
+        return parsedPermissions as Record<string, any>;
+      }
+    } catch (error) {
+      return {};
+    }
+
+    return {};
+  }
+
+  if (typeof permissions === "object" && !Array.isArray(permissions)) {
+    return permissions as Record<string, any>;
+  }
+
+  return {};
+};
+
+const getAuthenticatedUserId = (user: any): number => {
+  const actorUserId = Number(user?.id);
+  if (!Number.isInteger(actorUserId) || actorUserId <= 0) {
+    throw new UnauthorizedError("Authenticated user not found");
+  }
+
+  return actorUserId;
+};
+
+const hasRequisitionManagePermission = (user: any): boolean => {
+  const permissions = parsePermissionObject(user?.permissions);
+  const permissionValue =
+    permissions?.Requisition || permissions?.Requisitions || null;
+
+  return (
+    permissionValue === "Can_Manage" || permissionValue === "Super_Admin"
+  );
+};
+
+const ensureRequisitionAccess = (user: any, requisitionOwnerId: number) => {
+  const actorUserId = getAuthenticatedUserId(user);
+  if (
+    actorUserId !== requisitionOwnerId &&
+    !hasRequisitionManagePermission(user)
+  ) {
+    throw new UnauthorizedError(
+      "You do not have permission to access this requisition",
+    );
+  }
+};
+
 const isMissingWorkflowTablesError = (error: unknown): boolean => {
   return (
     isRequisitionApprovalTableMissingError(error) ||
@@ -479,11 +540,15 @@ export const generateRequestId = async (): Promise<string> => {
  * @param {RequisitionInterface} data The data for the new requisition.
  * @returns {Promise<RequisitionInterface>} The newly created requisition.
  */
-export const createRequisition = async (data: RequisitionInterface) => {
+export const createRequisition = async (
+  data: RequisitionInterface,
+  user: any,
+) => {
   if (!data.request_date) {
     throw new InputValidationError("Request date is required.");
   }
 
+  const actorUserId = getAuthenticatedUserId(user);
   const requestId = await generateRequestId();
   const shouldSubmit = Boolean(data.user_sign?.trim());
 
@@ -492,7 +557,7 @@ export const createRequisition = async (data: RequisitionInterface) => {
       data: {
         request_id: requestId,
         user_sign: data.user_sign,
-        user_id: data.user_id,
+        user_id: actorUserId,
         department_id: data.department_id,
         event_id: data.event_id,
         requisition_date: new Date(data.request_date as string),
@@ -564,7 +629,7 @@ export const createRequisition = async (data: RequisitionInterface) => {
     return request;
   });
 
-  return getRequisition(createdRequest.id);
+  return getRequisition(createdRequest.id, user);
 };
 
 /**
@@ -585,7 +650,7 @@ export const updateRequisition = async (
     throw new InputValidationError("Requisition ID is required for updates.");
   }
 
-  const { id: token_user_id } = user;
+  const token_user_id = getAuthenticatedUserId(user);
 
   const [
     findRequest,
@@ -657,7 +722,7 @@ export const updateRequisition = async (
       });
     }
 
-    return getRequisition(data.id);
+    return getRequisition(data.id, user);
   }
 
   const incomingAttachments = data.attachmentLists || [];
@@ -798,7 +863,7 @@ export const updateRequisition = async (
   });
 
   // Return the latest record shape after deletions.
-  return getRequisition(data.id);
+  return getRequisition(data.id, user);
 };
 
 /**
@@ -806,7 +871,7 @@ export const updateRequisition = async (
  * @param {any} id The ID of the requisition to delete.
  * @returns {Promise<{message: string}>} A promise containing a message indicating the success of the deletion.
  */
-export const deleteRequisition = async (id: any) => {
+export const deleteRequisition = async (id: any, user: any) => {
   await Joi.object({
     id: Joi.required(),
   }).validateAsync({ id });
@@ -820,6 +885,7 @@ export const deleteRequisition = async (id: any) => {
     where: { id: parsedId },
     select: {
       id: true,
+      user_id: true,
       attachmentsList: {
         select: {
           URL: true,
@@ -831,6 +897,8 @@ export const deleteRequisition = async (id: any) => {
   if (!requisition) {
     throw new NotFoundError(`Requisition with ID ${id} not found.`);
   }
+
+  ensureRequisitionAccess(user, requisition.user_id);
 
   const attachmentUrls = requisition.attachmentsList.map(
     (attachment) => attachment.URL,
@@ -853,16 +921,19 @@ export const deleteRequisition = async (id: any) => {
   return result;
 };
 
-export const listRequisition = async () => {
-  return getRequisitionSummaryFromRequests();
-};
-
-export const getmyRequisition = async (id: any) => {
-  const userId = Number(id);
-  if (!Number.isInteger(userId) || userId <= 0) {
-    throw new InputValidationError("A valid user ID is required");
+export const listRequisition = async (user: any) => {
+  const actorUserId = getAuthenticatedUserId(user);
+  if (hasRequisitionManagePermission(user)) {
+    return getRequisitionSummaryFromRequests();
   }
 
+  return getRequisitionSummaryFromRequests({
+    user_id: actorUserId,
+  });
+};
+
+export const getmyRequisition = async (user: any) => {
+  const userId = getAuthenticatedUserId(user);
   return getRequisitionSummaryFromRequests({
     user_id: userId,
   });
@@ -931,7 +1002,7 @@ export const submitRequisition = async (requisitionId: unknown, user: any) => {
     }
   });
 
-  return getRequisition(parsedId);
+  return getRequisition(parsedId, user);
 };
 
 export const actionRequisitionApproval = async (
@@ -977,7 +1048,7 @@ export const actionRequisitionApproval = async (
     });
   }
 
-  return getRequisition(validated.requisitionId);
+  return getRequisition(validated.requisitionId, user);
 };
 
 export const getStaffRequisition = async (user: any) => {
@@ -988,7 +1059,9 @@ export const getStaffRequisition = async (user: any) => {
   });
 };
 
-export const getRequisition = async (id: any) => {
+export const getRequisition = async (id: any, user: any) => {
+  const actorUserId = getAuthenticatedUserId(user);
+
   if (id) {
     const buildInclude = (includeApprovalInstances: boolean) => ({
       request_comments: {
@@ -1055,6 +1128,15 @@ export const getRequisition = async (id: any) => {
       throw new NotFoundError("Requisition not found");
     }
 
+    if (
+      actorUserId !== response.user_id &&
+      !hasRequisitionManagePermission(user)
+    ) {
+      throw new UnauthorizedError(
+        "You do not have permission to access this requisition",
+      );
+    }
+
     if (response.approval_instances?.length) {
       const approverUserIds = Array.from(
         new Set(
@@ -1097,6 +1179,6 @@ export const getRequisition = async (id: any) => {
     // Transform the response into the desired shape
     return updateRequestReturnValue(response, totalCost);
   } else {
-    return {};
+    throw new InputValidationError("Requisition ID is required");
   }
 };

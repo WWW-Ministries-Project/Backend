@@ -43,6 +43,36 @@ const isRealEmail = (email?: string | null) => {
   );
 };
 
+const parsePermissionsObject = (permissions: any): Record<string, any> | null => {
+  if (!permissions) return null;
+
+  if (typeof permissions === "string") {
+    const trimmedPermissions = permissions.trim();
+    if (!trimmedPermissions) return null;
+
+    try {
+      const parsedPermissions = JSON.parse(trimmedPermissions);
+      if (
+        parsedPermissions &&
+        typeof parsedPermissions === "object" &&
+        !Array.isArray(parsedPermissions)
+      ) {
+        return parsedPermissions as Record<string, any>;
+      }
+    } catch (error) {
+      return null;
+    }
+
+    return null;
+  }
+
+  if (typeof permissions === "object" && !Array.isArray(permissions)) {
+    return permissions as Record<string, any>;
+  }
+
+  return null;
+};
+
 const canRunSensitiveUserOps = () => {
   const isProduction = process.env.NODE_ENV === "production";
   const allowSensitiveOps = process.env.ALLOW_ADMIN_UTIL_ENDPOINTS === "true";
@@ -890,8 +920,8 @@ export const login = async (req: Request, res: Response) => {
 
     if (!existance) {
       return res
-        .status(404)
-        .json({ message: "No user with Email", data: null });
+        .status(401)
+        .json({ message: "Invalid Credentials", data: null });
     }
 
     if (existance && existance.is_active === false) {
@@ -915,7 +945,9 @@ export const login = async (req: Request, res: Response) => {
     const user_category =
       ministry_worker && Boolean(existance.access_level_id) ? "admin" : "member";
     const tokenPermissions =
-      user_category === "admin" ? existance.access?.permissions || {} : null;
+      user_category === "admin"
+        ? parsePermissionsObject(existance.access?.permissions) || {}
+        : null;
 
     const life_center_leader: boolean = await checkIfLifeCenterLeader(
       existance.id,
@@ -964,14 +996,49 @@ export const login = async (req: Request, res: Response) => {
 };
 
 export const changePassword = async (req: Request, res: Response) => {
-  const { token, newpassword } = req.body;
+  const authenticatedUserId = Number((req as any).user?.id);
+  const { current_password, newpassword } = req.body;
   try {
-    const user: any = JWT.verify(token, JWT_SECRET);
-    const id = user.id;
+    if (!Number.isInteger(authenticatedUserId) || authenticatedUserId <= 0) {
+      return res.status(401).json({ message: "Unauthorized", data: null });
+    }
+
+    if (!current_password || !newpassword) {
+      return res.status(400).json({
+        message: "current_password and newpassword are required",
+        data: null,
+      });
+    }
+
+    const existingUser = await prisma.user.findUnique({
+      where: {
+        id: authenticatedUserId,
+      },
+      select: {
+        id: true,
+        password: true,
+      },
+    });
+
+    if (!existingUser?.password) {
+      return res
+        .status(401)
+        .json({ message: "Invalid current password", data: null });
+    }
+
+    const isCurrentPasswordValid = await comparePassword(
+      String(current_password),
+      existingUser.password,
+    );
+    if (!isCurrentPasswordValid) {
+      return res
+        .status(401)
+        .json({ message: "Invalid current password", data: null });
+    }
 
     await prisma.user.update({
       where: {
-        id,
+        id: authenticatedUserId,
       },
       data: {
         password: await hashPassword(newpassword),
@@ -990,16 +1057,26 @@ export const changePassword = async (req: Request, res: Response) => {
 export const forgetPassword = async (req: Request, res: Response) => {
   const { email } = req.body;
   try {
-    //check for the existence of an account using
+    const normalizedEmail = normalizeOptionalEmail(email);
+    const genericResponse = {
+      message: "If an account exists, a reset link has been sent.",
+      data: null,
+    };
+
+    if (!isRealEmail(normalizedEmail)) {
+      return res.status(200).json(genericResponse);
+    }
+
     const existingUser = await prisma.user.findUnique({
       where: {
-        email,
+        email: normalizedEmail as string,
       },
     });
 
-    if (!existingUser) {
-      return res.status(400).json({ error: "User Not Exists" });
+    if (!existingUser?.password) {
+      return res.status(200).json(genericResponse);
     }
+
     const secret = JWT_SECRET + existingUser.password;
     const token = JWT.sign(
       {
@@ -1018,10 +1095,12 @@ export const forgetPassword = async (req: Request, res: Response) => {
       link,
       expiration: "15mins",
     };
-    sendEmail(forgetPasswordTemplate(mailDetails), email, "Reset Password");
-    return res
-      .status(200)
-      .json({ message: `Link Send to your Mail`, data: null });
+    await sendEmail(
+      forgetPasswordTemplate(mailDetails),
+      normalizedEmail as string,
+      "Reset Password",
+    );
+    return res.status(200).json(genericResponse);
   } catch (error) {
     return res
       .status(500)
@@ -1032,36 +1111,52 @@ export const forgetPassword = async (req: Request, res: Response) => {
 export const resetPassword = async (req: Request, res: Response) => {
   const { id, token } = req.query;
   const { newpassword } = req.body;
-  //check for the existence of an account using
   try {
+    const parsedUserId = Number(id);
+    if (
+      !Number.isInteger(parsedUserId) ||
+      parsedUserId <= 0 ||
+      typeof token !== "string" ||
+      !newpassword
+    ) {
+      return res
+        .status(400)
+        .json({ message: "Invalid reset payload", data: null });
+    }
+
     const existingUser = await prisma.user.findUnique({
       where: {
-        id: Number(id),
+        id: parsedUserId,
+      },
+      select: {
+        id: true,
+        password: true,
       },
     });
-    if (!existingUser) {
-      return res.status(404).json({ message: "User Not Exists", data: null });
-    }
-    const secret = JWT_SECRET + existingUser.password;
-    const verify = JWT.verify(token as string, secret);
-
-    if (verify) {
-      await prisma.user.update({
-        where: {
-          id: Number(id),
-        },
-        data: {
-          password: await hashPassword(newpassword),
-        },
-      });
+    if (!existingUser?.password) {
       return res
-        .status(200)
-        .json({ message: "Password Successfully changed", data: null });
+        .status(400)
+        .json({ message: "Invalid or expired reset link", data: null });
     }
+
+    const secret = JWT_SECRET + existingUser.password;
+    JWT.verify(token, secret);
+
+    await prisma.user.update({
+      where: {
+        id: parsedUserId,
+      },
+      data: {
+        password: await hashPassword(newpassword),
+      },
+    });
+    return res
+      .status(200)
+      .json({ message: "Password Successfully changed", data: null });
   } catch (error) {
     return res
-      .status(500)
-      .json({ message: "Link Expired" + error, data: null });
+      .status(400)
+      .json({ message: "Invalid or expired reset link", data: null });
   }
 };
 
@@ -1871,6 +1966,9 @@ export const statsUsers = async (req: Request, res: Response) => {
 
 export const getUserByEmailPhone = async (req: Request, res: Response) => {
   const { email, cohortId } = req.query;
+  const memberScope = (req as any).memberScope;
+  const authenticatedUserId = Number((req as any).user?.id);
+  const isOwnScope = memberScope?.mode === "own";
 
   try {
     let user = null;
@@ -1878,10 +1976,17 @@ export const getUserByEmailPhone = async (req: Request, res: Response) => {
 
     // If email is passed, find user
     if (email) {
+      const userLookupWhere: any =
+        isOwnScope && Number.isInteger(authenticatedUserId) && authenticatedUserId > 0
+          ? {
+              user_id: authenticatedUserId,
+            }
+          : {
+              OR: [{ email: email as string }, { primary_number: email as string }],
+            };
+
       user = await prisma.user_info.findFirst({
-        where: {
-          OR: [{ email: email as string }, { primary_number: email as string }],
-        },
+        where: userLookupWhere,
         select: {
           user_id: true,
           first_name: true,
@@ -2005,8 +2110,22 @@ export const linkSpouses = async (req: Request, res: Response) => {
 export const getUserFamily = async (req: Request, res: Response) => {
   try {
     const { user_id } = req.query;
+    const fallbackUserId = Number((req as any).user?.id);
+    const resolvedUserId =
+      Number.isInteger(Number(user_id)) && Number(user_id) > 0
+        ? Number(user_id)
+        : Number.isInteger(fallbackUserId) && fallbackUserId > 0
+          ? fallbackUserId
+          : null;
 
-    const family = await userService.getUserFamily(Number(user_id));
+    if (!resolvedUserId) {
+      return res.status(400).json({
+        message: "Operation failed",
+        data: "Invalid or missing user_id",
+      });
+    }
+
+    const family = await userService.getUserFamily(resolvedUserId);
 
     if (!family) {
       return res.status(404).json({
@@ -2055,18 +2174,13 @@ export const linkChildren = async (req: Request, res: Response) => {
 
 export const currentuser = async (req: Request, res: Response) => {
   try {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      return res
-        .status(401)
-        .json({ message: "Authorization header missing or invalid." });
+    const authenticatedUserId = Number((req as any).user?.id);
+    if (!Number.isInteger(authenticatedUserId) || authenticatedUserId <= 0) {
+      return res.status(401).json({ message: "Unauthorized" });
     }
 
-    const token = authHeader.split(" ")[1];
-    const decoded: any = JWT.verify(token, JWT_SECRET);
-
     const user = await prisma.user.findUnique({
-      where: { id: decoded.id },
+      where: { id: authenticatedUserId },
       include: {
         user_info: true,
         department_positions: {

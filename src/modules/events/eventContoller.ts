@@ -1211,11 +1211,20 @@ export class eventManagement {
   register = async (req: Request, res: Response) => {
     try {
       const { event_id, user_id } = req.body;
+      const authenticatedUserId = Number((req as any).user?.id);
+      const targetUserId =
+        Number.isInteger(authenticatedUserId) && authenticatedUserId > 0
+          ? authenticatedUserId
+          : Number(user_id);
 
-      if (!event_id || !user_id) {
+      if (
+        !event_id ||
+        !Number.isInteger(targetUserId) ||
+        targetUserId <= 0
+      ) {
         return res.status(400).json({
           success: false,
-          message: "event_id and user_id are required",
+          message: "event_id and valid user context are required",
         });
       }
 
@@ -1223,7 +1232,7 @@ export class eventManagement {
       const existing = await prisma.event_registers.findFirst({
         where: {
           event_id: Number(event_id),
-          user_id: Number(user_id),
+          user_id: targetUserId,
         },
       });
 
@@ -1238,7 +1247,7 @@ export class eventManagement {
       const registration = await prisma.event_registers.create({
         data: {
           event_id: Number(event_id),
-          user_id: Number(user_id),
+          user_id: targetUserId,
         },
         include: {
           user: {
@@ -1332,7 +1341,8 @@ export class eventManagement {
 
   registeredMember = async (req: Request, res: Response) => {
     try {
-      const { event_id, user_id } = req.body;
+      const event_id = req.body?.event_id ?? req.query?.event_id;
+      const user_id = req.body?.user_id ?? req.query?.user_id;
 
       if (!event_id || !user_id) {
         return res.status(400).json({

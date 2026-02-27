@@ -73,15 +73,43 @@ const isPermissionObject = (
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 };
 
+const normalizePermissionPayload = (
+  permissions: Prisma.JsonValue | null | undefined,
+): Prisma.JsonObject | null => {
+  if (!permissions) return null;
+
+  if (typeof permissions === "string") {
+    const trimmedPermissions = permissions.trim();
+    if (!trimmedPermissions) return null;
+
+    try {
+      const parsedPermissions = JSON.parse(trimmedPermissions) as Prisma.JsonValue;
+      if (isPermissionObject(parsedPermissions)) {
+        return parsedPermissions;
+      }
+    } catch (error) {
+      return null;
+    }
+    return null;
+  }
+
+  if (isPermissionObject(permissions)) {
+    return permissions;
+  }
+
+  return null;
+};
+
 const hasRequisitionManagePermission = (
   permissions: Prisma.JsonValue | null | undefined,
 ): boolean => {
-  if (!isPermissionObject(permissions)) {
+  const normalizedPermissions = normalizePermissionPayload(permissions);
+  if (!normalizedPermissions) {
     return false;
   }
 
   for (const key of REQUISITION_PERMISSION_KEYS) {
-    const value = permissions[key];
+    const value = normalizedPermissions[key];
     if (
       typeof value === "string" &&
       REQUISITION_MANAGE_PERMISSION_VALUES.includes(value)
