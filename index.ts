@@ -18,40 +18,9 @@ const swaggerOptions = require("./src/swagger");
 
 const port = process.env.PORT;
 const app = express();
-const corsAllowedOrigins = Array.from(
-  new Set(
-    [
-      ...(process.env.CORS_ORIGINS || "").split(","),
-      process.env.Frontend_URL || "",
-    ]
-      .map((origin) => origin.trim())
-      .filter(Boolean),
-  ),
-);
-const isProduction = process.env.NODE_ENV === "production";
 
 app.disable("x-powered-by");
-app.use(
-  cors({
-    origin: (origin, callback) => {
-      if (!origin) {
-        return callback(null, true);
-      }
-
-      if (!corsAllowedOrigins.length) {
-        return isProduction
-          ? callback(new Error("CORS origin denied"))
-          : callback(null, true);
-      }
-
-      if (corsAllowedOrigins.includes(origin)) {
-        return callback(null, true);
-      }
-
-      return callback(new Error("CORS origin denied"));
-    },
-  }),
-);
+app.use(cors());
 app.use(bodyParser.json({ limit: "1mb" }));
 app.use(express.json({ limit: "1mb" }));
 app.use(bodyParser.urlencoded({ extended: true, limit: "1mb" }));
