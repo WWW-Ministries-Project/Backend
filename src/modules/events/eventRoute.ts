@@ -68,13 +68,15 @@ eventRouter.delete(
   eventContoller.deleteEventType,
 );
 
-eventRouter.post("/register", eventContoller.register);
+eventRouter.post("/register", [protect], eventContoller.register);
 eventRouter.get(
   "/get-registered-event-members",
+  [protect, permissions.can_view_events],
   eventContoller.allRegisteredMembers,
 );
 eventRouter.get(
   "/all-registered-event-member",
+  [protect, permissions.can_view_events],
   eventContoller.registeredMember,
 );
 

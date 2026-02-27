@@ -24,9 +24,11 @@ import {
 
 export const createRequisitionHandler = async (req: Request, res: Response) => {
   const requisitionData: Partial<RequisitionInterface> = req.body;
+  const user = (req as any).user;
 
   const createdRequisition = await createRequisition(
     requisitionData as RequisitionInterface,
+    user,
   );
 
   res.status(201).json({
@@ -102,7 +104,8 @@ export const requisitionApprovalActionHandler = async (
 };
 
 export const listRequisitionHandler = async (req: Request, res: Response) => {
-  const requisitions = await listRequisition();
+  const user = (req as any).user;
+  const requisitions = await listRequisition(user);
   res.status(200).json({
     message: "Requisitions retrieved successfully",
     data: requisitions,
@@ -110,9 +113,8 @@ export const listRequisitionHandler = async (req: Request, res: Response) => {
 };
 
 export const userRequisitionsHandler = async (req: Request, res: Response) => {
-  const { id } = req.query;
-
-  const response = await getmyRequisition(id);
+  const user = (req as any).user;
+  const response = await getmyRequisition(user);
   res.status(201).json({
     message: "Operation successful",
     data: response,
@@ -121,8 +123,9 @@ export const userRequisitionsHandler = async (req: Request, res: Response) => {
 
 export const getRequisitionHandler = async (req: Request, res: Response) => {
   const { id } = req.query;
+  const user = (req as any).user;
 
-  const response = await getRequisition(id);
+  const response = await getRequisition(id, user);
   res.status(201).json({
     message: "Operation successful",
     data: response,
@@ -145,11 +148,12 @@ export const staffRequestHandler = async (req: Request, res: Response) => {
 };
 export const deleteRequisitionHandler = async (req: Request, res: Response) => {
   const { id } = req.query;
+  const user = (req as any).user;
 
   if (!id) {
     throw new InputValidationError("Requisition ID is required");
   }
-  await deleteRequisition(id);
+  await deleteRequisition(id, user);
   res.status(201).json({
     message: "Operation successful",
   });

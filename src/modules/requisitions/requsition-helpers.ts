@@ -55,11 +55,27 @@ export const calculateTotalCost = (
   ) || 0;
 
 export const checkPermissions = (user: any, requisitionUserId: number) => {
-  const isHOD = user.permissions.Requisition === "Can_Manage";
-  const isPastor = user.permissions.Requisition === "Super_Admin";
+  const rawPermissions = user?.permissions;
+  const permissions =
+    typeof rawPermissions === "string"
+      ? (() => {
+          try {
+            const parsed = JSON.parse(rawPermissions);
+            return parsed && typeof parsed === "object" ? parsed : {};
+          } catch (error) {
+            return {};
+          }
+        })()
+      : rawPermissions && typeof rawPermissions === "object"
+        ? rawPermissions
+        : {};
+
+  const requisitionPermission = String(permissions?.Requisition || "");
+  const isHOD = requisitionPermission === "Can_Manage";
+  const isPastor = requisitionPermission === "Super_Admin";
   const isMember = !isHOD && !isPastor;
 
-  if (isMember && requisitionUserId !== user.id) {
+  if (isMember && requisitionUserId !== user?.id) {
     throw new UnauthorizedError(
       "You do not have permission to access this requisition",
     );

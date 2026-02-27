@@ -27,14 +27,45 @@ const PERMISSION_KEY_ALIASES: Record<string, string[]> = {
   "Life Center": ["Life Center"],
 };
 
+const parsePermissionsObject = (permissions: any): Record<string, any> => {
+  if (!permissions) return {};
+
+  if (typeof permissions === "string") {
+    const trimmedPermissions = permissions.trim();
+    if (!trimmedPermissions) return {};
+
+    try {
+      const parsedPermissions = JSON.parse(trimmedPermissions);
+      if (
+        parsedPermissions &&
+        typeof parsedPermissions === "object" &&
+        !Array.isArray(parsedPermissions)
+      ) {
+        return parsedPermissions as Record<string, any>;
+      }
+    } catch (error) {
+      return {};
+    }
+
+    return {};
+  }
+
+  if (typeof permissions === "object" && !Array.isArray(permissions)) {
+    return permissions as Record<string, any>;
+  }
+
+  return {};
+};
+
 const resolvePermissionValue = (permissions: any, permissionType: string) => {
-  if (!permissions || typeof permissions !== "object") {
+  const parsedPermissions = parsePermissionsObject(permissions);
+  if (Object.keys(parsedPermissions).length === 0) {
     return null;
   }
 
   const aliasKeys = PERMISSION_KEY_ALIASES[permissionType] || [permissionType];
   for (const key of aliasKeys) {
-    const value = permissions?.[key];
+    const value = parsedPermissions?.[key];
     if (typeof value === "string") {
       return value;
     }
@@ -73,13 +104,14 @@ const parseResponsibleMembers = (responsibleMembers: any): number[] => {
 };
 
 const getNestedExclusionSource = (permissions: any) => {
-  if (!permissions || typeof permissions !== "object") return null;
+  const parsedPermissions = parsePermissionsObject(permissions);
+  if (Object.keys(parsedPermissions).length === 0) return null;
 
   const candidates = [
-    permissions?.Exclusions,
-    permissions?.exclusions,
-    permissions?.exclusion_list,
-    permissions?.exclusionList,
+    parsedPermissions?.Exclusions,
+    parsedPermissions?.exclusions,
+    parsedPermissions?.exclusion_list,
+    parsedPermissions?.exclusionList,
   ];
 
   for (const candidate of candidates) {
@@ -92,12 +124,13 @@ const getNestedExclusionSource = (permissions: any) => {
 };
 
 const resolveDomainExclusions = (permissions: any, permissionType: string) => {
-  if (!permissions || typeof permissions !== "object") {
+  const parsedPermissions = parsePermissionsObject(permissions);
+  if (Object.keys(parsedPermissions).length === 0) {
     return [];
   }
 
   const aliasKeys = PERMISSION_KEY_ALIASES[permissionType] || [permissionType];
-  const nestedSource = getNestedExclusionSource(permissions);
+  const nestedSource = getNestedExclusionSource(parsedPermissions);
 
   const allCandidateKeys = Array.from(
     new Set(
@@ -111,7 +144,7 @@ const resolveDomainExclusions = (permissions: any, permissionType: string) => {
   );
 
   for (const key of allCandidateKeys) {
-    const directIds = parsePositiveIntArray(permissions?.[key]);
+    const directIds = parsePositiveIntArray(parsedPermissions?.[key]);
     if (directIds.length > 0) {
       return directIds;
     }
@@ -213,7 +246,7 @@ export class Permissions {
       return null;
     }
 
-    const livePermissions = currentUser?.access?.permissions || {};
+    const livePermissions = parsePermissionsObject(currentUser?.access?.permissions);
     const departmentIds = Array.from(
       new Set(
         [currentUser?.department_id, ...(currentUser?.department_positions || []).map((item: any) => item.department_id)]

@@ -27,6 +27,7 @@ import {
   filterUsersInfo,
 } from "../user/userController";
 import { Permissions } from "../../middleWare/authorization";
+import { authRateLimiter } from "../../middleWare/authRateLimiter";
 const permissions = new Permissions();
 const protect = permissions.protect;
 dotenv.config();
@@ -57,15 +58,15 @@ userRouter.get("/stats-users", [protect], statsUsers);
 
 userRouter.post("/seed-user", [protect, permissions.can_delete_users], seedUser);
 
-userRouter.post("/reset-password", resetPassword);
+userRouter.post("/reset-password", [authRateLimiter], resetPassword);
 
-userRouter.post("/forgot-password", forgetPassword);
+userRouter.post("/forgot-password", [authRateLimiter], forgetPassword);
 
-userRouter.post("/change-password", changePassword);
+userRouter.post("/change-password", [authRateLimiter, protect], changePassword);
 
-userRouter.post("/login", login);
+userRouter.post("/login", [authRateLimiter], login);
 
-userRouter.post("/register", registerUser);
+userRouter.post("/register", [authRateLimiter], registerUser);
 userRouter.put(
   "/update-user",
   [protect, permissions.can_manage_member_details],
@@ -87,7 +88,11 @@ userRouter.put(
   [protect, permissions.can_manage_member_details],
   activateAccount,
 );
-userRouter.get("/get-user-email", getUserByEmailPhone);
+userRouter.get(
+  "/get-user-email",
+  [protect, permissions.can_view_member_details],
+  getUserByEmailPhone,
+);
 
 userRouter.get("/", landingPage);
 
@@ -103,7 +108,11 @@ userRouter.put(
   linkSpouses,
 );
 
-userRouter.get("/get-user-family", getUserFamily);
+userRouter.get(
+  "/get-user-family",
+  [protect, permissions.can_view_member_details],
+  getUserFamily,
+);
 
 userRouter.put(
   "/link-children",
@@ -111,7 +120,7 @@ userRouter.put(
   linkChildren,
 );
 
-userRouter.get("/current-user", currentuser);
+userRouter.get("/current-user", [protect], currentuser);
 
 userRouter.get(
   "/set-default-passwords",
@@ -119,4 +128,8 @@ userRouter.get(
   updateUserPasswordToDefault,
 );
 
-userRouter.post("/send-emails-to-user", sendEmailToAllUsers);
+userRouter.post(
+  "/send-emails-to-user",
+  [protect, permissions.can_manage_member_details],
+  sendEmailToAllUsers,
+);

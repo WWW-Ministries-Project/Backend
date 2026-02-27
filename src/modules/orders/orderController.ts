@@ -118,25 +118,18 @@ export class OrderController {
   async hubtelWebhook(req: Request, res: Response) {
     try {
       const { Data } = req.body;
-      console.log(`Call Back ${Data}`);
-      console.log(JSON.stringify(Data, null, 2));
-      const hubtelStatus = String(Data?.Status || "")
-        .trim()
-        .toLowerCase();
-      const status =
-        ["paid", "success", "successful", "completed", "complete"].includes(
-          hubtelStatus,
-        )
-          ? "success"
-          : ["failed", "failure", "cancelled", "canceled", "declined"].includes(
-                hubtelStatus,
-              )
-            ? "failed"
-            : "pending";
+      const clientReference = String(Data?.ClientReference || "").trim();
 
-      const result = await orderService.updateOrderStatusByHubtel(
-        Data.ClientReference,
-        status,
+      if (!clientReference) {
+        return res
+          .status(400)
+          .json({ message: "Invalid webhook payload", result: null });
+      }
+
+      // Do not trust callback payload status directly.
+      // Confirm the latest transaction status against Hubtel before updating.
+      const result = await orderService.checkHubtelTransactionStatus(
+        clientReference,
       );
 
       res.status(200).json({ message: "Callback processed", result });
