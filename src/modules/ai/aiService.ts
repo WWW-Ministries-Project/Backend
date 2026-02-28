@@ -6,7 +6,34 @@ import { AiCredentialService, AiCredentialServiceError } from "./aiCredentialSer
 const DEFAULT_TEMPERATURE = 0.3;
 const DEFAULT_OPENAI_MAX_TOKENS = 500;
 const DEFAULT_GEMINI_MAX_OUTPUT_TOKENS = 500;
+const DEFAULT_GEMINI_API_VERSION = "v1";
 const OPENAI_MODEL_PREFIXES = ["gpt-", "o1", "o3", "o4"];
+const GEMINI_RESTRICTED_PREFIXES = ["gemini-1.5-"];
+const GEMINI_DEPRECATED_MODELS = new Set(["gemini-2.0-flash"]);
+const GEMINI_RECOMMENDED_MODELS = [
+  "gemini-2.5-flash",
+  "gemini-2.5-pro",
+  "gemini-2.5-flash-lite",
+];
+
+type GeminiSdkModule = {
+  GoogleGenAI: new (options: {
+    apiKey?: string;
+    apiVersion?: string;
+  }) => {
+    models: {
+      generateContent: (params: any) => Promise<any>;
+    };
+  };
+};
+let geminiSdkModulePromise: Promise<GeminiSdkModule> | null = null;
+
+const loadGeminiSdk = async (): Promise<GeminiSdkModule> => {
+  if (!geminiSdkModulePromise) {
+    geminiSdkModulePromise = import("@google/genai");
+  }
+  return geminiSdkModulePromise;
+};
 
 type AiProvider = "openai" | "gemini";
 type AiGenerationOptions = {
@@ -28,22 +55,9 @@ type OpenAiChatMessage = {
   content: string;
 };
 
-type GeminiResponse = {
-  candidates?: Array<{
-    content?: {
-      parts?: Array<{ text?: string }>;
-    };
-  }>;
-  usageMetadata?: {
-    promptTokenCount?: number;
-    candidatesTokenCount?: number;
-    totalTokenCount?: number;
-  };
-  error?: {
-    code?: number;
-    message?: string;
-    status?: string;
-  };
+type GeminiMessage = {
+  role: "user" | "model";
+  parts: Array<{ text: string }>;
 };
 
 export class AiProviderError extends Error {
@@ -121,6 +135,17 @@ export class AiService {
       };
     }
 
+    const resolvedGeminiModel = this.normalizeGeminiModelName(requestedModel);
+    if (!resolvedGeminiModel) {
+      throw new AiProviderError(
+        "Unsupported Gemini model format. Use gemini-* or models/gemini-*",
+        400,
+        "gemini",
+      );
+    }
+
+    this.assertGeminiModelSupported(resolvedGeminiModel);
+
     const geminiCredential = await this.safeGetActiveCredential("gemini");
     if (!geminiCredential?.api_key) {
       throw new AiProviderError(
@@ -132,7 +157,7 @@ export class AiService {
 
     const geminiResult = await this.callGemini(
       geminiCredential.api_key,
-      requestedModel,
+      resolvedGeminiModel,
       systemPrompt,
       sanitizedMessage,
       sanitizedContext,
@@ -212,51 +237,64 @@ export class AiService {
     context: AiContext,
     history: AiChatHistoryMessage[],
   ): Promise<{ reply: string; provider: string; model: string; usage: AiUsage }> {
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+    try {
+      const { GoogleGenAI } = await loadGeminiSdk();
+      const gemini = new GoogleGenAI({
+        apiKey,
+        apiVersion: this.getGeminiApiVersion(),
+      });
 
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        contents: this.buildGeminiContents(systemPrompt, message, context, history),
-        generationConfig: {
+      const response = await gemini.models.generateContent({
+        model,
+        contents: this.buildGeminiContents(message, context, history),
+        config: {
+          systemInstruction: systemPrompt,
           temperature: this.getTemperature(),
           maxOutputTokens: this.getGeminiMaxOutputTokens(),
         },
-      }),
-    });
+      });
 
-    const payload = (await response.json()) as GeminiResponse;
-    if (!response.ok) {
+      const reply = String(response?.text || "").trim();
+      if (!reply) {
+        throw new AiProviderError("Gemini returned an empty response", 502, "gemini");
+      }
+
+      return {
+        reply,
+        provider: "gemini",
+        model,
+        usage: {
+          prompt_tokens: Number(response?.usageMetadata?.promptTokenCount || 0),
+          completion_tokens: Number(response?.usageMetadata?.candidatesTokenCount || 0),
+          total_tokens: Number(response?.usageMetadata?.totalTokenCount || 0),
+        },
+      };
+    } catch (error: any) {
+      if (error instanceof AiProviderError) {
+        throw error;
+      }
+
+      if (this.isGeminiApiError(error)) {
+        throw new AiProviderError(
+          this.buildGeminiModelErrorMessage(
+            model,
+            error.message || "Gemini request failed",
+          ),
+          Number(error.status || 502),
+          "gemini",
+          {
+            status: error.status,
+            message: error.message,
+          },
+        );
+      }
+
       throw new AiProviderError(
-        payload?.error?.message || "Gemini request failed",
-        response.status,
+        error?.message || "Gemini request failed",
+        Number(error?.status || 500),
         "gemini",
-        payload,
       );
     }
-
-    const reply = (payload?.candidates?.[0]?.content?.parts || [])
-      .map((part) => part?.text || "")
-      .join(" ")
-      .trim();
-
-    if (!reply) {
-      throw new AiProviderError("Gemini returned an empty response", 502, "gemini");
-    }
-
-    return {
-      reply,
-      provider: "gemini",
-      model,
-      usage: {
-        prompt_tokens: Number(payload?.usageMetadata?.promptTokenCount || 0),
-        completion_tokens: Number(payload?.usageMetadata?.candidatesTokenCount || 0),
-        total_tokens: Number(payload?.usageMetadata?.totalTokenCount || 0),
-      },
-    };
   }
 
   private composeUserPrompt(message: string, context: AiContext): string {
@@ -329,17 +367,11 @@ export class AiService {
   }
 
   private buildGeminiContents(
-    systemPrompt: string,
     message: string,
     context: AiContext,
     history: AiChatHistoryMessage[],
-  ): Array<{ role: "user" | "model"; parts: Array<{ text: string }> }> {
-    const contents: Array<{ role: "user" | "model"; parts: Array<{ text: string }> }> = [
-      {
-        role: "user",
-        parts: [{ text: `System instructions:\n${systemPrompt}` }],
-      },
-    ];
+  ): GeminiMessage[] {
+    const contents: GeminiMessage[] = [];
 
     for (const historyEntry of history) {
       contents.push({
@@ -380,16 +412,124 @@ export class AiService {
   }
 
   private inferProviderFromModel(model: string): AiProvider | null {
-    const normalized = model.toLowerCase();
-    if (normalized.startsWith("gemini-")) {
+    const geminiModel = this.normalizeGeminiModelName(model);
+    if (geminiModel) {
       return "gemini";
     }
+
+    const normalized = model.toLowerCase();
 
     if (OPENAI_MODEL_PREFIXES.some((prefix) => normalized.startsWith(prefix))) {
       return "openai";
     }
 
     return null;
+  }
+
+  private isGeminiApiError(error: unknown): error is { status?: number; message: string } {
+    if (!error || typeof error !== "object") {
+      return false;
+    }
+
+    const status = (error as { status?: unknown }).status;
+    const message = (error as { message?: unknown }).message;
+    return typeof status === "number" && typeof message === "string";
+  }
+
+  private normalizeGeminiModelName(modelInput: string): string | null {
+    const model = String(modelInput || "").trim();
+    if (!model) {
+      return null;
+    }
+
+    const normalized = model.toLowerCase();
+
+    if (normalized.startsWith("models/gemini-")) {
+      return model.slice("models/".length);
+    }
+
+    if (normalized.startsWith("google/gemini-")) {
+      return model.slice("google/".length);
+    }
+
+    if (normalized.includes("/models/gemini-")) {
+      const marker = normalized.lastIndexOf("/models/");
+      if (marker >= 0) {
+        return model.slice(marker + "/models/".length);
+      }
+    }
+
+    if (normalized.startsWith("gemini-") || normalized.startsWith("tunedmodels/")) {
+      return model;
+    }
+
+    return null;
+  }
+
+  private assertGeminiModelSupported(model: string): void {
+    const normalized = model.toLowerCase();
+    const suggestion = `Use one of: ${GEMINI_RECOMMENDED_MODELS.join(", ")}.`;
+
+    if (normalized.startsWith("tunedmodels/")) {
+      return;
+    }
+
+    if (GEMINI_RESTRICTED_PREFIXES.some((prefix) => normalized.startsWith(prefix))) {
+      throw new AiProviderError(
+        `Model "${model}" is restricted for this integration. ${suggestion}`,
+        400,
+        "gemini",
+      );
+    }
+
+    if (GEMINI_DEPRECATED_MODELS.has(normalized)) {
+      throw new AiProviderError(
+        `Model "${model}" is deprecated for new users. ${suggestion}`,
+        400,
+        "gemini",
+      );
+    }
+
+    if (normalized.endsWith("-latest")) {
+      throw new AiProviderError(
+        `Model "${model}" is a legacy alias and may fail unpredictably. ${suggestion}`,
+        400,
+        "gemini",
+      );
+    }
+  }
+
+  private buildGeminiModelErrorMessage(
+    model: string,
+    providerMessage: string,
+  ): string {
+    const base = String(providerMessage || "Gemini request failed");
+    const lowered = base.toLowerCase();
+    const modelMismatch = [
+      "not found for api version",
+      "no longer available",
+      "not found",
+      "unsupported model",
+      "invalid model",
+    ].some((needle) => lowered.includes(needle));
+
+    if (!modelMismatch) {
+      return base;
+    }
+
+    return `Model "${model}" is unavailable for this API key/version. Use @google/genai with apiVersion=v1 and try: ${GEMINI_RECOMMENDED_MODELS.join(", ")}.`;
+  }
+
+  private getGeminiApiVersion(): "v1" | "v1beta" | "v1alpha" {
+    const value = String(process.env.GEMINI_API_VERSION || DEFAULT_GEMINI_API_VERSION)
+      .trim()
+      .toLowerCase();
+
+    if (value === "v1beta" || value === "v1alpha") {
+      return value;
+    }
+
+    return "v1";
   }
 
   private async safeGetActiveCredential(provider: "openai" | "gemini") {
