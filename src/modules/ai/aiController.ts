@@ -4,6 +4,7 @@ import { prisma } from "../../Models/context";
 import { AiProviderError, AiService } from "./aiService";
 import { AiQuotaExceededError, AiUsageService } from "./aiUsageService";
 import { AiCredentialService, AiCredentialServiceError } from "./aiCredentialService";
+import { AiBusinessContextService } from "./aiBusinessContextService";
 import {
   AiChatHistoryMessage,
   AiContext,
@@ -29,6 +30,7 @@ export class AiController {
   private aiService = new AiService();
   private usageService = new AiUsageService();
   private credentialService = new AiCredentialService();
+  private businessContextService = new AiBusinessContextService();
 
   async listCredentials(req: Request, res: Response) {
     const provider =
@@ -368,8 +370,13 @@ export class AiController {
       });
     }
     const requestedModel = requestedModelValidation.model;
+    const normalizedModule = moduleName.toLowerCase();
+    const isOperationsModule = normalizedModule === "operations";
     const basePrompt = [
       `Generate deterministic operational insights for module "${moduleName}".`,
+      isOperationsModule
+        ? "Because module is operations, you are allowed to answer across all backend modules."
+        : `Focus primarily on ${moduleName} while still using relevant cross-module dependencies when needed.`,
       "Prioritize concise risk flags, trends, and practical next steps.",
       userPrompt || "No additional user prompt provided.",
     ].join(" ");
@@ -382,6 +389,7 @@ export class AiController {
           ...context,
           module: moduleName,
           scope: context.scope || "admin",
+          cross_module_access: isOperationsModule,
         },
         requestedModel,
         conversationTitle: `${moduleName} insights`,
@@ -461,6 +469,11 @@ export class AiController {
     let reservation: AiReservation | null = null;
     try {
       reservation = await this.usageService.reserveQuota();
+      const enrichedContext = await this.businessContextService.enrichContext(
+        params.message,
+        params.context,
+        params.actorId,
+      );
       const conversation = await this.resolveConversation({
         actorId: params.actorId,
         conversationId: params.conversationId,
@@ -483,7 +496,7 @@ export class AiController {
 
       const providerResult = await this.aiService.generateReply(
         params.message,
-        params.context,
+        enrichedContext,
         history,
         {
           model: params.requestedModel,
