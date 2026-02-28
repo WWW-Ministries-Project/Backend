@@ -23,6 +23,7 @@ const PERMISSION_KEY_ALIASES: Record<string, string[]> = {
   School_of_ministry: ["School_of_ministry", "School of ministry", "Program"],
   Financials: ["Financials", "Access_rights", "Access rights"],
   Settings: ["Settings", "Access_rights", "Access rights"],
+  AI: ["AI", "Settings", "Access_rights", "Access rights"],
   Marketplace: ["Marketplace", "Program"],
   "Life Center": ["Life Center"],
 };
@@ -1320,6 +1321,25 @@ export class Permissions {
     "School_of_ministry",
     "admin",
     "Not authorized to delete school of ministry data",
+  );
+
+  // AI
+  can_view_ai = this.checkPermission(
+    "AI",
+    "view",
+    "Not authorized to view AI resources",
+  );
+
+  can_manage_ai = this.checkPermission(
+    "AI",
+    "manage",
+    "Not authorized to manage AI resources",
+  );
+
+  can_delete_ai = this.checkPermission(
+    "AI",
+    "admin",
+    "Not authorized to delete AI resources",
   );
 
   // Life Center

@@ -1073,6 +1073,122 @@ model appointment {
   @@index([requesterId])
 }
 
+model ai_conversation {
+  id            String          @id @default(uuid())
+  created_by    Int
+  title         String?
+  status        String          @default("active")
+  created_at    DateTime        @default(now())
+  updated_at    DateTime        @updatedAt
+  messages      ai_message[]
+  usage_entries ai_usage_ledger[]
+
+  @@index([created_by])
+  @@index([created_at])
+}
+
+model ai_message {
+  id            String          @id @default(uuid())
+  conversation_id String
+  role          String
+  content       String          @db.LongText
+  provider      String?
+  model         String?
+  created_at    DateTime        @default(now())
+  conversation  ai_conversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
+  usage_entries ai_usage_ledger[]
+
+  @@index([conversation_id, created_at])
+  @@index([created_at])
+}
+
+model ai_usage_ledger {
+  id                String          @id @default(uuid())
+  conversation_id   String
+  message_id        String
+  prompt_tokens     Int
+  completion_tokens Int
+  total_tokens      Int
+  message_count     Int             @default(1)
+  cost_estimate     Float?
+  provider          String
+  model             String
+  created_at        DateTime        @default(now())
+  conversation      ai_conversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
+  message           ai_message      @relation(fields: [message_id], references: [id], onDelete: Cascade)
+
+  @@index([created_at])
+  @@index([conversation_id])
+  @@index([provider, model])
+}
+
+model ai_usage_quota {
+  id               String   @id @default(uuid())
+  period_start     DateTime
+  period_end       DateTime
+  message_limit    Int
+  token_limit      Int
+  message_used     Int      @default(0)
+  token_used       Int      @default(0)
+  updated_at       DateTime @updatedAt
+
+  @@unique([period_start, period_end])
+  @@index([period_start, period_end])
+}
+
+model ai_pricing_catalog {
+  id                String   @id @default(cuid())
+  provider          String
+  model             String
+  input_token_cost  Float
+  output_token_cost Float
+  effective_from    DateTime
+  updated_at        DateTime @updatedAt
+
+  @@index([provider, model, effective_from])
+}
+
+model ai_audit_log {
+  id         String   @id @default(uuid())
+  actor_id   Int
+  action     String
+  resource   String
+  metadata   String?  @db.LongText
+  created_at DateTime @default(now())
+
+  @@index([actor_id])
+  @@index([created_at])
+}
+
+model ai_idempotency_key {
+  id               String   @id @default(uuid())
+  actor_id         Int
+  endpoint         String
+  key              String
+  request_hash     String
+  response_payload String?  @db.LongText
+  status_code      Int
+  created_at       DateTime @default(now())
+
+  @@unique([actor_id, endpoint, key])
+  @@index([created_at])
+}
+
+model ai_provider_credential {
+  id               String   @id @default(uuid())
+  provider         String
+  encrypted_key    String   @db.LongText
+  encrypted_secret String?  @db.LongText
+  is_active        Boolean  @default(true)
+  created_by       Int
+  rotated_at       DateTime?
+  created_at       DateTime @default(now())
+  updated_at       DateTime @updatedAt
+
+  @@index([provider, is_active])
+  @@index([created_at])
+}
+
 enum status_type {
   UNCONFIRMED
   CONFIRMED
