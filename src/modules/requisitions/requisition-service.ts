@@ -150,6 +150,9 @@ const mapRequestToSummary = (request: {
     position: { name: string } | null;
   };
   products: { name: string; unitPrice: number; quantity: number }[];
+}, editMetadata?: {
+  updated_by_name?: string | null;
+  updated_at?: Date | string | null;
 }) => ({
   requisition_id: request.id,
   user_id: request.user_id,
@@ -163,9 +166,159 @@ const mapRequestToSummary = (request: {
   ),
   department_id: request.department_id,
   requester_name: request.user.name,
+  requester_department_name: request.department.name,
   requester_department: request.department.name,
   requester_position: request.user.position?.name || null,
+  updated_by_name: editMetadata?.updated_by_name || null,
+  edited_by_name: editMetadata?.updated_by_name || null,
+  updated_at: editMetadata?.updated_at || null,
+  edited_at: editMetadata?.updated_at || null,
 });
+
+type RequisitionEditMetadataRow = {
+  requisition_id: number;
+  updated_by_name: string | null;
+  updated_at: Date | null;
+};
+
+const getRequisitionEditMetadataMap = async (requisitionIds: number[]) => {
+  const ids = Array.from(
+    new Set(
+      requisitionIds.filter((id) => Number.isInteger(id) && id > 0),
+    ),
+  );
+
+  if (!ids.length) {
+    return new Map<number, RequisitionEditMetadataRow>();
+  }
+
+  const rows = await prisma.$queryRaw<RequisitionEditMetadataRow[]>(Prisma.sql`
+    SELECT
+      r.id AS requisition_id,
+      editor.name AS updated_by_name,
+      r.updated_at AS updated_at
+    FROM \`request\` r
+    LEFT JOIN \`user\` editor ON editor.id = r.updated_by_user_id
+    WHERE r.id IN (${Prisma.join(ids)})
+  `);
+
+  return new Map<number, RequisitionEditMetadataRow>(
+    rows.map((row) => [Number(row.requisition_id), row]),
+  );
+};
+
+const areDatesEqual = (
+  firstDate: Date | null | undefined,
+  secondDate: Date | null | undefined,
+) => {
+  if (!firstDate && !secondDate) return true;
+  if (!firstDate || !secondDate) return false;
+  return firstDate.getTime() === secondDate.getTime();
+};
+
+const buildChangedFields = (args: {
+  incomingData: Partial<RequisitionInterface>;
+  existingRequest: {
+    requisition_date: Date;
+    department_id: number;
+    event_id: number | null;
+    request_approval_status: RequestApprovalStatus;
+    currency: string;
+    user_sign: string | null;
+  };
+  hasProductsChange: boolean;
+  hasAttachmentsChange: boolean;
+}) => {
+  const { incomingData, existingRequest, hasProductsChange, hasAttachmentsChange } =
+    args;
+  const changedFields: string[] = [];
+
+  if (incomingData.request_date !== undefined) {
+    const nextRequestDate = new Date(incomingData.request_date);
+    if (
+      !Number.isNaN(nextRequestDate.getTime()) &&
+      !areDatesEqual(nextRequestDate, existingRequest.requisition_date)
+    ) {
+      changedFields.push("request_date");
+    }
+  }
+
+  if (
+    incomingData.department_id !== undefined &&
+    incomingData.department_id !== existingRequest.department_id
+  ) {
+    changedFields.push("department_id");
+  }
+
+  if (
+    incomingData.event_id !== undefined &&
+    incomingData.event_id !== existingRequest.event_id
+  ) {
+    changedFields.push("event_id");
+  }
+
+  if (
+    incomingData.currency !== undefined &&
+    incomingData.currency !== existingRequest.currency
+  ) {
+    changedFields.push("currency");
+  }
+
+  if (
+    incomingData.user_sign !== undefined &&
+    incomingData.user_sign !== existingRequest.user_sign
+  ) {
+    changedFields.push("user_sign");
+  }
+
+  if (
+    incomingData.approval_status !== undefined &&
+    incomingData.approval_status !== existingRequest.request_approval_status
+  ) {
+    changedFields.push("approval_status");
+  }
+
+  if (incomingData.comment !== undefined) {
+    changedFields.push("comment");
+  }
+
+  if (hasProductsChange) {
+    changedFields.push("products");
+  }
+
+  if (hasAttachmentsChange) {
+    changedFields.push("attachmentLists");
+  }
+
+  return Array.from(new Set(changedFields));
+};
+
+const applyRequisitionEditAuditTx = async (
+  tx: Prisma.TransactionClient,
+  payload: {
+    requisitionId: number;
+    editorUserId: number;
+    editedAt?: Date;
+    changedFields: string[];
+  },
+) => {
+  const editedAt = payload.editedAt || new Date();
+  const changedFieldsValue = JSON.stringify(payload.changedFields || []);
+
+  await tx.$executeRaw`
+    UPDATE \`request\`
+    SET updated_by_user_id = ${payload.editorUserId},
+        updated_at = ${editedAt}
+    WHERE id = ${payload.requisitionId}
+  `;
+
+  await tx.$executeRaw`
+    INSERT INTO \`requisition_edit_logs\` (requisition_id, editor_user_id, edited_at, changed_fields)
+    VALUES (${payload.requisitionId}, ${payload.editorUserId}, ${editedAt}, ${changedFieldsValue})
+  `;
+
+  return editedAt;
+};
 
 const stripApprovalInstanceFilters = (value: any): any => {
   if (Array.isArray(value)) {
@@ -341,7 +494,13 @@ const getRequisitionSummaryFromRequests = async (where?: any) => {
     });
   }
 
-  return requests.map(mapRequestToSummary);
+  const editMetadataMap = await getRequisitionEditMetadataMap(
+    requests.map((request) => request.id),
+  );
+
+  return requests.map((request) =>
+    mapRequestToSummary(request, editMetadataMap.get(request.id)),
+  );
 };
 
 const resolveLegacySubmissionState = async (
@@ -551,42 +710,43 @@ export const createRequisition = async (
   const actorUserId = getAuthenticatedUserId(user);
   const requestId = await generateRequestId();
   const shouldSubmit = Boolean(data.user_sign?.trim());
+  const requestCreateData: Prisma.requestUncheckedCreateInput = {
+    request_id: requestId,
+    user_sign: data.user_sign,
+    user_id: actorUserId,
+    department_id: data.department_id,
+    event_id: data.event_id ?? null,
+    requisition_date: new Date(data.request_date as string),
+    request_approval_status: RequestApprovalStatus.Draft,
+    currency: data.currency,
+
+    // Create the products related to the request
+    products: data.products?.length
+      ? {
+          create: data.products.map((product) => ({
+            name: product.name,
+            unitPrice: product.unitPrice,
+            quantity: product.quantity,
+            image_url: product.image_url,
+          })),
+        }
+      : undefined,
+    request_approvals: {
+      create: {},
+    },
+    // Create the attachments list for the request, if provided
+    attachmentsList: data.attachmentLists?.length
+      ? {
+          create: data.attachmentLists.map((attachment) => ({
+            URL: attachment.URL,
+          })),
+        }
+      : undefined,
+  };
 
   const createdRequest = await prisma.$transaction(async (tx) => {
     const request = await tx.request.create({
-      data: {
-        request_id: requestId,
-        user_sign: data.user_sign,
-        user_id: actorUserId,
-        department_id: data.department_id,
-        event_id: data.event_id,
-        requisition_date: new Date(data.request_date as string),
-        request_approval_status: RequestApprovalStatus.Draft,
-        currency: data.currency,
-
-        // Create the products related to the request
-        products: data.products?.length
-          ? {
-              create: data.products.map((product) => ({
-                name: product.name,
-                unitPrice: product.unitPrice,
-                quantity: product.quantity,
-                image_url: product.image_url,
-              })),
-            }
-          : undefined,
-        request_approvals: {
-          create: {},
-        },
-        // Create the attachments list for the request, if provided
-        attachmentsList: data.attachmentLists?.length
-          ? {
-              create: data.attachmentLists.map((attachment) => ({
-                URL: attachment.URL,
-              })),
-            }
-          : undefined,
-      },
+      data: requestCreateData,
       select: {
         id: true,
         user_id: true,
@@ -651,6 +811,9 @@ export const updateRequisition = async (
   }
 
   const token_user_id = getAuthenticatedUserId(user);
+  const updateInput: Partial<RequisitionInterface> = { ...data };
+  // Requester identity is immutable after creation.
+  delete (updateInput as any).user_id;
 
   const [
     findRequest,
@@ -697,11 +860,11 @@ export const updateRequisition = async (
   );
 
   const hasApprovalWorkflow = Boolean(existingApprovalInstance);
-  const isSignedAction = Boolean(data.user_sign?.trim());
+  const isSignedAction = Boolean(updateInput.user_sign?.trim());
 
   if (hasApprovalWorkflow && !isMember && isSignedAction) {
     const action =
-      data.approval_status === RequestApprovalStatus.REJECTED
+      updateInput.approval_status === RequestApprovalStatus.REJECTED
         ? "REJECT"
         : "APPROVE";
 
@@ -709,24 +872,40 @@ export const updateRequisition = async (
       requisitionId: data.id,
       actorUserId: token_user_id,
       action,
-      ...(data.comment && { comment: data.comment }),
+      ...(updateInput.comment && { comment: updateInput.comment }),
     });
 
-    if (data.comment) {
-      await prisma.request_comments.create({
-        data: {
-          request_id: data.id,
-          comment: data.comment,
-          user_id: token_user_id,
-        },
+    const approvalChangedFields = Array.from(
+      new Set([
+        "approval_status",
+        ...(updateInput.user_sign !== undefined ? ["user_sign"] : []),
+        ...(updateInput.comment !== undefined ? ["comment"] : []),
+      ]),
+    );
+
+    await prisma.$transaction(async (tx) => {
+      if (updateInput.comment) {
+        await tx.request_comments.create({
+          data: {
+            request_id: data.id,
+            comment: updateInput.comment,
+            user_id: token_user_id,
+          },
+        });
+      }
+
+      await applyRequisitionEditAuditTx(tx, {
+        requisitionId: data.id as number,
+        editorUserId: token_user_id,
+        changedFields: approvalChangedFields,
       });
-    }
+    });
 
     return getRequisition(data.id, user);
   }
 
-  const incomingAttachments = data.attachmentLists || [];
-  const incomingProducts = data.products || [];
+  const incomingAttachments = updateInput.attachmentLists || [];
+  const incomingProducts = updateInput.products || [];
 
   const newAttachments = incomingAttachments.filter(
     (attachment) => typeof attachment.id !== "number",
@@ -735,7 +914,7 @@ export const updateRequisition = async (
     typeof attachment.id === "number" &&
     existingAttachments.some((ea) => ea.id === attachment.id),
   );
-  const attachmentsToDelete = data.attachmentLists
+  const attachmentsToDelete = updateInput.attachmentLists
     ? existingAttachments.filter(
         (ea) => !incomingAttachments.some((ia) => ia.id === ea.id),
       )
@@ -749,15 +928,22 @@ export const updateRequisition = async (
       typeof product.id === "number" &&
       existingProducts.some((existingProduct) => existingProduct.id === product.id),
   );
-  const productsToDelete = data.products
+  const productsToDelete = updateInput.products
     ? existingProducts.filter(
         (existingProduct) =>
           !incomingProducts.some((incomingProduct) => incomingProduct.id === existingProduct.id),
       )
     : [];
 
+  const hasProductsChange = Boolean(
+    newProducts.length || productsToUpdate.length || productsToDelete.length,
+  );
+  const hasAttachmentsChange = Boolean(
+    newAttachments.length || attachmentsToUpdate.length || attachmentsToDelete.length,
+  );
+
   const { requestApprovalStatus, approvalData } = getApprovalData(
-    data,
+    updateInput,
     token_user_id,
     isHOD,
     isPastor,
@@ -769,13 +955,31 @@ export const updateRequisition = async (
     isSignedAction &&
     !hasApprovalWorkflow &&
     findRequest.request_approval_status === RequestApprovalStatus.Draft;
+
+  const changedFields = buildChangedFields({
+    incomingData: updateInput,
+    existingRequest: {
+      requisition_date: findRequest.requisition_date,
+      department_id: findRequest.department_id,
+      event_id: findRequest.event_id,
+      request_approval_status: findRequest.request_approval_status,
+      currency: findRequest.currency,
+      user_sign: findRequest.user_sign,
+    },
+    hasProductsChange,
+    hasAttachmentsChange,
+  });
+  const effectiveChangedFields = shouldSubmitByRequester
+    ? Array.from(new Set([...changedFields, "approval_status"]))
+    : changedFields;
+
   const effectiveRequestApprovalStatus = shouldSubmitByRequester
     ? findRequest.request_approval_status
     : requestApprovalStatus;
 
   // Build the update payload
   const updateData = updateDataPayload(
-    data,
+    updateInput,
     isMember,
     effectiveRequestApprovalStatus,
     productsToUpdate,
@@ -801,18 +1005,18 @@ export const updateRequisition = async (
       });
     }
 
-    if (data.comment) {
+    if (updateInput.comment) {
       const commentData = {
         request_id: data.id,
-        comment: data.comment,
+        comment: updateInput.comment,
         user_id: token_user_id,
       };
 
-      if (data.comment_id) {
+      if (updateInput.comment_id) {
         // Update existing comment
         await tx.request_comments.update({
-          where: { id: data.comment_id },
-          data: { comment: data.comment },
+          where: { id: updateInput.comment_id },
+          data: { comment: updateInput.comment },
         });
       } else {
         // Create new comment
@@ -823,7 +1027,7 @@ export const updateRequisition = async (
     // Update the requisition
     await tx.request.update({
       where: { id: data.id },
-      data: updateData,
+      data: updateData as Prisma.requestUncheckedUpdateInput,
     });
 
     // Delete omitted requested items
@@ -856,10 +1060,16 @@ export const updateRequisition = async (
           requestId: data.id as number,
           requesterId: findRequest.user_id,
           departmentId: findRequest.department_id,
-          userSign: data.user_sign,
+          userSign: updateInput.user_sign,
         });
       }
     }
+
+    await applyRequisitionEditAuditTx(tx, {
+      requisitionId: data.id as number,
+      editorUserId: token_user_id,
+      changedFields: effectiveChangedFields,
+    });
   });
 
   // Return the latest record shape after deletions.
@@ -1137,6 +1347,9 @@ export const getRequisition = async (id: any, user: any) => {
       );
     }
 
+    const editMetadataMap = await getRequisitionEditMetadataMap([response.id]);
+    const editMetadata = editMetadataMap.get(response.id) || null;
+
     if (response.approval_instances?.length) {
       const approverUserIds = Array.from(
         new Set(
@@ -1177,7 +1390,7 @@ export const getRequisition = async (id: any, user: any) => {
     const totalCost = calculateTotalCost(response.products);
 
     // Transform the response into the desired shape
-    return updateRequestReturnValue(response, totalCost);
+    return updateRequestReturnValue(response, totalCost, editMetadata);
   } else {
     throw new InputValidationError("Requisition ID is required");
   }
