@@ -244,15 +244,38 @@ export class AiService {
         apiVersion: this.getGeminiApiVersion(),
       });
 
-      const response = await gemini.models.generateContent({
-        model,
-        contents: this.buildGeminiContents(message, context, history),
-        config: {
-          systemInstruction: systemPrompt,
-          temperature: this.getTemperature(),
-          maxOutputTokens: this.getGeminiMaxOutputTokens(),
-        },
-      });
+      const baseConfig = {
+        temperature: this.getTemperature(),
+        maxOutputTokens: this.getGeminiMaxOutputTokens(),
+      };
+
+      let response;
+      try {
+        response = await gemini.models.generateContent({
+          model,
+          contents: this.buildGeminiContents(message, context, history),
+          config: {
+            ...baseConfig,
+            systemInstruction: systemPrompt,
+          },
+        });
+      } catch (firstError) {
+        if (!this.isGeminiSystemInstructionUnsupportedError(firstError)) {
+          throw firstError;
+        }
+
+        // Fallback for endpoints/models that reject top-level systemInstruction.
+        response = await gemini.models.generateContent({
+          model,
+          contents: this.buildGeminiContents(
+            message,
+            context,
+            history,
+            systemPrompt,
+          ),
+          config: baseConfig,
+        });
+      }
 
       const reply = String(response?.text || "").trim();
       if (!reply) {
@@ -370,8 +393,16 @@ export class AiService {
     message: string,
     context: AiContext,
     history: AiChatHistoryMessage[],
+    fallbackSystemPrompt?: string,
   ): GeminiMessage[] {
     const contents: GeminiMessage[] = [];
+
+    if (fallbackSystemPrompt?.trim()) {
+      contents.push({
+        role: "user",
+        parts: [{ text: `System instructions:\n${fallbackSystemPrompt}` }],
+      });
+    }
 
     for (const historyEntry of history) {
       contents.push({
@@ -434,6 +465,18 @@ export class AiService {
     const status = (error as { status?: unknown }).status;
     const message = (error as { message?: unknown }).message;
     return typeof status === "number" && typeof message === "string";
+  }
+
+  private isGeminiSystemInstructionUnsupportedError(error: unknown): boolean {
+    if (!this.isGeminiApiError(error)) {
+      return false;
+    }
+
+    const message = String(error.message || "").toLowerCase();
+    return (
+      message.includes("unknown name") &&
+      message.includes("systeminstruction")
+    );
   }
 
   private normalizeGeminiModelName(modelInput: string): string | null {
