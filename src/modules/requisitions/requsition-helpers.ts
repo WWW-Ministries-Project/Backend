@@ -125,7 +125,6 @@ export const updateDataPayload = (
     !!attachmentsPayload && Object.keys(attachmentsPayload).length > 0;
 
   return {
-    user_id: data.user_id,
     user_sign: isMember ? data.user_sign : undefined,
     department_id: data.department_id,
     event_id: data.event_id,
@@ -142,6 +141,10 @@ export const updateDataPayload = (
 export const updateRequestReturnValue = (
   updatedRequest: any,
   totalCost: any,
+  editMetadata?: {
+    updated_by_name?: string | null;
+    updated_at?: Date | string | null;
+  } | null,
 ) => {
   const eventName = updatedRequest.event?.event?.event_name || null;
   const approvalInstances = updatedRequest.approval_instances || [];
@@ -158,11 +161,18 @@ export const updateRequestReturnValue = (
     approvalInstances.find((instance: any) => instance.status === "PENDING") || null;
   const selectedApproverInstance =
     latestActedInstance || currentPendingInstance || approvalInstances[0] || null;
+  const updatedByName = editMetadata?.updated_by_name || null;
+  const updatedAt = editMetadata?.updated_at || null;
 
   return {
     id: updatedRequest.id,
     generated_id: updatedRequest.request_id || null,
     requester_name: updatedRequest.user?.name || null,
+    requester_department_name: updatedRequest.department?.name || null,
+    updated_by_name: updatedByName,
+    edited_by_name: updatedByName,
+    updated_at: updatedAt,
+    edited_at: updatedAt,
     department_id:
       updatedRequest.department_id ?? updatedRequest.department?.id ?? null,
     event_id: updatedRequest.event_id ?? updatedRequest.event?.id ?? null,
@@ -183,6 +193,12 @@ export const updateRequestReturnValue = (
       requisition_id: updatedRequest.id,
       user_sign: updatedRequest.user_sign,
       department: updatedRequest.department?.name || null,
+      requester_name: updatedRequest.user?.name || null,
+      requester_department_name: updatedRequest.department?.name || null,
+      updated_by_name: updatedByName,
+      edited_by_name: updatedByName,
+      updated_at: updatedAt,
+      edited_at: updatedAt,
       department_id: updatedRequest.department?.id || null,
       program: eventName,
       program_id: updatedRequest.event?.id || null,
@@ -191,9 +207,13 @@ export const updateRequestReturnValue = (
       status: updatedRequest.request_approval_status,
     },
     requester: {
+      id: updatedRequest.user_id ?? null,
       name: updatedRequest.user?.name || null,
       email: updatedRequest.user?.email || null,
       position: updatedRequest.user?.position?.name || null,
+      department_id:
+        updatedRequest.department_id ?? updatedRequest.department?.id ?? null,
+      department_name: updatedRequest.department?.name || null,
     },
     approval_instances: approvalInstances,
     request_comments: updatedRequest.request_comments || null,

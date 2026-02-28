@@ -320,15 +320,17 @@ model request {
   id                      Int                              @id @default(autoincrement())
   request_id              String
   user_id                 Int
-  event_id                Int
+  event_id                Int?
   department_id           Int
   request_approval_status RequestApprovalStatus
   requisition_date        DateTime
   currency                String
   user_sign               String?
+  updated_by_user_id      Int?
+  updated_at              DateTime?
   attachmentsList         request_attachment[]
   department              department                       @relation(fields: [department_id], references: [id])
-  event                   event_mgt                        @relation(fields: [event_id], references: [id])
+  event                   event_mgt?                       @relation(fields: [event_id], references: [id])
   user                    user                             @relation(fields: [user_id], references: [id])
   request_approvals       request_approvals?
   request_comments        request_comments[]
@@ -338,6 +340,7 @@ model request {
   @@index([user_id], map: "request_user_id_fkey")
   @@index([department_id], map: "request_department_id_fkey")
   @@index([event_id], map: "request_event_id_fkey")
+  @@index([updated_by_user_id], map: "request_updated_by_user_id_idx")
 }
 
 model requisition_summary {
@@ -469,6 +472,18 @@ model requisition_approval_instances {
   @@index([approver_user_id])
   @@index([status])
   @@index([config_id])
+}
+
+model requisition_edit_logs {
+  id             Int      @id @default(autoincrement())
+  requisition_id Int
+  editor_user_id Int
+  edited_at      DateTime @default(now())
+  changed_fields String?  @db.LongText
+
+  @@index([requisition_id], map: "requisition_edit_logs_requisition_id_idx")
+  @@index([editor_user_id], map: "requisition_edit_logs_editor_user_id_idx")
+  @@index([edited_at], map: "requisition_edit_logs_edited_at_idx")
 }
 
 model program {

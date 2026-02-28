@@ -1309,6 +1309,7 @@ export const ListUsers = async (req: Request, res: Response) => {
             photo: true,
             country: true,
             member_since: true,
+            date_of_birth: true,
             marital_status: true,
             work_info: {
               select: {
