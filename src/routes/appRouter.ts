@@ -59,6 +59,7 @@ appRouter.use("/bankaccountconfig", bankAccountConfigRouter);
 appRouter.use("/tithebreakdownconfig", titheBreakdownConfigRouter);
 appRouter.use("/financials", financialsRouter);
 appRouter.use("/ai", aiRouter);
+appRouter.use("/api/ai", aiRouter);
 appRouter.use("/api/v1/ai", aiRouter);
 
 // Backward-compatible aliases used by some clients.
