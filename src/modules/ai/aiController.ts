@@ -4,7 +4,13 @@ import { prisma } from "../../Models/context";
 import { AiProviderError, AiService } from "./aiService";
 import { AiQuotaExceededError, AiUsageService } from "./aiUsageService";
 import { AiCredentialService, AiCredentialServiceError } from "./aiCredentialService";
-import { AiContext, AiReservation, AiUsage, AiUsageSnapshot } from "./aiTypes";
+import {
+  AiChatHistoryMessage,
+  AiContext,
+  AiReservation,
+  AiUsage,
+  AiUsageSnapshot,
+} from "./aiTypes";
 
 type ChatExecutionResult = {
   conversation_id: string;
@@ -147,6 +153,14 @@ export class AiController {
         ? req.body.conversation_id.trim()
         : undefined;
     const context = this.parseContext(req.body?.context);
+    const requestedModelValidation = this.parseRequestedModel(req.body?.model);
+    if (!requestedModelValidation.ok) {
+      return res.status(400).json({
+        message: requestedModelValidation.error,
+        data: null,
+      });
+    }
+    const requestedModel = requestedModelValidation.model;
 
     if (!message) {
       return res.status(400).json({
@@ -162,6 +176,7 @@ export class AiController {
       message,
       conversation_id: conversationId || null,
       context,
+      model: requestedModel || null,
     });
 
     if (idempotencyKey) {
@@ -197,6 +212,7 @@ export class AiController {
         message,
         context,
         conversationId,
+        requestedModel,
         auditResource: endpoint,
       });
 
@@ -206,6 +222,10 @@ export class AiController {
           message_id: result.message_id,
           reply: result.reply,
           created_at: result.created_at,
+          provider: result.provider,
+          model: result.model,
+          fallback_used: result.fallback_used,
+          fallback_reason: result.fallback_reason,
           usage: result.usage,
           usage_snapshot: result.usage_snapshot,
         },
@@ -340,6 +360,14 @@ export class AiController {
     const userPrompt =
       typeof req.body?.message === "string" ? req.body.message.trim() : "";
     const context = this.parseContext(req.body?.context);
+    const requestedModelValidation = this.parseRequestedModel(req.body?.model);
+    if (!requestedModelValidation.ok) {
+      return res.status(400).json({
+        message: requestedModelValidation.error,
+        data: null,
+      });
+    }
+    const requestedModel = requestedModelValidation.model;
     const basePrompt = [
       `Generate deterministic operational insights for module "${moduleName}".`,
       "Prioritize concise risk flags, trends, and practical next steps.",
@@ -355,6 +383,7 @@ export class AiController {
           module: moduleName,
           scope: context.scope || "admin",
         },
+        requestedModel,
         conversationTitle: `${moduleName} insights`,
         auditResource: `/ai/insights/${moduleName}`,
       });
@@ -366,6 +395,10 @@ export class AiController {
           message_id: result.message_id,
           reply: result.reply,
           created_at: result.created_at,
+          provider: result.provider,
+          model: result.model,
+          fallback_used: result.fallback_used,
+          fallback_reason: result.fallback_reason,
           usage: result.usage,
           usage_snapshot: result.usage_snapshot,
         },
@@ -421,6 +454,7 @@ export class AiController {
     message: string;
     context: AiContext;
     conversationId?: string;
+    requestedModel?: string;
     conversationTitle?: string;
     auditResource: string;
   }): Promise<ChatExecutionResult> {
@@ -433,18 +467,27 @@ export class AiController {
         fallbackTitle:
           params.conversationTitle || this.createConversationTitle(params.message),
       });
+      const history = await this.getConversationHistory(
+        conversation.id,
+        this.getChatHistoryLimit(),
+      );
 
       await prisma.ai_message.create({
         data: {
           conversation_id: conversation.id,
           role: "user",
           content: params.message,
+          model: params.requestedModel || null,
         },
       });
 
       const providerResult = await this.aiService.generateReply(
         params.message,
         params.context,
+        history,
+        {
+          model: params.requestedModel,
+        },
       );
 
       const assistantMessage = await prisma.ai_message.create({
@@ -477,6 +520,7 @@ export class AiController {
             message_id: assistantMessage.id,
             provider: providerResult.provider,
             model: providerResult.model,
+            requested_model: params.requestedModel || null,
             usage: providerResult.usage,
             fallback_used: providerResult.fallback_used,
             fallback_reason: providerResult.fallback_reason,
@@ -607,5 +651,66 @@ export class AiController {
   private startOfCurrentMonth(): Date {
     const now = new Date();
     return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  }
+
+  private async getConversationHistory(
+    conversationId: string,
+    limit: number,
+  ): Promise<AiChatHistoryMessage[]> {
+    if (!Number.isFinite(limit) || limit <= 0) {
+      return [];
+    }
+
+    const rows = await prisma.ai_message.findMany({
+      where: {
+        conversation_id: conversationId,
+        role: {
+          in: ["user", "assistant"],
+        },
+      },
+      orderBy: {
+        created_at: "desc",
+      },
+      take: limit,
+      select: {
+        role: true,
+        content: true,
+      },
+    });
+
+    return rows
+      .reverse()
+      .map((row) => ({
+        role: row.role === "assistant" ? "assistant" : "user",
+        content: row.content,
+      }));
+  }
+
+  private getChatHistoryLimit(): number {
+    const parsed = Number(process.env.AI_CHAT_HISTORY_LIMIT);
+    return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 12;
+  }
+
+  private parseRequestedModel(value: unknown):
+    | { ok: true; model?: string }
+    | { ok: false; error: string } {
+    if (value === undefined || value === null) {
+      return { ok: false, error: "model is required" };
+    }
+
+    if (typeof value !== "string") {
+      return { ok: false, error: "model must be a string" };
+    }
+
+    const model = value.trim();
+    if (!model) {
+      return { ok: false, error: "model cannot be empty" };
+    }
+
+    if (model.length > 100) {
+      return { ok: false, error: "model is too long" };
+    }
+
+    return { ok: true, model };
   }
 }

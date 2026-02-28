@@ -5,6 +5,13 @@ export type AiContext = {
   [key: string]: unknown;
 };
 
+export type AiChatRole = "user" | "assistant";
+
+export type AiChatHistoryMessage = {
+  role: AiChatRole;
+  content: string;
+};
+
 export type AiUsage = {
   prompt_tokens: number;
   completion_tokens: number;
