@@ -5,6 +5,7 @@ import { AiProviderError, AiService } from "./aiService";
 import { AiQuotaExceededError, AiUsageService } from "./aiUsageService";
 import { AiCredentialService, AiCredentialServiceError } from "./aiCredentialService";
 import { AiBusinessContextService } from "./aiBusinessContextService";
+import { AiReadOnlyDataService, AiReadOnlyDataServiceError } from "./aiReadOnlyDataService";
 import {
   AiChatHistoryMessage,
   AiContext,
@@ -31,6 +32,7 @@ export class AiController {
   private usageService = new AiUsageService();
   private credentialService = new AiCredentialService();
   private businessContextService = new AiBusinessContextService();
+  private readOnlyDataService = new AiReadOnlyDataService();
 
   async listCredentials(req: Request, res: Response) {
     const provider =
@@ -344,6 +346,97 @@ export class AiController {
     }
   }
 
+  async queryContracts(req: Request, res: Response) {
+    const moduleName =
+      typeof req.query?.module === "string" ? req.query.module.trim() : undefined;
+
+    try {
+      const data = this.readOnlyDataService.listContracts(moduleName);
+      return res.status(200).json({ data });
+    } catch (error: any) {
+      if (error instanceof AiReadOnlyDataServiceError) {
+        return res.status(error.status_code).json({
+          message: error.message,
+          data: null,
+        });
+      }
+
+      return res.status(500).json({
+        message: "Failed to fetch read-only query contracts",
+        data: null,
+      });
+    }
+  }
+
+  async queryReadOnly(req: Request, res: Response) {
+    const actorId = this.getActorId(req);
+    if (!actorId) {
+      return res.status(401).json({ message: "Not authorized. Token not found", data: null });
+    }
+
+    const moduleName =
+      typeof req.body?.module === "string"
+        ? req.body.module.trim()
+        : typeof req.query?.module === "string"
+          ? req.query.module.trim()
+          : "";
+    const operation =
+      typeof req.body?.operation === "string"
+        ? req.body.operation.trim()
+        : typeof req.query?.operation === "string"
+          ? req.query.operation.trim()
+          : "";
+    const input =
+      req.body?.input && typeof req.body.input === "object" && !Array.isArray(req.body.input)
+        ? (req.body.input as Record<string, unknown>)
+        : {};
+    const crossModule = true;
+
+    if (!moduleName || !operation) {
+      return res.status(400).json({
+        message: "module and operation are required",
+        data: null,
+      });
+    }
+
+    try {
+      const data = await this.readOnlyDataService.executeQuery({
+        module: moduleName,
+        operation,
+        input,
+        actorId,
+        crossModule,
+      });
+
+      await prisma.ai_audit_log.create({
+        data: {
+          actor_id: actorId,
+          action: "ai_read_only_query",
+          resource: "/ai/query-read-only",
+          metadata: JSON.stringify({
+            module: data.module,
+            operation: data.operation,
+            applied_filters: data.applied_filters,
+          }),
+        },
+      });
+
+      return res.status(200).json({ data });
+    } catch (error: any) {
+      if (error instanceof AiReadOnlyDataServiceError) {
+        return res.status(error.status_code).json({
+          message: error.message,
+          data: null,
+        });
+      }
+
+      return res.status(500).json({
+        message: "Failed to execute read-only query",
+        data: null,
+      });
+    }
+  }
+
   async insights(req: Request, res: Response) {
     const actorId = this.getActorId(req);
     if (!actorId) {
@@ -500,6 +593,7 @@ export class AiController {
         history,
         {
           model: params.requestedModel,
+          actorId: params.actorId,
         },
       );
 

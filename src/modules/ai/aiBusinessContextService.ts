@@ -84,6 +84,32 @@ type AssignedPendingRecord = {
   requisition_date: string;
 };
 
+type AttendanceLookupRecord = {
+  attendance_summary_id: number;
+  event_id: number;
+  event_name: string | null;
+  event_start_date: string | null;
+  attendance_date: string;
+  group: string;
+  male_total: number;
+  female_total: number;
+  attendance_total: number;
+  visitors: number;
+  new_members: number;
+  visiting_pastors: number;
+  attendance_plus_visitors: number;
+};
+
+type AttendanceLookupTotals = {
+  male_total: number;
+  female_total: number;
+  attendance_total: number;
+  visitors: number;
+  new_members: number;
+  visiting_pastors: number;
+  attendance_plus_visitors: number;
+};
+
 type DbKnowledge = {
   generated_at: string;
   intents: string[];
@@ -130,6 +156,17 @@ type DbKnowledge = {
     pending_appointments_today: number;
     visitors_today: number;
   };
+  attendance_lookup?: {
+    data_source: string;
+    date_basis: string;
+    requested_date: string | null;
+    requested_event_name: string | null;
+    matched_records: number;
+    matched_events: Array<{ event_id: number; event_name: string | null }>;
+    totals: AttendanceLookupTotals;
+    records: AttendanceLookupRecord[];
+    notes: string[];
+  };
 };
 
 const MEMBERSHIP_TYPES = ["ONLINE", "IN_HOUSE"] as const;
@@ -148,13 +185,11 @@ export class AiBusinessContextService {
     actorId?: number,
   ): Promise<AiContext> {
     const normalizedModule = this.normalizeModuleName(context.module);
-    const operationsCrossModule = normalizedModule === "operations";
-    const normalizedMessage = String(message || "").toLowerCase();
+    const safeMessage = String(message || "");
 
-    const includeMemberMetrics =
-      operationsCrossModule || this.matchesAny(normalizedMessage, MEMBER_INTENT_PATTERNS);
-    const includeAttendanceToday =
-      operationsCrossModule || this.matchesAny(normalizedMessage, ATTENDANCE_INTENT_PATTERNS);
+    // Always include baseline member metrics. Keep other enrichments lightweight.
+    const includeMemberMetrics = true;
+    const includeAttendanceToday = this.matchesAny(safeMessage, ATTENDANCE_INTENT_PATTERNS);
 
     const warnings: string[] = [];
     const metrics: MetricBundle = {};
@@ -185,12 +220,7 @@ export class AiBusinessContextService {
       );
     }
 
-    const knowledgePromise = this.buildKnowledge(
-      normalizedMessage,
-      normalizedModule,
-      operationsCrossModule,
-      actorId,
-    ).catch(() => {
+    const knowledgePromise = this.buildKnowledge(safeMessage).catch(() => {
       warnings.push("db_knowledge_unavailable");
       return null;
     });
@@ -200,17 +230,20 @@ export class AiBusinessContextService {
     return {
       ...context,
       module: normalizedModule || (typeof context.module === "string" ? context.module : undefined),
+      cross_module_access: true,
       ai_business: {
         generated_at: new Date().toISOString(),
-        module_policy: operationsCrossModule
-          ? "operations_cross_module"
-          : normalizedModule || "general",
-        cross_module_access: operationsCrossModule,
+        module_policy: "always_cross_module",
+        cross_module_access: true,
         canonical_metrics: {
           total_members:
             "Count of members from user_info linked to user where membership_type is ONLINE or IN_HOUSE.",
           male_attendance_today:
             "Sum of event_attendance_summary.adultMale + youthMale + childrenMale for today's records.",
+          attendance_total:
+            "adultMale + youthMale + childrenMale + adultFemale + youthFemale + childrenFemale.",
+          attendance_plus_visitors:
+            "attendance_total + visitors for the same attendance summary record.",
           current_active_program:
             "Program where completed=false and at least one cohort has status Ongoing or Upcoming.",
           pending_requisitions:
@@ -225,32 +258,20 @@ export class AiBusinessContextService {
 
   private async buildKnowledge(
     message: string,
-    normalizedModule: string,
-    operationsCrossModule: boolean,
-    actorId?: number,
   ): Promise<DbKnowledge | null> {
     const intents = this.detectIntents(message);
     const entityHints = this.detectEntityHints(message);
 
-    const shouldLoadActivePrograms =
-      operationsCrossModule ||
-      intents.has("active_program_lookup") ||
-      intents.has("program_prerequisite_lookup") ||
-      entityHints.has("program");
+    // Keep prefetch lightweight. The model can fetch detailed data on demand via tools.
+    const shouldLoadActivePrograms = false;
+    const shouldLoadProgramPrerequisites = false;
+    const shouldLoadPendingApprovals = false;
+    const shouldLoadAttendanceLookup =
+      intents.has("attendance_lookup") ||
+      entityHints.has("attendance") ||
+      this.hasDateLikeToken(message);
 
-    const shouldLoadProgramPrerequisites =
-      operationsCrossModule ||
-      intents.has("program_prerequisite_lookup") ||
-      normalizedModule.includes("program");
-
-    const shouldLoadPendingApprovals =
-      operationsCrossModule ||
-      intents.has("pending_approval_lookup") ||
-      entityHints.has("requisition") ||
-      normalizedModule.includes("requisition") ||
-      normalizedModule.includes("request");
-
-    const shouldLoadLookupHits = true;
+    const shouldLoadLookupHits = false;
     const shouldLoadOperationalSnapshot = true;
 
     const knowledge: DbKnowledge = {
@@ -288,7 +309,7 @@ export class AiBusinessContextService {
 
     if (shouldLoadPendingApprovals) {
       tasks.push(
-        this.getPendingApprovalsKnowledge(actorId).then((payload) => {
+        this.getPendingApprovalsKnowledge().then((payload) => {
           knowledge.pending_approvals = payload;
         }),
       );
@@ -298,6 +319,14 @@ export class AiBusinessContextService {
       tasks.push(
         this.getOperationalSnapshotKnowledge().then((payload) => {
           knowledge.operational_snapshot = payload;
+        }),
+      );
+    }
+
+    if (shouldLoadAttendanceLookup) {
+      tasks.push(
+        this.getAttendanceLookupKnowledge(message).then((payload) => {
+          knowledge.attendance_lookup = payload;
         }),
       );
     }
@@ -547,6 +576,175 @@ export class AiBusinessContextService {
         name: product.name,
         status: product.status || null,
       })),
+    };
+  }
+
+  private async getAttendanceLookupKnowledge(
+    message: string,
+  ): Promise<DbKnowledge["attendance_lookup"]> {
+    const requestedDate = this.extractDateForAttendanceLookup(message);
+    let requestedEventName = this.extractEventNameForAttendanceLookup(message);
+    const notes: string[] = [];
+    const where: any = {};
+
+    if (requestedDate) {
+      const { startOfDay, endOfDay } = this.getDayBounds(requestedDate);
+      where.date = {
+        gte: startOfDay,
+        lt: endOfDay,
+      };
+    }
+
+    if (requestedEventName) {
+      where.event = {
+        event: {
+          event_name: {
+            contains: requestedEventName,
+          },
+        },
+      };
+    }
+
+    let rows = await prisma.event_attendance_summary.findMany({
+      where,
+      include: {
+        event: {
+          select: {
+            id: true,
+            start_date: true,
+            event: {
+              select: {
+                event_name: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: [{ date: "desc" }, { event_mgt_id: "asc" }],
+      take: 30,
+    });
+
+    if (!rows.length && requestedEventName) {
+      const relaxedEventName = requestedEventName
+        .replace(/\b(19|20)\d{2}\b/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+
+      if (relaxedEventName && relaxedEventName !== requestedEventName) {
+        const relaxedWhere = {
+          ...where,
+          event: {
+            event: {
+              event_name: {
+                contains: relaxedEventName,
+              },
+            },
+          },
+        };
+
+        const relaxedRows = await prisma.event_attendance_summary.findMany({
+          where: relaxedWhere,
+          include: {
+            event: {
+              select: {
+                id: true,
+                start_date: true,
+                event: {
+                  select: {
+                    event_name: true,
+                  },
+                },
+              },
+            },
+          },
+          orderBy: [{ date: "desc" }, { event_mgt_id: "asc" }],
+          take: 30,
+        });
+
+        if (relaxedRows.length > 0) {
+          rows = relaxedRows;
+          requestedEventName = relaxedEventName;
+          notes.push("attendance_lookup_event_query_relaxed");
+        }
+      }
+    }
+
+    const records: AttendanceLookupRecord[] = rows.map((row) => {
+      const maleTotal =
+        Number(row.adultMale || 0) +
+        Number(row.youthMale || 0) +
+        Number(row.childrenMale || 0);
+      const femaleTotal =
+        Number(row.adultFemale || 0) +
+        Number(row.youthFemale || 0) +
+        Number(row.childrenFemale || 0);
+      const attendanceTotal = maleTotal + femaleTotal;
+      const visitors = Number(row.visitors || 0);
+      const newMembers = Number(row.newMembers || 0);
+      const visitingPastors = Number(row.visitingPastors || 0);
+
+      return {
+        attendance_summary_id: row.id,
+        event_id: row.event_mgt_id,
+        event_name: row.event.event.event_name,
+        event_start_date: row.event.start_date
+          ? row.event.start_date.toISOString()
+          : null,
+        attendance_date: row.date.toISOString().slice(0, 10),
+        group: String(row.group || "BOTH"),
+        male_total: maleTotal,
+        female_total: femaleTotal,
+        attendance_total: attendanceTotal,
+        visitors,
+        new_members: newMembers,
+        visiting_pastors: visitingPastors,
+        attendance_plus_visitors: attendanceTotal + visitors,
+      };
+    });
+
+    const totals: AttendanceLookupTotals = {
+      male_total: 0,
+      female_total: 0,
+      attendance_total: 0,
+      visitors: 0,
+      new_members: 0,
+      visiting_pastors: 0,
+      attendance_plus_visitors: 0,
+    };
+
+    const matchedEventsMap = new Map<number, { event_id: number; event_name: string | null }>();
+
+    for (const record of records) {
+      totals.male_total += record.male_total;
+      totals.female_total += record.female_total;
+      totals.attendance_total += record.attendance_total;
+      totals.visitors += record.visitors;
+      totals.new_members += record.new_members;
+      totals.visiting_pastors += record.visiting_pastors;
+      totals.attendance_plus_visitors += record.attendance_plus_visitors;
+
+      if (!matchedEventsMap.has(record.event_id)) {
+        matchedEventsMap.set(record.event_id, {
+          event_id: record.event_id,
+          event_name: record.event_name,
+        });
+      }
+    }
+
+    if (!records.length) {
+      notes.push("no_attendance_records_found_for_filters");
+    }
+
+    return {
+      data_source: "prisma.event_attendance_summary + event_mgt + event_act",
+      date_basis: "server_local_time",
+      requested_date: requestedDate ? requestedDate.toISOString().slice(0, 10) : null,
+      requested_event_name: requestedEventName || null,
+      matched_records: records.length,
+      matched_events: Array.from(matchedEventsMap.values()),
+      totals,
+      records,
+      notes,
     };
   }
 
@@ -997,6 +1195,9 @@ export class AiBusinessContextService {
     if (this.matchesAny(message, OPERATIONAL_SNAPSHOT_PATTERNS)) {
       intents.add("operational_snapshot_lookup");
     }
+    if (this.matchesAny(message, ATTENDANCE_LOOKUP_PATTERNS)) {
+      intents.add("attendance_lookup");
+    }
 
     return intents;
   }
@@ -1067,6 +1268,242 @@ export class AiBusinessContextService {
     return cleaned;
   }
 
+  private hasDateLikeToken(message: string): boolean {
+    return this.extractDateForAttendanceLookup(message) !== null;
+  }
+
+  private extractDateForAttendanceLookup(message: string): Date | null {
+    const isoMatch = message.match(DATE_ISO_CAPTURE_REGEX);
+    if (isoMatch) {
+      const date = this.buildLocalDate(
+        Number(isoMatch[1]),
+        Number(isoMatch[2]) - 1,
+        Number(isoMatch[3]),
+      );
+      if (date) return date;
+    }
+
+    const monthDayYearMatch = message.match(DATE_MONTH_DAY_YEAR_CAPTURE_REGEX);
+    if (monthDayYearMatch) {
+      const monthIndex = this.resolveMonthIndex(monthDayYearMatch[1]);
+      if (monthIndex !== null) {
+        const date = this.buildLocalDate(
+          Number(monthDayYearMatch[3]),
+          monthIndex,
+          Number(monthDayYearMatch[2]),
+        );
+        if (date) return date;
+      }
+    }
+
+    const dayMonthYearMatch = message.match(DATE_DAY_MONTH_YEAR_CAPTURE_REGEX);
+    if (dayMonthYearMatch) {
+      const monthIndex = this.resolveMonthIndex(dayMonthYearMatch[2]);
+      if (monthIndex !== null) {
+        const date = this.buildLocalDate(
+          Number(dayMonthYearMatch[3]),
+          monthIndex,
+          Number(dayMonthYearMatch[1]),
+        );
+        if (date) return date;
+      }
+    }
+
+    const yearMonthDayTextMatch = message.match(DATE_YEAR_MONTH_DAY_TEXT_CAPTURE_REGEX);
+    if (yearMonthDayTextMatch) {
+      const monthIndex = this.resolveMonthIndex(yearMonthDayTextMatch[2]);
+      if (monthIndex !== null) {
+        const year = Number(yearMonthDayTextMatch[4] || yearMonthDayTextMatch[1]);
+        const date = this.buildLocalDate(year, monthIndex, Number(yearMonthDayTextMatch[3]));
+        if (date) return date;
+      }
+    }
+
+    const relativeDate = this.extractRelativeDateForAttendanceLookup(message);
+    if (relativeDate) {
+      return relativeDate;
+    }
+
+    return null;
+  }
+
+  private extractEventNameForAttendanceLookup(message: string): string | null {
+    const quotedMatch = message.match(/(?:"([^"]+)")|(?:'([^']+)')/);
+    if (quotedMatch) {
+      const candidate = quotedMatch[1] || quotedMatch[2] || "";
+      const normalized = this.cleanEventLookupText(candidate);
+      if (normalized.length >= 3) {
+        return normalized;
+      }
+    }
+
+    const patterns = [
+      /(?:attendance|attend[a-z]*)\s+(?:for|of)\s+(.+)$/i,
+      /for\s+(.+?)\s+(?:on|at)\s+.+$/i,
+    ];
+
+    for (const pattern of patterns) {
+      const match = message.match(pattern);
+      if (!match?.[1]) continue;
+      const normalized = this.cleanEventLookupText(match[1]);
+      if (normalized.length >= 3) {
+        return normalized;
+      }
+    }
+
+    const fallback = this.cleanEventLookupText(this.extractLookupPhrase(message));
+    if (this.isGenericAttendanceEventText(fallback)) {
+      return null;
+    }
+    return fallback.length >= 3 ? fallback : null;
+  }
+
+  private cleanEventLookupText(value: string): string {
+    return value
+      .replace(DATE_ISO_REGEX, " ")
+      .replace(DATE_MONTH_DAY_YEAR_REGEX, " ")
+      .replace(DATE_DAY_MONTH_YEAR_REGEX, " ")
+      .replace(DATE_YEAR_MONTH_DAY_TEXT_REGEX, " ")
+      .replace(/[^\w\s-]/g, " ")
+      .replace(/\s+/g, " ")
+      .replace(/^the\s+/i, "")
+      .trim();
+  }
+
+  private resolveMonthIndex(monthToken: string): number | null {
+    const normalized = String(monthToken || "").trim().toLowerCase();
+    if (!normalized) return null;
+    const value = MONTH_TOKEN_TO_INDEX[normalized];
+    return Number.isInteger(value) ? value : null;
+  }
+
+  private extractRelativeDateForAttendanceLookup(message: string): Date | null {
+    const normalized = String(message || "").toLowerCase();
+    if (!normalized) {
+      return null;
+    }
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    if (/\btoday\b/.test(normalized)) {
+      return new Date(today);
+    }
+
+    if (/\byesterday\b/.test(normalized)) {
+      const yesterday = new Date(today);
+      yesterday.setDate(yesterday.getDate() - 1);
+      return yesterday;
+    }
+
+    if (/\btomorrow\b/.test(normalized)) {
+      const tomorrow = new Date(today);
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      return tomorrow;
+    }
+
+    const directionalWeekdayMatch = normalized.match(
+      /\b(last|this|next)\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i,
+    );
+    if (directionalWeekdayMatch) {
+      return this.resolveRelativeWeekday(
+        directionalWeekdayMatch[2],
+        directionalWeekdayMatch[1].toLowerCase() as "last" | "this" | "next",
+      );
+    }
+
+    const plainWeekdayMatch = normalized.match(
+      /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i,
+    );
+    if (plainWeekdayMatch) {
+      return this.resolveRelativeWeekday(plainWeekdayMatch[1], "recent");
+    }
+
+    return null;
+  }
+
+  private resolveRelativeWeekday(
+    weekdayToken: string,
+    mode: "last" | "this" | "next" | "recent",
+  ): Date | null {
+    const normalizedWeekday = String(weekdayToken || "").trim().toLowerCase();
+    const targetDay = WEEKDAY_TOKEN_TO_INDEX[normalizedWeekday];
+    if (!Number.isInteger(targetDay)) {
+      return null;
+    }
+
+    const base = new Date();
+    base.setHours(0, 0, 0, 0);
+    const currentDay = base.getDay();
+
+    let delta = 0;
+    if (mode === "last") {
+      delta = -((currentDay - targetDay + 7) % 7 || 7);
+    } else if (mode === "next") {
+      delta = (targetDay - currentDay + 7) % 7 || 7;
+    } else if (mode === "this") {
+      delta = targetDay - currentDay;
+    } else {
+      delta = -((currentDay - targetDay + 7) % 7);
+    }
+
+    const resolved = new Date(base);
+    resolved.setDate(resolved.getDate() + delta);
+    return resolved;
+  }
+
+  private isGenericAttendanceEventText(value: string): boolean {
+    const normalized = String(value || "")
+      .toLowerCase()
+      .replace(/\s+/g, " ")
+      .trim();
+
+    if (!normalized) {
+      return true;
+    }
+
+    const tokens = normalized.split(" ").filter(Boolean);
+    if (!tokens.length) {
+      return true;
+    }
+
+    const meaningful = tokens.filter(
+      (token) => !GENERIC_ATTENDANCE_EVENT_TOKENS.has(token),
+    );
+
+    return meaningful.length === 0;
+  }
+
+  private buildLocalDate(year: number, monthIndex: number, day: number): Date | null {
+    if (!Number.isInteger(year) || !Number.isInteger(monthIndex) || !Number.isInteger(day)) {
+      return null;
+    }
+
+    if (year < 1900 || year > 2200 || monthIndex < 0 || monthIndex > 11 || day < 1 || day > 31) {
+      return null;
+    }
+
+    const date = new Date(year, monthIndex, day);
+    if (
+      date.getFullYear() !== year ||
+      date.getMonth() !== monthIndex ||
+      date.getDate() !== day
+    ) {
+      return null;
+    }
+
+    date.setHours(0, 0, 0, 0);
+    return date;
+  }
+
+  private getDayBounds(date: Date): { startOfDay: Date; endOfDay: Date } {
+    const startOfDay = new Date(date);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(startOfDay);
+    endOfDay.setDate(endOfDay.getDate() + 1);
+    return { startOfDay, endOfDay };
+  }
+
   private normalizeModuleName(moduleValue: unknown): string {
     if (typeof moduleValue !== "string") {
       return "";
@@ -1110,10 +1547,20 @@ const MEMBER_INTENT_PATTERNS = [
 
 const ATTENDANCE_INTENT_PATTERNS = [
   /\battendance\b/i,
-  /\battend\b/i,
+  /\battend[a-z]*\b/i,
   /\bcame\s+to\s+church\b/i,
   /\bchurch\s+today\b/i,
   /\btoday\b/i,
+];
+const ATTENDANCE_LOOKUP_PATTERNS = [
+  /\battend[a-z]*\b/i,
+  /\btotal\b.*\battend[a-z]*\b/i,
+  /\battend[a-z]*\b.*\bfor\b/i,
+  /\battend[a-z]*\b.*\bon\b/i,
+  /\bhow\s+many\b.*\battend[a-z]*\b/i,
+  /\bhead\s*count\b/i,
+  /\bwho\s+came\b/i,
+  /\bcame\s+to\s+church\b/i,
 ];
 
 const ACTIVE_PROGRAM_INTENT_PATTERNS = [
@@ -1190,7 +1637,102 @@ const STOP_WORDS = new Set([
   "your",
   "our",
   "their",
-  "today",
+]);
+
+const MONTH_NAME_PATTERN =
+  "jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?";
+const DATE_ISO_CAPTURE_REGEX = /\b(\d{4})[-/](\d{1,2})[-/](\d{1,2})\b/i;
+const DATE_MONTH_DAY_YEAR_CAPTURE_REGEX = new RegExp(
+  `\\b(${MONTH_NAME_PATTERN})\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:,\\s*|\\s+)(\\d{4})\\b`,
+  "i",
+);
+const DATE_DAY_MONTH_YEAR_CAPTURE_REGEX = new RegExp(
+  `\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+(${MONTH_NAME_PATTERN})\\s+(\\d{4})\\b`,
+  "i",
+);
+const DATE_YEAR_MONTH_DAY_TEXT_CAPTURE_REGEX = new RegExp(
+  `\\b(\\d{4})\\s+(${MONTH_NAME_PATTERN})\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:,\\s*(\\d{4}))?\\b`,
+  "i",
+);
+const DATE_ISO_REGEX = /\b\d{4}[-/]\d{1,2}[-/]\d{1,2}\b/gi;
+const DATE_MONTH_DAY_YEAR_REGEX = new RegExp(
+  `\\b(?:${MONTH_NAME_PATTERN})\\s+\\d{1,2}(?:st|nd|rd|th)?(?:,\\s*|\\s+)\\d{4}\\b`,
+  "gi",
+);
+const DATE_DAY_MONTH_YEAR_REGEX = new RegExp(
+  `\\b\\d{1,2}(?:st|nd|rd|th)?\\s+(?:${MONTH_NAME_PATTERN})\\s+\\d{4}\\b`,
+  "gi",
+);
+const DATE_YEAR_MONTH_DAY_TEXT_REGEX = new RegExp(
+  `\\b\\d{4}\\s+(?:${MONTH_NAME_PATTERN})\\s+\\d{1,2}(?:st|nd|rd|th)?(?:,\\s*\\d{4})?\\b`,
+  "gi",
+);
+const MONTH_TOKEN_TO_INDEX: Record<string, number> = {
+  jan: 0,
+  january: 0,
+  feb: 1,
+  february: 1,
+  mar: 2,
+  march: 2,
+  apr: 3,
+  april: 3,
+  may: 4,
+  jun: 5,
+  june: 5,
+  jul: 6,
+  july: 6,
+  aug: 7,
+  august: 7,
+  sep: 8,
+  sept: 8,
+  september: 8,
+  oct: 9,
+  october: 9,
+  nov: 10,
+  november: 10,
+  dec: 11,
+  december: 11,
+};
+
+const WEEKDAY_TOKEN_TO_INDEX: Record<string, number> = {
+  sunday: 0,
+  monday: 1,
+  tuesday: 2,
+  wednesday: 3,
+  thursday: 4,
+  friday: 5,
+  saturday: 6,
+};
+
+const GENERIC_ATTENDANCE_EVENT_TOKENS = new Set([
+  "attendance",
+  "attendace",
+  "attendence",
+  "attendees",
+  "attendee",
+  "total",
+  "totals",
   "current",
-  "active",
+  "today",
+  "headcount",
+  "head",
+  "count",
+  "who",
+  "came",
+  "come",
+  "church",
+  "service",
+  "last",
+  "this",
+  "next",
+  "week",
+  "month",
+  "year",
+  "sunday",
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
 ]);
