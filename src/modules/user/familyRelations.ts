@@ -83,40 +83,44 @@ const RELATION_LABEL: Record<FamilyRelationType, string> = {
 const SUPPORTED_RELATIONS_MESSAGE =
   "Unsupported family relation. Allowed values: spouse, parent, child, sibling, guardian, dependent, grandparent, grandchild, in-law.";
 
-export const normalizeFamilyRelation = (relation: unknown): FamilyRelationType => {
-  if (typeof relation !== "string") {
-    throw new Error(SUPPORTED_RELATIONS_MESSAGE);
+type ParentChildRelation =
+  | typeof FAMILY_RELATION.PARENT
+  | typeof FAMILY_RELATION.CHILD;
+
+type UpsertFamilyRelationOptions = {
+  skipHierarchyPropagation?: boolean;
+};
+
+const isParentChildRelation = (
+  relation: FamilyRelationType | string | null | undefined,
+): relation is ParentChildRelation => {
+  return (
+    relation === FAMILY_RELATION.PARENT ||
+    relation === FAMILY_RELATION.CHILD
+  );
+};
+
+const deriveParentIdFromForwardRelation = (
+  userId: number,
+  familyId: number,
+  relation: FamilyRelationType | string | null | undefined,
+): number | null => {
+  if (relation === FAMILY_RELATION.PARENT) {
+    return familyId;
   }
 
-  const normalized = relation.trim().toLowerCase();
-  const mapped = INPUT_TO_RELATION[normalized];
-
-  if (!mapped) {
-    throw new Error(SUPPORTED_RELATIONS_MESSAGE);
+  if (relation === FAMILY_RELATION.CHILD) {
+    return userId;
   }
 
-  return mapped;
+  return null;
 };
 
-export const getReciprocalFamilyRelation = (
-  relation: FamilyRelationType,
-): FamilyRelationType => {
-  return RECIPROCAL_RELATION[relation];
-};
-
-export const toFamilyRelationLabel = (relation: FamilyRelationType): string => {
-  return RELATION_LABEL[relation];
-};
-
-export const upsertBidirectionalFamilyRelation = async (
+const upsertBidirectionalFamilyRelationRaw = async (
   userId: number,
   familyId: number,
   relation: FamilyRelationType,
 ) => {
-  if (userId === familyId) {
-    throw new Error("A member cannot create a relationship with themselves.");
-  }
-
   const reciprocal = getReciprocalFamilyRelation(relation);
 
   await prisma.$transaction([
@@ -155,7 +159,7 @@ export const upsertBidirectionalFamilyRelation = async (
   ]);
 };
 
-export const removeBidirectionalFamilyRelation = async (
+const removeBidirectionalFamilyRelationRaw = async (
   userId: number,
   familyId: number,
 ) => {
@@ -175,6 +179,195 @@ export const removeBidirectionalFamilyRelation = async (
   });
 };
 
+const getDirectChildIds = async (parentId: number): Promise<Set<number>> => {
+  const [forwardChildren, reverseChildren, biologicalChildren] = await Promise.all([
+    prisma.family_relation.findMany({
+      where: {
+        user_id: parentId,
+        relation: FAMILY_RELATION.CHILD,
+      },
+      select: {
+        family_id: true,
+      },
+    }),
+    prisma.family_relation.findMany({
+      where: {
+        family_id: parentId,
+        relation: FAMILY_RELATION.PARENT,
+      },
+      select: {
+        user_id: true,
+      },
+    }),
+    prisma.user.findMany({
+      where: {
+        parent_id: parentId,
+      },
+      select: {
+        id: true,
+      },
+    }),
+  ]);
+
+  const childIds = new Set<number>();
+
+  forwardChildren.forEach((entry) => childIds.add(entry.family_id));
+  reverseChildren.forEach((entry) => childIds.add(entry.user_id));
+  biologicalChildren.forEach((entry) => childIds.add(entry.id));
+
+  return childIds;
+};
+
+const syncGrandparentRelationsForParent = async (parentId: number) => {
+  const directChildren = await getDirectChildIds(parentId);
+  const expectedGrandchildren = new Set<number>();
+
+  for (const childId of directChildren) {
+    const childChildren = await getDirectChildIds(childId);
+    childChildren.forEach((grandchildId) => {
+      if (grandchildId !== parentId && !directChildren.has(grandchildId)) {
+        expectedGrandchildren.add(grandchildId);
+      }
+    });
+  }
+
+  const existingGrandchildren = await prisma.family_relation.findMany({
+    where: {
+      user_id: parentId,
+      relation: FAMILY_RELATION.GRANDPARENT,
+    },
+    select: {
+      family_id: true,
+    },
+  });
+
+  const existingGrandchildIds = new Set<number>(
+    existingGrandchildren.map((entry) => entry.family_id),
+  );
+
+  for (const grandchildId of expectedGrandchildren) {
+    if (!existingGrandchildIds.has(grandchildId)) {
+      await upsertBidirectionalFamilyRelationRaw(
+        parentId,
+        grandchildId,
+        FAMILY_RELATION.GRANDPARENT,
+      );
+    }
+  }
+
+  for (const grandchildId of existingGrandchildIds) {
+    if (!expectedGrandchildren.has(grandchildId)) {
+      await removeBidirectionalFamilyRelationRaw(parentId, grandchildId);
+    }
+  }
+};
+
+export const normalizeFamilyRelation = (relation: unknown): FamilyRelationType => {
+  if (typeof relation !== "string") {
+    throw new Error(SUPPORTED_RELATIONS_MESSAGE);
+  }
+
+  const normalized = relation.trim().toLowerCase();
+  const mapped = INPUT_TO_RELATION[normalized];
+
+  if (!mapped) {
+    throw new Error(SUPPORTED_RELATIONS_MESSAGE);
+  }
+
+  return mapped;
+};
+
+export const getReciprocalFamilyRelation = (
+  relation: FamilyRelationType,
+): FamilyRelationType => {
+  return RECIPROCAL_RELATION[relation];
+};
+
+export const toFamilyRelationLabel = (relation: FamilyRelationType): string => {
+  return RELATION_LABEL[relation];
+};
+
+export const upsertBidirectionalFamilyRelation = async (
+  userId: number,
+  familyId: number,
+  relation: FamilyRelationType,
+  options: UpsertFamilyRelationOptions = {},
+) => {
+  if (userId === familyId) {
+    throw new Error("A member cannot create a relationship with themselves.");
+  }
+
+  const existingRelation = await prisma.family_relation.findUnique({
+    where: {
+      user_id_family_id: {
+        user_id: userId,
+        family_id: familyId,
+      },
+    },
+    select: {
+      relation: true,
+    },
+  });
+
+  const parentIdsToSync = new Set<number>();
+  const previousParentId = deriveParentIdFromForwardRelation(
+    userId,
+    familyId,
+    existingRelation?.relation,
+  );
+  if (previousParentId) {
+    parentIdsToSync.add(previousParentId);
+  }
+
+  const currentParentId = deriveParentIdFromForwardRelation(
+    userId,
+    familyId,
+    relation,
+  );
+  if (currentParentId) {
+    parentIdsToSync.add(currentParentId);
+  }
+
+  await upsertBidirectionalFamilyRelationRaw(userId, familyId, relation);
+
+  if (options.skipHierarchyPropagation) {
+    return;
+  }
+
+  for (const parentId of parentIdsToSync) {
+    await syncGrandparentRelationsForParent(parentId);
+  }
+};
+
+export const removeBidirectionalFamilyRelation = async (
+  userId: number,
+  familyId: number,
+) => {
+  const existingRelation = await prisma.family_relation.findUnique({
+    where: {
+      user_id_family_id: {
+        user_id: userId,
+        family_id: familyId,
+      },
+    },
+    select: {
+      relation: true,
+    },
+  });
+
+  const parentIdToSync = deriveParentIdFromForwardRelation(
+    userId,
+    familyId,
+    existingRelation?.relation,
+  );
+
+  await removeBidirectionalFamilyRelationRaw(userId, familyId);
+
+  if (parentIdToSync) {
+    await syncGrandparentRelationsForParent(parentIdToSync);
+  }
+};
+
 export const pruneMissingBidirectionalFamilyRelations = async (
   userId: number,
   keepFamilyIds: Set<number>,
@@ -185,24 +378,48 @@ export const pruneMissingBidirectionalFamilyRelations = async (
     },
     select: {
       family_id: true,
+      relation: true,
     },
   });
 
-  const staleFamilyIds = existingRelations
-    .map((relation) => relation.family_id)
-    .filter((familyId) => !keepFamilyIds.has(familyId));
+  const prunableRelations = existingRelations.filter(
+    (relation) =>
+      relation.relation !== FAMILY_RELATION.GRANDPARENT &&
+      relation.relation !== FAMILY_RELATION.GRANDCHILD,
+  );
 
-  if (!staleFamilyIds.length) {
+  const staleRelations = prunableRelations.filter(
+    (relation) => !keepFamilyIds.has(relation.family_id),
+  );
+
+  if (!staleRelations.length) {
     return;
   }
 
-  const staleRelationPairs = staleFamilyIds.flatMap((familyId) => [
+  const parentIdsToSync = new Set<number>();
+  staleRelations.forEach((relation) => {
+    if (!isParentChildRelation(relation.relation)) {
+      return;
+    }
+
+    const parentId = deriveParentIdFromForwardRelation(
+      userId,
+      relation.family_id,
+      relation.relation,
+    );
+
+    if (parentId) {
+      parentIdsToSync.add(parentId);
+    }
+  });
+
+  const staleRelationPairs = staleRelations.flatMap((relation) => [
     {
       user_id: userId,
-      family_id: familyId,
+      family_id: relation.family_id,
     },
     {
-      user_id: familyId,
+      user_id: relation.family_id,
       family_id: userId,
     },
   ]);
@@ -212,4 +429,8 @@ export const pruneMissingBidirectionalFamilyRelations = async (
       OR: staleRelationPairs,
     },
   });
+
+  for (const parentId of parentIdsToSync) {
+    await syncGrandparentRelationsForParent(parentId);
+  }
 };
