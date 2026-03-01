@@ -55,6 +55,18 @@ aiRouter.get(
   (req: Request, res: Response) => aiController.usageHistory(req, res),
 );
 
+aiRouter.get(
+  "/query-contracts",
+  [protect, permissions.can_view_ai],
+  (req: Request, res: Response) => aiController.queryContracts(req, res),
+);
+
+aiRouter.post(
+  "/query-read-only",
+  [protect, permissions.can_view_ai],
+  (req: Request, res: Response) => aiController.queryReadOnly(req, res),
+);
+
 aiRouter.post(
   "/insights/:module",
   [protect, permissions.can_manage_ai],

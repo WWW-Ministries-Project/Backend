@@ -2,6 +2,7 @@ import OpenAI, { APIError } from "openai";
 import { AiPolicyService } from "./aiPolicyService";
 import { AiChatHistoryMessage, AiContext, AiProviderResult, AiUsage } from "./aiTypes";
 import { AiCredentialService, AiCredentialServiceError } from "./aiCredentialService";
+import { AiReadOnlyDataService } from "./aiReadOnlyDataService";
 
 const DEFAULT_TEMPERATURE = 0.3;
 const DEFAULT_OPENAI_MAX_TOKENS = 500;
@@ -15,6 +16,10 @@ const GEMINI_RECOMMENDED_MODELS = [
   "gemini-2.5-pro",
   "gemini-2.5-flash-lite",
 ];
+const OPENAI_TOOL_MAX_ROUNDS = 4;
+const OPENAI_TOOL_MAX_CALLS_PER_ROUND = 3;
+const OPENAI_TOOL_NAME_LIST_CONTRACTS = "list_read_only_query_contracts";
+const OPENAI_TOOL_NAME_READ_MODULE = "read_module_data";
 
 type GeminiSdkModule = {
   GoogleGenAI: new (options: {
@@ -38,6 +43,7 @@ const loadGeminiSdk = async (): Promise<GeminiSdkModule> => {
 type AiProvider = "openai" | "gemini";
 type AiGenerationOptions = {
   model?: string;
+  actorId?: number;
 };
 
 const getPositiveIntEnv = (key: string, fallback: number): number => {
@@ -51,8 +57,10 @@ const getNumberEnv = (key: string, fallback: number): number => {
 };
 
 type OpenAiChatMessage = {
-  role: "system" | "user" | "assistant";
+  role: "system" | "user" | "assistant" | "tool";
   content: string;
+  tool_call_id?: string;
+  tool_calls?: any[];
 };
 
 type GeminiMessage = {
@@ -82,6 +90,7 @@ export class AiProviderError extends Error {
 export class AiService {
   private policy = new AiPolicyService();
   private credentialService = new AiCredentialService();
+  private readOnlyDataService = new AiReadOnlyDataService();
 
   async generateReply(
     message: string,
@@ -127,6 +136,7 @@ export class AiService {
         sanitizedMessage,
         sanitizedContext,
         sanitizedHistory,
+        options.actorId,
       );
 
       return {
@@ -176,31 +186,81 @@ export class AiService {
     message: string,
     context: AiContext,
     history: AiChatHistoryMessage[],
+    actorId?: number,
   ): Promise<{ reply: string; provider: string; model: string; usage: AiUsage }> {
     try {
       const openai = new OpenAI({ apiKey });
-      const completion = await openai.chat.completions.create({
-        model,
-        temperature: this.getTemperature(),
-        max_tokens: this.getOpenAiMaxTokens(),
-        messages: this.buildOpenAiMessages(systemPrompt, message, context, history),
-      });
+      const messages: any[] = this.buildOpenAiMessages(
+        systemPrompt,
+        message,
+        context,
+        history,
+      );
+      const tools = this.buildOpenAiTools();
+      const usage: AiUsage = {
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        total_tokens: 0,
+      };
 
-      const reply = this.extractOpenAiReply(completion?.choices?.[0]?.message?.content);
-      if (!reply) {
-        throw new AiProviderError("OpenAI returned an empty response", 502, "openai");
+      for (let round = 0; round < OPENAI_TOOL_MAX_ROUNDS; round += 1) {
+        const completion = await openai.chat.completions.create({
+          model,
+          temperature: this.getTemperature(),
+          max_tokens: this.getOpenAiMaxTokens(),
+          messages: messages as any,
+          tools: tools as any,
+          tool_choice: "auto",
+        });
+
+        usage.prompt_tokens += Number(completion?.usage?.prompt_tokens || 0);
+        usage.completion_tokens += Number(completion?.usage?.completion_tokens || 0);
+        usage.total_tokens += Number(completion?.usage?.total_tokens || 0);
+
+        const assistantMessage = completion?.choices?.[0]?.message;
+        if (!assistantMessage) {
+          throw new AiProviderError("OpenAI returned an empty response", 502, "openai");
+        }
+
+        const toolCalls = Array.isArray((assistantMessage as any).tool_calls)
+          ? ((assistantMessage as any).tool_calls as any[]).slice(0, OPENAI_TOOL_MAX_CALLS_PER_ROUND)
+          : [];
+
+        if (!toolCalls.length) {
+          const reply = this.extractOpenAiReply(assistantMessage.content);
+          if (!reply) {
+            throw new AiProviderError("OpenAI returned an empty response", 502, "openai");
+          }
+
+          return {
+            reply,
+            provider: "openai",
+            model,
+            usage,
+          };
+        }
+
+        messages.push({
+          role: "assistant",
+          content: assistantMessage.content || "",
+          tool_calls: toolCalls,
+        });
+
+        for (const toolCall of toolCalls) {
+          const toolResult = await this.executeOpenAiToolCall(toolCall, actorId);
+          messages.push({
+            role: "tool",
+            tool_call_id: String(toolCall?.id || ""),
+            content: JSON.stringify(toolResult),
+          });
+        }
       }
 
-      return {
-        reply,
-        provider: "openai",
-        model,
-        usage: {
-          prompt_tokens: Number(completion?.usage?.prompt_tokens || 0),
-          completion_tokens: Number(completion?.usage?.completion_tokens || 0),
-          total_tokens: Number(completion?.usage?.total_tokens || 0),
-        },
-      };
+      throw new AiProviderError(
+        "OpenAI tool-calling did not produce a final response",
+        502,
+        "openai",
+      );
     } catch (error: any) {
       if (error instanceof AiProviderError) {
         throw error;
@@ -387,6 +447,128 @@ export class AiService {
     }
 
     return "";
+  }
+
+  private buildOpenAiTools(): any[] {
+    return [
+      {
+        type: "function",
+        function: {
+          name: OPENAI_TOOL_NAME_LIST_CONTRACTS,
+          description:
+            "List read-only query contracts by module so you know what data can be fetched safely.",
+          parameters: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              module: {
+                type: "string",
+                description: "Optional module name (e.g., event, user, requisitions).",
+              },
+            },
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: OPENAI_TOOL_NAME_READ_MODULE,
+          description:
+            "Run a read-only query contract against a backend module to fetch grounded facts.",
+          parameters: {
+            type: "object",
+            additionalProperties: false,
+            required: ["module", "operation"],
+            properties: {
+              module: {
+                type: "string",
+                description: "Module name from list_read_only_query_contracts.",
+              },
+              operation: {
+                type: "string",
+                description:
+                  "Operation name from the selected module contract (summary, recent, search, attendance_lookup).",
+              },
+              input: {
+                type: "object",
+                description: "Operation input arguments (e.g., q, date, event_id, limit).",
+              },
+              cross_module: {
+                type: "boolean",
+                description:
+                  "Optional. Set true when answering a question that requires data from multiple modules.",
+              },
+            },
+          },
+        },
+      },
+    ];
+  }
+
+  private parseToolArguments(raw: unknown): Record<string, unknown> {
+    if (typeof raw !== "string" || !raw.trim()) {
+      return {};
+    }
+
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+      return {};
+    } catch (error) {
+      return {};
+    }
+  }
+
+  private async executeOpenAiToolCall(toolCall: any, actorId?: number) {
+    const toolName = String(toolCall?.function?.name || "").trim();
+    const args = this.parseToolArguments(toolCall?.function?.arguments);
+
+    try {
+      if (toolName === OPENAI_TOOL_NAME_LIST_CONTRACTS) {
+        const moduleName = typeof args.module === "string" ? args.module : undefined;
+        return {
+          ok: true,
+          tool: OPENAI_TOOL_NAME_LIST_CONTRACTS,
+          data: this.readOnlyDataService.listContracts(moduleName),
+        };
+      }
+
+      if (toolName === OPENAI_TOOL_NAME_READ_MODULE) {
+        const moduleName = typeof args.module === "string" ? args.module : "";
+        const operation = typeof args.operation === "string" ? args.operation : "";
+        const input =
+          args.input && typeof args.input === "object" && !Array.isArray(args.input)
+            ? (args.input as Record<string, unknown>)
+            : {};
+        const crossModule = true;
+
+        const data = await this.readOnlyDataService.executeQuery({
+          module: moduleName,
+          operation,
+          input,
+          actorId,
+          crossModule,
+        });
+
+        return {
+          ok: true,
+          tool: OPENAI_TOOL_NAME_READ_MODULE,
+          data,
+        };
+      }
+
+      return {
+        ok: false,
+        error: `Unsupported tool call: ${toolName}`,
+      };
+    } catch (error: any) {
+      return {
+        ok: false,
+        error: error?.message || "Tool execution failed",
+      };
+    }
   }
 
   private buildGeminiContents(
