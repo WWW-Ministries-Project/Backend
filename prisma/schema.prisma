@@ -105,7 +105,7 @@ model family_relation {
   id        Int    @id @default(autoincrement())
   user_id   Int
   family_id Int
-  relation  String
+  relation  family_relation_type
   family    user   @relation("FamilyUser", fields: [family_id], references: [id])
   user      user   @relation("UserFamily", fields: [user_id], references: [id])
 
@@ -1251,6 +1251,18 @@ enum asset_status {
   NOT_FIXABLE
   OUT_OF_REPAIRS
   LOST_OR_STOLEN
+}
+
+enum family_relation_type {
+  SPOUSE
+  PARENT
+  CHILD
+  SIBLING
+  GUARDIAN
+  DEPENDENT
+  GRANDPARENT
+  GRANDCHILD
+  IN_LAW
 }
 
 enum marital_status {

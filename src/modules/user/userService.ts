@@ -2,6 +2,12 @@ import { prisma } from "../../Models/context";
 import { toCapitalizeEachWord, hashPassword, sendEmail } from "../../utils";
 import axios from "axios";
 import { applicationLiveTemplate } from "../../utils/mail_templates/applicationLiveTemplate";
+import {
+  FAMILY_RELATION,
+  normalizeFamilyRelation,
+  toFamilyRelationLabel,
+  upsertBidirectionalFamilyRelation,
+} from "./familyRelations";
 
 export class UserService {
   private normalizeOptionalEmail(email?: string | null) {
@@ -199,152 +205,97 @@ export class UserService {
   }
 
   async registerFamilyMembers(family: any[], primaryUser: any) {
-    const childKeywords = [
-      "child",
-      "son",
-      "daughter",
-      "ward",
-      "kid",
-      "children",
-    ];
-    const spouseKeywords = ["spouse", "wife", "husband"];
-
+    const retainedFamilyIds = new Set<number>();
+    const savedFamilyMembers: any[] = [];
     let spouseUser: any = null;
 
     for (const member of family) {
-      if (spouseKeywords.includes(member.relation.toLowerCase())) {
-        if (member.user_id) {
-          spouseUser = await prisma.user.findUnique({
-            where: { id: Number(member.user_id) },
-          });
-        } else {
-          spouseUser = await prisma.user.create({
-            data: {
-              name: toCapitalizeEachWord(
-                `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
-              ),
-              email: this.normalizeOptionalEmail(member.email),
-              is_user: false,
-              is_active: true,
-              membership_type: primaryUser.membership_type || "IN_HOUSE",
-              user_info: {
-                create: {
-                  title: member.title,
-                  first_name: member.first_name,
-                  last_name: member.last_name,
-                  other_name: member.other_name || null,
-                  date_of_birth: new Date(member.date_of_birth),
-                  gender: member.gender,
-                  marital_status: member.marital_status,
-                  nationality: member.nationality,
-                },
-              },
-            },
-          });
-
-          await this.generateUserId(spouseUser);
-        }
-        await prisma.family_relation.upsert({
-          where: {
-            user_id_family_id: {
-              user_id: primaryUser.id,
-              family_id: spouseUser.id,
-            },
-          },
-          update: { relation: member.relation },
-          create: {
-            user_id: primaryUser.id,
-            family_id: spouseUser.id,
-            relation: member.relation,
-          },
-        });
+      const relation = normalizeFamilyRelation(member?.relation);
+      if (relation !== FAMILY_RELATION.SPOUSE) {
+        continue;
       }
-    }
 
-    return Promise.all(
-      family.map(async (member) => {
-        let familyUser: any;
-
-        if (spouseKeywords.includes(member.relation.toLowerCase())) {
-          return spouseUser;
-        }
-
-        if (member.user_id) {
-          familyUser = await prisma.user.findUnique({
-            where: { id: Number(member.user_id) },
-          });
-        } else if (childKeywords.includes(member.relation.toLowerCase())) {
-          // Try to find existing child for either parent
-          familyUser = await prisma.user.findFirst({
-            where: {
-              user_info: {
+      if (member.user_id) {
+        spouseUser = await prisma.user.findUnique({
+          where: { id: Number(member.user_id) },
+        });
+      } else {
+        spouseUser = await prisma.user.create({
+          data: {
+            name: toCapitalizeEachWord(
+              `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
+            ),
+            email: this.normalizeOptionalEmail(member.email),
+            is_user: false,
+            is_active: true,
+            membership_type: primaryUser.membership_type || "IN_HOUSE",
+            user_info: {
+              create: {
+                title: member.title,
                 first_name: member.first_name,
                 last_name: member.last_name,
+                other_name: member.other_name || null,
                 date_of_birth: new Date(member.date_of_birth),
+                gender: member.gender,
+                marital_status: member.marital_status,
+                nationality: member.nationality,
               },
-              OR: [
-                { parent_id: primaryUser.id },
-                { parent_id: spouseUser?.id },
-              ],
             },
-          });
+          },
+        });
 
-          // Create child if not found
-          if (!familyUser) {
-            familyUser = await prisma.user.create({
-              data: {
-                name: toCapitalizeEachWord(
-                  `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
-                ),
-                email: this.normalizeOptionalEmail(member.email),
-                parent_id: primaryUser.id, // biological / primary
-                is_user: false,
-                is_active: true,
-                user_info: {
-                  create: {
-                    title: member.title,
-                    first_name: member.first_name,
-                    last_name: member.last_name,
-                    other_name: member.other_name || null,
-                    date_of_birth: new Date(member.date_of_birth),
-                    gender: member.gender,
-                    marital_status: member.marital_status,
-                    nationality: member.nationality,
-                  },
-                },
-              },
-            });
+        await this.generateUserId(spouseUser);
+      }
 
-            await this.generateUserId(familyUser);
-          }
+      if (!spouseUser) {
+        throw new Error("Spouse user not found.");
+      }
 
-          // 🔗 Link child to spouse as well
-          if (spouseUser) {
-            await prisma.family_relation.upsert({
-              where: {
-                user_id_family_id: {
-                  user_id: spouseUser.id,
-                  family_id: familyUser.id,
-                },
-              },
-              update: { relation: "child" },
-              create: {
-                user_id: spouseUser.id,
-                family_id: familyUser.id,
-                relation: "child",
-              },
-            });
-          }
+      retainedFamilyIds.add(spouseUser.id);
+      await upsertBidirectionalFamilyRelation(
+        primaryUser.id,
+        spouseUser.id,
+        relation,
+      );
+    }
+
+    for (const member of family) {
+      const relation = normalizeFamilyRelation(member?.relation);
+      let familyUser: any;
+
+      if (relation === FAMILY_RELATION.SPOUSE) {
+        if (spouseUser) {
+          savedFamilyMembers.push(spouseUser);
         }
+        continue;
+      }
 
-        // 5️⃣ Other family members
-        else {
+      if (member.user_id) {
+        familyUser = await prisma.user.findUnique({
+          where: { id: Number(member.user_id) },
+        });
+      } else if (relation === FAMILY_RELATION.CHILD) {
+        // Try to find existing child for either parent
+        familyUser = await prisma.user.findFirst({
+          where: {
+            user_info: {
+              first_name: member.first_name,
+              last_name: member.last_name,
+              date_of_birth: new Date(member.date_of_birth),
+            },
+            OR: [{ parent_id: primaryUser.id }, { parent_id: spouseUser?.id }],
+          },
+        });
+
+        // Create child if not found
+        if (!familyUser) {
           familyUser = await prisma.user.create({
             data: {
               name: toCapitalizeEachWord(
                 `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
               ),
               email: this.normalizeOptionalEmail(member.email),
+              parent_id: primaryUser.id, // biological / primary
               is_user: false,
               is_active: true,
               user_info: {
@@ -364,26 +315,61 @@ export class UserService {
 
           await this.generateUserId(familyUser);
         }
-
-        // 🔗 Link to primary user
-        await prisma.family_relation.upsert({
-          where: {
-            user_id_family_id: {
-              user_id: primaryUser.id,
-              family_id: familyUser.id,
+      } else {
+        // Other family members
+        familyUser = await prisma.user.create({
+          data: {
+            name: toCapitalizeEachWord(
+              `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
+            ),
+            email: this.normalizeOptionalEmail(member.email),
+            is_user: false,
+            is_active: true,
+            user_info: {
+              create: {
+                title: member.title,
+                first_name: member.first_name,
+                last_name: member.last_name,
+                other_name: member.other_name || null,
+                date_of_birth: new Date(member.date_of_birth),
+                gender: member.gender,
+                marital_status: member.marital_status,
+                nationality: member.nationality,
+              },
             },
-          },
-          update: { relation: member.relation },
-          create: {
-            user_id: primaryUser.id,
-            family_id: familyUser.id,
-            relation: member.relation,
           },
         });
 
-        return familyUser;
-      }),
-    );
+        await this.generateUserId(familyUser);
+      }
+
+      if (!familyUser) {
+        throw new Error("Family member not found.");
+      }
+
+      if (retainedFamilyIds.has(familyUser.id)) {
+        throw new Error(`Duplicate relationship for member ID ${familyUser.id}.`);
+      }
+
+      retainedFamilyIds.add(familyUser.id);
+      await upsertBidirectionalFamilyRelation(
+        primaryUser.id,
+        familyUser.id,
+        relation,
+      );
+
+      if (spouseUser && relation === FAMILY_RELATION.CHILD) {
+        await upsertBidirectionalFamilyRelation(
+          spouseUser.id,
+          familyUser.id,
+          FAMILY_RELATION.CHILD,
+        );
+      }
+
+      savedFamilyMembers.push(familyUser);
+    }
+
+    return savedFamilyMembers;
   }
 
   private async savedDepartments(
@@ -838,27 +824,15 @@ export class UserService {
       }),
     ]);
 
+    await upsertBidirectionalFamilyRelation(
+      userId1,
+      userId2,
+      FAMILY_RELATION.SPOUSE,
+    );
+
     return { message: "Spouses linked successfully.", error: "" };
   }
   async getUserFamily(userId: number) {
-    const siblingsKeywords = [
-      "sibling",
-      "brother",
-      "sister",
-      "sibs",
-      "sis",
-      "bro",
-      "siblings",
-    ];
-    const childKeywords = [
-      "child",
-      "son",
-      "daughter",
-      "ward",
-      "kid",
-      "children",
-    ];
-
     // Helper to remove password
     const sanitizeUser = (u: any) => {
       if (!u) return null;
@@ -882,29 +856,36 @@ export class UserService {
 
     // 3️⃣ Organize relations by type
     const spouses = relations
-      .filter((r) => r.relation.toLowerCase() === "spouse")
+      .filter((r) => r.relation === FAMILY_RELATION.SPOUSE)
       .map((r) => sanitizeUser(r.family));
 
     const children = relations
-      .filter((r) => childKeywords.includes(r.relation.toLowerCase()))
+      .filter((r) => r.relation === FAMILY_RELATION.CHILD)
       .map((r) => sanitizeUser(r.family));
 
     const siblings = relations
-      .filter((r) => siblingsKeywords.includes(r.relation.toLowerCase()))
+      .filter((r) => r.relation === FAMILY_RELATION.SIBLING)
       .map((r) => sanitizeUser(r.family));
 
     const parents = relations
-      .filter((r) => r.relation.toLowerCase() === "parent")
+      .filter((r) => r.relation === FAMILY_RELATION.PARENT)
       .map((r) => sanitizeUser(r.family));
+
+    const groupedRelationTypes = new Set<string>([
+      FAMILY_RELATION.SPOUSE,
+      FAMILY_RELATION.CHILD,
+      FAMILY_RELATION.SIBLING,
+      FAMILY_RELATION.PARENT,
+    ]);
 
     const others = relations
       .filter(
-        (r) =>
-          !["spouse", "child", "sibling", "parent"]
-            .concat(siblingsKeywords, childKeywords)
-            .includes(r.relation.toLowerCase()),
+        (r) => !groupedRelationTypes.has(r.relation),
       )
-      .map((r) => ({ ...sanitizeUser(r.family), relation: r.relation }));
+      .map((r) => ({
+        ...sanitizeUser(r.family),
+        relation: toFamilyRelationLabel(r.relation),
+      }));
 
     // 4️⃣ Include children who have this user as biological parent
     const biologicalChildren = await prisma.user.findMany({
