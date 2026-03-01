@@ -614,16 +614,26 @@ export class ProgramService {
   }
 
   async getAllTopics() {
-    return await prisma.topic.findMany({
+    const topics = await prisma.topic.findMany({
       include: {
         program: true,
         LearningUnit: true,
       },
     });
+
+    return topics.map((topic) => ({
+      ...topic,
+      LearningUnit: topic.LearningUnit
+        ? {
+            ...topic.LearningUnit,
+            data: this.deserializeLearningUnitData(topic.LearningUnit.data),
+          }
+        : null,
+    }));
   }
 
   async getProgramById(id: number) {
-    return await prisma.program.findUnique({
+    const program = await prisma.program.findUnique({
       where: { id },
       include: {
         topics: {
@@ -648,6 +658,23 @@ export class ProgramService {
         },
       },
     });
+
+    if (!program) {
+      return null;
+    }
+
+    return {
+      ...program,
+      topics: program.topics.map((topic) => ({
+        ...topic,
+        LearningUnit: topic.LearningUnit
+          ? {
+              ...topic.LearningUnit,
+              data: this.deserializeLearningUnitData(topic.LearningUnit.data),
+            }
+          : null,
+      })),
+    };
   }
 
   async updateProgram(id: number, data: any) {
@@ -729,7 +756,7 @@ export class ProgramService {
           topicId: topic.id,
           type: normalizedLearningUnit.type,
           maxAttempts: normalizedLearningUnit.maxAttempts,
-          data: normalizedLearningUnit.data,
+          data: this.serializeLearningUnitData(normalizedLearningUnit.data),
         },
       });
 
@@ -766,6 +793,9 @@ export class ProgramService {
   ) {
     const normalizedLearningUnit = this.normalizeLearningUnit(learningUnit);
     this.validateLearningUnit(normalizedLearningUnit);
+    const serializedLearningUnitData = this.serializeLearningUnitData(
+      normalizedLearningUnit.data,
+    );
 
     return prisma.$transaction(async (tx) => {
       // 1️⃣ Update topic
@@ -783,14 +813,14 @@ export class ProgramService {
         update: {
           type: normalizedLearningUnit.type,
           maxAttempts: normalizedLearningUnit.maxAttempts,
-          data: normalizedLearningUnit.data,
+          data: serializedLearningUnitData,
           version: { increment: 1 },
         },
         create: {
           topicId: id,
           type: normalizedLearningUnit.type,
           maxAttempts: normalizedLearningUnit.maxAttempts,
-          data: normalizedLearningUnit.data,
+          data: serializedLearningUnitData,
         },
       });
 
@@ -803,13 +833,42 @@ export class ProgramService {
       return learningUnit;
     }
 
+    const parsedData = this.deserializeLearningUnitData(learningUnit.data);
     const normalized = {
       ...learningUnit,
       data:
-        learningUnit.data && typeof learningUnit.data === "object"
-          ? { ...learningUnit.data }
-          : learningUnit.data,
+        parsedData && typeof parsedData === "object" && !Array.isArray(parsedData)
+          ? { ...parsedData }
+          : parsedData,
     };
+
+    if (typeof normalized.data === "string") {
+      const value = normalized.data.trim();
+
+      if (normalized.type === "lesson-note") {
+        normalized.data = { content: value };
+      }
+
+      if (normalized.type === "assignment-essay") {
+        normalized.data = { question: value };
+      }
+
+      if (normalized.type === "video") {
+        normalized.data = { url: value };
+      }
+
+      if (normalized.type === "live") {
+        normalized.data = { meetingLink: value };
+      }
+
+      if (normalized.type === "in-person") {
+        normalized.data = { venue: value };
+      }
+
+      if (normalized.type === "pdf" || normalized.type === "ppt") {
+        normalized.data = { link: value };
+      }
+    }
 
     if (
       normalized.maxAttempts === undefined &&
@@ -886,12 +945,26 @@ export class ProgramService {
 
   //get topic
   async getTopic(topicId: number) {
-    return await prisma.topic.findUnique({
+    const topic = await prisma.topic.findUnique({
       where: { id: topicId },
       include: {
         LearningUnit: true,
       },
     });
+
+    if (!topic) {
+      return null;
+    }
+
+    return {
+      ...topic,
+      LearningUnit: topic.LearningUnit
+        ? {
+            ...topic.LearningUnit,
+            data: this.deserializeLearningUnitData(topic.LearningUnit.data),
+          }
+        : null,
+    };
   }
 
   async completeTopicByUserAndTopic(userId: number, topicId: number) {
@@ -1310,7 +1383,8 @@ export class ProgramService {
       throw new Error(`Maximum attempts of ${maxAttempts} exceeded`);
     }
 
-    const questions = (learningUnit?.data as any)?.questions as any[];
+    const learningUnitData = this.deserializeLearningUnitData(learningUnit.data);
+    const questions = (learningUnitData as any)?.questions as any[];
     if (!Array.isArray(questions) || questions.length === 0) {
       throw new Error("Assignment questions are not configured");
     }
@@ -1544,11 +1618,10 @@ export class ProgramService {
     data: any;
     maxAttempts: number | null;
   }) {
+    const parsedData = this.deserializeLearningUnitData(learningUnit.data);
     const data =
-      learningUnit.data &&
-      typeof learningUnit.data === "object" &&
-      !Array.isArray(learningUnit.data)
-        ? learningUnit.data
+      parsedData && typeof parsedData === "object" && !Array.isArray(parsedData)
+        ? parsedData
         : {};
 
     const rawPassMark = data.passMark ?? data.pass_mark ?? data.passmark;
@@ -1574,12 +1647,16 @@ export class ProgramService {
     data: any,
     maxAttempts: number | null,
   ) {
+    const parsedData = this.deserializeLearningUnitData(data);
+
     if (!type.startsWith("assignment")) {
-      return data;
+      return parsedData;
     }
 
     const normalizedData =
-      data && typeof data === "object" && !Array.isArray(data) ? { ...data } : {};
+      parsedData && typeof parsedData === "object" && !Array.isArray(parsedData)
+        ? { ...parsedData }
+        : {};
     const assignmentConfig = this.getAssignmentConfig({
       data: normalizedData,
       maxAttempts,
@@ -1690,6 +1767,35 @@ export class ProgramService {
       if (!optionIds.includes(q.correctOptionId)) {
         throw new Error("correctOptionId must match an option");
       }
+    }
+  }
+
+  private serializeLearningUnitData(data: any): string {
+    if (data === undefined || data === null) {
+      return "";
+    }
+
+    if (typeof data === "string") {
+      return data;
+    }
+
+    return JSON.stringify(data);
+  }
+
+  private deserializeLearningUnitData(data: any) {
+    if (typeof data !== "string") {
+      return data;
+    }
+
+    const trimmed = data.trim();
+    if (!trimmed) {
+      return "";
+    }
+
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      return data;
     }
   }
 }
