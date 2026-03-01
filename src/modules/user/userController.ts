@@ -16,6 +16,14 @@ import { LifeCenterService } from "../lifeCenterMangement/lifeCenterService";
 import { forgetPasswordTemplate } from "../../utils/mail_templates/forgotPasswordTemplate";
 import { userActivatedTemplate } from "../../utils/mail_templates/userActivatedTemplate";
 import { activateUserTemplate } from "../../utils/mail_templates/activateUserTemplate";
+import {
+  FAMILY_RELATION,
+  getReciprocalFamilyRelation,
+  normalizeFamilyRelation,
+  pruneMissingBidirectionalFamilyRelations,
+  toFamilyRelationLabel,
+  upsertBidirectionalFamilyRelation,
+} from "./familyRelations";
 
 dotenv.config();
 
@@ -77,6 +85,23 @@ const canRunSensitiveUserOps = () => {
   const isProduction = process.env.NODE_ENV === "production";
   const allowSensitiveOps = process.env.ALLOW_ADMIN_UTIL_ENDPOINTS === "true";
   return !isProduction || allowSensitiveOps;
+};
+
+const isFamilyRelationValidationError = (errorMessage?: string) => {
+  if (!errorMessage) return false;
+
+  const relationValidationIndicators = [
+    "Unsupported family relation",
+    "A member cannot create a relationship with themselves.",
+    "Duplicate relationship for member ID",
+    "Duplicate spouse relationships are not allowed.",
+    "Family member not found.",
+    "Spouse user not found.",
+  ];
+
+  return relationValidationIndicators.some((indicator) =>
+    errorMessage.includes(indicator),
+  );
 };
 
 export const landingPage = async (req: Request, res: Response) => {
@@ -198,6 +223,14 @@ export const registerUser = async (req: Request, res: Response) => {
       .json({ message: "User Created Successfully", data: response });
   } catch (error: any) {
     console.error(error);
+
+    if (isFamilyRelationValidationError(error?.message)) {
+      return res.status(400).json({
+        message: error?.message,
+        data: null,
+      });
+    }
+
     return res
       .status(500)
       .json({ message: "Internal Server Error", data: error?.message });
@@ -253,6 +286,7 @@ export const updateUser = async (req: Request, res: Response) => {
       is_user,
       department_positions,
     } = req.body;
+    const hasFamilyField = Object.prototype.hasOwnProperty.call(req.body, "family");
 
     const userExists = await prisma.user.findUnique({
       where: { id: Number(user_id) },
@@ -454,8 +488,13 @@ export const updateUser = async (req: Request, res: Response) => {
       );
     }
 
-    // Optional: handle children (currently stubbed)
-    if (family.length > 0) {
+    if (hasFamilyField) {
+      if (!Array.isArray(family)) {
+        return res.status(400).json({
+          message: "family must be an array when provided.",
+          data: null,
+        });
+      }
       await updateFamilyMembers(family, updatedUser);
     }
     const { password, ...rest } = updatedUser;
@@ -471,6 +510,14 @@ export const updateUser = async (req: Request, res: Response) => {
       .json({ message: "User updated successfully", data: data });
   } catch (error: any) {
     console.error(error);
+
+    if (isFamilyRelationValidationError(error?.message)) {
+      return res.status(400).json({
+        message: error?.message,
+        data: null,
+      });
+    }
+
     return res
       .status(500)
       .json({ message: "Internal Server Error", data: error?.message });
@@ -478,20 +525,22 @@ export const updateUser = async (req: Request, res: Response) => {
 };
 
 async function updateFamilyMembers(family: any[], primaryUser: any) {
-  const childKeywords = ["child", "son", "daughter", "ward", "kid", "children"];
-  const spouseKeywords = ["spouse", "wife", "husband"];
-
+  const retainedFamilyIds = new Set<number>();
+  const updatedMembers: any[] = [];
   let spouseUser: any = null;
 
-  /* =====================================================
-     1️⃣ HANDLE SPOUSE FIRST (UPDATE OR CREATE)
-  ====================================================== */
   for (const member of family) {
-    if (!spouseKeywords.includes(member.relation.toLowerCase())) continue;
+    const relation = normalizeFamilyRelation(member?.relation);
+    if (relation !== FAMILY_RELATION.SPOUSE) {
+      continue;
+    }
+
+    if (spouseUser) {
+      throw new Error("Duplicate spouse relationships are not allowed.");
+    }
 
     if (member.user_id) {
       const hasEmailField = Object.prototype.hasOwnProperty.call(member, "email");
-      // UPDATE EXISTING SPOUSE
       spouseUser = await prisma.user.update({
         where: { id: Number(member.user_id) },
         data: {
@@ -526,7 +575,6 @@ async function updateFamilyMembers(family: any[], primaryUser: any) {
         },
       });
     } else {
-      // CREATE SPOUSE
       spouseUser = await prisma.user.create({
         data: {
           name: toCapitalizeEachWord(
@@ -553,153 +601,80 @@ async function updateFamilyMembers(family: any[], primaryUser: any) {
       await userService.generateUserId(spouseUser);
     }
 
-    await prisma.family_relation.upsert({
-      where: {
-        user_id_family_id: {
-          user_id: primaryUser.id,
-          family_id: spouseUser.id,
-        },
-      },
-      update: { relation: member.relation },
-      create: {
-        user_id: primaryUser.id,
-        family_id: spouseUser.id,
-        relation: member.relation,
-      },
-    });
-
-    await prisma.family_relation.upsert({
-      where: {
-        user_id_family_id: {
-          user_id: spouseUser.id,
-          family_id: primaryUser.id,
-        },
-      },
-      update: { relation: member.relation },
-      create: {
-        user_id: spouseUser.id,
-        family_id: primaryUser.id,
-        relation: member.relation,
-      },
-    });
+    retainedFamilyIds.add(spouseUser.id);
+    await upsertBidirectionalFamilyRelation(
+      primaryUser.id,
+      spouseUser.id,
+      relation,
+    );
   }
 
-  return Promise.all(
-    family.map(async (member) => {
-      let familyUser: any;
+  for (const member of family) {
+    const relation = normalizeFamilyRelation(member?.relation);
+    let familyUser: any;
 
-      // Skip spouse (already handled)
-      if (spouseKeywords.includes(member.relation.toLowerCase())) {
-        return spouseUser;
+    if (relation === FAMILY_RELATION.SPOUSE) {
+      if (spouseUser) {
+        updatedMembers.push(spouseUser);
       }
+      continue;
+    }
 
-      if (member.user_id) {
-        const hasEmailField = Object.prototype.hasOwnProperty.call(
-          member,
-          "email",
-        );
-        familyUser = await prisma.user.update({
-          where: { id: Number(member.user_id) },
-          data: {
-            name: toCapitalizeEachWord(
-              `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
-            ),
-            ...(hasEmailField
-              ? { email: normalizeOptionalEmail(member.email) }
-              : {}),
-            user_info: {
-              upsert: {
-                create: {
-                  title: member.title,
-                  first_name: member.first_name,
-                  last_name: member.last_name,
-                  other_name: member.other_name || null,
-                  date_of_birth: new Date(member.date_of_birth),
-                  gender: member.gender,
-                  marital_status: member.marital_status,
-                  nationality: member.nationality,
-                },
-                update: {
-                  title: member.title,
-                  first_name: member.first_name,
-                  last_name: member.last_name,
-                  other_name: member.other_name || null,
-                  date_of_birth: new Date(member.date_of_birth),
-                  gender: member.gender,
-                  marital_status: member.marital_status,
-                  nationality: member.nationality,
-                },
+    if (member.user_id) {
+      const hasEmailField = Object.prototype.hasOwnProperty.call(member, "email");
+      familyUser = await prisma.user.update({
+        where: { id: Number(member.user_id) },
+        data: {
+          name: toCapitalizeEachWord(
+            `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
+          ),
+          ...(hasEmailField ? { email: normalizeOptionalEmail(member.email) } : {}),
+          user_info: {
+            upsert: {
+              create: {
+                title: member.title,
+                first_name: member.first_name,
+                last_name: member.last_name,
+                other_name: member.other_name || null,
+                date_of_birth: new Date(member.date_of_birth),
+                gender: member.gender,
+                marital_status: member.marital_status,
+                nationality: member.nationality,
+              },
+              update: {
+                title: member.title,
+                first_name: member.first_name,
+                last_name: member.last_name,
+                other_name: member.other_name || null,
+                date_of_birth: new Date(member.date_of_birth),
+                gender: member.gender,
+                marital_status: member.marital_status,
+                nationality: member.nationality,
               },
             },
           },
-        });
-      } else if (childKeywords.includes(member.relation.toLowerCase())) {
-        familyUser = await prisma.user.findFirst({
-          where: {
-            user_info: {
-              first_name: member.first_name,
-              last_name: member.last_name,
-              date_of_birth: new Date(member.date_of_birth),
-            },
-            OR: [{ parent_id: primaryUser.id }, { parent_id: spouseUser?.id }],
+        },
+      });
+    } else if (relation === FAMILY_RELATION.CHILD) {
+      familyUser = await prisma.user.findFirst({
+        where: {
+          user_info: {
+            first_name: member.first_name,
+            last_name: member.last_name,
+            date_of_birth: new Date(member.date_of_birth),
           },
-        });
+          OR: [{ parent_id: primaryUser.id }, { parent_id: spouseUser?.id }],
+        },
+      });
 
-        if (!familyUser) {
-          familyUser = await prisma.user.create({
-            data: {
-              name: toCapitalizeEachWord(
-                `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
-              ),
-              email: normalizeOptionalEmail(member.email),
-              parent_id: primaryUser.id,
-              is_user: false,
-              is_active: true,
-              user_info: {
-                create: {
-                  title: member.title,
-                  first_name: member.first_name,
-                  last_name: member.last_name,
-                  other_name: member.other_name || null,
-                  date_of_birth: new Date(member.date_of_birth),
-                  gender: member.gender,
-                  marital_status: member.marital_status,
-                  nationality: member.nationality,
-                },
-              },
-            },
-          });
-
-          await userService.generateUserId(familyUser);
-        }
-
-        // 🔗 CHILD ↔ SPOUSE
-        if (spouseUser) {
-          await prisma.family_relation.upsert({
-            where: {
-              user_id_family_id: {
-                user_id: spouseUser.id,
-                family_id: familyUser.id,
-              },
-            },
-            update: { relation: "child" },
-            create: {
-              user_id: spouseUser.id,
-              family_id: familyUser.id,
-              relation: "child",
-            },
-          });
-        }
-      } else {
-        /* =====================
-         OTHER FAMILY MEMBERS
-      ====================== */
+      if (!familyUser) {
         familyUser = await prisma.user.create({
           data: {
             name: toCapitalizeEachWord(
               `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
             ),
             email: normalizeOptionalEmail(member.email),
+            parent_id: primaryUser.id,
             is_user: false,
             is_active: true,
             user_info: {
@@ -720,27 +695,59 @@ async function updateFamilyMembers(family: any[], primaryUser: any) {
         await userService.generateUserId(familyUser);
       }
 
-      /* =====================
-         LINK TO PRIMARY USER
-      ====================== */
-      await prisma.family_relation.upsert({
-        where: {
-          user_id_family_id: {
-            user_id: primaryUser.id,
-            family_id: familyUser.id,
+      if (spouseUser) {
+        await upsertBidirectionalFamilyRelation(
+          spouseUser.id,
+          familyUser.id,
+          FAMILY_RELATION.CHILD,
+        );
+      }
+    } else {
+      familyUser = await prisma.user.create({
+        data: {
+          name: toCapitalizeEachWord(
+            `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
+          ),
+          email: normalizeOptionalEmail(member.email),
+          is_user: false,
+          is_active: true,
+          user_info: {
+            create: {
+              title: member.title,
+              first_name: member.first_name,
+              last_name: member.last_name,
+              other_name: member.other_name || null,
+              date_of_birth: new Date(member.date_of_birth),
+              gender: member.gender,
+              marital_status: member.marital_status,
+              nationality: member.nationality,
+            },
           },
-        },
-        update: { relation: member.relation },
-        create: {
-          user_id: primaryUser.id,
-          family_id: familyUser.id,
-          relation: member.relation,
         },
       });
 
-      return familyUser;
-    }),
-  );
+      await userService.generateUserId(familyUser);
+    }
+
+    if (!familyUser) {
+      throw new Error("Family member not found.");
+    }
+
+    if (retainedFamilyIds.has(familyUser.id)) {
+      throw new Error(`Duplicate relationship for member ID ${familyUser.id}.`);
+    }
+
+    retainedFamilyIds.add(familyUser.id);
+    await upsertBidirectionalFamilyRelation(
+      primaryUser.id,
+      familyUser.id,
+      relation,
+    );
+    updatedMembers.push(familyUser);
+  }
+
+  await pruneMissingBidirectionalFamilyRelations(primaryUser.id, retainedFamilyIds);
+  return updatedMembers;
 }
 
 // Helper to update department_positions
@@ -1583,18 +1590,6 @@ export const getUser = async (req: Request, res: Response) => {
     return res.status(400).json({ message: "Invalid or missing user_id" });
   }
 
-  const siblingsKeywords = [
-    "sibling",
-    "brother",
-    "sister",
-    "sibs",
-    "sis",
-    "bro",
-    "siblings",
-  ];
-
-  const childKeywords = ["child", "son", "daughter", "ward", "kid", "children"];
-
   try {
     const response: any = await prisma.user.findUnique({
       where: { id: resolvedUserId },
@@ -1683,21 +1678,16 @@ export const getUser = async (req: Request, res: Response) => {
     forwardRelations.forEach((r) => {
       normalizedRelations.push({
         user: r.family,
-        relation: r.relation.toLowerCase(),
+        relation: r.relation,
         direction: "forward",
       });
     });
 
     // Reverse (them → me)
     reverseRelations.forEach((r) => {
-      let inferredRelation = r.relation.toLowerCase();
-
-      if (childKeywords.includes(inferredRelation)) inferredRelation = "parent";
-      else if (inferredRelation === "parent") inferredRelation = "child";
-
       normalizedRelations.push({
         user: r.user,
-        relation: inferredRelation,
+        relation: getReciprocalFamilyRelation(r.relation),
         direction: "reverse",
       });
     });
@@ -1718,23 +1708,30 @@ export const getUser = async (req: Request, res: Response) => {
     /* =========================
        5️⃣ GROUP FAMILY
     ========================== */
-    const spouses = relations.filter((r) => r.relation === "spouse");
-
-    const parents = relations.filter((r) => r.relation === "parent");
-
-    const children = relations.filter((r) =>
-      childKeywords.includes(r.relation),
+    const spouses = relations.filter(
+      (r) => r.relation === FAMILY_RELATION.SPOUSE,
     );
 
-    const siblings = relations.filter((r) =>
-      siblingsKeywords.includes(r.relation),
+    const parents = relations.filter(
+      (r) => r.relation === FAMILY_RELATION.PARENT,
+    );
+
+    const children = relations.filter(
+      (r) => r.relation === FAMILY_RELATION.CHILD,
+    );
+
+    const siblings = relations.filter(
+      (r) => r.relation === FAMILY_RELATION.SIBLING,
     );
 
     const others = relations.filter(
       (r) =>
-        !["spouse", "parent"]
-          .concat(childKeywords, siblingsKeywords)
-          .includes(r.relation),
+        ![
+          FAMILY_RELATION.SPOUSE,
+          FAMILY_RELATION.PARENT,
+          FAMILY_RELATION.CHILD,
+          FAMILY_RELATION.SIBLING,
+        ].includes(r.relation),
     );
 
     /* =========================
@@ -1779,22 +1776,25 @@ export const getUser = async (req: Request, res: Response) => {
     };
 
     user.family = [
-      ...spouses.map((s) => ({ ...s.user.user_info, relation: "spouse" })),
+      ...spouses.map((s) => ({
+        ...s.user.user_info,
+        relation: toFamilyRelationLabel(s.relation),
+      })),
       ...Array.from(childrenMap.values()).map((c) => ({
         ...c.user_info,
-        relation: "child",
+        relation: toFamilyRelationLabel(FAMILY_RELATION.CHILD),
       })),
       ...parents.map((p) => ({
         ...p.user.user_info,
-        relation: "parent",
+        relation: toFamilyRelationLabel(p.relation),
       })),
       ...Array.from(siblingsMap.values()).map((s) => ({
         ...s.user_info,
-        relation: "sibling",
+        relation: toFamilyRelationLabel(FAMILY_RELATION.SIBLING),
       })),
       ...others.map((o) => ({
         ...o.user.user_info,
-        relation: o.relation,
+        relation: toFamilyRelationLabel(o.relation),
       })),
     ];
 
