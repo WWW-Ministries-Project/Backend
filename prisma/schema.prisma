@@ -336,6 +336,7 @@ model request {
   request_comments        request_comments[]
   products                requested_item[]                 @relation("ProductRequest")
   approval_instances      requisition_approval_instances[]
+  notification_events     requisition_notification_events[]
 
   @@index([user_id], map: "request_user_id_fkey")
   @@index([department_id], map: "request_department_id_fkey")
@@ -421,7 +422,19 @@ model requisition_approval_configs {
   updated_at DateTime                                 @default(now()) @updatedAt
   requesters requisition_approval_config_requesters[]
   steps      requisition_approval_config_steps[]
+  notifications requisition_approval_config_notifications[]
   instances  requisition_approval_instances[]
+}
+
+model requisition_approval_config_notifications {
+  id        Int                          @id @default(autoincrement())
+  config_id Int
+  user_id   Int
+  config    requisition_approval_configs @relation(fields: [config_id], references: [id], onDelete: Cascade)
+
+  @@unique([config_id, user_id])
+  @@index([user_id])
+  @@index([config_id])
 }
 
 model requisition_approval_config_requesters {
@@ -472,6 +485,27 @@ model requisition_approval_instances {
   @@index([approver_user_id])
   @@index([status])
   @@index([config_id])
+}
+
+model requisition_notification_events {
+  id                 Int                              @id @default(autoincrement())
+  idempotency_key    String                           @unique
+  event_type         String
+  requisition_id     Int
+  actor_user_id      Int?
+  decision           String?
+  recipient_user_ids String                           @db.LongText
+  status             RequisitionNotificationEventStatus @default(PENDING)
+  attempts           Int                              @default(0)
+  last_error         String?                          @db.LongText
+  sent_at            DateTime?
+  created_at         DateTime                         @default(now())
+  updated_at         DateTime                         @default(now()) @updatedAt
+  requisition        request                          @relation(fields: [requisition_id], references: [id], onDelete: Cascade)
+
+  @@index([status, created_at])
+  @@index([requisition_id])
+  @@index([event_type])
 }
 
 model requisition_edit_logs {
@@ -1243,6 +1277,14 @@ enum RequisitionApprovalInstanceStatus {
   PENDING
   APPROVED
   REJECTED
+}
+
+enum RequisitionNotificationEventStatus {
+  PENDING
+  PROCESSING
+  SENT
+  FAILED
+  SKIPPED_NO_RECIPIENTS
 }
 
 enum asset_status {

@@ -29,6 +29,7 @@ import {
   getRequisitionApprovalConfig,
   isRequisitionApprovalTableMissingError,
   processRequisitionApprovalAction,
+  triggerRequisitionNotificationEventProcessing,
   upsertRequisitionApprovalConfig,
   validateApprovalActionPayload,
 } from "./requisition-approval-workflow";
@@ -874,6 +875,7 @@ export const updateRequisition = async (
       action,
       ...(updateInput.comment && { comment: updateInput.comment }),
     });
+    triggerRequisitionNotificationEventProcessing();
 
     const approvalChangedFields = Array.from(
       new Set([
@@ -1233,6 +1235,7 @@ export const actionRequisitionApproval = async (
       action: validated.action,
       comment: validated.comment,
     });
+    triggerRequisitionNotificationEventProcessing();
   } catch (error) {
     const isMissingWorkflowTables = isMissingWorkflowTablesError(error);
 

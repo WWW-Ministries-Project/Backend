@@ -8,6 +8,7 @@ import client from "prom-client";
 import { logRequests } from "./src/middleWare/requestLogger";
 import { responseMessageEnhancer } from "./src/middleWare/responseMessageEnhancer";
 import "./src/cron-jobs/hubtelPaymentReconciliationCron";
+import "./src/cron-jobs/requisitionNotificationCron";
 dotenv.config();
 const collectDefaultMetrics = client.collectDefaultMetrics;
 collectDefaultMetrics();

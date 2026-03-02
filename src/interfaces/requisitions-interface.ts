@@ -67,6 +67,7 @@ export interface RequisitionApprovalConfigPayload {
   module: RequisitionApprovalModuleType;
   requester_user_ids: number[];
   approvers: RequisitionApprovalConfigApprover[];
+  notification_user_ids?: number[];
   is_active?: boolean;
 }
 

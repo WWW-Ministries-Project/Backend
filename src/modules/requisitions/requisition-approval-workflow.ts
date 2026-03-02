@@ -3,8 +3,10 @@ import {
   RequestApprovalStatus,
   RequisitionApprovalInstanceStatus,
   RequisitionApprovalModule,
+  RequisitionNotificationEventStatus,
   RequisitionApproverType,
 } from "@prisma/client";
+import { sendEmail } from "../../utils/emailService";
 import {
   RequisitionApprovalActionPayload,
   RequisitionApprovalConfigPayload,
@@ -19,6 +21,7 @@ import {
 type RequisitionApprovalConfigResponse = {
   module: RequisitionApprovalModule;
   requester_user_ids: number[];
+  notification_user_ids: number[];
   approvers: Array<{
     order: number;
     type: RequisitionApproverType;
@@ -38,8 +41,26 @@ type NormalizedApproverStep = {
 type NormalizedConfigPayload = {
   module: RequisitionApprovalModule;
   requesterUserIds: number[];
+  notificationUserIds: number[];
   approvers: NormalizedApproverStep[];
   isActive: boolean;
+};
+
+type RequisitionNotificationEventType =
+  | "REQUISITION_FINAL_APPROVED"
+  | "REQUISITION_FINAL_REJECTED"
+  | "REQUISITION_NEXT_APPROVER_PENDING";
+
+type NotificationEventSummary = {
+  id: number;
+  eventType: RequisitionNotificationEventType;
+  decision: "APPROVED" | "REJECTED" | null;
+  recipientCount: number;
+  actorUserId: number | null;
+};
+
+type RequisitionApprovalActionResult = {
+  notificationEvents: NotificationEventSummary[];
 };
 
 type ApprovalAction = RequisitionApprovalActionPayload["action"];
@@ -49,12 +70,23 @@ type ApprovalWorkflowTx = Prisma.TransactionClient;
 const REQUISITION_MODULE = RequisitionApprovalModule.REQUISITION;
 const REQUISITION_PERMISSION_KEYS = ["Requisition", "Requisitions"];
 const REQUISITION_MANAGE_PERMISSION_VALUES = ["Can_Manage", "Super_Admin"];
+const MAX_NOTIFICATION_RECIPIENTS = 50;
+const NOTIFICATION_EVENT_RETRY_LIMIT = 5;
+const NOTIFICATION_EVENT_BATCH_SIZE = 20;
+const FINAL_APPROVED_EVENT: RequisitionNotificationEventType =
+  "REQUISITION_FINAL_APPROVED";
+const FINAL_REJECTED_EVENT: RequisitionNotificationEventType =
+  "REQUISITION_FINAL_REJECTED";
+const NEXT_APPROVER_EVENT: RequisitionNotificationEventType =
+  "REQUISITION_NEXT_APPROVER_PENDING";
 
 const REQUISITION_APPROVAL_TABLE_NAMES = [
   "requisition_approval_configs",
   "requisition_approval_config_requesters",
+  "requisition_approval_config_notifications",
   "requisition_approval_config_steps",
   "requisition_approval_instances",
+  "requisition_notification_events",
 ];
 
 let ensureWorkflowTablesPromise: Promise<void> | null = null;
@@ -202,6 +234,18 @@ const ensureRequisitionApprovalWorkflowTables = async (): Promise<void> => {
     `);
 
     await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS \`requisition_approval_config_notifications\` (
+        \`id\` INTEGER NOT NULL AUTO_INCREMENT,
+        \`config_id\` INTEGER NOT NULL,
+        \`user_id\` INTEGER NOT NULL,
+        UNIQUE INDEX \`requisition_approval_config_notifications_config_id_user_id_key\`(\`config_id\`, \`user_id\`),
+        INDEX \`requisition_approval_config_notifications_user_id_idx\`(\`user_id\`),
+        INDEX \`requisition_approval_config_notifications_config_id_idx\`(\`config_id\`),
+        PRIMARY KEY (\`id\`)
+      ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+    `);
+
+    await prisma.$executeRawUnsafe(`
       CREATE TABLE IF NOT EXISTS \`requisition_approval_config_steps\` (
         \`id\` INTEGER NOT NULL AUTO_INCREMENT,
         \`config_id\` INTEGER NOT NULL,
@@ -241,6 +285,29 @@ const ensureRequisitionApprovalWorkflowTables = async (): Promise<void> => {
       ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
     `);
 
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS \`requisition_notification_events\` (
+        \`id\` INTEGER NOT NULL AUTO_INCREMENT,
+        \`idempotency_key\` VARCHAR(191) NOT NULL,
+        \`event_type\` VARCHAR(191) NOT NULL,
+        \`requisition_id\` INTEGER NOT NULL,
+        \`actor_user_id\` INTEGER NULL,
+        \`decision\` VARCHAR(191) NULL,
+        \`recipient_user_ids\` LONGTEXT NOT NULL,
+        \`status\` ENUM('PENDING', 'PROCESSING', 'SENT', 'FAILED', 'SKIPPED_NO_RECIPIENTS') NOT NULL DEFAULT 'PENDING',
+        \`attempts\` INTEGER NOT NULL DEFAULT 0,
+        \`last_error\` LONGTEXT NULL,
+        \`sent_at\` DATETIME(3) NULL,
+        \`created_at\` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+        \`updated_at\` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+        UNIQUE INDEX \`requisition_notification_events_idempotency_key_key\`(\`idempotency_key\`),
+        INDEX \`requisition_notification_events_status_created_at_idx\`(\`status\`, \`created_at\`),
+        INDEX \`requisition_notification_events_requisition_id_idx\`(\`requisition_id\`),
+        INDEX \`requisition_notification_events_event_type_idx\`(\`event_type\`),
+        PRIMARY KEY (\`id\`)
+      ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+    `);
+
     // Best-effort FK wiring for environments where migrations were skipped.
     try {
       await prisma.$executeRawUnsafe(`
@@ -262,6 +329,15 @@ const ensureRequisitionApprovalWorkflowTables = async (): Promise<void> => {
 
     try {
       await prisma.$executeRawUnsafe(`
+        ALTER TABLE \`requisition_approval_config_notifications\`
+        ADD CONSTRAINT \`requisition_approval_config_notifications_config_id_fkey\`
+        FOREIGN KEY (\`config_id\`) REFERENCES \`requisition_approval_configs\`(\`id\`)
+        ON DELETE CASCADE ON UPDATE CASCADE;
+      `);
+    } catch (error) {}
+
+    try {
+      await prisma.$executeRawUnsafe(`
         ALTER TABLE \`requisition_approval_instances\`
         ADD CONSTRAINT \`requisition_approval_instances_config_id_fkey\`
         FOREIGN KEY (\`config_id\`) REFERENCES \`requisition_approval_configs\`(\`id\`)
@@ -274,6 +350,15 @@ const ensureRequisitionApprovalWorkflowTables = async (): Promise<void> => {
         ALTER TABLE \`requisition_approval_instances\`
         ADD CONSTRAINT \`requisition_approval_instances_request_id_fkey\`
         FOREIGN KEY (\`request_id\`) REFERENCES \`request\`(\`id\`)
+        ON DELETE CASCADE ON UPDATE CASCADE;
+      `);
+    } catch (error) {}
+
+    try {
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE \`requisition_notification_events\`
+        ADD CONSTRAINT \`requisition_notification_events_requisition_id_fkey\`
+        FOREIGN KEY (\`requisition_id\`) REFERENCES \`request\`(\`id\`)
         ON DELETE CASCADE ON UPDATE CASCADE;
       `);
     } catch (error) {}
@@ -325,6 +410,35 @@ const parseRequesterUserIds = (value: unknown): number[] => {
   }
 
   return uniqueIds;
+};
+
+const parseNotificationUserIds = (value: unknown): number[] => {
+  if (value === undefined || value === null) {
+    return [];
+  }
+
+  if (!Array.isArray(value)) {
+    throw new InputValidationError("notification_user_ids must be an array when provided");
+  }
+
+  const ids = value.map((item) => toPositiveInt(item));
+  if (ids.some((item) => item === null)) {
+    throw new InputValidationError(
+      "notification_user_ids must contain only positive integer user ids",
+    );
+  }
+
+  const uniqueSortedIds = Array.from(new Set(ids as number[])).sort(
+    (first, second) => first - second,
+  );
+
+  if (uniqueSortedIds.length > MAX_NOTIFICATION_RECIPIENTS) {
+    throw new InputValidationError(
+      `notification_user_ids cannot exceed ${MAX_NOTIFICATION_RECIPIENTS} users`,
+    );
+  }
+
+  return uniqueSortedIds;
 };
 
 const parseApprovers = (value: unknown): NormalizedApproverStep[] => {
@@ -454,6 +568,9 @@ const normalizeConfigPayload = (
 
   const module = parseModule(payload.module);
   const requesterUserIds = parseRequesterUserIds(payload.requester_user_ids);
+  const notificationUserIds = parseNotificationUserIds(
+    payload.notification_user_ids,
+  );
   const approvers = parseApprovers(payload.approvers);
 
   let isActive = true;
@@ -468,6 +585,7 @@ const normalizeConfigPayload = (
   return {
     module,
     requesterUserIds,
+    notificationUserIds,
     approvers,
     isActive,
   };
@@ -482,7 +600,11 @@ const verifyConfigReferences = async (
     .filter((id): id is number => Number.isInteger(id));
 
   const userIdsToCheck = Array.from(
-    new Set([...payload.requesterUserIds, ...specificApproverUserIds]),
+    new Set([
+      ...payload.requesterUserIds,
+      ...specificApproverUserIds,
+      ...payload.notificationUserIds,
+    ]),
   );
 
   if (userIdsToCheck.length) {
@@ -553,6 +675,7 @@ const mapConfigResponse = (config: {
   module: RequisitionApprovalModule;
   is_active: boolean;
   requesters: Array<{ user_id: number }>;
+  notifications?: Array<{ user_id: number }>;
   steps: Array<{
     step_order: number;
     step_type: RequisitionApproverType;
@@ -572,6 +695,9 @@ const mapConfigResponse = (config: {
   return {
     module: config.module,
     requester_user_ids: requesterUserIds,
+    notification_user_ids: (config.notifications || []).map(
+      (notification) => notification.user_id,
+    ),
     approvers: config.steps.map((step) => ({
       order: step.step_order,
       type: step.step_type,
@@ -594,6 +720,14 @@ const getConfigByModuleTx = async (
       },
       include: {
         requesters: {
+          orderBy: {
+            user_id: "asc",
+          },
+          select: {
+            user_id: true,
+          },
+        },
+        notifications: {
           orderBy: {
             user_id: "asc",
           },
@@ -847,6 +981,7 @@ const resolveApproverUserIdForStep = async (
 export const getRequisitionApprovalConfig = async (): Promise<
   RequisitionApprovalConfigResponse | null
 > => {
+  await ensureRequisitionApprovalWorkflowTables();
   return prisma.$transaction(async (tx) => {
     return getConfigByModuleTx(tx, REQUISITION_MODULE);
   });
@@ -893,6 +1028,12 @@ export const upsertRequisitionApprovalConfig = async (
         },
       });
 
+      await tx.requisition_approval_config_notifications.deleteMany({
+        where: {
+          config_id: config.id,
+        },
+      });
+
       await tx.requisition_approval_config_requesters.createMany({
         data: normalizedPayload.requesterUserIds.map((userId) => ({
           config_id: config.id,
@@ -909,6 +1050,15 @@ export const upsertRequisitionApprovalConfig = async (
           user_id: step.userId,
         })),
       });
+
+      if (normalizedPayload.notificationUserIds.length) {
+        await tx.requisition_approval_config_notifications.createMany({
+          data: normalizedPayload.notificationUserIds.map((userId) => ({
+            config_id: config.id,
+            user_id: userId,
+          })),
+        });
+      }
 
       const updatedConfig = await getConfigByModuleTx(tx, normalizedPayload.module);
 
@@ -1085,16 +1235,605 @@ export const validateApprovalActionPayload = (
   };
 };
 
+const getUniqueSortedPositiveIds = (values: number[]): number[] =>
+  Array.from(
+    new Set(
+      values.filter((value) => Number.isInteger(value) && value > 0),
+    ),
+  ).sort((first, second) => first - second);
+
+const isFinalDecisionEventType = (
+  eventType: RequisitionNotificationEventType,
+): boolean =>
+  eventType === FINAL_APPROVED_EVENT || eventType === FINAL_REJECTED_EVENT;
+
+const isSupportedNotificationEventType = (
+  value: string,
+): value is RequisitionNotificationEventType =>
+  value === FINAL_APPROVED_EVENT ||
+  value === FINAL_REJECTED_EVENT ||
+  value === NEXT_APPROVER_EVENT;
+
+const normalizeDecision = (
+  value: string | null | undefined,
+): "APPROVED" | "REJECTED" | null => {
+  if (value === "APPROVED" || value === "REJECTED") {
+    return value;
+  }
+
+  return null;
+};
+
+const emitFinalDecisionMetric = (args: {
+  metricName: string;
+  requisitionId: number;
+  decision: "APPROVED" | "REJECTED" | null;
+  recipientCount: number;
+  actorUserId: number | null;
+  error?: string;
+}) => {
+  const payload = {
+    requisition_id: args.requisitionId,
+    decision: args.decision,
+    recipient_count: args.recipientCount,
+    actor_user_id: args.actorUserId,
+    ...(args.error ? { error: args.error } : {}),
+  };
+
+  const serializedPayload = JSON.stringify(payload);
+  if (args.metricName.endsWith(".failed")) {
+    console.error(`${args.metricName} ${serializedPayload}`);
+    return;
+  }
+
+  console.info(`${args.metricName} ${serializedPayload}`);
+};
+
+const buildFinalDecisionIdempotencyKey = (
+  requisitionId: number,
+  eventType: RequisitionNotificationEventType,
+) => `requisition:${requisitionId}:event:${eventType}`;
+
+const buildNextApproverIdempotencyKey = (
+  requisitionId: number,
+  stepOrder: number,
+) => `requisition:${requisitionId}:event:${NEXT_APPROVER_EVENT}:step:${stepOrder}`;
+
+const isIdempotencyConflictError = (error: unknown): boolean => {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError)) {
+    return false;
+  }
+
+  if (error.code !== "P2002") {
+    return false;
+  }
+
+  const targetMeta = Array.isArray(error.meta?.target)
+    ? error.meta?.target.join(",")
+    : String(error.meta?.target || "");
+
+  return targetMeta.includes("idempotency_key");
+};
+
+const resolveActiveRecipientUserIdsTx = async (
+  tx: ApprovalWorkflowTx,
+  candidateUserIds: number[],
+  actorUserId?: number,
+): Promise<number[]> => {
+  const uniqueCandidateUserIds = getUniqueSortedPositiveIds(candidateUserIds);
+  if (!uniqueCandidateUserIds.length) {
+    return [];
+  }
+
+  const activeUsers = await tx.user.findMany({
+    where: {
+      id: {
+        in: uniqueCandidateUserIds,
+      },
+      NOT: {
+        is_active: false,
+      },
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  const activeUserIdSet = new Set(activeUsers.map((user) => user.id));
+  return uniqueCandidateUserIds.filter(
+    (userId) => activeUserIdSet.has(userId) && userId !== actorUserId,
+  );
+};
+
+const createNotificationEventTx = async (
+  tx: ApprovalWorkflowTx,
+  args: {
+    idempotencyKey: string;
+    eventType: RequisitionNotificationEventType;
+    requisitionId: number;
+    actorUserId?: number;
+    decision?: "APPROVED" | "REJECTED";
+    recipientUserIds: number[];
+  },
+): Promise<NotificationEventSummary | null> => {
+  const recipientUserIds = getUniqueSortedPositiveIds(args.recipientUserIds);
+  const status = recipientUserIds.length
+    ? RequisitionNotificationEventStatus.PENDING
+    : RequisitionNotificationEventStatus.SKIPPED_NO_RECIPIENTS;
+
+  try {
+    const event = await tx.requisition_notification_events.create({
+      data: {
+        idempotency_key: args.idempotencyKey,
+        event_type: args.eventType,
+        requisition_id: args.requisitionId,
+        actor_user_id: args.actorUserId,
+        decision: args.decision || null,
+        recipient_user_ids: JSON.stringify(recipientUserIds),
+        status,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    return {
+      id: event.id,
+      eventType: args.eventType,
+      decision: args.decision || null,
+      recipientCount: recipientUserIds.length,
+      actorUserId: args.actorUserId || null,
+    };
+  } catch (error) {
+    if (isIdempotencyConflictError(error)) {
+      return null;
+    }
+
+    throw error;
+  }
+};
+
+const escapeHtml = (value: string): string =>
+  value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
+const buildFinalDecisionEmailTemplate = (args: {
+  decision: "APPROVED" | "REJECTED";
+  requisitionReference: string;
+  requesterName: string;
+  actorName: string;
+}) => {
+  const isApproved = args.decision === "APPROVED";
+  const statusText = isApproved ? "approved" : "rejected";
+  const statusColor = isApproved ? "#166534" : "#991b1b";
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Requisition Final Decision</title>
+</head>
+<body style="margin:0;padding:0;background:#f3f4f6;font-family:Arial,sans-serif;color:#111827;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="padding:24px 0;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px;background:#ffffff;border-radius:8px;overflow:hidden;border:1px solid #e5e7eb;">
+          <tr>
+            <td style="background:#111827;color:#ffffff;padding:18px 24px;">
+              <h2 style="margin:0;font-size:20px;font-weight:700;">Requisition Final Decision</h2>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:24px;">
+              <p style="margin:0 0 14px 0;font-size:15px;">A requisition has reached a final decision.</p>
+              <p style="margin:0 0 10px 0;font-size:15px;line-height:1.6;">
+                <strong>Requisition:</strong> ${escapeHtml(args.requisitionReference)}
+              </p>
+              <p style="margin:0 0 10px 0;font-size:15px;line-height:1.6;">
+                <strong>Requester:</strong> ${escapeHtml(args.requesterName)}
+              </p>
+              <p style="margin:0 0 10px 0;font-size:15px;line-height:1.6;">
+                <strong>Final Approver:</strong> ${escapeHtml(args.actorName)}
+              </p>
+              <p style="margin:0;font-size:15px;line-height:1.6;">
+                <strong>Status:</strong>
+                <span style="color:${statusColor};font-weight:700;text-transform:uppercase;">${statusText}</span>
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+};
+
+const buildNextApproverEmailTemplate = (args: {
+  requisitionReference: string;
+  requesterName: string;
+  actorName: string;
+}) => `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Requisition Pending Approval</title>
+</head>
+<body style="margin:0;padding:0;background:#f3f4f6;font-family:Arial,sans-serif;color:#111827;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="padding:24px 0;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px;background:#ffffff;border-radius:8px;overflow:hidden;border:1px solid #e5e7eb;">
+          <tr>
+            <td style="background:#111827;color:#ffffff;padding:18px 24px;">
+              <h2 style="margin:0;font-size:20px;font-weight:700;">Requisition Pending Your Approval</h2>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:24px;">
+              <p style="margin:0 0 14px 0;font-size:15px;line-height:1.6;">
+                ${escapeHtml(args.actorName)} has approved a requisition and it is now pending your approval.
+              </p>
+              <p style="margin:0 0 10px 0;font-size:15px;line-height:1.6;">
+                <strong>Requisition:</strong> ${escapeHtml(args.requisitionReference)}
+              </p>
+              <p style="margin:0;font-size:15px;line-height:1.6;">
+                <strong>Requester:</strong> ${escapeHtml(args.requesterName)}
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+
+const buildNotificationEmail = (args: {
+  eventType: RequisitionNotificationEventType;
+  decision: "APPROVED" | "REJECTED" | null;
+  requisitionReference: string;
+  requesterName: string;
+  actorName: string;
+}): { subject: string; html: string } => {
+  if (args.eventType === FINAL_APPROVED_EVENT || args.eventType === FINAL_REJECTED_EVENT) {
+    const decision = args.decision || (args.eventType === FINAL_APPROVED_EVENT ? "APPROVED" : "REJECTED");
+    return {
+      subject:
+        decision === "APPROVED"
+          ? "Requisition Final Approval Decision"
+          : "Requisition Final Disapproval Decision",
+      html: buildFinalDecisionEmailTemplate({
+        decision,
+        requisitionReference: args.requisitionReference,
+        requesterName: args.requesterName,
+        actorName: args.actorName,
+      }),
+    };
+  }
+
+  return {
+    subject: "Requisition Pending Your Approval",
+    html: buildNextApproverEmailTemplate({
+      requisitionReference: args.requisitionReference,
+      requesterName: args.requesterName,
+      actorName: args.actorName,
+    }),
+  };
+};
+
+const parseRecipientUserIdsSnapshot = (value: string): number[] => {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    return getUniqueSortedPositiveIds(
+      parsed
+        .map((entry) => toPositiveInt(entry))
+        .filter((entry): entry is number => Number.isInteger(entry)),
+    );
+  } catch (error) {
+    return [];
+  }
+};
+
+let isProcessingNotificationEvents = false;
+
+export const processPendingRequisitionNotificationEvents = async (args?: {
+  limit?: number;
+}): Promise<void> => {
+  if (isProcessingNotificationEvents) {
+    return;
+  }
+
+  isProcessingNotificationEvents = true;
+
+  try {
+    await ensureRequisitionApprovalWorkflowTables();
+
+    const limit =
+      Number.isInteger(args?.limit) && (args?.limit || 0) > 0
+        ? Math.min(args?.limit || 0, 100)
+        : NOTIFICATION_EVENT_BATCH_SIZE;
+
+    const events = await prisma.requisition_notification_events.findMany({
+      where: {
+        status: {
+          in: [
+            RequisitionNotificationEventStatus.PENDING,
+            RequisitionNotificationEventStatus.FAILED,
+          ],
+        },
+        attempts: {
+          lt: NOTIFICATION_EVENT_RETRY_LIMIT,
+        },
+      },
+      orderBy: {
+        created_at: "asc",
+      },
+      take: limit,
+      select: {
+        id: true,
+        event_type: true,
+        requisition_id: true,
+        actor_user_id: true,
+        decision: true,
+        recipient_user_ids: true,
+      },
+    });
+
+    for (const event of events) {
+      const claim = await prisma.requisition_notification_events.updateMany({
+        where: {
+          id: event.id,
+          status: {
+            in: [
+              RequisitionNotificationEventStatus.PENDING,
+              RequisitionNotificationEventStatus.FAILED,
+            ],
+          },
+        },
+        data: {
+          status: RequisitionNotificationEventStatus.PROCESSING,
+        },
+      });
+
+      if (!claim.count) {
+        continue;
+      }
+
+      const decision = normalizeDecision(event.decision);
+
+      try {
+        if (!isSupportedNotificationEventType(event.event_type)) {
+          throw new Error(`Unsupported notification event type: ${event.event_type}`);
+        }
+
+        const recipientUserIds = parseRecipientUserIdsSnapshot(
+          event.recipient_user_ids,
+        );
+
+        if (!recipientUserIds.length) {
+          await prisma.requisition_notification_events.update({
+            where: { id: event.id },
+            data: {
+              status: RequisitionNotificationEventStatus.SKIPPED_NO_RECIPIENTS,
+              attempts: {
+                increment: 1,
+              },
+              last_error: null,
+            },
+          });
+
+          if (isFinalDecisionEventType(event.event_type)) {
+            emitFinalDecisionMetric({
+              metricName:
+                "requisition.final_decision_notification.skipped_no_recipients",
+              requisitionId: event.requisition_id,
+              decision,
+              recipientCount: 0,
+              actorUserId: event.actor_user_id || null,
+            });
+          }
+
+          continue;
+        }
+
+        const actorUserPromise = event.actor_user_id
+          ? prisma.user.findUnique({
+              where: {
+                id: event.actor_user_id,
+              },
+              select: {
+                name: true,
+              },
+            })
+          : Promise.resolve<null>(null);
+
+        const [requisition, actorUser, recipientUsers] = await Promise.all([
+          prisma.request.findUnique({
+            where: {
+              id: event.requisition_id,
+            },
+            select: {
+              id: true,
+              request_id: true,
+              user: {
+                select: {
+                  name: true,
+                },
+              },
+            },
+          }),
+          actorUserPromise,
+          prisma.user.findMany({
+            where: {
+              id: {
+                in: recipientUserIds,
+              },
+              NOT: {
+                is_active: false,
+              },
+              email: {
+                not: null,
+              },
+            },
+            orderBy: {
+              id: "asc",
+            },
+            select: {
+              id: true,
+              email: true,
+            },
+          }),
+        ]);
+
+        if (!requisition) {
+          throw new NotFoundError("Requisition not found for notification event");
+        }
+
+        const recipientEmails = Array.from(
+          new Set(
+            recipientUsers
+              .map((user) => user.email?.trim() || "")
+              .filter((email): email is string => Boolean(email)),
+          ),
+        );
+
+        if (!recipientEmails.length) {
+          await prisma.requisition_notification_events.update({
+            where: { id: event.id },
+            data: {
+              status: RequisitionNotificationEventStatus.SKIPPED_NO_RECIPIENTS,
+              attempts: {
+                increment: 1,
+              },
+              last_error: null,
+            },
+          });
+
+          if (isFinalDecisionEventType(event.event_type)) {
+            emitFinalDecisionMetric({
+              metricName:
+                "requisition.final_decision_notification.skipped_no_recipients",
+              requisitionId: event.requisition_id,
+              decision,
+              recipientCount: 0,
+              actorUserId: event.actor_user_id || null,
+            });
+          }
+
+          continue;
+        }
+
+        const actorName = actorUser?.name || "Approver";
+        const requisitionReference =
+          requisition.request_id || `#${requisition.id}`;
+        const requesterName = requisition.user?.name || "Requester";
+
+        const { subject, html } = buildNotificationEmail({
+          eventType: event.event_type,
+          decision,
+          requisitionReference,
+          requesterName,
+          actorName,
+        });
+
+        await sendEmail(html, recipientEmails.join(","), subject, {
+          throwOnError: true,
+        });
+
+        await prisma.requisition_notification_events.update({
+          where: {
+            id: event.id,
+          },
+          data: {
+            status: RequisitionNotificationEventStatus.SENT,
+            sent_at: new Date(),
+            attempts: {
+              increment: 1,
+            },
+            last_error: null,
+          },
+        });
+
+        if (isFinalDecisionEventType(event.event_type)) {
+          emitFinalDecisionMetric({
+            metricName: "requisition.final_decision_notification.sent",
+            requisitionId: event.requisition_id,
+            decision,
+            recipientCount: recipientEmails.length,
+            actorUserId: event.actor_user_id || null,
+          });
+        }
+      } catch (error) {
+        const normalizedError =
+          error instanceof Error ? error.message : String(error);
+        const truncatedError = normalizedError.slice(0, 4000);
+
+        await prisma.requisition_notification_events.update({
+          where: {
+            id: event.id,
+          },
+          data: {
+            status: RequisitionNotificationEventStatus.FAILED,
+            attempts: {
+              increment: 1,
+            },
+            last_error: truncatedError,
+          },
+        });
+
+        if (
+          isSupportedNotificationEventType(event.event_type) &&
+          isFinalDecisionEventType(event.event_type)
+        ) {
+          emitFinalDecisionMetric({
+            metricName: "requisition.final_decision_notification.failed",
+            requisitionId: event.requisition_id,
+            decision,
+            recipientCount: parseRecipientUserIdsSnapshot(event.recipient_user_ids)
+              .length,
+            actorUserId: event.actor_user_id || null,
+            error: truncatedError,
+          });
+        }
+      }
+    }
+  } finally {
+    isProcessingNotificationEvents = false;
+  }
+};
+
+export const triggerRequisitionNotificationEventProcessing = () => {
+  void processPendingRequisitionNotificationEvents().catch((error) => {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(
+      `[requisition-notification-events] background processing failed: ${message}`,
+    );
+  });
+};
+
 export const processRequisitionApprovalAction = async (args: {
   requisitionId: number;
   actorUserId: number;
   action: ApprovalAction;
   comment?: string;
-}): Promise<void> => {
+}): Promise<RequisitionApprovalActionResult> => {
   const { requisitionId, actorUserId, action, comment } = args;
 
-  try {
-    await prisma.$transaction(async (tx) => {
+  const runAction = async (): Promise<RequisitionApprovalActionResult> =>
+    prisma.$transaction(async (tx) => {
+      const notificationEvents: NotificationEventSummary[] = [];
+
       const request = await tx.request.findUnique({
         where: {
           id: requisitionId,
@@ -1127,6 +1866,7 @@ export const processRequisitionApprovalAction = async (args: {
         },
         select: {
           id: true,
+          config_id: true,
           approver_user_id: true,
           step_order: true,
         },
@@ -1144,10 +1884,68 @@ export const processRequisitionApprovalAction = async (args: {
         );
       }
 
+      const maxStepOrderResult = await tx.requisition_approval_instances.aggregate({
+        where: {
+          request_id: requisitionId,
+        },
+        _max: {
+          step_order: true,
+        },
+      });
+      const maxStepOrder = maxStepOrderResult._max.step_order;
+      const isFinalStep =
+        typeof maxStepOrder === "number" &&
+        currentPendingStep.step_order === maxStepOrder;
+
       const actionData = {
         acted_by_user_id: actorUserId,
         acted_at: new Date(),
         ...(comment !== undefined && { comment }),
+      };
+
+      const createFinalDecisionNotificationEventTx = async (
+        decision: "APPROVED" | "REJECTED",
+      ) => {
+        if (!isFinalStep) {
+          return;
+        }
+
+        const configNotifications =
+          await tx.requisition_approval_config_notifications.findMany({
+            where: {
+              config_id: currentPendingStep.config_id,
+            },
+            orderBy: {
+              user_id: "asc",
+            },
+            select: {
+              user_id: true,
+            },
+          });
+
+        const finalRecipientUserIds = await resolveActiveRecipientUserIdsTx(
+          tx,
+          configNotifications.map((notification) => notification.user_id),
+          actorUserId,
+        );
+
+        const eventType =
+          decision === "APPROVED" ? FINAL_APPROVED_EVENT : FINAL_REJECTED_EVENT;
+        const createdEvent = await createNotificationEventTx(tx, {
+          idempotencyKey: buildFinalDecisionIdempotencyKey(
+            requisitionId,
+            eventType,
+          ),
+          eventType,
+          requisitionId,
+          actorUserId,
+          decision,
+          recipientUserIds: finalRecipientUserIds,
+        });
+
+        if (createdEvent) {
+          notificationEvents.push(createdEvent);
+        }
       };
 
       if (action === "REJECT") {
@@ -1170,7 +1968,8 @@ export const processRequisitionApprovalAction = async (args: {
           },
         });
 
-        return;
+        await createFinalDecisionNotificationEventTx("REJECTED");
+        return { notificationEvents };
       }
 
       await tx.requisition_approval_instances.update({
@@ -1196,6 +1995,8 @@ export const processRequisitionApprovalAction = async (args: {
         },
         select: {
           id: true,
+          step_order: true,
+          approver_user_id: true,
         },
       });
 
@@ -1218,7 +2019,28 @@ export const processRequisitionApprovalAction = async (args: {
           },
         });
 
-        return;
+        const nextApproverRecipientUserIds = await resolveActiveRecipientUserIdsTx(
+          tx,
+          [nextStep.approver_user_id],
+          actorUserId,
+        );
+
+        const createdEvent = await createNotificationEventTx(tx, {
+          idempotencyKey: buildNextApproverIdempotencyKey(
+            requisitionId,
+            nextStep.step_order,
+          ),
+          eventType: NEXT_APPROVER_EVENT,
+          requisitionId,
+          actorUserId,
+          recipientUserIds: nextApproverRecipientUserIds,
+        });
+
+        if (createdEvent) {
+          notificationEvents.push(createdEvent);
+        }
+
+        return { notificationEvents };
       }
 
       await tx.request.update({
@@ -1229,15 +2051,59 @@ export const processRequisitionApprovalAction = async (args: {
           request_approval_status: RequestApprovalStatus.APPROVED,
         },
       });
+
+      await createFinalDecisionNotificationEventTx("APPROVED");
+      return { notificationEvents };
     });
+
+  let result: RequisitionApprovalActionResult;
+  try {
+    result = await runAction();
   } catch (error) {
-    if (isRequisitionApprovalTableMissingError(error)) {
+    if (!isRequisitionApprovalTableMissingError(error)) {
+      throw error;
+    }
+
+    try {
+      await ensureRequisitionApprovalWorkflowTables();
+      result = await runAction();
+    } catch (retryError) {
+      if (!isRequisitionApprovalTableMissingError(retryError)) {
+        throw retryError;
+      }
+
       throw new InputValidationError(
         "Requisition approval workflow tables are missing. Run database migrations first.",
       );
     }
-    throw error;
   }
+
+  for (const event of result.notificationEvents) {
+    if (!isFinalDecisionEventType(event.eventType)) {
+      continue;
+    }
+
+    if (event.recipientCount > 0) {
+      emitFinalDecisionMetric({
+        metricName: "requisition.final_decision_notification.created",
+        requisitionId,
+        decision: event.decision,
+        recipientCount: event.recipientCount,
+        actorUserId: event.actorUserId,
+      });
+      continue;
+    }
+
+    emitFinalDecisionMetric({
+      metricName: "requisition.final_decision_notification.skipped_no_recipients",
+      requisitionId,
+      decision: event.decision,
+      recipientCount: event.recipientCount,
+      actorUserId: event.actorUserId,
+    });
+  }
+
+  return result;
 };
 
 export const canUserManageRequisitionByApproverRole = async (

@@ -189,23 +189,10 @@ positionRouter.delete(
  * @swagger
  * /position/list-positions:
  *   get:
- *     summary: List all positions (paginated)
+ *     summary: List all positions
  *     tags: [Positions]
  *     security:
  *       - bearerAuth: []
- *     parameters:
- *       - in: query
- *         name: page
- *         schema:
- *           type: integer
- *           default: 1
- *         description: Page number
- *       - in: query
- *         name: take
- *         schema:
- *           type: integer
- *           default: 10
- *         description: Number of items per page
  *     responses:
  *       200:
  *         description: List of positions
@@ -217,14 +204,6 @@ positionRouter.delete(
  *                 message:
  *                   type: string
  *                   example: Success
- *                 current_page:
- *                   type: integer
- *                 page_size:
- *                   type: integer
- *                 total:
- *                   type: integer
- *                 totalPages:
- *                   type: integer
  *                 data:
  *                   type: array
  *                   items:
