@@ -657,5 +657,10 @@ orderRouter.post(
   [protect, permissions.can_manage_marketplace],
   orderController.reconcilePendingHubtelPayments,
 );
+orderRouter.put(
+  "/update-delivery-status",
+  [protect, permissions.can_manage_marketplace],
+  orderController.updateDeliveryStatus,
+);
 
 export default orderRouter;

@@ -48,6 +48,9 @@ model user {
   notes                    note[]
   orders                   orders[]
   prayerRequests           prayer_request[]
+  received_notifications   in_app_notification[]       @relation("notification_recipient")
+  acted_notifications      in_app_notification[]       @relation("notification_actor")
+  notification_preferences notification_preference[]
   request                  request[]
   hod_user                 request_approvals[]        @relation("hod_user")
   ps_user                  request_approvals[]        @relation("ps_user")
@@ -518,6 +521,46 @@ model requisition_edit_logs {
   @@index([requisition_id], map: "requisition_edit_logs_requisition_id_idx")
   @@index([editor_user_id], map: "requisition_edit_logs_editor_user_id_idx")
   @@index([edited_at], map: "requisition_edit_logs_edited_at_idx")
+}
+
+model in_app_notification {
+  id                Int                   @id @default(autoincrement())
+  dedupe_key        String?               @unique
+  type              String
+  title             String
+  body              String                @db.LongText
+  recipient_user_id Int
+  actor_user_id     Int?
+  entity_type       String?
+  entity_id         String?
+  action_url        String?
+  priority          notification_priority @default(MEDIUM)
+  is_read           Boolean               @default(false)
+  read_at           DateTime?
+  email_sent_at     DateTime?
+  created_at        DateTime              @default(now())
+  updated_at        DateTime              @default(now()) @updatedAt
+  actor             user?                 @relation("notification_actor", fields: [actor_user_id], references: [id], onDelete: SetNull)
+  recipient         user                  @relation("notification_recipient", fields: [recipient_user_id], references: [id], onDelete: Cascade)
+
+  @@index([recipient_user_id, is_read, created_at], map: "in_app_notification_recipient_read_created_idx")
+  @@index([recipient_user_id, created_at], map: "in_app_notification_recipient_created_idx")
+  @@index([type], map: "in_app_notification_type_idx")
+  @@index([created_at], map: "in_app_notification_created_at_idx")
+}
+
+model notification_preference {
+  id             Int      @id @default(autoincrement())
+  user_id        Int
+  type           String
+  in_app_enabled Boolean  @default(true)
+  email_enabled  Boolean  @default(true)
+  created_at     DateTime @default(now())
+  updated_at     DateTime @default(now()) @updatedAt
+  user           user     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@unique([user_id, type], map: "notification_preference_user_id_type_key")
+  @@index([user_id], map: "notification_preference_user_id_idx")
 }
 
 model program {
@@ -1349,4 +1392,11 @@ enum appointment_status {
   PENDING
   CONFIRMED
   CANCELLED
+}
+
+enum notification_priority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
 }

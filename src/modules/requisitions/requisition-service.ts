@@ -33,8 +33,15 @@ import {
   upsertRequisitionApprovalConfig,
   validateApprovalActionPayload,
 } from "./requisition-approval-workflow";
+import { notificationService } from "../notifications/notificationService";
 
 const UPLOADS_DIR = path.resolve(process.cwd(), "uploads");
+
+const encodeRequisitionIdForRoute = (requisitionId: number): string =>
+  Buffer.from(String(requisitionId), "utf8").toString("base64");
+
+const buildRequisitionActionUrl = (requisitionId: number): string =>
+  `/home/requests/${encodeRequisitionIdForRoute(requisitionId)}`;
 
 const getCloudinaryPublicIdFromUrl = (attachmentUrl: string): string | null => {
   if (!attachmentUrl) return null;
@@ -424,6 +431,97 @@ const isMissingWorkflowTablesError = (error: unknown): boolean => {
   );
 };
 
+const notifyRequisitionCommentParticipants = async (args: {
+  requisitionId: number;
+  actorUserId: number;
+  comment: string;
+}) => {
+  const trimmedComment = String(args.comment || "").trim();
+  if (!trimmedComment) {
+    return;
+  }
+
+  const requisition = await prisma.request.findUnique({
+    where: {
+      id: args.requisitionId,
+    },
+    select: {
+      id: true,
+      request_id: true,
+      user_id: true,
+      request_approval_status: true,
+    },
+  });
+
+  if (
+    !requisition ||
+    requisition.request_approval_status === RequestApprovalStatus.Draft
+  ) {
+    return;
+  }
+
+  let currentPendingApproverUserId: number | null = null;
+  try {
+    const pendingStep = await prisma.requisition_approval_instances.findFirst({
+      where: {
+        request_id: requisition.id,
+        status: "PENDING",
+      },
+      orderBy: {
+        step_order: "asc",
+      },
+      select: {
+        approver_user_id: true,
+      },
+    });
+
+    currentPendingApproverUserId = pendingStep?.approver_user_id || null;
+  } catch (error) {
+    if (!isMissingWorkflowTablesError(error)) {
+      throw error;
+    }
+  }
+
+  const recipientUserIds = Array.from(
+    new Set(
+      [requisition.user_id, currentPendingApproverUserId]
+        .map((id) => Number(id))
+        .filter(
+          (id): id is number =>
+            Number.isInteger(id) && id > 0 && id !== args.actorUserId,
+        ),
+    ),
+  );
+
+  if (!recipientUserIds.length) {
+    return;
+  }
+
+  const requisitionReference = requisition.request_id || `#${requisition.id}`;
+  const shortComment =
+    trimmedComment.length > 220
+      ? `${trimmedComment.slice(0, 217)}...`
+      : trimmedComment;
+
+  await notificationService.createManyInAppNotifications(
+    recipientUserIds.map((recipientUserId) => ({
+      type: "requisition.comment_added",
+      title: "New requisition comment",
+      body: `A new comment was added on requisition ${requisitionReference}: ${shortComment}`,
+      recipientUserId,
+      actorUserId: args.actorUserId,
+      entityType: "REQUISITION",
+      entityId: String(requisition.id),
+      actionUrl: buildRequisitionActionUrl(requisition.id),
+      priority: "MEDIUM",
+      dedupeKey: `requisition:${requisition.id}:comment:${args.actorUserId}:${recipientUserId}:${Buffer.from(
+        shortComment,
+        "utf8",
+      ).toString("base64").slice(0, 32)}`,
+    })),
+  );
+};
+
 const getRequisitionSummaryFromRequests = async (where?: any) => {
   let requests;
   try {
@@ -790,6 +888,10 @@ export const createRequisition = async (
     return request;
   });
 
+  if (shouldSubmit) {
+    triggerRequisitionNotificationEventProcessing();
+  }
+
   return getRequisition(createdRequest.id, user);
 };
 
@@ -902,6 +1004,14 @@ export const updateRequisition = async (
         changedFields: approvalChangedFields,
       });
     });
+
+    if (updateInput.comment) {
+      await notifyRequisitionCommentParticipants({
+        requisitionId: data.id as number,
+        actorUserId: token_user_id,
+        comment: updateInput.comment,
+      });
+    }
 
     return getRequisition(data.id, user);
   }
@@ -1074,6 +1184,18 @@ export const updateRequisition = async (
     });
   });
 
+  if (shouldSubmitByRequester) {
+    triggerRequisitionNotificationEventProcessing();
+  }
+
+  if (updateInput.comment) {
+    await notifyRequisitionCommentParticipants({
+      requisitionId: data.id as number,
+      actorUserId: token_user_id,
+      comment: updateInput.comment,
+    });
+  }
+
   // Return the latest record shape after deletions.
   return getRequisition(data.id, user);
 };
@@ -1214,6 +1336,8 @@ export const submitRequisition = async (requisitionId: unknown, user: any) => {
     }
   });
 
+  triggerRequisitionNotificationEventProcessing();
+
   return getRequisition(parsedId, user);
 };
 
@@ -1258,6 +1382,12 @@ export const actionRequisitionApproval = async (
         comment: validated.comment,
         user_id: actorUserId,
       },
+    });
+
+    await notifyRequisitionCommentParticipants({
+      requisitionId: validated.requisitionId,
+      actorUserId,
+      comment: validated.comment,
     });
   }
 

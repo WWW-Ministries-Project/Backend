@@ -2,6 +2,7 @@ import { prisma } from "../../Models/context";
 import axios from "axios";
 import crypto from "crypto";
 import { toSentenceCase } from "../../utils";
+import { notificationService } from "../notifications/notificationService";
 
 export class OrderService {
   async findOrderByName(first_name?: string, last_name?: string) {
@@ -338,11 +339,81 @@ export class OrderService {
     status: "success" | "failed" | "pending",
     orderNumber?: string,
   ) {
-    return prisma.orders.update({
+    const updatedOrder = await prisma.orders.update({
       where: { id: orderId },
       data: { payment_status: status, order_number: orderNumber },
       include: { items: true, billing_details: true },
     });
+
+    const recipientUserId = Number(updatedOrder.user_id);
+    if (
+      Number.isInteger(recipientUserId) &&
+      recipientUserId > 0 &&
+      (status === "success" || status === "failed")
+    ) {
+      await notificationService.createInAppNotification({
+        type: status === "success" ? "order.payment_success" : "order.payment_failed",
+        title: status === "success" ? "Payment successful" : "Payment failed",
+        body:
+          status === "success"
+            ? `Payment for order ${updatedOrder.order_number || `#${updatedOrder.id}`} was successful.`
+            : `Payment for order ${updatedOrder.order_number || `#${updatedOrder.id}`} failed.`,
+        recipientUserId,
+        actorUserId: null,
+        entityType: "ORDER",
+        entityId: String(updatedOrder.id),
+        actionUrl: "/member/market/orders",
+        priority: status === "success" ? "MEDIUM" : "HIGH",
+        dedupeKey: `order:${updatedOrder.id}:payment:${status}`,
+      });
+    }
+
+    return updatedOrder;
+  }
+
+  async updateDeliveryStatus(
+    orderId: number,
+    status: "pending" | "shipped" | "delivered" | "cancelled",
+    actorUserId?: number | null,
+  ) {
+    const normalizedStatus = status.trim().toLowerCase();
+    if (!["pending", "shipped", "delivered", "cancelled"].includes(normalizedStatus)) {
+      throw new Error("delivery status must be pending, shipped, delivered, or cancelled");
+    }
+
+    const updatedOrder = await prisma.orders.update({
+      where: {
+        id: orderId,
+      },
+      data: {
+        delivery_status: normalizedStatus as any,
+      },
+      include: {
+        items: true,
+        billing_details: true,
+      },
+    });
+
+    const recipientUserId = Number(updatedOrder.user_id);
+    if (Number.isInteger(recipientUserId) && recipientUserId > 0) {
+      await notificationService.createInAppNotification({
+        type: "delivery.status_changed",
+        title: "Delivery status updated",
+        body: `Delivery status for order ${updatedOrder.order_number || `#${updatedOrder.id}`} is now ${normalizedStatus}.`,
+        recipientUserId,
+        actorUserId:
+          Number.isInteger(Number(actorUserId)) && Number(actorUserId) > 0
+            ? Number(actorUserId)
+            : null,
+        entityType: "ORDER",
+        entityId: String(updatedOrder.id),
+        actionUrl: "/member/market/orders",
+        priority: "MEDIUM",
+        dedupeKey: `order:${updatedOrder.id}:delivery:${normalizedStatus}`,
+      });
+    }
+
+    return updatedOrder;
   }
 
   async initializeHubtelTransaction(
