@@ -128,14 +128,8 @@ Frontend should pre-validate type/size before upload.
 - `5xx`: show retryable generic failure message.
 
 ## 10. CORS and Request Size Constraints
-- Backend now enforces origin allowlist (`CORS_ORIGINS` and `Frontend_URL` envs).
-- If frontend origin is not allowlisted, browser requests will fail due to CORS.
-- `Frontend_URL` and each `CORS_ORIGINS` entry may include a trailing slash/path, but they are normalized to origin form (`https://host`) before matching.
-- Recommended env format:
-```env
-Frontend_URL=https://testing-wwm.netlify.app
-CORS_ORIGINS=https://testing-wwm.netlify.app,https://wwwministries.netlify.app
-```
+- Backend is currently configured with permissive CORS for development (`app.use(cors())`).
+- Before production, re-enable origin allowlisting to restrict trusted frontend domains.
 - JSON body size limit is `1mb`.
 
 Coordinate environment config before production release.
