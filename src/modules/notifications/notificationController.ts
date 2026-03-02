@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import { InputValidationError } from "../../utils/custom-error-handlers";
 import { notificationService } from "./notificationService";
+import { issueNotificationStreamToken } from "./notificationStreamAuth";
 
 const getAuthenticatedUserId = (req: Request): number => {
   const parsed = Number((req as any)?.user?.id);
@@ -33,6 +34,19 @@ const parseUnreadOnly = (value: unknown): boolean => {
 };
 
 export class NotificationController {
+  async issueStreamToken(req: Request, res: Response) {
+    const userId = getAuthenticatedUserId(req);
+    const streamTokenData = issueNotificationStreamToken(userId);
+
+    res.status(200).json({
+      message: "Notification stream token issued",
+      data: {
+        streamToken: streamTokenData.token,
+        expiresInSeconds: streamTokenData.expiresInSeconds,
+      },
+    });
+  }
+
   async listNotifications(req: Request, res: Response) {
     const userId = getAuthenticatedUserId(req);
     const page = parseOptionalPositiveInt(req.query.page);
@@ -122,4 +136,3 @@ export class NotificationController {
 }
 
 export const notificationController = new NotificationController();
-
