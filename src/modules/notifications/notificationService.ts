@@ -84,13 +84,32 @@ type SseClient = {
   heartbeat: NodeJS.Timeout;
 };
 
+type SseEventEnvelope = {
+  id: number;
+  event: string;
+  data: unknown;
+  createdAt: number;
+};
+
+type SseBroadcastOptions = {
+  persistForReplay?: boolean;
+};
+
+type StartSseStreamOptions = {
+  lastEventId?: number | null;
+};
+
 const MAX_PAGE_SIZE = 100;
 const DEFAULT_PAGE_SIZE = 20;
-const SSE_HEARTBEAT_MS = 25_000;
+const SSE_HEARTBEAT_MS = 20_000;
 const SSE_RETRY_MS = 5_000;
+const SSE_REPLAY_TTL_MS = 5 * 60 * 1000;
+const SSE_REPLAY_MAX_EVENTS_PER_USER = 500;
 const ACTION_URL_FALLBACK = "/home/notifications";
 
 const sseClientsByUserId = new Map<number, Set<SseClient>>();
+const sseReplayBufferByUserId = new Map<number, SseEventEnvelope[]>();
+let sseEventIdCounter = 0;
 
 const getOrCreateCounter = (
   name: string,
@@ -230,18 +249,143 @@ const toPayload = (row: NotificationRow): NotificationPayload => ({
   createdAt: row.created_at.toISOString(),
 });
 
-const writeSse = (res: Response, event: string, data: unknown) => {
-  res.write(`event: ${event}\n`);
-  res.write(`data: ${JSON.stringify(data)}\n\n`);
+const createSseEnvelope = (event: string, data: unknown): SseEventEnvelope => {
+  sseEventIdCounter += 1;
+  return {
+    id: sseEventIdCounter,
+    event,
+    data,
+    createdAt: Date.now(),
+  };
 };
 
-const registerSseClient = (userId: number, res: Response) => {
+const writeSseEnvelope = (res: Response, envelope: SseEventEnvelope) => {
+  res.write(`id: ${envelope.id}\n`);
+  res.write(`event: ${envelope.event}\n`);
+  res.write(`data: ${JSON.stringify(envelope.data)}\n\n`);
+};
+
+const parseLastEventId = (value: unknown): number | null => {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    return null;
+  }
+  return parsed;
+};
+
+const pruneReplayEvents = (
+  events: SseEventEnvelope[],
+  nowMs = Date.now(),
+): SseEventEnvelope[] => {
+  const cutoff = nowMs - SSE_REPLAY_TTL_MS;
+  const freshEvents = events.filter((event) => event.createdAt >= cutoff);
+  if (freshEvents.length <= SSE_REPLAY_MAX_EVENTS_PER_USER) {
+    return freshEvents;
+  }
+
+  return freshEvents.slice(
+    freshEvents.length - SSE_REPLAY_MAX_EVENTS_PER_USER,
+  );
+};
+
+const addReplayEvent = (userId: number, envelope: SseEventEnvelope) => {
+  const existingEvents = sseReplayBufferByUserId.get(userId) || [];
+  existingEvents.push(envelope);
+  const prunedEvents = pruneReplayEvents(existingEvents, envelope.createdAt);
+
+  if (!prunedEvents.length) {
+    sseReplayBufferByUserId.delete(userId);
+    return;
+  }
+
+  sseReplayBufferByUserId.set(userId, prunedEvents);
+};
+
+const getReplayEventsAfter = (
+  userId: number,
+  lastEventId: number,
+): SseEventEnvelope[] => {
+  const existingEvents = sseReplayBufferByUserId.get(userId);
+  if (!existingEvents?.length) {
+    return [];
+  }
+
+  const prunedEvents = pruneReplayEvents(existingEvents);
+  if (!prunedEvents.length) {
+    sseReplayBufferByUserId.delete(userId);
+    return [];
+  }
+
+  if (prunedEvents.length !== existingEvents.length) {
+    sseReplayBufferByUserId.set(userId, prunedEvents);
+  }
+
+  return prunedEvents.filter((event) => event.id > lastEventId);
+};
+
+const removeSseClient = (userId: number, clientState: SseClient) => {
+  clearInterval(clientState.heartbeat);
+  const userClients = sseClientsByUserId.get(userId);
+  if (!userClients) return;
+
+  userClients.delete(clientState);
+  if (userClients.size === 0) {
+    sseClientsByUserId.delete(userId);
+  }
+};
+
+const sendEnvelopeToClient = (clientState: SseClient, envelope: SseEventEnvelope) => {
+  writeSseEnvelope(clientState.res, envelope);
+};
+
+const sendSseToClient = (
+  clientState: SseClient,
+  event: string,
+  data: unknown,
+) => {
+  const envelope = createSseEnvelope(event, data);
+  sendEnvelopeToClient(clientState, envelope);
+};
+
+const replayMissedEventsToClient = (
+  userId: number,
+  clientState: SseClient,
+  lastEventId: number | null,
+): number => {
+  const parsedLastEventId = parseLastEventId(lastEventId);
+  if (parsedLastEventId === null) {
+    return 0;
+  }
+
+  const missedEvents = getReplayEventsAfter(userId, parsedLastEventId);
+  let replayed = 0;
+
+  for (const eventEnvelope of missedEvents) {
+    try {
+      sendEnvelopeToClient(clientState, eventEnvelope);
+      replayed += 1;
+    } catch (error) {
+      removeSseClient(userId, clientState);
+      break;
+    }
+  }
+
+  return replayed;
+};
+
+const registerSseClient = (userId: number, res: Response): SseClient => {
   const clientState: SseClient = {
     res,
     heartbeat: setInterval(() => {
-      writeSse(res, "heartbeat", {
+      const heartbeat = createSseEnvelope("heartbeat", {
         now: new Date().toISOString(),
       });
+
+      try {
+        sendEnvelopeToClient(clientState, heartbeat);
+      } catch (error) {
+        removeSseClient(userId, clientState);
+      }
     }, SSE_HEARTBEAT_MS),
   };
 
@@ -250,44 +394,43 @@ const registerSseClient = (userId: number, res: Response) => {
   sseClientsByUserId.set(userId, existingClients);
 
   res.write(`retry: ${SSE_RETRY_MS}\n\n`);
-  writeSse(res, "connected", {
-    userId: String(userId),
-    now: new Date().toISOString(),
-  });
-
-  const onClose = () => {
-    clearInterval(clientState.heartbeat);
-    const userClients = sseClientsByUserId.get(userId);
-    if (!userClients) return;
-
-    userClients.delete(clientState);
-    if (userClients.size === 0) {
-      sseClientsByUserId.delete(userId);
-    }
-  };
+  const onClose = () => removeSseClient(userId, clientState);
 
   res.on("close", onClose);
   res.on("error", onClose);
+
+  return clientState;
 };
 
-const broadcastToUser = (userId: number, event: string, data: unknown) => {
+const broadcastToUser = (
+  userId: number,
+  event: string,
+  data: unknown,
+  options: SseBroadcastOptions = {},
+) => {
+  const envelope = createSseEnvelope(event, data);
+  if (options.persistForReplay !== false) {
+    addReplayEvent(userId, envelope);
+  }
+
   const userClients = sseClientsByUserId.get(userId);
   if (!userClients?.size) {
-    return;
+    return envelope;
   }
 
   for (const clientState of userClients) {
     try {
-      writeSse(clientState.res, event, data);
+      sendEnvelopeToClient(clientState, envelope);
     } catch (error) {
-      clearInterval(clientState.heartbeat);
-      userClients.delete(clientState);
+      removeSseClient(userId, clientState);
     }
   }
 
   if (userClients.size === 0) {
     sseClientsByUserId.delete(userId);
   }
+
+  return envelope;
 };
 
 const updateUnreadBacklogMetric = async () => {
@@ -417,17 +560,37 @@ const getRowByDedupeKey = async (dedupeKey: string): Promise<NotificationRow | n
   return row as NotificationRow | null;
 };
 
-const sendUnreadCountToUser = async (userId: number) => {
-  const unreadCount = await prisma.in_app_notification.count({
+const getUnreadCountForUser = async (userId: number): Promise<number> =>
+  prisma.in_app_notification.count({
     where: {
       recipient_user_id: userId,
       is_read: false,
     },
   });
 
-  broadcastToUser(userId, "unread_count", {
-    unreadCount,
-  });
+const emitUnreadCountToUser = (
+  userId: number,
+  unreadCount: number,
+  options: SseBroadcastOptions = {},
+) => {
+  broadcastToUser(
+    userId,
+    "unread_count",
+    {
+      unreadCount,
+    },
+    options,
+  );
+};
+
+const sendUnreadCountToUser = async (
+  userId: number,
+  options: SseBroadcastOptions = {},
+): Promise<number> => {
+  const unreadCount = await getUnreadCountForUser(userId);
+
+  emitUnreadCountToUser(userId, unreadCount, options);
+  return unreadCount;
 };
 
 const createInAppNotification = async (
@@ -654,12 +817,7 @@ const listNotifications = async (
 };
 
 const getUnreadCount = async (userId: number): Promise<number> =>
-  prisma.in_app_notification.count({
-    where: {
-      recipient_user_id: userId,
-      is_read: false,
-    },
-  });
+  getUnreadCountForUser(userId);
 
 const markNotificationAsRead = async (
   userId: number,
@@ -709,8 +867,15 @@ const markNotificationAsRead = async (
   }
 
   const payload = toPayload(row as NotificationRow);
-  broadcastToUser(userId, "notification_updated", payload);
-  void sendUnreadCountToUser(userId);
+  const unreadCount = await getUnreadCountForUser(userId);
+
+  broadcastToUser(userId, "notification_updated", {
+    notificationId: payload.id,
+    recipientUserId: payload.recipientUserId,
+    notification: payload,
+    unreadCount,
+  });
+  emitUnreadCountToUser(userId, unreadCount);
   void updateUnreadBacklogMetric();
   return payload;
 };
@@ -763,8 +928,15 @@ const markNotificationAsUnread = async (
   }
 
   const payload = toPayload(row as NotificationRow);
-  broadcastToUser(userId, "notification_updated", payload);
-  void sendUnreadCountToUser(userId);
+  const unreadCount = await getUnreadCountForUser(userId);
+
+  broadcastToUser(userId, "notification_updated", {
+    notificationId: payload.id,
+    recipientUserId: payload.recipientUserId,
+    notification: payload,
+    unreadCount,
+  });
+  emitUnreadCountToUser(userId, unreadCount);
   void updateUnreadBacklogMetric();
   return payload;
 };
@@ -787,17 +959,37 @@ const markAllNotificationsAsRead = async (
     notificationReadCounter.labels("read_all").inc(updateResult.count);
   }
 
+  const unreadCount = await getUnreadCountForUser(userId);
   broadcastToUser(userId, "notifications_read_all", {
+    recipientUserId: String(userId),
     updated: updateResult.count,
+    unreadCount,
   });
-  void sendUnreadCountToUser(userId);
+  emitUnreadCountToUser(userId, unreadCount);
   void updateUnreadBacklogMetric();
   return { updated: updateResult.count };
 };
 
-const startSseStream = async (userId: number, res: Response): Promise<void> => {
-  registerSseClient(userId, res);
-  await sendUnreadCountToUser(userId);
+const startSseStream = async (
+  userId: number,
+  res: Response,
+  options: StartSseStreamOptions = {},
+): Promise<void> => {
+  const clientState = registerSseClient(userId, res);
+  const replayedEvents = replayMissedEventsToClient(
+    userId,
+    clientState,
+    options.lastEventId ?? null,
+  );
+
+  sendSseToClient(clientState, "connected", {
+    userId: String(userId),
+    replayedEvents,
+    now: new Date().toISOString(),
+  });
+
+  const unreadCount = await getUnreadCountForUser(userId);
+  sendSseToClient(clientState, "unread_count", { unreadCount });
 };
 
 const pruneOldNotifications = async (
@@ -883,4 +1075,3 @@ export const notificationService = {
   pruneOldNotifications,
   notifyAdminsJobFailed,
 };
-

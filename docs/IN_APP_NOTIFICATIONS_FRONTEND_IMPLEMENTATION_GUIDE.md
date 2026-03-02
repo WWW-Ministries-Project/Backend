@@ -44,6 +44,33 @@ Use this flow:
 
 If you use an SSE client that supports custom headers, `Authorization: Bearer <jwt>` on `/notifications/stream` still works.
 
+Stream token TTL is constrained to `60-180` seconds (default `120` seconds). Old and new tokens overlap until expiry, so reconnect bursts can reuse recently issued tokens safely.
+
+## SSE Transport Requirements
+
+Backend response headers for `/notifications/stream`:
+- `Content-Type: text/event-stream`
+- `Cache-Control: no-cache, no-transform`
+- `Connection: keep-alive`
+- `X-Accel-Buffering: no`
+
+Heartbeat cadence:
+- Event: `heartbeat`
+- Interval: every `20s` (within recommended `15-25s`)
+
+Reverse proxy / load balancer:
+- Disable response buffering for the SSE path.
+- NGINX example:
+
+```nginx
+location /notifications/stream {
+  proxy_http_version 1.1;
+  proxy_set_header Connection "";
+  proxy_buffering off;
+  chunked_transfer_encoding on;
+}
+```
+
 ## SSE Events
 - `connected`
 - `heartbeat`
@@ -53,6 +80,58 @@ If you use an SSE client that supports custom headers, `Authorization: Bearer <j
 - `unread_count`
 
 Use `/notifications/stream` with `EventSource` and auth token (polyfill if your runtime requires custom headers).
+
+## SSE Event Payload Shapes
+
+`unread_count`:
+
+```json
+{
+  "unreadCount": 4
+}
+```
+
+`notification_updated`:
+
+```json
+{
+  "notificationId": "123",
+  "recipientUserId": "4",
+  "notification": {
+    "id": "123",
+    "dedupeKey": "requisition:event:12:recipient:4",
+    "type": "requisition.final_approved",
+    "title": "Requisition approved",
+    "body": "Requisition RQ-0021 was finally approved.",
+    "recipientUserId": "4",
+    "actorUserId": "19",
+    "entityType": "REQUISITION",
+    "entityId": "21",
+    "actionUrl": "/home/requests/MjE=",
+    "priority": "HIGH",
+    "isRead": true,
+    "readAt": "2026-03-02T13:25:18.000Z",
+    "createdAt": "2026-03-02T13:24:18.000Z"
+  },
+  "unreadCount": 3
+}
+```
+
+`notifications_read_all`:
+
+```json
+{
+  "recipientUserId": "4",
+  "updated": 12,
+  "unreadCount": 0
+}
+```
+
+## Replay on Reconnect
+
+- Every SSE event includes an `id` field.
+- Reconnect with `Last-Event-ID` header (or `lastEventId` / `last_event_id` query parameter) to replay missed events for the same user.
+- On connect, backend emits `connected` with `replayedEvents` count.
 
 ## UI Behavior
 - Bell icon unread badge: poll `GET /notifications/unread-count` once on app load, then keep synced from SSE `unread_count`.

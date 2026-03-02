@@ -2,8 +2,9 @@ import { Request } from "express";
 import JWT from "jsonwebtoken";
 
 const STREAM_TOKEN_PURPOSE = "notifications_stream";
-const DEFAULT_STREAM_TOKEN_TTL_SECONDS = 600;
-const MAX_STREAM_TOKEN_TTL_SECONDS = 3600;
+const DEFAULT_STREAM_TOKEN_TTL_SECONDS = 120;
+const MIN_STREAM_TOKEN_TTL_SECONDS = 60;
+const MAX_STREAM_TOKEN_TTL_SECONDS = 180;
 
 const toPositiveInt = (value: unknown): number | null => {
   const parsed = Number(value);
@@ -27,7 +28,10 @@ const resolveTtlSeconds = (): number => {
     return DEFAULT_STREAM_TOKEN_TTL_SECONDS;
   }
 
-  return Math.min(configuredTtl, MAX_STREAM_TOKEN_TTL_SECONDS);
+  return Math.min(
+    MAX_STREAM_TOKEN_TTL_SECONDS,
+    Math.max(MIN_STREAM_TOKEN_TTL_SECONDS, configuredTtl),
+  );
 };
 
 type JwtPayload = {
@@ -132,4 +136,3 @@ export const verifyNotificationStreamToken = (token: string): number | null => {
     return null;
   }
 };
-

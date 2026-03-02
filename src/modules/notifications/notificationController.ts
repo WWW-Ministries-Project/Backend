@@ -33,6 +33,28 @@ const parseUnreadOnly = (value: unknown): boolean => {
   return ["true", "1", "yes", "unread"].includes(normalized);
 };
 
+const firstValue = (value: unknown): unknown =>
+  Array.isArray(value) ? value[0] : value;
+
+const parseOptionalLastEventId = (req: Request): number | undefined => {
+  const rawHeader = firstValue(req.headers["last-event-id"]);
+  const rawQuery = firstValue(
+    req.query.lastEventId ?? req.query.last_event_id ?? req.query.lastEventID,
+  );
+  const candidate = rawHeader ?? rawQuery;
+
+  if (candidate === undefined || candidate === null || candidate === "") {
+    return undefined;
+  }
+
+  const parsed = Number(candidate);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    return undefined;
+  }
+
+  return parsed;
+};
+
 export class NotificationController {
   async issueStreamToken(req: Request, res: Response) {
     const userId = getAuthenticatedUserId(req);
@@ -125,13 +147,17 @@ export class NotificationController {
 
   async stream(req: Request, res: Response) {
     const userId = getAuthenticatedUserId(req);
+    const lastEventId = parseOptionalLastEventId(req);
 
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache, no-transform");
     res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
     res.flushHeaders?.();
 
-    await notificationService.startSseStream(userId, res);
+    await notificationService.startSseStream(userId, res, {
+      lastEventId,
+    });
   }
 }
 
