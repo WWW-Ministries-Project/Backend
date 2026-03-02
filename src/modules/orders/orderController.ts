@@ -239,4 +239,37 @@ export class OrderController {
       });
     }
   }
+
+  async updateDeliveryStatus(req: Request, res: Response) {
+    try {
+      const { id, status } = req.body as { id?: number | string; status?: string };
+      const orderId = Number(id);
+      if (!Number.isInteger(orderId) || orderId <= 0) {
+        return res.status(400).json({ message: "A valid order id is required" });
+      }
+      if (typeof status !== "string" || !status.trim()) {
+        return res.status(400).json({ message: "Delivery status is required" });
+      }
+
+      const actorUserId = Number((req as any)?.user?.id);
+      const updatedOrder = await orderService.updateDeliveryStatus(
+        orderId,
+        status.trim().toLowerCase() as
+          | "pending"
+          | "shipped"
+          | "delivered"
+          | "cancelled",
+        Number.isInteger(actorUserId) && actorUserId > 0 ? actorUserId : null,
+      );
+
+      return res.status(200).json({
+        message: "Delivery status updated successfully",
+        data: updatedOrder,
+      });
+    } catch (error: any) {
+      return res.status(400).json({
+        message: error.message || "Failed to update delivery status",
+      });
+    }
+  }
 }

@@ -1,7 +1,6 @@
 import { Request, Response } from "express";
 import { AppointmentService } from "./appointment-service";
-import { sendEmail } from "../../utils";
-import { appointmentStatusTemplate } from "../../utils/mail_templates/appointmentStatusTemplate";
+import { notificationService } from "../notifications/notificationService";
 
 export class AppointmentController {
   /**
@@ -157,6 +156,23 @@ export class AppointmentController {
         req.body,
         requesterId,
       );
+
+      const staffRecipientId = Number(newBooking.staffId);
+      if (Number.isInteger(staffRecipientId) && staffRecipientId > 0) {
+        await notificationService.createInAppNotification({
+          type: "appointment.booked",
+          title: "New appointment booking",
+          body: `${newBooking.fullName || "A member"} booked an appointment for ${newBooking.date} (${newBooking.session.start} - ${newBooking.session.end}).`,
+          recipientUserId: staffRecipientId,
+          actorUserId: requesterId,
+          entityType: "APPOINTMENT",
+          entityId: String(newBooking.id),
+          actionUrl: "/home/appointments",
+          priority: "MEDIUM",
+          dedupeKey: `appointment:${newBooking.id}:booked:recipient:${staffRecipientId}`,
+        });
+      }
+
       res.status(201).json({
         message: "Appointment booked successfully",
         data: newBooking,
@@ -382,31 +398,52 @@ export class AppointmentController {
 
       const newStatus = isConfirmed ? "CONFIRMED" : "PENDING";
       const updated = await AppointmentService.updateStatus(parsedId, newStatus);
-      const mailResult = await sendEmail(
-        appointmentStatusTemplate({
-          requesterName: updated.fullName || "Member",
-          attendeeName: updated.attendeeName || "Attendee",
-          date: updated.date,
-          startTime: updated.session?.start || "",
-          endTime: updated.session?.end || "",
-          status: newStatus as "CONFIRMED" | "PENDING",
-        }),
-        updated.email,
-        `Appointment ${isConfirmed ? "Confirmed" : "Unconfirmed"}`,
+      const actorUserId = Number((req as any)?.user?.id);
+      const statusWord = newStatus.toLowerCase();
+
+      const recipientUserIds = Array.from(
+        new Set(
+          [updated.requesterId, updated.staffId]
+            .map((entry) => Number(entry))
+            .filter(
+              (entry): entry is number =>
+                Number.isInteger(entry) &&
+                entry > 0 &&
+                entry !== actorUserId,
+            ),
+        ),
       );
+
+      if (recipientUserIds.length) {
+        await notificationService.createManyInAppNotifications(
+          recipientUserIds.map((recipientUserId) => ({
+            type: "appointment.status_changed",
+            title: "Appointment status updated",
+            body: `Appointment on ${updated.date} (${updated.session.start} - ${updated.session.end}) is now ${statusWord}.`,
+            recipientUserId,
+            actorUserId:
+              Number.isInteger(actorUserId) && actorUserId > 0
+                ? actorUserId
+                : null,
+            entityType: "APPOINTMENT",
+            entityId: String(updated.id),
+            actionUrl:
+              recipientUserId === Number(updated.requesterId)
+                ? "/member/appointments"
+                : "/home/appointments",
+            priority: "MEDIUM",
+            dedupeKey: `appointment:${updated.id}:status:${newStatus}:recipient:${recipientUserId}`,
+            emailSubject: `Appointment ${newStatus === "CONFIRMED" ? "Confirmed" : "Updated"}`,
+          })),
+        );
+      }
 
       res.json({
         message: `Appointment ${newStatus.toLowerCase()} successfully`,
         data: updated,
-        notification: mailResult?.success
-          ? {
-              sent: true,
-              messageId: mailResult.messageId ?? null,
-            }
-          : {
-              sent: false,
-              error: mailResult?.error || "Email delivery failed",
-            },
+        notification: {
+          sent: true,
+        },
       });
     } catch (error: any) {
       res.status(500).json({ error: error.message || "Status update failed" });

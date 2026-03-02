@@ -3,6 +3,7 @@ import { prisma } from "../../Models/context";
 import { Request, Response } from "express";
 import * as dotenv from "dotenv";
 import { addDays, addMonths, startOfMonth } from "date-fns";
+import { notificationService } from "../notifications/notificationService";
 
 dotenv.config();
 
@@ -289,6 +290,50 @@ export class eventManagement {
         },
         select: selectQuery,
       });
+
+      const actorUserId = Number((req as any)?.user?.id);
+      const registeredUsers = await prisma.event_registers.findMany({
+        where: {
+          event_id: eventId,
+        },
+        select: {
+          user_id: true,
+        },
+      });
+
+      const recipientUserIds = Array.from(
+        new Set(
+          registeredUsers
+            .map((registration) => Number(registration.user_id))
+            .filter(
+              (id): id is number =>
+                Number.isInteger(id) &&
+                id > 0 &&
+                (!Number.isInteger(actorUserId) || id !== actorUserId),
+            ),
+        ),
+      );
+
+      if (recipientUserIds.length) {
+        await notificationService.createManyInAppNotifications(
+          recipientUserIds.map((recipientUserId) => ({
+            type: "event.updated",
+            title: "Event updated",
+            body: "An event you registered for has been updated.",
+            recipientUserId,
+            actorUserId:
+              Number.isInteger(actorUserId) && actorUserId > 0
+                ? actorUserId
+                : null,
+            entityType: "EVENT",
+            entityId: String(eventId),
+            actionUrl: "/home/events",
+            priority: "MEDIUM",
+            dedupeKey: `event:${eventId}:updated:${Date.now()}:recipient:${recipientUserId}`,
+          })),
+        );
+      }
+
       res.status(200).json({
         message: "Event Updated Succesfully",
         data: await this.listEventsP(),
@@ -304,11 +349,63 @@ export class eventManagement {
   deleteEvent = async (req: Request, res: Response) => {
     try {
       const { id } = req.query;
-      const response = await prisma.event_mgt.delete({
+      const eventId = Number(id);
+      if (!Number.isInteger(eventId) || eventId <= 0) {
+        return res.status(400).json({
+          message: "A valid event id is required",
+          data: null,
+        });
+      }
+
+      const actorUserId = Number((req as any)?.user?.id);
+      const registeredUsers = await prisma.event_registers.findMany({
         where: {
-          id: Number(id),
+          event_id: eventId,
+        },
+        select: {
+          user_id: true,
         },
       });
+
+      const response = await prisma.event_mgt.delete({
+        where: {
+          id: eventId,
+        },
+      });
+
+      const recipientUserIds = Array.from(
+        new Set(
+          registeredUsers
+            .map((registration) => Number(registration.user_id))
+            .filter(
+              (userId): userId is number =>
+                Number.isInteger(userId) &&
+                userId > 0 &&
+                (!Number.isInteger(actorUserId) || userId !== actorUserId),
+            ),
+        ),
+      );
+
+      if (recipientUserIds.length) {
+        await notificationService.createManyInAppNotifications(
+          recipientUserIds.map((recipientUserId) => ({
+            type: "event.cancelled",
+            title: "Event cancelled",
+            body: "An event you registered for has been cancelled.",
+            recipientUserId,
+            actorUserId:
+              Number.isInteger(actorUserId) && actorUserId > 0
+                ? actorUserId
+                : null,
+            entityType: "EVENT",
+            entityId: String(eventId),
+            actionUrl: "/home/events",
+            priority: "HIGH",
+            dedupeKey: `event:${eventId}:cancelled:recipient:${recipientUserId}`,
+          })),
+        );
+      }
+
       res.status(200).json({
         message: "Event Created Succesfully",
         data: await this.listEventsP(),
@@ -1263,6 +1360,19 @@ export class eventManagement {
             },
           },
         },
+      });
+
+      await notificationService.createInAppNotification({
+        type: "event.registration_success",
+        title: "Event registration successful",
+        body: "You have successfully registered for this event.",
+        recipientUserId: targetUserId,
+        actorUserId: null,
+        entityType: "EVENT",
+        entityId: String(event_id),
+        actionUrl: "/home/events",
+        priority: "LOW",
+        dedupeKey: `event:${event_id}:registration-success:${targetUserId}`,
       });
 
       return res.status(201).json({

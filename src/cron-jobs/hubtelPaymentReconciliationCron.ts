@@ -1,5 +1,6 @@
 import cron from "node-cron";
 import { OrderService } from "../modules/orders/orderService";
+import { notificationService } from "../modules/notifications/notificationService";
 
 const orderService = new OrderService();
 
@@ -22,10 +23,17 @@ export async function reconcilePendingHubtelPaymentsJob() {
     const result = await orderService.reconcilePendingHubtelPayments(100);
     console.log("[INFO] Hubtel pending payment reconciliation:", result);
   } catch (error: any) {
+    const normalizedError = error?.message || String(error);
     console.error(
       "[ERROR] Hubtel pending payment reconciliation failed:",
-      error.message || error,
+      normalizedError,
     );
+    await notificationService.notifyAdminsJobFailed({
+      jobName: "hubtel-payment-reconciliation",
+      errorMessage: normalizedError,
+      actionUrl: "/home/dashboard",
+      dedupeKey: `job:hubtel-reconciliation:${new Date().toISOString().slice(0, 13)}`,
+    });
   } finally {
     isReconciling = false;
   }

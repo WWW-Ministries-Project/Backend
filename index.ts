@@ -9,6 +9,8 @@ import { logRequests } from "./src/middleWare/requestLogger";
 import { responseMessageEnhancer } from "./src/middleWare/responseMessageEnhancer";
 import "./src/cron-jobs/hubtelPaymentReconciliationCron";
 import "./src/cron-jobs/requisitionNotificationCron";
+import "./src/cron-jobs/followUpNotificationCron";
+import "./src/cron-jobs/notificationRetentionCron";
 dotenv.config();
 const collectDefaultMetrics = client.collectDefaultMetrics;
 collectDefaultMetrics();

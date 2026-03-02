@@ -1,4 +1,5 @@
 import { prisma } from "../../Models/context";
+import { notificationService } from "../notifications/notificationService";
 
 const toPositiveInt = (value: any) => {
   const parsed = Number(value);
@@ -30,7 +31,27 @@ export class FollowUpService {
       notes: data.notes,
       assignedTo: data.assignedTo,
     };
-    return await prisma.follow_up.create({ data: followUpData });
+    const createdFollowUp = await prisma.follow_up.create({ data: followUpData });
+
+    if (
+      Number.isInteger(Number(createdFollowUp.assignedTo)) &&
+      Number(createdFollowUp.assignedTo) > 0
+    ) {
+      await notificationService.createInAppNotification({
+        type: "follow_up.assigned",
+        title: "New follow-up assignment",
+        body: "A visitor follow-up has been assigned to you.",
+        recipientUserId: Number(createdFollowUp.assignedTo),
+        actorUserId: toPositiveInt(data.userId),
+        entityType: "VISITOR_FOLLOW_UP",
+        entityId: String(createdFollowUp.id),
+        actionUrl: `/home/visitors/visitor/${createdFollowUp.visitorId}`,
+        priority: "MEDIUM",
+        dedupeKey: `follow-up:${createdFollowUp.id}:assigned:${createdFollowUp.assignedTo}`,
+      });
+    }
+
+    return createdFollowUp;
   }
 
   async getAllFollowUps(scope?: {
@@ -100,7 +121,12 @@ export class FollowUpService {
     return { followup, assignedTo: user };
   }
 
-  async updateFollowUp(id: number, data: any) {
+  async updateFollowUp(id: number, data: any, actorUserId?: number | null) {
+    const existing = await prisma.follow_up.findUnique({
+      where: { id },
+      select: { assignedTo: true, visitorId: true },
+    });
+
     const followUpData = {
       visitorId: data.visitorId,
       date: new Date(data.date),
@@ -109,7 +135,26 @@ export class FollowUpService {
       notes: data.notes,
       assignedTo: data.assignedTo,
     };
-    return await prisma.follow_up.update({ where: { id }, data: followUpData });
+    const updated = await prisma.follow_up.update({ where: { id }, data: followUpData });
+
+    const previousAssignee = toPositiveInt(existing?.assignedTo);
+    const newAssignee = toPositiveInt(updated.assignedTo);
+    if (newAssignee && newAssignee !== previousAssignee) {
+      await notificationService.createInAppNotification({
+        type: "follow_up.assigned",
+        title: "New follow-up assignment",
+        body: "A visitor follow-up has been assigned to you.",
+        recipientUserId: newAssignee,
+        actorUserId: toPositiveInt(actorUserId),
+        entityType: "VISITOR_FOLLOW_UP",
+        entityId: String(updated.id),
+        actionUrl: `/home/visitors/visitor/${updated.visitorId}`,
+        priority: "MEDIUM",
+        dedupeKey: `follow-up:${updated.id}:assigned:${newAssignee}`,
+      });
+    }
+
+    return updated;
   }
 
   async deleteFollowUp(id: number) {

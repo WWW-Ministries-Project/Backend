@@ -21,6 +21,7 @@ import {
   NotFoundError,
   UnauthorizedError,
 } from "../../utils/custom-error-handlers";
+import { notificationService } from "../notifications/notificationService";
 
 type RequisitionApprovalConfigResponse = {
   module: RequisitionApprovalModule;
@@ -51,6 +52,7 @@ type NormalizedConfigPayload = {
 };
 
 type RequisitionNotificationEventType =
+  | "REQUISITION_SUBMITTED"
   | "REQUISITION_FINAL_APPROVED"
   | "REQUISITION_FINAL_REJECTED"
   | "REQUISITION_NEXT_APPROVER_PENDING";
@@ -77,6 +79,7 @@ const REQUISITION_MANAGE_PERMISSION_VALUES = ["Can_Manage", "Super_Admin"];
 const MAX_NOTIFICATION_RECIPIENTS = 50;
 const NOTIFICATION_EVENT_RETRY_LIMIT = 5;
 const NOTIFICATION_EVENT_BATCH_SIZE = 20;
+const SUBMITTED_EVENT: RequisitionNotificationEventType = "REQUISITION_SUBMITTED";
 const FINAL_APPROVED_EVENT: RequisitionNotificationEventType =
   "REQUISITION_FINAL_APPROVED";
 const FINAL_REJECTED_EVENT: RequisitionNotificationEventType =
@@ -1193,6 +1196,23 @@ export const buildRequisitionApprovalSnapshotTx = async (
       request_approval_status: RequestApprovalStatus.Awaiting_HOD_Approval,
     },
   });
+
+  const firstStep = snapshotRows.find((row) => row.step_order === 1) || snapshotRows[0];
+  if (firstStep) {
+    const recipientUserIds = await resolveActiveRecipientUserIdsTx(
+      tx,
+      [firstStep.approver_user_id],
+      requesterId,
+    );
+
+    await createNotificationEventTx(tx, {
+      idempotencyKey: buildSubmissionIdempotencyKey(requestId),
+      eventType: SUBMITTED_EVENT,
+      requisitionId: requestId,
+      actorUserId: requesterId,
+      recipientUserIds,
+    });
+  }
 };
 
 export const submitRequisitionForApproval = async (args: {
@@ -1254,6 +1274,7 @@ const isFinalDecisionEventType = (
 const isSupportedNotificationEventType = (
   value: string,
 ): value is RequisitionNotificationEventType =>
+  value === SUBMITTED_EVENT ||
   value === FINAL_APPROVED_EVENT ||
   value === FINAL_REJECTED_EVENT ||
   value === NEXT_APPROVER_EVENT;
@@ -1298,10 +1319,36 @@ const buildFinalDecisionIdempotencyKey = (
   eventType: RequisitionNotificationEventType,
 ) => `requisition:${requisitionId}:event:${eventType}`;
 
+const buildSubmissionIdempotencyKey = (requisitionId: number) =>
+  `requisition:${requisitionId}:event:${SUBMITTED_EVENT}:step:1`;
+
 const buildNextApproverIdempotencyKey = (
   requisitionId: number,
   stepOrder: number,
 ) => `requisition:${requisitionId}:event:${NEXT_APPROVER_EVENT}:step:${stepOrder}`;
+
+const encodeRequisitionIdForRoute = (requisitionId: number): string =>
+  Buffer.from(String(requisitionId), "utf8").toString("base64");
+
+const buildRequisitionActionUrl = (requisitionId: number): string =>
+  `/home/requests/${encodeRequisitionIdForRoute(requisitionId)}`;
+
+const toAbsoluteActionUrl = (actionUrl: string): string => {
+  if (/^https?:\/\//i.test(actionUrl)) {
+    return actionUrl;
+  }
+
+  const frontendBaseUrl = String(process.env.Frontend_URL || "").trim();
+  if (!frontendBaseUrl) {
+    return actionUrl;
+  }
+
+  const normalizedBaseUrl = frontendBaseUrl.replace(/\/+$/, "");
+  const normalizedActionUrl = actionUrl.startsWith("/")
+    ? actionUrl
+    : `/${actionUrl}`;
+  return `${normalizedBaseUrl}${normalizedActionUrl}`;
+};
 
 const isIdempotencyConflictError = (error: unknown): boolean => {
   if (!(error instanceof Prisma.PrismaClientKnownRequestError)) {
@@ -1402,6 +1449,7 @@ const buildFinalDecisionEmailTemplate = (args: {
   requisitionReference: string;
   requesterName: string;
   actorName: string;
+  actionUrl: string;
 }) => {
   const isApproved = args.decision === "APPROVED";
   const statusText = isApproved ? "approved" : "rejected";
@@ -1429,9 +1477,11 @@ const buildFinalDecisionEmailTemplate = (args: {
     headerText: "A requisition request has reached a final decision.",
     greeting: "Hello,",
     messageHtml,
+    actionLabel: "Open requisition",
+    actionUrl: args.actionUrl,
     supportUrl: String(process.env.Frontend_URL || "").trim(),
     supportLabel: "Open requisitions",
-    showActionUrl: false,
+    showActionUrl: true,
   });
 };
 
@@ -1439,9 +1489,14 @@ const buildNextApproverEmailTemplate = (args: {
   requisitionReference: string;
   requesterName: string;
   actorName: string;
+  actionUrl: string;
+  submittedDirectlyByRequester: boolean;
 }) => {
+  const introText = args.submittedDirectlyByRequester
+    ? `${escapeEmailHtml(args.actorName)} submitted a requisition and it is now pending your approval.`
+    : `${escapeEmailHtml(args.actorName)} has approved a requisition and it is now pending your approval.`;
   const messageHtml = `<p style="margin: 0 0 14px 0; font-size: 15px; line-height: 1.7; color: #4b5563;">
-                        ${escapeEmailHtml(args.actorName)} has approved a requisition and it is now pending your approval.
+                        ${introText}
                       </p>
                       <p style="margin: 0 0 10px 0; font-size: 15px; line-height: 1.7; color: #4b5563;">
                         <strong style="color: #080d2d;">Requisition:</strong> ${escapeEmailHtml(args.requisitionReference)}
@@ -1456,9 +1511,11 @@ const buildNextApproverEmailTemplate = (args: {
     headerText: "A requisition is waiting for your approval action.",
     greeting: "Hello,",
     messageHtml,
+    actionLabel: "Review requisition",
+    actionUrl: args.actionUrl,
     supportUrl: String(process.env.Frontend_URL || "").trim(),
     supportLabel: "Open requisitions",
-    showActionUrl: false,
+    showActionUrl: true,
   });
 };
 
@@ -1468,6 +1525,7 @@ const buildNotificationEmail = (args: {
   requisitionReference: string;
   requesterName: string;
   actorName: string;
+  actionUrl: string;
 }): { subject: string; html: string } => {
   if (args.eventType === FINAL_APPROVED_EVENT || args.eventType === FINAL_REJECTED_EVENT) {
     const decision = args.decision || (args.eventType === FINAL_APPROVED_EVENT ? "APPROVED" : "REJECTED");
@@ -1481,16 +1539,22 @@ const buildNotificationEmail = (args: {
         requisitionReference: args.requisitionReference,
         requesterName: args.requesterName,
         actorName: args.actorName,
+        actionUrl: args.actionUrl,
       }),
     };
   }
 
   return {
-    subject: "Requisition Pending Your Approval",
+    subject:
+      args.eventType === SUBMITTED_EVENT
+        ? "New Requisition Pending Your Approval"
+        : "Requisition Pending Your Approval",
     html: buildNextApproverEmailTemplate({
       requisitionReference: args.requisitionReference,
       requesterName: args.requesterName,
       actorName: args.actorName,
+      actionUrl: args.actionUrl,
+      submittedDirectlyByRequester: args.eventType === SUBMITTED_EVENT,
     }),
   };
 };
@@ -1649,15 +1713,13 @@ export const processPendingRequisitionNotificationEvents = async (args?: {
               NOT: {
                 is_active: false,
               },
-              email: {
-                not: null,
-              },
             },
             orderBy: {
               id: "asc",
             },
             select: {
               id: true,
+              name: true,
               email: true,
             },
           }),
@@ -1667,15 +1729,7 @@ export const processPendingRequisitionNotificationEvents = async (args?: {
           throw new NotFoundError("Requisition not found for notification event");
         }
 
-        const recipientEmails = Array.from(
-          new Set(
-            recipientUsers
-              .map((user) => user.email?.trim() || "")
-              .filter((email): email is string => Boolean(email)),
-          ),
-        );
-
-        if (!recipientEmails.length) {
+        if (!recipientUsers.length) {
           await prisma.requisition_notification_events.update({
             where: { id: event.id },
             data: {
@@ -1701,10 +1755,68 @@ export const processPendingRequisitionNotificationEvents = async (args?: {
           continue;
         }
 
-        const actorName = actorUser?.name || "Approver";
+        const actorName =
+          actorUser?.name || (event.event_type === SUBMITTED_EVENT ? "Requester" : "Approver");
         const requisitionReference =
           requisition.request_id || `#${requisition.id}`;
         const requesterName = requisition.user?.name || "Requester";
+        const requisitionActionUrl = buildRequisitionActionUrl(requisition.id);
+        const emailActionUrl = toAbsoluteActionUrl(requisitionActionUrl);
+
+        const inAppType =
+          event.event_type === SUBMITTED_EVENT
+            ? "requisition.submitted"
+            : event.event_type === NEXT_APPROVER_EVENT
+              ? "requisition.step_advanced"
+              : event.event_type === FINAL_APPROVED_EVENT
+                ? "requisition.final_approved"
+                : "requisition.final_rejected";
+        const inAppPriority =
+          event.event_type === FINAL_APPROVED_EVENT ||
+          event.event_type === FINAL_REJECTED_EVENT
+            ? "HIGH"
+            : "MEDIUM";
+        const inAppTitle =
+          event.event_type === SUBMITTED_EVENT
+            ? "New requisition awaiting approval"
+            : event.event_type === NEXT_APPROVER_EVENT
+              ? "Requisition moved to your approval queue"
+              : event.event_type === FINAL_APPROVED_EVENT
+                ? "Requisition approved"
+                : "Requisition rejected";
+        const inAppBody =
+          event.event_type === SUBMITTED_EVENT
+            ? `${requesterName} submitted requisition ${requisitionReference} and it is pending your approval.`
+            : event.event_type === NEXT_APPROVER_EVENT
+              ? `${actorName} approved requisition ${requisitionReference}. It now requires your approval.`
+              : event.event_type === FINAL_APPROVED_EVENT
+                ? `Requisition ${requisitionReference} for ${requesterName} was finally approved by ${actorName}.`
+                : `Requisition ${requisitionReference} for ${requesterName} was finally rejected by ${actorName}.`;
+
+        await notificationService.createManyInAppNotifications(
+          recipientUsers.map((recipient) => ({
+            type: inAppType,
+            title: inAppTitle,
+            body: inAppBody,
+            recipientUserId: recipient.id,
+            actorUserId: event.actor_user_id || null,
+            entityType: "REQUISITION",
+            entityId: String(requisition.id),
+            actionUrl: requisitionActionUrl,
+            priority: inAppPriority,
+            dedupeKey: `requisition:event:${event.id}:recipient:${recipient.id}`,
+            // Email remains owned by this workflow event processor.
+            sendEmail: false,
+          })),
+        );
+
+        const recipientEmails = Array.from(
+          new Set(
+            recipientUsers
+              .map((user) => user.email?.trim() || "")
+              .filter((email): email is string => Boolean(email)),
+          ),
+        );
 
         const { subject, html } = buildNotificationEmail({
           eventType: event.event_type,
@@ -1712,11 +1824,14 @@ export const processPendingRequisitionNotificationEvents = async (args?: {
           requisitionReference,
           requesterName,
           actorName,
+          actionUrl: emailActionUrl,
         });
 
-        await sendEmail(html, recipientEmails.join(","), subject, {
-          throwOnError: true,
-        });
+        if (recipientEmails.length) {
+          await sendEmail(html, recipientEmails.join(","), subject, {
+            throwOnError: true,
+          });
+        }
 
         await prisma.requisition_notification_events.update({
           where: {
@@ -1737,7 +1852,7 @@ export const processPendingRequisitionNotificationEvents = async (args?: {
             metricName: "requisition.final_decision_notification.sent",
             requisitionId: event.requisition_id,
             decision,
-            recipientCount: recipientEmails.length,
+            recipientCount: recipientUsers.length,
             actorUserId: event.actor_user_id || null,
           });
         }
@@ -1786,6 +1901,12 @@ export const triggerRequisitionNotificationEventProcessing = () => {
     console.error(
       `[requisition-notification-events] background processing failed: ${message}`,
     );
+    void notificationService.notifyAdminsJobFailed({
+      jobName: "requisition-notification-events-trigger",
+      errorMessage: message,
+      actionUrl: "/home/notifications",
+      dedupeKey: `job:requisition-notification-trigger:${new Date().toISOString().slice(0, 13)}`,
+    });
   });
 };
 
@@ -1807,6 +1928,7 @@ export const processRequisitionApprovalAction = async (args: {
         },
         select: {
           id: true,
+          user_id: true,
           request_approval_status: true,
         },
       });
@@ -1892,7 +2014,10 @@ export const processRequisitionApprovalAction = async (args: {
 
         const finalRecipientUserIds = await resolveActiveRecipientUserIdsTx(
           tx,
-          configNotifications.map((notification) => notification.user_id),
+          [
+            request.user_id,
+            ...configNotifications.map((notification) => notification.user_id),
+          ],
           actorUserId,
         );
 
