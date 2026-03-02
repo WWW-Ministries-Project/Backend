@@ -1,39 +1,9 @@
-import fs from "fs";
-import path from "path";
-
 const DEFAULT_PRODUCT_NAME = "World Wide Word Ministries";
 const DEFAULT_SUPPORT_LABEL = "Contact support";
 
-const resolveLogoPath = (inputPath: string) =>
-  path.isAbsolute(inputPath)
-    ? inputPath
-    : path.resolve(process.cwd(), inputPath);
-
-const LOCAL_LOGO_PATHS = [
-  String(process.env.MAIL_LOGO_PATH || "").trim(),
-  resolveLogoPath("src/assets/main-logo.svg"),
-  resolveLogoPath("dist/src/assets/main-logo.svg"),
-].filter(Boolean);
-const localLogoDataUri = (() => {
-  for (const pathToLogo of LOCAL_LOGO_PATHS) {
-    try {
-      const logoSvg = fs.readFileSync(pathToLogo, "utf8");
-      return `data:image/svg+xml;base64,${Buffer.from(logoSvg).toString("base64")}`;
-    } catch {
-      continue;
-    }
-  }
-  return "";
-})();
-const normalizedFrontendUrl = String(process.env.Frontend_URL || "").trim().replace(
-  /\/+$/,
-  "",
-);
+export const EMAIL_LOGO_CID = "wwm-main-logo";
 const DEFAULT_LOGO_URL =
-  process.env.MAIL_LOGO_URL ||
-  localLogoDataUri ||
-  (normalizedFrontendUrl ? `${normalizedFrontendUrl}/logo/main-logo.svg` : "") ||
-  "https://res.cloudinary.com/dt8vgj0u3/image/upload/v1747597889/main-logo_nuhmgv.svg";
+  String(process.env.MAIL_LOGO_URL || "").trim() || `cid:${EMAIL_LOGO_CID}`;
 
 const normalizeValue = (value?: string | number | null): string =>
   String(value ?? "").trim();

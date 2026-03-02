@@ -1,9 +1,21 @@
 import nodemailer from "nodemailer";
 import * as dotenv from "dotenv";
+import fs from "fs";
+import path from "path";
+import { EMAIL_LOGO_CID } from "./mail_templates/unifiedEmailTemplate";
 dotenv.config();
+
+type EmailAttachment = {
+  filename?: string;
+  content?: string | Buffer;
+  path?: string;
+  cid?: string;
+  contentType?: string;
+};
 
 type SendEmailOptions = {
   throwOnError?: boolean;
+  attachments?: EmailAttachment[];
 };
 
 type SmtpAttempt = {
@@ -145,6 +157,89 @@ function formatAttempt(attempt: SmtpAttempt) {
   return `secure=${attempt.secure}, port=${attempt.port}, requireTLS=${attempt.requireTLS}, ignoreTLS=${attempt.ignoreTLS}`;
 }
 
+const resolveLogoPath = (inputPath: string) =>
+  path.isAbsolute(inputPath)
+    ? inputPath
+    : path.resolve(process.cwd(), inputPath);
+
+const LOGO_PATH_CANDIDATES = [
+  String(process.env.MAIL_LOGO_PATH || "").trim(),
+  resolveLogoPath("src/assets/main-logo.png"),
+  resolveLogoPath("src/assets/main-logo.svg"),
+  resolveLogoPath("dist/src/assets/main-logo.png"),
+  resolveLogoPath("dist/src/assets/main-logo.svg"),
+].filter(Boolean);
+
+let cachedLogoAttachment: EmailAttachment | null | undefined;
+
+const buildInlineLogoAttachment = (): EmailAttachment | null => {
+  if (cachedLogoAttachment !== undefined) {
+    return cachedLogoAttachment;
+  }
+
+  for (const candidatePath of LOGO_PATH_CANDIDATES) {
+    try {
+      if (!fs.existsSync(candidatePath)) {
+        continue;
+      }
+
+      const extension = path.extname(candidatePath).toLowerCase();
+
+      if (extension === ".png") {
+        cachedLogoAttachment = {
+          filename: "main-logo.png",
+          path: candidatePath,
+          cid: EMAIL_LOGO_CID,
+          contentType: "image/png",
+        };
+        return cachedLogoAttachment;
+      }
+
+      const fileContent = fs.readFileSync(candidatePath, "utf8");
+      const embeddedPngMatch = fileContent.match(
+        /data:image\/png;base64,([^"'\s>]+)/i,
+      );
+
+      if (embeddedPngMatch?.[1]) {
+        cachedLogoAttachment = {
+          filename: "main-logo.png",
+          content: Buffer.from(embeddedPngMatch[1], "base64"),
+          cid: EMAIL_LOGO_CID,
+          contentType: "image/png",
+        };
+        return cachedLogoAttachment;
+      }
+
+      cachedLogoAttachment = {
+        filename: "main-logo.svg",
+        content: fileContent,
+        cid: EMAIL_LOGO_CID,
+        contentType: "image/svg+xml",
+      };
+      return cachedLogoAttachment;
+    } catch {
+      continue;
+    }
+  }
+
+  cachedLogoAttachment = null;
+  return cachedLogoAttachment;
+};
+
+const getMailAttachments = (options: SendEmailOptions): EmailAttachment[] => {
+  const attachments = [...(options.attachments || [])];
+  const logoAttachment = buildInlineLogoAttachment();
+
+  if (
+    logoAttachment &&
+    !attachments.some((attachment) => attachment.cid === EMAIL_LOGO_CID)
+  ) {
+    attachments.unshift(logoAttachment);
+  }
+
+  return attachments;
+};
+
 export const sendEmail = async (
   template: string,
   to: string,
@@ -170,11 +265,13 @@ export const sendEmail = async (
 
   try {
     const host = normalizeMailHost(process.env.MAIL_HOST);
+    const attachments = getMailAttachments(options);
     const mailOptions = {
       from: `World Wide Word Ministries <${process.env.MAIL_FROM}>`,
       to,
       subject,
       html: template,
+      attachments: attachments.length ? attachments : undefined,
     };
 
     let lastError: any;
