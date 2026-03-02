@@ -1,3 +1,8 @@
+import {
+  buildUnifiedEmailTemplate,
+  escapeEmailHtml,
+} from "./unifiedEmailTemplate";
+
 export const applicationLiveTemplate = (
   loginLink: string,
   guestLink: string,
@@ -5,105 +10,49 @@ export const applicationLiveTemplate = (
   name: string,
   email: string,
 ) => {
-  return `
-  <!DOCTYPE html>
-  <html lang="en">
-  <head>
-    <meta charset="UTF-8">
-    <title>PA25 Apparel Ordering Guide</title>
-    <style>
-      body {
-        font-family: Arial, sans-serif;
-        background-color: #f9f9f9;
-        margin: 0;
-        padding: 0;
-      }
-      .container {
-        max-width: 650px;
-        margin: 30px auto;
-        background: #ffffff;
-        border-radius: 10px;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-        padding: 30px;
-        line-height: 1.6;
-        color: #333;
-      }
-      h2 {
-        color: #2c3e50;
-        margin-bottom: 20px;
-      }
-      ul {
-        padding-left: 20px;
-      }
-      a {
-        color: #3498db;
-        text-decoration: none;
-      }
-      a:hover {
-        text-decoration: underline;
-      }
-      .footer {
-        margin-top: 40px;
-        font-size: 14px;
-        color: #777;
-        border-top: 1px solid #eee;
-        padding-top: 15px;
-        text-align: center;
-      }
-      .section-title {
-        font-weight: bold;
-        margin-top: 25px;
-        color: #2c3e50;
-      }
-    </style>
-  </head>
-  <body>
-    <div class="container">
-      <h2>👕 PA25 APPAREL ORDERING GUIDE</h2>
-      <p>Dear <strong>${name}</strong>,</p>
+  const safeLoginLink = String(loginLink || "").trim();
+  const safeGuestLink = String(guestLink || "").trim();
+  const safeContact = String(itContact || "").trim();
+  const safeName = String(name || "Member").trim();
+  const safeEmail = String(email || "").trim();
+  const supportUrl = safeContact.includes("@")
+    ? `mailto:${safeContact}`
+    : safeLoginLink || String(process.env.Frontend_URL || "").trim();
 
-      <p>Kindly note that there are two different links, one for <strong>Registered WWM Members</strong> and one for <strong>Non-Registered WWM Members</strong>. Please follow the right guide depending on your status.</p>
+  const messageHtml = `<p style="margin: 0 0 16px 0; font-size: 15px; line-height: 1.7; color: #4b5563;">
+                        Kindly note that there are two different links, one for <strong>Registered WWM Members</strong> and one for <strong>Non-Registered WWM Members</strong>. Please follow the right guide depending on your status.
+                      </p>
+                      <p style="margin: 0 0 10px 0; font-size: 14px; font-weight: 600; color: #080d2d;">For Registered WWM Members</p>
+                      <ol style="margin: 0 0 18px 18px; padding: 0; font-size: 14px; line-height: 1.7; color: #4b5563;">
+                        <li>Use this link: <a href="${escapeEmailHtml(safeLoginLink)}" target="_blank" rel="noopener noreferrer" style="color: #9c622a; text-decoration: underline;">${escapeEmailHtml(safeLoginLink)}</a></li>
+                        <li>Log in with email <strong>${escapeEmailHtml(safeEmail)}</strong> and password <strong>123456</strong>.</li>
+                        <li>Click the three dots beside the WWM logo and select <strong>Marketplace</strong>.</li>
+                        <li>Select your apparel, add items to cart, and proceed to payment.</li>
+                      </ol>
+                      <p style="margin: 0 0 10px 0; font-size: 14px; font-weight: 600; color: #080d2d;">For Non-Registered WWM Members</p>
+                      <ol style="margin: 0 0 18px 18px; padding: 0; font-size: 14px; line-height: 1.7; color: #4b5563;">
+                        <li>Use this link: <a href="${escapeEmailHtml(safeGuestLink)}" target="_blank" rel="noopener noreferrer" style="color: #9c622a; text-decoration: underline;">${escapeEmailHtml(safeGuestLink)}</a></li>
+                        <li>No login is required. Browse available apparels and place your order.</li>
+                      </ol>
+                      <p style="margin: 0 0 8px 0; font-size: 14px; line-height: 1.7; color: #4b5563;">
+                        <strong style="color: #080d2d;">Important:</strong> Orders are confirmed only after payment on the platform. No cash payments are accepted.
+                      </p>
+                      <p style="margin: 0 0 24px 0; font-size: 14px; line-height: 1.7; color: #4b5563;">
+                        During payment, an OTP will be sent via SMS to the MOMO number used. For assistance, contact the Registry Head or IT Department at ${escapeEmailHtml(safeContact)}.
+                      </p>`;
 
-      <div class="section-title">🔹 For Registered WWM Members</div>
-      <ol>
-        <li>Use this link: <a href="${loginLink}">${loginLink}</a></li>
-        <li>Log in with:
-          <ul>
-            <li>Email: <strong>${email}</strong> (same email used when registering)</li>
-            <li>Password: <strong>123456</strong></li>
-          </ul>
-        </li>
-        <li>Once logged in, click on the 3 dots at the top beside the WWM logo.</li>
-        <li>Select <strong>Marketplace</strong> to view the displayed PA25 apparels (T-shirts, jerseys, hoodies, etc.).</li>
-        <li>Click <strong>View Product</strong> on the item you want.</li>
-        <li>Fill in the required details, add your item(s) to the cart, and proceed to payment.
-          <br>• You may edit or adjust your order in the cart before finalizing payment.
-        </li>
-      </ol>
-
-      <div class="section-title">🔹 For Non-Registered WWM Members</div>
-      <ol>
-        <li>Use this link: <a href="${guestLink}">${guestLink}</a></li>
-        <li>No login is required.</li>
-        <li>Browse the PA25 apparels available.</li>
-        <li>Click <strong>View Product</strong> on the item you want.</li>
-        <li>Enter your personal details, place your order, and proceed to payment.</li>
-      </ol>
-
-      <div class="section-title">🔹 Important Notes (For All)</div>
-      <ul>
-        <li>Your order is confirmed only after payment is made on the platform.</li>
-        <li>No cash payments will be accepted. All payments must be done directly on the ordering platform.</li>
-        <li>During the payment process, each person will receive an <strong>OTP code via SMS</strong> on their MOMO number used for the payment. They will need to input the OTP to complete the process.</li>
-        <li>If you need further assistance or have any enquiries about the platform, kindly contact the <strong>Registry Head</strong> or the <a href="mailto:${itContact}">IT Department</a>.</li>
-      </ul>
-
-      <div class="footer">
-        Best regards,<br>
-        <strong>World Wide Word Ministries</strong>
-      </div>
-    </div>
-  </body>
-  </html>
-  `;
+  return buildUnifiedEmailTemplate({
+    preheader: "PA25 apparel ordering links and instructions.",
+    headerTitle: "PA25 Apparel Ordering Guide",
+    headerText:
+      "Order instructions for registered and non-registered members.",
+    greeting: `Dear ${safeName},`,
+    messageHtml,
+    actionLabel: "Open Registered Member Link",
+    actionUrl: safeLoginLink,
+    secondaryText:
+      "If the main button does not work, use the link shown below or the guest link in the instructions.",
+    supportUrl,
+    supportLabel: "Contact IT Department",
+  });
 };

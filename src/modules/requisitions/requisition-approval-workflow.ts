@@ -11,6 +11,10 @@ import {
   RequisitionApprovalActionPayload,
   RequisitionApprovalConfigPayload,
 } from "../../interfaces/requisitions-interface";
+import {
+  buildUnifiedEmailTemplate,
+  escapeEmailHtml,
+} from "../../utils/mail_templates/unifiedEmailTemplate";
 import { prisma } from "../../Models/context";
 import {
   InputValidationError,
@@ -1393,14 +1397,6 @@ const createNotificationEventTx = async (
   }
 };
 
-const escapeHtml = (value: string): string =>
-  value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/\"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-
 const buildFinalDecisionEmailTemplate = (args: {
   decision: "APPROVED" | "REJECTED";
   requisitionReference: string;
@@ -1410,90 +1406,61 @@ const buildFinalDecisionEmailTemplate = (args: {
   const isApproved = args.decision === "APPROVED";
   const statusText = isApproved ? "approved" : "rejected";
   const statusColor = isApproved ? "#166534" : "#991b1b";
+  const messageHtml = `<p style="margin: 0 0 14px 0; font-size: 15px; line-height: 1.7; color: #4b5563;">
+                        A requisition has reached a final decision.
+                      </p>
+                      <p style="margin: 0 0 10px 0; font-size: 15px; line-height: 1.7; color: #4b5563;">
+                        <strong style="color: #080d2d;">Requisition:</strong> ${escapeEmailHtml(args.requisitionReference)}
+                      </p>
+                      <p style="margin: 0 0 10px 0; font-size: 15px; line-height: 1.7; color: #4b5563;">
+                        <strong style="color: #080d2d;">Requester:</strong> ${escapeEmailHtml(args.requesterName)}
+                      </p>
+                      <p style="margin: 0 0 10px 0; font-size: 15px; line-height: 1.7; color: #4b5563;">
+                        <strong style="color: #080d2d;">Final Approver:</strong> ${escapeEmailHtml(args.actorName)}
+                      </p>
+                      <p style="margin: 0 0 24px 0; font-size: 15px; line-height: 1.7; color: #4b5563;">
+                        <strong style="color: #080d2d;">Status:</strong>
+                        <span style="color:${statusColor};font-weight:700;text-transform:uppercase;">${escapeEmailHtml(statusText)}</span>
+                      </p>`;
 
-  return `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Requisition Final Decision</title>
-</head>
-<body style="margin:0;padding:0;background:#f3f4f6;font-family:Arial,sans-serif;color:#111827;">
-  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="padding:24px 0;">
-    <tr>
-      <td align="center">
-        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px;background:#ffffff;border-radius:8px;overflow:hidden;border:1px solid #e5e7eb;">
-          <tr>
-            <td style="background:#111827;color:#ffffff;padding:18px 24px;">
-              <h2 style="margin:0;font-size:20px;font-weight:700;">Requisition Final Decision</h2>
-            </td>
-          </tr>
-          <tr>
-            <td style="padding:24px;">
-              <p style="margin:0 0 14px 0;font-size:15px;">A requisition has reached a final decision.</p>
-              <p style="margin:0 0 10px 0;font-size:15px;line-height:1.6;">
-                <strong>Requisition:</strong> ${escapeHtml(args.requisitionReference)}
-              </p>
-              <p style="margin:0 0 10px 0;font-size:15px;line-height:1.6;">
-                <strong>Requester:</strong> ${escapeHtml(args.requesterName)}
-              </p>
-              <p style="margin:0 0 10px 0;font-size:15px;line-height:1.6;">
-                <strong>Final Approver:</strong> ${escapeHtml(args.actorName)}
-              </p>
-              <p style="margin:0;font-size:15px;line-height:1.6;">
-                <strong>Status:</strong>
-                <span style="color:${statusColor};font-weight:700;text-transform:uppercase;">${statusText}</span>
-              </p>
-            </td>
-          </tr>
-        </table>
-      </td>
-    </tr>
-  </table>
-</body>
-</html>`;
+  return buildUnifiedEmailTemplate({
+    preheader: `Requisition ${statusText}: ${args.requisitionReference}`,
+    headerTitle: "Requisition Final Decision",
+    headerText: "A requisition request has reached a final decision.",
+    greeting: "Hello,",
+    messageHtml,
+    supportUrl: String(process.env.Frontend_URL || "").trim(),
+    supportLabel: "Open requisitions",
+    showActionUrl: false,
+  });
 };
 
 const buildNextApproverEmailTemplate = (args: {
   requisitionReference: string;
   requesterName: string;
   actorName: string;
-}) => `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Requisition Pending Approval</title>
-</head>
-<body style="margin:0;padding:0;background:#f3f4f6;font-family:Arial,sans-serif;color:#111827;">
-  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="padding:24px 0;">
-    <tr>
-      <td align="center">
-        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px;background:#ffffff;border-radius:8px;overflow:hidden;border:1px solid #e5e7eb;">
-          <tr>
-            <td style="background:#111827;color:#ffffff;padding:18px 24px;">
-              <h2 style="margin:0;font-size:20px;font-weight:700;">Requisition Pending Your Approval</h2>
-            </td>
-          </tr>
-          <tr>
-            <td style="padding:24px;">
-              <p style="margin:0 0 14px 0;font-size:15px;line-height:1.6;">
-                ${escapeHtml(args.actorName)} has approved a requisition and it is now pending your approval.
-              </p>
-              <p style="margin:0 0 10px 0;font-size:15px;line-height:1.6;">
-                <strong>Requisition:</strong> ${escapeHtml(args.requisitionReference)}
-              </p>
-              <p style="margin:0;font-size:15px;line-height:1.6;">
-                <strong>Requester:</strong> ${escapeHtml(args.requesterName)}
-              </p>
-            </td>
-          </tr>
-        </table>
-      </td>
-    </tr>
-  </table>
-</body>
-</html>`;
+}) => {
+  const messageHtml = `<p style="margin: 0 0 14px 0; font-size: 15px; line-height: 1.7; color: #4b5563;">
+                        ${escapeEmailHtml(args.actorName)} has approved a requisition and it is now pending your approval.
+                      </p>
+                      <p style="margin: 0 0 10px 0; font-size: 15px; line-height: 1.7; color: #4b5563;">
+                        <strong style="color: #080d2d;">Requisition:</strong> ${escapeEmailHtml(args.requisitionReference)}
+                      </p>
+                      <p style="margin: 0 0 24px 0; font-size: 15px; line-height: 1.7; color: #4b5563;">
+                        <strong style="color: #080d2d;">Requester:</strong> ${escapeEmailHtml(args.requesterName)}
+                      </p>`;
+
+  return buildUnifiedEmailTemplate({
+    preheader: `Requisition pending approval: ${args.requisitionReference}`,
+    headerTitle: "Requisition Pending Your Approval",
+    headerText: "A requisition is waiting for your approval action.",
+    greeting: "Hello,",
+    messageHtml,
+    supportUrl: String(process.env.Frontend_URL || "").trim(),
+    supportLabel: "Open requisitions",
+    showActionUrl: false,
+  });
+};
 
 const buildNotificationEmail = (args: {
   eventType: RequisitionNotificationEventType;
