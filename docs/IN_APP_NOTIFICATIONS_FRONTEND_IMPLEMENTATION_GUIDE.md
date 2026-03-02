@@ -6,6 +6,7 @@
 - `PATCH /notifications/:id/read`
 - `PATCH /notifications/:id/unread`
 - `PATCH /notifications/read-all`
+- `GET /notifications/stream-token` (short-lived token for native SSE)
 - `GET /notifications/stream` (SSE)
 
 All routes require `Authorization: Bearer <token>`.
@@ -30,6 +31,18 @@ All routes require `Authorization: Bearer <token>`.
   "createdAt": "2026-03-02T13:25:18.000Z"
 }
 ```
+
+## SSE Auth (Important)
+
+If your frontend uses native `EventSource`, it cannot send `Authorization` headers.
+
+Use this flow:
+1. Fetch stream token with your normal bearer token:
+   - `GET /notifications/stream-token`
+2. Open SSE with query token:
+   - `GET /notifications/stream?stream_token=<token>`
+
+If you use an SSE client that supports custom headers, `Authorization: Bearer <jwt>` on `/notifications/stream` still works.
 
 ## SSE Events
 - `connected`
@@ -59,4 +72,3 @@ Use `/notifications/stream` with `EventSource` and auth token (polyfill if your 
 - Events: `/home/events`
 - Orders/payments/delivery: `/member/market/orders`
 - System/admin jobs: `/home/dashboard` or `/home/notifications`
-
