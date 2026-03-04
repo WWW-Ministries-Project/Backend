@@ -8,6 +8,7 @@ import {
   InputValidationError,
   NotFoundError,
 } from "../../utils/custom-error-handlers";
+import { notificationPushService } from "./notificationPushService";
 
 export type NotificationPriority = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 
@@ -743,6 +744,30 @@ const createInAppNotification = async (
   broadcastToUser(recipientUserId, "notification", payload);
   void sendUnreadCountToUser(recipientUserId);
   void updateUnreadBacklogMetric();
+
+  try {
+    const pushDelivery = await notificationPushService.deliverNotificationPush({
+      id: payload.id,
+      dedupeKey: payload.dedupeKey,
+      recipientUserId: payload.recipientUserId,
+      type: payload.type,
+      title: payload.title,
+      body: payload.body,
+      actionUrl: payload.actionUrl,
+      entityType: payload.entityType,
+      entityId: payload.entityId,
+      priority: payload.priority,
+      createdAt: payload.createdAt,
+    });
+
+    if (pushDelivery.failed > 0) {
+      notificationDeliveryFailureCounter.labels("push", trimmedType).inc(
+        pushDelivery.failed,
+      );
+    }
+  } catch (error) {
+    notificationDeliveryFailureCounter.labels("push", trimmedType).inc();
+  }
 
   return payload;
 };

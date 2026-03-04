@@ -51,6 +51,8 @@ model user {
   received_notifications   in_app_notification[]       @relation("notification_recipient")
   acted_notifications      in_app_notification[]       @relation("notification_actor")
   notification_preferences notification_preference[]
+  push_subscriptions       notification_push_subscription[]
+  push_delivery_jobs       notification_push_delivery_job[] @relation("notification_push_delivery_user")
   request                  request[]
   hod_user                 request_approvals[]        @relation("hod_user")
   ps_user                  request_approvals[]        @relation("ps_user")
@@ -542,6 +544,7 @@ model in_app_notification {
   updated_at        DateTime              @default(now()) @updatedAt
   actor             user?                 @relation("notification_actor", fields: [actor_user_id], references: [id], onDelete: SetNull)
   recipient         user                  @relation("notification_recipient", fields: [recipient_user_id], references: [id], onDelete: Cascade)
+  push_delivery_jobs notification_push_delivery_job[]
 
   @@index([recipient_user_id, is_read, created_at], map: "in_app_notification_recipient_read_created_idx")
   @@index([recipient_user_id, created_at], map: "in_app_notification_recipient_created_idx")
@@ -561,6 +564,58 @@ model notification_preference {
 
   @@unique([user_id, type], map: "notification_preference_user_id_type_key")
   @@index([user_id], map: "notification_preference_user_id_idx")
+}
+
+model notification_push_subscription {
+  id                 String                          @id @default(uuid())
+  user_id            Int
+  endpoint           String                          @unique @db.VarChar(512)
+  p256dh             String                          @db.VarChar(512)
+  auth               String                          @db.VarChar(512)
+  expiration_time    DateTime?
+  is_active          Boolean                         @default(true)
+  user_agent         String?                         @db.VarChar(512)
+  platform           String?                         @db.VarChar(191)
+  language           String?                         @db.VarChar(32)
+  timezone           String?                         @db.VarChar(191)
+  last_seen_at       DateTime                        @default(now())
+  last_error_code    String?                         @db.VarChar(64)
+  last_error_message String?                         @db.VarChar(1024)
+  last_error_at      DateTime?
+  created_at         DateTime                        @default(now())
+  updated_at         DateTime                        @default(now()) @updatedAt
+  user               user                            @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  delivery_jobs      notification_push_delivery_job[]
+
+  @@index([user_id, is_active], map: "notification_push_subscriptions_user_active_idx")
+  @@map("notification_push_subscriptions")
+}
+
+model notification_push_delivery_job {
+  id                 String                            @id @default(uuid())
+  notification_id    Int
+  user_id            Int
+  subscription_id    String
+  payload            Json
+  status             notification_push_delivery_status @default(PENDING)
+  attempts           Int                               @default(0)
+  next_attempt_at    DateTime                          @default(now())
+  last_error_code    String?                           @db.VarChar(64)
+  last_error_message String?                           @db.VarChar(1024)
+  last_error_at      DateTime?
+  sent_at            DateTime?
+  created_at         DateTime                          @default(now())
+  updated_at         DateTime                          @default(now()) @updatedAt
+  notification       in_app_notification               @relation(fields: [notification_id], references: [id], onDelete: Cascade)
+  user               user                              @relation("notification_push_delivery_user", fields: [user_id], references: [id], onDelete: Cascade)
+  subscription       notification_push_subscription    @relation(fields: [subscription_id], references: [id], onDelete: Cascade)
+
+  @@unique([notification_id, subscription_id], map: "notification_push_delivery_jobs_notification_subscription_key")
+  @@index([status, next_attempt_at], map: "notification_push_delivery_jobs_status_next_attempt_idx")
+  @@index([subscription_id], map: "notification_push_delivery_jobs_subscription_idx")
+  @@index([notification_id], map: "notification_push_delivery_jobs_notification_idx")
+  @@index([user_id], map: "notification_push_delivery_jobs_user_idx")
+  @@map("notification_push_delivery_jobs")
 }
 
 model program {
@@ -1399,4 +1454,11 @@ enum notification_priority {
   MEDIUM
   HIGH
   CRITICAL
+}
+
+enum notification_push_delivery_status {
+  PENDING
+  PROCESSING
+  SENT
+  DEAD
 }

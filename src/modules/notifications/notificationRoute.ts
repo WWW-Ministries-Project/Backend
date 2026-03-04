@@ -6,6 +6,7 @@ import {
   extractStreamTokenFromQuery,
   verifyNotificationStreamToken,
 } from "./notificationStreamAuth";
+import { notificationPushRateLimiter } from "./notificationPushRateLimiter";
 
 const notificationRouter = Router();
 const permissions = new Permissions();
@@ -41,6 +42,24 @@ notificationRouter.get(
   "/stream-token",
   [permissions.protect],
   notificationController.issueStreamToken,
+);
+
+notificationRouter.get(
+  "/push/public-key",
+  [permissions.protect],
+  notificationController.getPushPublicKey,
+);
+
+notificationRouter.post(
+  "/push/subscribe",
+  [permissions.protect, notificationPushRateLimiter],
+  notificationController.subscribePush,
+);
+
+notificationRouter.post(
+  "/push/unsubscribe",
+  [permissions.protect, notificationPushRateLimiter],
+  notificationController.unsubscribePush,
 );
 
 notificationRouter.get(
