@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import { InputValidationError } from "../../utils/custom-error-handlers";
 import { notificationService } from "./notificationService";
+import { notificationPushService } from "./notificationPushService";
 import { issueNotificationStreamToken } from "./notificationStreamAuth";
 
 const getAuthenticatedUserId = (req: Request): number => {
@@ -66,6 +67,35 @@ export class NotificationController {
         streamToken: streamTokenData.token,
         expiresInSeconds: streamTokenData.expiresInSeconds,
       },
+    });
+  }
+
+  async getPushPublicKey(req: Request, res: Response) {
+    const data = notificationPushService.getPublicKeyResponse();
+
+    res.status(200).json({
+      message: "Push public key retrieved successfully",
+      data,
+    });
+  }
+
+  async subscribePush(req: Request, res: Response) {
+    const userId = getAuthenticatedUserId(req);
+    const data = await notificationPushService.subscribe(userId, req.body);
+
+    res.status(200).json({
+      message: "Push subscription saved",
+      data,
+    });
+  }
+
+  async unsubscribePush(req: Request, res: Response) {
+    const userId = getAuthenticatedUserId(req);
+    const data = await notificationPushService.unsubscribe(userId, req.body);
+
+    res.status(200).json({
+      message: "Push subscription removed",
+      data,
     });
   }
 
