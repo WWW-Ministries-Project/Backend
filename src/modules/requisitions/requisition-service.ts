@@ -29,7 +29,6 @@ import {
   getRequisitionApprovalConfig,
   isRequisitionApprovalTableMissingError,
   processRequisitionApprovalAction,
-  triggerRequisitionNotificationEventProcessing,
   upsertRequisitionApprovalConfig,
   validateApprovalActionPayload,
 } from "./requisition-approval-workflow";
@@ -888,10 +887,6 @@ export const createRequisition = async (
     return request;
   });
 
-  if (shouldSubmit) {
-    triggerRequisitionNotificationEventProcessing();
-  }
-
   return getRequisition(createdRequest.id, user);
 };
 
@@ -977,7 +972,6 @@ export const updateRequisition = async (
       action,
       ...(updateInput.comment && { comment: updateInput.comment }),
     });
-    triggerRequisitionNotificationEventProcessing();
 
     const approvalChangedFields = Array.from(
       new Set([
@@ -1184,10 +1178,6 @@ export const updateRequisition = async (
     });
   });
 
-  if (shouldSubmitByRequester) {
-    triggerRequisitionNotificationEventProcessing();
-  }
-
   if (updateInput.comment) {
     await notifyRequisitionCommentParticipants({
       requisitionId: data.id as number,
@@ -1336,8 +1326,6 @@ export const submitRequisition = async (requisitionId: unknown, user: any) => {
     }
   });
 
-  triggerRequisitionNotificationEventProcessing();
-
   return getRequisition(parsedId, user);
 };
 
@@ -1359,7 +1347,6 @@ export const actionRequisitionApproval = async (
       action: validated.action,
       comment: validated.comment,
     });
-    triggerRequisitionNotificationEventProcessing();
   } catch (error) {
     const isMissingWorkflowTables = isMissingWorkflowTablesError(error);
 
