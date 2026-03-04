@@ -100,6 +100,8 @@ type StartSseStreamOptions = {
   lastEventId?: number | null;
 };
 
+type NotificationDeliveryTask = () => Promise<void>;
+
 const MAX_PAGE_SIZE = 100;
 const DEFAULT_PAGE_SIZE = 20;
 const SSE_HEARTBEAT_MS = 20_000;
@@ -107,10 +109,13 @@ const SSE_RETRY_MS = 5_000;
 const SSE_REPLAY_TTL_MS = 5 * 60 * 1000;
 const SSE_REPLAY_MAX_EVENTS_PER_USER = 500;
 const ACTION_URL_FALLBACK = "/home/notifications";
+const NOTIFICATION_DELIVERY_CONCURRENCY = 1;
 
 const sseClientsByUserId = new Map<number, Set<SseClient>>();
 const sseReplayBufferByUserId = new Map<number, SseEventEnvelope[]>();
+const notificationDeliveryTaskQueue: NotificationDeliveryTask[] = [];
 let sseEventIdCounter = 0;
+let activeNotificationDeliveryWorkers = 0;
 
 const getOrCreateCounter = (
   name: string,
@@ -185,6 +190,30 @@ const parsePositiveInt = (value: unknown): number | null => {
     return null;
   }
   return parsed;
+};
+
+const runNotificationDeliveryQueue = () => {
+  while (activeNotificationDeliveryWorkers < NOTIFICATION_DELIVERY_CONCURRENCY) {
+    const task = notificationDeliveryTaskQueue.shift();
+    if (!task) {
+      return;
+    }
+
+    activeNotificationDeliveryWorkers += 1;
+    void task()
+      .catch(() => {
+        // Task handlers already emit delivery-failure metrics per channel.
+      })
+      .finally(() => {
+        activeNotificationDeliveryWorkers -= 1;
+        runNotificationDeliveryQueue();
+      });
+  }
+};
+
+const enqueueNotificationDelivery = (task: NotificationDeliveryTask) => {
+  notificationDeliveryTaskQueue.push(task);
+  runNotificationDeliveryQueue();
 };
 
 const parseNotificationPriority = (value?: string | null): NotificationPriority =>
@@ -701,39 +730,38 @@ const createInAppNotification = async (
   }
 
   const shouldSendEmail = (input.sendEmail ?? true) && preference.emailEnabled;
-  if (shouldSendEmail && recipientUser.email) {
-    try {
-      const actionUrlForEmail = toAbsoluteActionUrl(actionUrl);
-      const template = buildEmailTemplate({
-        title: trimmedTitle,
-        body: trimmedBody,
-        actionUrl: actionUrlForEmail,
-      });
+  const recipientEmail = recipientUser.email?.trim() || "";
+  if (shouldSendEmail && recipientEmail) {
+    const actionUrlForEmail = toAbsoluteActionUrl(actionUrl);
+    const template = buildEmailTemplate({
+      title: trimmedTitle,
+      body: trimmedBody,
+      actionUrl: actionUrlForEmail,
+    });
+    const emailSubject = String(input.emailSubject || trimmedTitle);
 
-      await sendEmail(
-        template,
-        recipientUser.email,
-        String(input.emailSubject || trimmedTitle),
-        {
+    enqueueNotificationDelivery(async () => {
+      try {
+        await sendEmail(template, recipientEmail, emailSubject, {
           throwOnError: true,
-        },
-      );
-
-      notificationEmailSentCounter.labels(trimmedType).inc();
-
-      if (row) {
-        await prisma.in_app_notification.update({
-          where: {
-            id: row.id,
-          },
-          data: {
-            email_sent_at: new Date(),
-          },
         });
+
+        notificationEmailSentCounter.labels(trimmedType).inc();
+
+        if (row) {
+          await prisma.in_app_notification.update({
+            where: {
+              id: row.id,
+            },
+            data: {
+              email_sent_at: new Date(),
+            },
+          });
+        }
+      } catch (error) {
+        notificationDeliveryFailureCounter.labels("email", trimmedType).inc();
       }
-    } catch (error) {
-      notificationDeliveryFailureCounter.labels("email", trimmedType).inc();
-    }
+    });
   }
 
   if (!row) {
@@ -745,29 +773,31 @@ const createInAppNotification = async (
   void sendUnreadCountToUser(recipientUserId);
   void updateUnreadBacklogMetric();
 
-  try {
-    const pushDelivery = await notificationPushService.deliverNotificationPush({
-      id: payload.id,
-      dedupeKey: payload.dedupeKey,
-      recipientUserId: payload.recipientUserId,
-      type: payload.type,
-      title: payload.title,
-      body: payload.body,
-      actionUrl: payload.actionUrl,
-      entityType: payload.entityType,
-      entityId: payload.entityId,
-      priority: payload.priority,
-      createdAt: payload.createdAt,
-    });
+  enqueueNotificationDelivery(async () => {
+    try {
+      const pushDelivery = await notificationPushService.deliverNotificationPush({
+        id: payload.id,
+        dedupeKey: payload.dedupeKey,
+        recipientUserId: payload.recipientUserId,
+        type: payload.type,
+        title: payload.title,
+        body: payload.body,
+        actionUrl: payload.actionUrl,
+        entityType: payload.entityType,
+        entityId: payload.entityId,
+        priority: payload.priority,
+        createdAt: payload.createdAt,
+      });
 
-    if (pushDelivery.failed > 0) {
-      notificationDeliveryFailureCounter.labels("push", trimmedType).inc(
-        pushDelivery.failed,
-      );
+      if (pushDelivery.failed > 0) {
+        notificationDeliveryFailureCounter.labels("push", trimmedType).inc(
+          pushDelivery.failed,
+        );
+      }
+    } catch (error) {
+      notificationDeliveryFailureCounter.labels("push", trimmedType).inc();
     }
-  } catch (error) {
-    notificationDeliveryFailureCounter.labels("push", trimmedType).inc();
-  }
+  });
 
   return payload;
 };
