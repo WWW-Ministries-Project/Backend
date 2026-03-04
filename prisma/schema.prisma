@@ -268,6 +268,8 @@ model event_mgt {
   visit                visit[]
 
   @@index([event_name_id], map: "event_mgt_event_name_id_fkey")
+  @@index([start_date], map: "event_mgt_start_date_idx")
+  @@index([event_type, event_status, start_date], map: "event_mgt_type_status_start_date_idx")
 }
 
 model event_attendance_summary {
@@ -347,6 +349,7 @@ model request {
   @@index([department_id], map: "request_department_id_fkey")
   @@index([event_id], map: "request_event_id_fkey")
   @@index([updated_by_user_id], map: "request_updated_by_user_id_idx")
+  @@index([request_approval_status], map: "request_approval_status_idx")
 }
 
 model requisition_summary {
@@ -550,6 +553,7 @@ model in_app_notification {
   @@index([recipient_user_id, created_at], map: "in_app_notification_recipient_created_idx")
   @@index([type], map: "in_app_notification_type_idx")
   @@index([created_at], map: "in_app_notification_created_at_idx")
+  @@index([is_read], map: "in_app_notification_is_read_idx")
 }
 
 model notification_preference {
@@ -837,6 +841,8 @@ model follow_up {
 
   @@index([userId], map: "follow_up_userId_fkey")
   @@index([visitorId], map: "follow_up_visitorId_fkey")
+  @@index([assignedTo], map: "follow_up_assignedTo_idx")
+  @@index([assignedTo, date, status], map: "follow_up_assigned_date_status_idx")
 }
 
 model prayer_request {
@@ -1055,6 +1061,8 @@ model orders {
   user            user?            @relation(fields: [user_id], references: [id])
 
   @@index([user_id], map: "orders_user_id_fkey")
+  @@index([reference], map: "orders_reference_idx")
+  @@index([payment_status], map: "orders_payment_status_idx")
 }
 
 model order_items {
@@ -1203,6 +1211,8 @@ model appointment {
   @@index([email])
   @@index([userId])
   @@index([requesterId])
+  @@index([userId, date, status], map: "appointment_user_date_status_idx")
+  @@index([userId, date, startTime, endTime], map: "appointment_user_date_time_idx")
 }
 
 model ai_conversation {

@@ -177,6 +177,224 @@ const hasActionPermission = (
   return ADMIN_PERMISSIONS.includes(permission);
 };
 
+type AccessContextSnapshot = {
+  currentUser: any;
+  permissions: Record<string, any>;
+  isPrivilegedUser: boolean;
+  departmentIds: number[];
+  lifeCenterIds: number[];
+};
+
+type AccessContextCacheEntry = {
+  snapshot: AccessContextSnapshot;
+  expiresAt: number;
+};
+
+const DEFAULT_AUTH_CONTEXT_CACHE_TTL_MS = 30_000;
+const DEFAULT_AUTH_CONTEXT_CACHE_MAX_ENTRIES = 2_000;
+
+const parsePositiveEnvInt = (value: unknown, fallback: number) => {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return parsed;
+};
+
+const authContextCacheEnabled = !["false", "0", "no"].includes(
+  String(process.env.AUTH_CONTEXT_CACHE_ENABLED ?? "true")
+    .trim()
+    .toLowerCase(),
+);
+
+const authContextCacheTtlMs = parsePositiveEnvInt(
+  process.env.AUTH_CONTEXT_CACHE_TTL_MS,
+  DEFAULT_AUTH_CONTEXT_CACHE_TTL_MS,
+);
+
+const authContextCacheMaxEntries = parsePositiveEnvInt(
+  process.env.AUTH_CONTEXT_CACHE_MAX_ENTRIES,
+  DEFAULT_AUTH_CONTEXT_CACHE_MAX_ENTRIES,
+);
+
+const authContextCache = new Map<number, AccessContextCacheEntry>();
+const inflightAuthContextFetches = new Map<number, Promise<AccessContextSnapshot | null>>();
+
+const cloneAccessContextSnapshot = (
+  snapshot: AccessContextSnapshot,
+): AccessContextSnapshot => ({
+  currentUser: {
+    ...snapshot.currentUser,
+    department_positions: Array.isArray(snapshot.currentUser?.department_positions)
+      ? snapshot.currentUser.department_positions.map((item: any) => ({ ...item }))
+      : [],
+    life_center_member: Array.isArray(snapshot.currentUser?.life_center_member)
+      ? snapshot.currentUser.life_center_member.map((item: any) => ({ ...item }))
+      : [],
+    access: snapshot.currentUser?.access
+      ? { ...snapshot.currentUser.access }
+      : snapshot.currentUser?.access,
+  },
+  permissions: { ...snapshot.permissions },
+  isPrivilegedUser: snapshot.isPrivilegedUser,
+  departmentIds: [...snapshot.departmentIds],
+  lifeCenterIds: [...snapshot.lifeCenterIds],
+});
+
+const pruneAuthContextCache = (now = Date.now()) => {
+  for (const [userId, entry] of authContextCache.entries()) {
+    if (entry.expiresAt <= now) {
+      authContextCache.delete(userId);
+    }
+  }
+
+  if (authContextCache.size <= authContextCacheMaxEntries) {
+    return;
+  }
+
+  const entriesByExpiry = [...authContextCache.entries()].sort(
+    (a, b) => a[1].expiresAt - b[1].expiresAt,
+  );
+  const excessEntries = authContextCache.size - authContextCacheMaxEntries;
+  for (let index = 0; index < excessEntries; index += 1) {
+    const candidate = entriesByExpiry[index];
+    if (!candidate) break;
+    authContextCache.delete(candidate[0]);
+  }
+};
+
+const getCachedAuthContextSnapshot = (
+  userId: number,
+): AccessContextSnapshot | null => {
+  if (!authContextCacheEnabled) {
+    return null;
+  }
+
+  const now = Date.now();
+  const cachedEntry = authContextCache.get(userId);
+  if (!cachedEntry) {
+    return null;
+  }
+
+  if (cachedEntry.expiresAt <= now) {
+    authContextCache.delete(userId);
+    return null;
+  }
+
+  return cloneAccessContextSnapshot(cachedEntry.snapshot);
+};
+
+const setCachedAuthContextSnapshot = (
+  userId: number,
+  snapshot: AccessContextSnapshot,
+) => {
+  if (!authContextCacheEnabled) {
+    return;
+  }
+
+  pruneAuthContextCache();
+  authContextCache.set(userId, {
+    snapshot,
+    expiresAt: Date.now() + authContextCacheTtlMs,
+  });
+};
+
+const fetchAuthContextSnapshotFromDb = async (
+  userId: number,
+): Promise<AccessContextSnapshot | null> => {
+  const currentUser = await prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      id: true,
+      is_user: true,
+      access_level_id: true,
+      department_id: true,
+      department_positions: {
+        select: {
+          department_id: true,
+        },
+      },
+      life_center_member: {
+        select: {
+          lifeCenterId: true,
+        },
+      },
+      access: {
+        select: {
+          permissions: true,
+        },
+      },
+    },
+  });
+
+  if (!currentUser) {
+    authContextCache.delete(userId);
+    return null;
+  }
+
+  const permissions = parsePermissionsObject(currentUser?.access?.permissions);
+  const departmentIds = Array.from(
+    new Set(
+      [currentUser?.department_id, ...(currentUser?.department_positions || []).map((item: any) => item.department_id)]
+        .map((id) => toPositiveInt(id))
+        .filter((id): id is number => Boolean(id)),
+    ),
+  );
+  const lifeCenterIds = Array.from(
+    new Set(
+      (currentUser?.life_center_member || [])
+        .map((item: any) => toPositiveInt(item?.lifeCenterId))
+        .filter((id: number | null): id is number => Boolean(id)),
+    ),
+  );
+  const isPrivilegedUser = Boolean(
+    currentUser?.is_user && currentUser?.access_level_id && currentUser?.access,
+  );
+
+  return {
+    currentUser,
+    permissions,
+    isPrivilegedUser,
+    departmentIds,
+    lifeCenterIds,
+  };
+};
+
+const getOrFetchAuthContextSnapshot = async (
+  userId: number,
+): Promise<AccessContextSnapshot | null> => {
+  const cached = getCachedAuthContextSnapshot(userId);
+  if (cached) {
+    return cached;
+  }
+
+  if (!authContextCacheEnabled) {
+    return fetchAuthContextSnapshotFromDb(userId);
+  }
+
+  const inflight = inflightAuthContextFetches.get(userId);
+  if (inflight) {
+    const snapshot = await inflight;
+    return snapshot ? cloneAccessContextSnapshot(snapshot) : null;
+  }
+
+  const fetchPromise = (async () => {
+    const snapshot = await fetchAuthContextSnapshotFromDb(userId);
+    if (snapshot) {
+      setCachedAuthContextSnapshot(userId, snapshot);
+    } else {
+      authContextCache.delete(userId);
+    }
+    return snapshot;
+  })().finally(() => {
+    inflightAuthContextFetches.delete(userId);
+  });
+
+  inflightAuthContextFetches.set(userId, fetchPromise);
+  const snapshot = await fetchPromise;
+  return snapshot ? cloneAccessContextSnapshot(snapshot) : null;
+};
+
 export class Permissions {
   private extractToken(req: Request | any) {
     return req.headers["authorization"]?.split(" ")[1];
@@ -211,61 +429,26 @@ export class Permissions {
       return null;
     }
 
-    let currentUser: any;
+    let snapshot: AccessContextSnapshot | null = null;
     try {
-      currentUser = await prisma.user.findUnique({
-        where: { id: userId },
-        select: {
-          id: true,
-          is_user: true,
-          access_level_id: true,
-          department_id: true,
-          department_positions: {
-            select: {
-              department_id: true,
-            },
-          },
-          life_center_member: {
-            select: {
-              lifeCenterId: true,
-            },
-          },
-          access: {
-            select: {
-              permissions: true,
-            },
-          },
-        },
-      });
+      snapshot = await getOrFetchAuthContextSnapshot(userId);
     } catch (error) {
       this.unauthorized(res, errorMessage);
       return null;
     }
 
-    if (!currentUser) {
+    if (!snapshot) {
       this.unauthorized(res, errorMessage);
       return null;
     }
 
-    const livePermissions = parsePermissionsObject(currentUser?.access?.permissions);
-    const departmentIds = Array.from(
-      new Set(
-        [currentUser?.department_id, ...(currentUser?.department_positions || []).map((item: any) => item.department_id)]
-          .map((id) => toPositiveInt(id))
-          .filter((id): id is number => Boolean(id)),
-      ),
-    );
-    const lifeCenterIds = Array.from(
-      new Set(
-        (currentUser?.life_center_member || [])
-          .map((item: any) => toPositiveInt(item?.lifeCenterId))
-          .filter((id: number | null): id is number => Boolean(id)),
-      ),
-    );
-
-    const isPrivilegedUser = Boolean(
-      currentUser?.is_user && currentUser?.access_level_id && currentUser?.access,
-    );
+    const {
+      currentUser,
+      permissions: livePermissions,
+      isPrivilegedUser,
+      departmentIds,
+      lifeCenterIds,
+    } = snapshot;
 
     req.user = {
       ...decoded,
