@@ -9,6 +9,7 @@ import {
   NotFoundError,
 } from "../../utils/custom-error-handlers";
 import { notificationPushService } from "./notificationPushService";
+import { notificationSmsService } from "./notificationSmsService";
 
 export type NotificationPriority = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 
@@ -59,6 +60,8 @@ export type CreateNotificationInput = {
   dedupeKey?: string | null;
   emailSubject?: string;
   sendEmail?: boolean;
+  sendSms?: boolean;
+  smsBody?: string;
 };
 
 type NotificationListArgs = {
@@ -109,7 +112,28 @@ const SSE_RETRY_MS = 5_000;
 const SSE_REPLAY_TTL_MS = 5 * 60 * 1000;
 const SSE_REPLAY_MAX_EVENTS_PER_USER = 500;
 const ACTION_URL_FALLBACK = "/home/notifications";
-const NOTIFICATION_DELIVERY_CONCURRENCY = 1;
+const NOTIFICATION_DELIVERY_CONCURRENCY = (() => {
+  const parsed = Number(process.env.NOTIFICATION_DELIVERY_CONCURRENCY);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return 2;
+  }
+  return Math.min(parsed, 10);
+})();
+const NOTIFICATION_SMS_DEFAULT_ENABLED = (() => {
+  const value = process.env.NOTIFICATION_SMS_DEFAULT_ENABLED;
+  if (value === undefined) {
+    return true;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (["true", "1", "yes", "on"].includes(normalized)) {
+    return true;
+  }
+  if (["false", "0", "no", "off"].includes(normalized)) {
+    return false;
+  }
+  return true;
+})();
 
 const sseClientsByUserId = new Map<number, Set<SseClient>>();
 const sseReplayBufferByUserId = new Map<number, SseEventEnvelope[]>();
@@ -669,6 +693,12 @@ const createInAppNotification = async (
         id: true,
         email: true,
         is_active: true,
+        user_info: {
+          select: {
+            primary_number: true,
+            country_code: true,
+          },
+        },
       },
     }),
     getNotificationPreference(recipientUserId, trimmedType),
@@ -762,6 +792,31 @@ const createInAppNotification = async (
         notificationDeliveryFailureCounter.labels("email", trimmedType).inc();
       }
     });
+  }
+
+  const shouldSendSms =
+    (input.sendSms ?? NOTIFICATION_SMS_DEFAULT_ENABLED) === true &&
+    notificationSmsService.isSmsEnabled();
+  if (shouldSendSms) {
+    const smsBody = String(input.smsBody || trimmedBody).trim();
+    if (smsBody) {
+      const smsResult = notificationSmsService.queueNotificationSms({
+        notificationType: trimmedType,
+        recipientUserId,
+        phoneNumber: recipientUser.user_info?.primary_number || null,
+        countryCode: recipientUser.user_info?.country_code || null,
+        message: smsBody,
+        dedupeKey,
+      });
+
+      if (
+        !smsResult.queued &&
+        !smsResult.disabled &&
+        smsResult.reason !== "deduped"
+      ) {
+        notificationDeliveryFailureCounter.labels("sms", trimmedType).inc();
+      }
+    }
   }
 
   if (!row) {
