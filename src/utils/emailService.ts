@@ -267,7 +267,7 @@ export const sendEmail = async (
     const host = normalizeMailHost(process.env.MAIL_HOST);
     const attachments = getMailAttachments(options);
     const mailOptions = {
-      from: `World Wide Word Ministries <${process.env.MAIL_FROM}>`,
+      from: `Worldwide Word Ministries <${process.env.MAIL_FROM}>`,
       to,
       subject,
       html: template,

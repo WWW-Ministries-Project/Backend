@@ -1,4 +1,4 @@
-const DEFAULT_PRODUCT_NAME = "World Wide Word Ministries";
+const DEFAULT_PRODUCT_NAME = "Worldwide Word Ministries";
 const DEFAULT_SUPPORT_LABEL = "Contact support";
 
 export const EMAIL_LOGO_CID = "wwm-main-logo";

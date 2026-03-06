@@ -28,7 +28,7 @@ export const confirmTemplate = (mailDetails: ConfirmTemplateDetails) => {
   return buildUnifiedEmailTemplate({
     preheader: "Your account invitation and login credentials are ready.",
     headerTitle: "Email Confirmation",
-    headerText: "Welcome to World Wide Word Ministries.",
+    headerText: "Welcome to Worldwide Word Ministries.",
     greeting: `Hello ${mailDetails.name}!`,
     messageHtml: credentialDetailsHtml,
     actionLabel: "Login Here",

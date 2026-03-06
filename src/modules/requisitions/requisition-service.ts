@@ -430,6 +430,76 @@ const isMissingWorkflowTablesError = (error: unknown): boolean => {
   );
 };
 
+const isApprovalChainAlreadyExistsError = (error: unknown): boolean => {
+  return (
+    error instanceof InputValidationError &&
+    error.message.includes("Approval chain already exists for this requisition")
+  );
+};
+
+const parseBooleanLike = (value: unknown): boolean => {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value === 1;
+  if (typeof value !== "string") return false;
+
+  return ["1", "true", "yes", "y", "on"].includes(value.trim().toLowerCase());
+};
+
+const normalizeOptionalEventIdValue = (
+  value: unknown,
+): number | null => {
+  if (value === undefined || value === null) {
+    return null;
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized || normalized === "null" || normalized === "none") {
+      return null;
+    }
+  }
+
+  const parsed = Number(value);
+  if (parsed === 0) {
+    return null;
+  }
+
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new InputValidationError("If provided, event must be a valid event id");
+  }
+
+  return parsed;
+};
+
+const normalizeCreateEventId = (value: unknown): number | null => {
+  return normalizeOptionalEventIdValue(value);
+};
+
+const normalizeUpdateEventId = (
+  payload: Partial<RequisitionInterface>,
+): number | null | undefined => {
+  if (!Object.prototype.hasOwnProperty.call(payload, "event_id")) {
+    return undefined;
+  }
+
+  return normalizeOptionalEventIdValue((payload as any).event_id);
+};
+
+const shouldSubmitOnCreate = (data: RequisitionInterface): boolean => {
+  const hasExplicitSubmitFlag = parseBooleanLike(
+    (data as any).submit_for_approval ??
+      (data as any).submitForApproval ??
+      (data as any).auto_submit ??
+      (data as any).autoSubmit,
+  );
+
+  const hasSubmittedStatus =
+    data.approval_status !== undefined &&
+    data.approval_status !== RequestApprovalStatus.Draft;
+
+  return hasExplicitSubmitFlag || hasSubmittedStatus;
+};
+
 const notifyRequisitionCommentParticipants = async (args: {
   requisitionId: number;
   actorUserId: number;
@@ -807,13 +877,14 @@ export const createRequisition = async (
 
   const actorUserId = getAuthenticatedUserId(user);
   const requestId = await generateRequestId();
-  const shouldSubmit = Boolean(data.user_sign?.trim());
+  const shouldSubmit = shouldSubmitOnCreate(data);
+  const normalizedEventId = normalizeCreateEventId((data as any).event_id);
   const requestCreateData: Prisma.requestUncheckedCreateInput = {
     request_id: requestId,
     user_sign: data.user_sign,
     user_id: actorUserId,
     department_id: data.department_id,
-    event_id: data.event_id ?? null,
+    event_id: normalizedEventId,
     requisition_date: new Date(data.request_date as string),
     request_approval_status: RequestApprovalStatus.Draft,
     currency: data.currency,
@@ -912,6 +983,7 @@ export const updateRequisition = async (
   const updateInput: Partial<RequisitionInterface> = { ...data };
   // Requester identity is immutable after creation.
   delete (updateInput as any).user_id;
+  updateInput.event_id = normalizeUpdateEventId(updateInput);
 
   const [
     findRequest,
@@ -1295,6 +1367,7 @@ export const submitRequisition = async (requisitionId: unknown, user: any) => {
         user_id: true,
         department_id: true,
         user_sign: true,
+        request_approval_status: true,
       },
     });
 
@@ -1306,6 +1379,11 @@ export const submitRequisition = async (requisitionId: unknown, user: any) => {
       throw new UnauthorizedError("Only the requester can submit this requisition");
     }
 
+    // Idempotent submit: once submitted/processed, a repeated submit should be a no-op.
+    if (requisition.request_approval_status !== RequestApprovalStatus.Draft) {
+      return;
+    }
+
     try {
       await buildRequisitionApprovalSnapshotTx(tx, {
         requestId: requisition.id,
@@ -1313,6 +1391,16 @@ export const submitRequisition = async (requisitionId: unknown, user: any) => {
         fallbackDepartmentId: requisition.department_id,
       });
     } catch (error) {
+      if (isApprovalChainAlreadyExistsError(error)) {
+        await tx.request.update({
+          where: { id: requisition.id },
+          data: {
+            request_approval_status: RequestApprovalStatus.Awaiting_HOD_Approval,
+          },
+        });
+        return;
+      }
+
       if (!isMissingWorkflowTablesError(error)) {
         throw error;
       }
@@ -1404,6 +1492,13 @@ export const getRequisition = async (id: any, user: any) => {
           name: true,
           unitPrice: true,
           quantity: true,
+          image_url: true,
+        },
+      },
+      request_approvals: {
+        select: {
+          hod_sign: true,
+          ps_sign: true,
         },
       },
       department: { select: { id: true, name: true } },

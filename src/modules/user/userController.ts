@@ -106,8 +106,8 @@ const isFamilyRelationValidationError = (errorMessage?: string) => {
 
 export const landingPage = async (req: Request, res: Response) => {
   res.send(
-    // `<h1>Welcome to World Wide Word Ministries Backend Server🔥🎉💒</h1>`
-    `<h1>Welcome to World Wide Word Ministries Backend Server🔥🎉🙏💒...</h1>`,
+    // `<h1>Welcome to Worldwide Word Ministries Backend Server🔥🎉💒</h1>`
+    `<h1>Welcome to Worldwide Word Ministries Backend Server🔥🎉🙏💒...</h1>`,
   );
 };
 
@@ -898,6 +898,7 @@ export const login = async (req: Request, res: Response) => {
       },
       select: {
         id: true,
+        member_id: true,
         email: true,
         name: true,
         password: true,
@@ -906,8 +907,21 @@ export const login = async (req: Request, res: Response) => {
         access_level_id: true,
         membership_type: true,
         department_positions: {
-          include: {
-            department: true,
+          select: {
+            department_id: true,
+            position_id: true,
+            department: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+            position: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
           },
         },
         user_info: {
@@ -944,9 +958,22 @@ export const login = async (req: Request, res: Response) => {
         .json({ message: "Invalid Credentials", data: null });
     }
 
-    const department: string[] = existance.department_positions.map(
-      (dept: any) => dept.department?.name,
-    ).filter(Boolean);
+    const department_positions = (existance.department_positions || []).map(
+      (deptPos: any) => ({
+        department_id: deptPos?.department?.id ?? deptPos?.department_id ?? null,
+        department_name: deptPos?.department?.name ?? null,
+        position_id: deptPos?.position?.id ?? deptPos?.position_id ?? null,
+        position_name: deptPos?.position?.name ?? null,
+      }),
+    );
+
+    const department: string[] = Array.from(
+      new Set(
+        department_positions
+          .map((deptPos: any) => deptPos.department_name)
+          .filter((name: string | null): name is string => Boolean(name)),
+      ),
+    );
 
     const ministry_worker = Boolean(existance.is_user);
     const user_category =
@@ -967,6 +994,7 @@ export const login = async (req: Request, res: Response) => {
       const token = JWT.sign(
         {
           id: existance.id,
+          member_id: existance.member_id || null,
           name: existance.name,
           email: existance.email,
           ministry_worker: ministry_worker,
@@ -975,6 +1003,7 @@ export const login = async (req: Request, res: Response) => {
           profile_img: existance.user_info?.photo,
           membership_type: existance.membership_type || null,
           department,
+          department_positions,
           life_center_leader,
           instructor,
           phone: existance.user_info?.primary_number || null,

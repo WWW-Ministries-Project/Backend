@@ -1448,6 +1448,7 @@ const buildFinalDecisionEmailTemplate = (args: {
   decision: "APPROVED" | "REJECTED";
   requisitionReference: string;
   requesterName: string;
+  departmentName: string;
   actorName: string;
   actionUrl: string;
 }) => {
@@ -1462,6 +1463,9 @@ const buildFinalDecisionEmailTemplate = (args: {
                       </p>
                       <p style="margin: 0 0 10px 0; font-size: 15px; line-height: 1.7; color: #4b5563;">
                         <strong style="color: #080d2d;">Requester:</strong> ${escapeEmailHtml(args.requesterName)}
+                      </p>
+                      <p style="margin: 0 0 10px 0; font-size: 15px; line-height: 1.7; color: #4b5563;">
+                        <strong style="color: #080d2d;">Department:</strong> ${escapeEmailHtml(args.departmentName)}
                       </p>
                       <p style="margin: 0 0 10px 0; font-size: 15px; line-height: 1.7; color: #4b5563;">
                         <strong style="color: #080d2d;">Final Approver:</strong> ${escapeEmailHtml(args.actorName)}
@@ -1488,6 +1492,7 @@ const buildFinalDecisionEmailTemplate = (args: {
 const buildNextApproverEmailTemplate = (args: {
   requisitionReference: string;
   requesterName: string;
+  departmentName: string;
   actorName: string;
   actionUrl: string;
   submittedDirectlyByRequester: boolean;
@@ -1503,6 +1508,9 @@ const buildNextApproverEmailTemplate = (args: {
                       </p>
                       <p style="margin: 0 0 24px 0; font-size: 15px; line-height: 1.7; color: #4b5563;">
                         <strong style="color: #080d2d;">Requester:</strong> ${escapeEmailHtml(args.requesterName)}
+                      </p>
+                      <p style="margin: 0 0 24px 0; font-size: 15px; line-height: 1.7; color: #4b5563;">
+                        <strong style="color: #080d2d;">Department:</strong> ${escapeEmailHtml(args.departmentName)}
                       </p>`;
 
   return buildUnifiedEmailTemplate({
@@ -1524,6 +1532,7 @@ const buildNotificationEmail = (args: {
   decision: "APPROVED" | "REJECTED" | null;
   requisitionReference: string;
   requesterName: string;
+  departmentName: string;
   actorName: string;
   actionUrl: string;
 }): { subject: string; html: string } => {
@@ -1538,6 +1547,7 @@ const buildNotificationEmail = (args: {
         decision,
         requisitionReference: args.requisitionReference,
         requesterName: args.requesterName,
+        departmentName: args.departmentName,
         actorName: args.actorName,
         actionUrl: args.actionUrl,
       }),
@@ -1552,6 +1562,7 @@ const buildNotificationEmail = (args: {
     html: buildNextApproverEmailTemplate({
       requisitionReference: args.requisitionReference,
       requesterName: args.requesterName,
+      departmentName: args.departmentName,
       actorName: args.actorName,
       actionUrl: args.actionUrl,
       submittedDirectlyByRequester: args.eventType === SUBMITTED_EVENT,
@@ -1702,6 +1713,11 @@ export const processPendingRequisitionNotificationEvents = async (args?: {
                   name: true,
                 },
               },
+              department: {
+                select: {
+                  name: true,
+                },
+              },
             },
           }),
           actorUserPromise,
@@ -1760,6 +1776,7 @@ export const processPendingRequisitionNotificationEvents = async (args?: {
         const requisitionReference =
           requisition.request_id || `#${requisition.id}`;
         const requesterName = requisition.user?.name || "Requester";
+        const departmentName = requisition.department?.name || "Not specified";
         const requisitionActionUrl = buildRequisitionActionUrl(requisition.id);
         const emailActionUrl = toAbsoluteActionUrl(requisitionActionUrl);
 
@@ -1823,6 +1840,7 @@ export const processPendingRequisitionNotificationEvents = async (args?: {
           decision,
           requisitionReference,
           requesterName,
+          departmentName,
           actorName,
           actionUrl: emailActionUrl,
         });

@@ -1,5 +1,10 @@
-import { progress_status } from "@prisma/client";
+import { Prisma, progress_status } from "@prisma/client";
 import { prisma } from "../../Models/context";
+import {
+  InputValidationError,
+  NotFoundError,
+  ResourceDuplicationError,
+} from "../../utils/custom-error-handlers";
 import { certificateTemplate } from "../../utils/mail_templates/certificateTemplate";
 import { sendEmail } from "../../utils";
 
@@ -8,7 +13,7 @@ export class EnrollmentService {
     // Step 1: Validate inputs
     const { course_id, user_id } = payload;
     if (!course_id || !user_id || course_id <= 0 || user_id <= 0) {
-      throw new Error("Invalid course_id or user_id.");
+      throw new InputValidationError("Please provide a valid user and course");
     }
 
     // Step 2: Fetch course details
@@ -28,11 +33,7 @@ export class EnrollmentService {
     });
 
     if (!course) {
-      throw new Error(`Course with ID ${course_id} not found.`);
-    }
-
-    if (course.enrolled >= course.capacity) {
-      throw new Error(`Course with ID ${course_id} is full.`);
+      throw new NotFoundError("The selected course was not found");
     }
 
     // Step 3: Verify user exists
@@ -40,18 +41,30 @@ export class EnrollmentService {
       where: { id: user_id },
     });
     if (!user) {
-      throw new Error(`User with ID ${user_id} not found.`);
+      throw new NotFoundError("The selected user was not found");
     }
 
-    // Step 4: Check for existing enrollment
-    const existingEnrollment = await prisma.enrollment.findUnique({
+    // Step 4: Ensure the user is not already enrolled in this program
+    const existingEnrollmentInProgram = await prisma.enrollment.findFirst({
       where: {
-        user_id_course_id: { user_id, course_id },
+        user_id,
+        course: {
+          cohort: {
+            programId: course.cohort.programId,
+          },
+        },
       },
+      select: { id: true },
     });
-    if (existingEnrollment) {
-      throw new Error(
-        `User ${user_id} is already enrolled in course ${course_id}.`,
+    if (existingEnrollmentInProgram) {
+      throw new ResourceDuplicationError(
+        "The user has already enrolled in this program",
+      );
+    }
+
+    if (course.enrolled >= course.capacity) {
+      throw new ResourceDuplicationError(
+        "This course is full. Please choose a different course",
       );
     }
 
@@ -92,28 +105,42 @@ export class EnrollmentService {
       });
 
     if (incompletePrereqs.length > 0) {
-      throw new Error(
-        `User must complete prerequisite programs: ${incompletePrereqs
+      throw new InputValidationError(
+        `Please complete these programs first: ${incompletePrereqs
           .map((p) => p.title)
           .join(", ")}`,
       );
     }
 
     // Step 6: Create enrollment and update course enrollment count
-    const [enrollment, _courseUpdate] = await prisma.$transaction([
-      prisma.enrollment.create({
-        data: {
-          user_id,
-          course_id,
-          enrolledAt: new Date(),
-        },
-        select: { id: true },
-      }),
-      prisma.course.update({
-        where: { id: course_id },
-        data: { enrolled: { increment: 1 } },
-      }),
-    ]);
+    let enrollment: { id: number };
+    try {
+      const [createdEnrollment] = await prisma.$transaction([
+        prisma.enrollment.create({
+          data: {
+            user_id,
+            course_id,
+            enrolledAt: new Date(),
+          },
+          select: { id: true },
+        }),
+        prisma.course.update({
+          where: { id: course_id },
+          data: { enrolled: { increment: 1 } },
+        }),
+      ]);
+      enrollment = createdEnrollment;
+    } catch (error: any) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002"
+      ) {
+        throw new ResourceDuplicationError(
+          "The user has already enrolled in this program",
+        );
+      }
+      throw error;
+    }
 
     // Step 7: Create progress records for topics in the program
     const topics = await prisma.topic.findMany({

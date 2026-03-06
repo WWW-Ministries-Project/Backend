@@ -552,9 +552,14 @@ export class Permissions {
     if (!context) return;
 
     const targetUserId = this.getTargetUserId(req);
-    const isSingleProfileRoute = String((req as any).originalUrl || req.path || "")
-      .toLowerCase()
-      .includes("get-user");
+    const routeKey = String(
+      (req as any).originalUrl || req.path || (req as any).route?.path || "",
+    ).toLowerCase();
+    const canViewOwnMemberDetails = [
+      "/get-user",
+      "/get-user-family",
+      "/get-user-email",
+    ].some((routeFragment) => routeKey.includes(routeFragment));
     const canViewAll =
       context.isPrivilegedUser &&
       hasActionPermission(context.permissions, "Members", "view");
@@ -575,9 +580,12 @@ export class Permissions {
       return next();
     }
 
-    const resolvedTargetUserId =
-      targetUserId || (isSingleProfileRoute ? context.userId : null);
-    if (!resolvedTargetUserId || resolvedTargetUserId !== context.userId) {
+    if (!canViewOwnMemberDetails) {
+      return this.unauthorized(res, errorMessage);
+    }
+
+    const resolvedTargetUserId = targetUserId || context.userId;
+    if (resolvedTargetUserId !== context.userId) {
       return this.unauthorized(res, errorMessage);
     }
 
