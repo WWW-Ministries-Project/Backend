@@ -1,4 +1,5 @@
 import cron from "node-cron";
+import { prisma } from "../Models/context";
 import { OrderService } from "../modules/orders/orderService";
 import { notificationService } from "../modules/notifications/notificationService";
 
@@ -14,6 +15,21 @@ export async function reconcilePendingHubtelPaymentsJob() {
   const hasHubtelConfig =
     Boolean(process.env.HUBTEL_POS_ID) && Boolean(process.env.HUBTEL_AUTH);
   if (!hasHubtelConfig) {
+    return;
+  }
+
+  const now = new Date();
+  const activeMarketsCount = await prisma.markets.count({
+    where: {
+      deleted: false,
+      OR: [
+        { start_date: null, end_date: null },
+        { start_date: { lte: now }, end_date: { gte: now } },
+        { start_date: { lte: now }, end_date: null },
+      ],
+    },
+  });
+  if (activeMarketsCount === 0) {
     return;
   }
 
@@ -39,6 +55,6 @@ export async function reconcilePendingHubtelPaymentsJob() {
   }
 }
 
-cron.schedule("*/10 * * * *", async () => {
+cron.schedule("0 0 * * *", async () => {
   await reconcilePendingHubtelPaymentsJob();
 });
