@@ -1,5 +1,7 @@
 import { Request, Response } from "express";
+import { Prisma } from "@prisma/client";
 import { EnrollmentService } from "./enrolmentService";
+import { AppError } from "../../utils/custom-error-handlers";
 
 const enrollment = new EnrollmentService();
 
@@ -36,13 +38,26 @@ export class EnrollmentController {
       // Validate required fields
       if (!user_id || !course_id) {
         return res.status(400).json({
-          message: "Missing required fields user_id,course_id",
+          message: "Please provide both user and course",
+        });
+      }
+
+      const parsedUserId = Number(user_id);
+      const parsedCourseId = Number(course_id);
+      if (
+        !Number.isInteger(parsedUserId) ||
+        parsedUserId <= 0 ||
+        !Number.isInteger(parsedCourseId) ||
+        parsedCourseId <= 0
+      ) {
+        return res.status(400).json({
+          message: "Please provide a valid user and course",
         });
       }
 
       const newEnrollment = await enrollment.enrollUser({
-        course_id: parseInt(course_id as string),
-        user_id: parseInt(user_id as string),
+        course_id: parsedCourseId,
+        user_id: parsedUserId,
       });
 
       return res.status(201).json({
@@ -50,9 +65,27 @@ export class EnrollmentController {
         data: newEnrollment,
       });
     } catch (error: any) {
+      if (error instanceof AppError) {
+        return res.status(error.statusCode).json({
+          message: error.message,
+          error: error.message,
+        });
+      }
+
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002"
+      ) {
+        const message = "The user has already enrolled in this program";
+        return res.status(409).json({
+          message,
+          error: message,
+        });
+      }
+
       return res.status(500).json({
-        message: "Error enrolling user",
-        error: error.message,
+        message: "We could not enroll this user right now. Please try again.",
+        error: "We could not enroll this user right now. Please try again.",
       });
     }
   }

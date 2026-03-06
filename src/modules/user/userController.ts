@@ -106,8 +106,8 @@ const isFamilyRelationValidationError = (errorMessage?: string) => {
 
 export const landingPage = async (req: Request, res: Response) => {
   res.send(
-    // `<h1>Welcome to World Wide Word Ministries Backend Server🔥🎉💒</h1>`
-    `<h1>Welcome to World Wide Word Ministries Backend Server🔥🎉🙏💒...</h1>`,
+    // `<h1>Welcome to Worldwide Word Ministries Backend Server🔥🎉💒</h1>`
+    `<h1>Welcome to Worldwide Word Ministries Backend Server🔥🎉🙏💒...</h1>`,
   );
 };
 
