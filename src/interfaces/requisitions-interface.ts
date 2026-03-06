@@ -33,6 +33,10 @@ export interface RequisitionInterface {
   hod_sign?: string;
   ps_sign?: string;
   fnc_sign?: string;
+  submit_for_approval?: boolean;
+  submitForApproval?: boolean;
+  auto_submit?: boolean;
+  autoSubmit?: boolean;
 }
 
 export interface RequestApprovals {

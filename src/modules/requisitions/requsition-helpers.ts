@@ -161,6 +161,16 @@ export const updateRequestReturnValue = (
     approvalInstances.find((instance: any) => instance.status === "PENDING") || null;
   const selectedApproverInstance =
     latestActedInstance || currentPendingInstance || approvalInstances[0] || null;
+  const selectedApproverStepOrder =
+    typeof selectedApproverInstance?.step_order === "number"
+      ? selectedApproverInstance.step_order
+      : null;
+  const approverSign =
+    selectedApproverStepOrder === 1
+      ? updatedRequest.request_approvals?.hod_sign || null
+      : selectedApproverStepOrder === 2
+        ? updatedRequest.request_approvals?.ps_sign || null
+        : null;
   const updatedByName = editMetadata?.updated_by_name || null;
   const updatedAt = editMetadata?.updated_at || null;
 
@@ -183,6 +193,9 @@ export const updateRequestReturnValue = (
       selectedApproverInstance?.acted_by_name ||
       selectedApproverInstance?.approver_name ||
       null,
+    approver_sign: approverSign,
+    hod_sign: updatedRequest.request_approvals?.hod_sign || null,
+    ps_sign: updatedRequest.request_approvals?.ps_sign || null,
     user_id: updatedRequest.user_id ?? null,
     user_sign: updatedRequest.user_sign || null,
     comment:
