@@ -157,6 +157,9 @@ const getPushPrivateKeyFromEnv = (): string =>
     "NOTIFICATIONS_VAPID_PRIVATE_KEY",
   ]);
 
+const isPushConfigured = (): boolean =>
+  Boolean(getPushPublicKeyFromEnv() && getPushPrivateKeyFromEnv());
+
 const getVapidSubjectFromEnv = (): string =>
   readEnv([
     "WEB_PUSH_VAPID_SUBJECT",
@@ -826,6 +829,7 @@ const getPublicKeyResponse = (): {
   vapidPublicKey: string;
   vapid_public_key: string;
   key: string;
+  pushEnabled: boolean;
 } => {
   const publicKey = getPushPublicKeyFromEnv();
   if (!publicKey) {
@@ -838,6 +842,7 @@ const getPublicKeyResponse = (): {
     vapidPublicKey: publicKey,
     vapid_public_key: publicKey,
     key: publicKey,
+    pushEnabled: true,
   };
 };
 
@@ -1154,6 +1159,7 @@ const processPendingPushDeliveryJobs = async (args?: {
 };
 
 export const notificationPushService = {
+  isPushConfigured,
   getPublicKeyResponse,
   subscribe,
   unsubscribe,

@@ -8,8 +8,30 @@
 - `PATCH /notifications/read-all`
 - `GET /notifications/stream-token` (short-lived token for native SSE)
 - `GET /notifications/stream` (SSE)
+- `GET /notifications/push/public-key`
+- `POST /notifications/push/subscribe`
+- `POST /notifications/push/unsubscribe`
 
 All routes require `Authorization: Bearer <token>`.
+
+## Push Notification Bootstrap (Important)
+
+Use this flow:
+1. Call `GET /notifications/push/public-key`.
+2. If response is `200`, continue with browser subscription + `POST /notifications/push/subscribe`.
+3. If response is `503`, do not treat as fatal auth/session error. Skip push setup and continue app bootstrap (SSE + in-app list/unread APIs remain available).
+
+`503` payload shape:
+
+```json
+{
+  "message": "Web push is not configured for this environment.",
+  "data": {
+    "pushEnabled": false,
+    "publicKey": null
+  }
+}
+```
 
 ## Standard Response Payload
 

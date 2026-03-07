@@ -125,6 +125,7 @@ Frontend should pre-validate type/size before upload.
 - `400`: show validation/actionable form errors.
 - `404`: show not-found state.
 - `429`: show cooldown using `Retry-After`.
+- `503` on `GET /notifications/push/public-key`: push is disabled/misconfigured in current environment; continue login/bootstrap without push subscription.
 - `5xx`: show retryable generic failure message.
 
 ## 10. CORS and Request Size Constraints
