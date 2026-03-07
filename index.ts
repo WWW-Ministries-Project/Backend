@@ -1,3 +1,4 @@
+import "express-async-errors";
 import express from "express";
 import bodyParser from "body-parser";
 import * as dotenv from "dotenv";
@@ -7,6 +8,10 @@ import logger from "./src/utils/logger-config";
 import client from "prom-client";
 import { logRequests } from "./src/middleWare/requestLogger";
 import { responseMessageEnhancer } from "./src/middleWare/responseMessageEnhancer";
+import {
+  globalErrorHandler,
+  notFoundHandler,
+} from "./src/middleWare/errorHandler";
 import "./src/cron-jobs/hubtelPaymentReconciliationCron";
 import "./src/cron-jobs/requisitionNotificationCron";
 import "./src/cron-jobs/followUpNotificationCron";
@@ -45,6 +50,9 @@ app.get("/metrics", async (req, res) => {
   res.set("Content-Type", client.register.contentType);
   res.end(await client.register.metrics());
 });
+
+app.use(notFoundHandler);
+app.use(globalErrorHandler);
 
 app.listen(port, () => {
   logger.info(`Server running on port ${port}`);

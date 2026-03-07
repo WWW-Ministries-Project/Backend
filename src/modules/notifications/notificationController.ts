@@ -71,6 +71,20 @@ export class NotificationController {
   }
 
   async getPushPublicKey(req: Request, res: Response) {
+    if (!notificationPushService.isPushConfigured()) {
+      return res.status(503).json({
+        message: "Web push is not configured for this environment.",
+        data: {
+          pushEnabled: false,
+          publicKey: null,
+          public_key: null,
+          vapidPublicKey: null,
+          vapid_public_key: null,
+          key: null,
+        },
+      });
+    }
+
     const data = notificationPushService.getPublicKeyResponse();
 
     res.status(200).json({
