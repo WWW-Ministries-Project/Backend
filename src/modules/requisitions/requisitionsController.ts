@@ -11,6 +11,7 @@ import {
   deleteRequisition,
   getmyRequisition,
   getStaffRequisition,
+  getPreApprovalSimilarItems,
 } from "./requisition-service";
 import {
   RequisitionApprovalActionPayload,
@@ -97,6 +98,20 @@ export const requisitionApprovalActionHandler = async (
   const user = (req as any).user;
 
   const response = await actionRequisitionApproval(payload, user);
+  res.status(200).json({
+    message: "Operation successful",
+    data: response,
+  });
+};
+
+export const preApprovalSimilarItemsHandler = async (
+  req: Request,
+  res: Response,
+) => {
+  const requisitionId = req.query?.requisition_id;
+  const days = req.query?.days;
+
+  const response = await getPreApprovalSimilarItems(requisitionId, days);
   res.status(200).json({
     message: "Operation successful",
     data: response,

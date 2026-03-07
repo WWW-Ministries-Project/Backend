@@ -27,6 +27,7 @@ type RequisitionApprovalConfigResponse = {
   module: RequisitionApprovalModule;
   requester_user_ids: number[];
   notification_user_ids: number[];
+  similar_item_lookback_days: number;
   approvers: Array<{
     order: number;
     type: RequisitionApproverType;
@@ -47,6 +48,7 @@ type NormalizedConfigPayload = {
   module: RequisitionApprovalModule;
   requesterUserIds: number[];
   notificationUserIds: number[];
+  similarItemLookbackDays: number;
   approvers: NormalizedApproverStep[];
   isActive: boolean;
 };
@@ -76,6 +78,7 @@ type ApprovalWorkflowTx = Prisma.TransactionClient;
 const REQUISITION_MODULE = RequisitionApprovalModule.REQUISITION;
 const REQUISITION_PERMISSION_KEYS = ["Requisition", "Requisitions"];
 const REQUISITION_MANAGE_PERMISSION_VALUES = ["Can_Manage", "Super_Admin"];
+const DEFAULT_SIMILAR_ITEM_LOOKBACK_DAYS = 30;
 const MAX_NOTIFICATION_RECIPIENTS = 50;
 const NOTIFICATION_EVENT_RETRY_LIMIT = 5;
 const NOTIFICATION_EVENT_BATCH_SIZE = 5;
@@ -219,6 +222,7 @@ const ensureRequisitionApprovalWorkflowTables = async (): Promise<void> => {
         \`id\` INTEGER NOT NULL AUTO_INCREMENT,
         \`module\` ENUM('REQUISITION') NOT NULL,
         \`is_active\` BOOLEAN NOT NULL DEFAULT true,
+        \`similar_item_lookback_days\` INTEGER NOT NULL DEFAULT ${DEFAULT_SIMILAR_ITEM_LOOKBACK_DAYS},
         \`created_by\` INTEGER NULL,
         \`updated_by\` INTEGER NULL,
         \`created_at\` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
@@ -316,6 +320,13 @@ const ensureRequisitionApprovalWorkflowTables = async (): Promise<void> => {
     `);
 
     // Best-effort FK wiring for environments where migrations were skipped.
+    try {
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE \`requisition_approval_configs\`
+        ADD COLUMN \`similar_item_lookback_days\` INTEGER NOT NULL DEFAULT ${DEFAULT_SIMILAR_ITEM_LOOKBACK_DAYS};
+      `);
+    } catch (error) {}
+
     try {
       await prisma.$executeRawUnsafe(`
         ALTER TABLE \`requisition_approval_config_requesters\`
@@ -448,6 +459,21 @@ const parseNotificationUserIds = (value: unknown): number[] => {
   return uniqueSortedIds;
 };
 
+const parseSimilarItemLookbackDays = (value: unknown): number => {
+  if (value === undefined || value === null || value === "") {
+    return DEFAULT_SIMILAR_ITEM_LOOKBACK_DAYS;
+  }
+
+  const parsed = toPositiveInt(value);
+  if (!parsed) {
+    throw new InputValidationError(
+      "similar_item_lookback_days must be a positive integer when provided",
+    );
+  }
+
+  return parsed;
+};
+
 const parseApprovers = (value: unknown): NormalizedApproverStep[] => {
   if (!Array.isArray(value) || !value.length) {
     throw new InputValidationError("approvers must be a non-empty array");
@@ -578,6 +604,9 @@ const normalizeConfigPayload = (
   const notificationUserIds = parseNotificationUserIds(
     payload.notification_user_ids,
   );
+  const similarItemLookbackDays = parseSimilarItemLookbackDays(
+    payload.similar_item_lookback_days,
+  );
   const approvers = parseApprovers(payload.approvers);
 
   let isActive = true;
@@ -593,6 +622,7 @@ const normalizeConfigPayload = (
     module,
     requesterUserIds,
     notificationUserIds,
+    similarItemLookbackDays,
     approvers,
     isActive,
   };
@@ -681,6 +711,7 @@ const verifyConfigReferences = async (
 const mapConfigResponse = (config: {
   module: RequisitionApprovalModule;
   is_active: boolean;
+  similar_item_lookback_days: number;
   requesters: Array<{ user_id: number }>;
   notifications?: Array<{ user_id: number }>;
   steps: Array<{
@@ -698,6 +729,9 @@ const mapConfigResponse = (config: {
     ...configuredRequesterIds,
     ...(config.effectiveRequesterUserIds || []),
   ]);
+  const similarItemLookbackDays =
+    toPositiveInt(config.similar_item_lookback_days) ||
+    DEFAULT_SIMILAR_ITEM_LOOKBACK_DAYS;
 
   return {
     module: config.module,
@@ -705,6 +739,7 @@ const mapConfigResponse = (config: {
     notification_user_ids: (config.notifications || []).map(
       (notification) => notification.user_id,
     ),
+    similar_item_lookback_days: similarItemLookbackDays,
     approvers: config.steps.map((step) => ({
       order: step.step_order,
       type: step.step_type,
@@ -1010,11 +1045,13 @@ export const upsertRequisitionApprovalConfig = async (
         },
         update: {
           is_active: normalizedPayload.isActive,
+          similar_item_lookback_days: normalizedPayload.similarItemLookbackDays,
           updated_by: actorUserId,
         },
         create: {
           module: normalizedPayload.module,
           is_active: normalizedPayload.isActive,
+          similar_item_lookback_days: normalizedPayload.similarItemLookbackDays,
           created_by: actorUserId,
           updated_by: actorUserId,
         },

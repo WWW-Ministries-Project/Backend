@@ -3,6 +3,7 @@ import fs from "fs/promises";
 import path from "path";
 import { prisma } from "../../Models/context";
 import {
+  RequisitionPreApprovalSimilarItemsResponse,
   RequisitionApprovalActionPayload,
   RequisitionApprovalConfigPayload,
   RequisitionInterface,
@@ -35,6 +36,7 @@ import {
 import { notificationService } from "../notifications/notificationService";
 
 const UPLOADS_DIR = path.resolve(process.cwd(), "uploads");
+const DEFAULT_SIMILAR_ITEM_LOOKBACK_DAYS = 30;
 
 const encodeRequisitionIdForRoute = (requisitionId: number): string =>
   Buffer.from(String(requisitionId), "utf8").toString("base64");
@@ -443,6 +445,30 @@ const parseBooleanLike = (value: unknown): boolean => {
   if (typeof value !== "string") return false;
 
   return ["1", "true", "yes", "y", "on"].includes(value.trim().toLowerCase());
+};
+
+const normalizeItemName = (value: unknown): string => {
+  if (typeof value !== "string") {
+    return "";
+  }
+
+  return value.trim().toLowerCase();
+};
+
+const parseOptionalPositiveInteger = (
+  value: unknown,
+  fieldName: string,
+): number | null => {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new InputValidationError(`${fieldName} must be a positive integer`);
+  }
+
+  return parsed;
 };
 
 const normalizeOptionalEventIdValue = (
@@ -1344,6 +1370,163 @@ export const saveRequisitionApprovalConfig = async (
 
 export const fetchRequisitionApprovalConfig = async () => {
   return getRequisitionApprovalConfig();
+};
+
+const resolveSimilarItemLookbackDays = async (
+  requestedDays: unknown,
+): Promise<number> => {
+  const explicitDays = parseOptionalPositiveInteger(
+    requestedDays,
+    "days",
+  );
+  if (explicitDays) {
+    return explicitDays;
+  }
+
+  try {
+    const config = await getRequisitionApprovalConfig();
+    const configuredDays = Number(config?.similar_item_lookback_days);
+    if (Number.isInteger(configuredDays) && configuredDays > 0) {
+      return configuredDays;
+    }
+  } catch (error) {
+    if (!isMissingWorkflowTablesError(error)) {
+      throw error;
+    }
+  }
+
+  return DEFAULT_SIMILAR_ITEM_LOOKBACK_DAYS;
+};
+
+type SimilarItemMatchRow = {
+  item_name: string;
+  image_url: string | null;
+  quantity: number;
+  requisition_id: number;
+  generated_id: string;
+  request_date: Date;
+  requester_name: string | null;
+  status: RequestApprovalStatus;
+};
+
+export const getPreApprovalSimilarItems = async (
+  requisitionId: unknown,
+  days?: unknown,
+): Promise<RequisitionPreApprovalSimilarItemsResponse> => {
+  const parsedRequisitionId = Number(requisitionId);
+  if (!Number.isInteger(parsedRequisitionId) || parsedRequisitionId <= 0) {
+    throw new InputValidationError("requisition_id must be a positive integer");
+  }
+
+  const lookbackDays = await resolveSimilarItemLookbackDays(days);
+  const lookbackStartDate = new Date(
+    Date.now() - lookbackDays * 24 * 60 * 60 * 1000,
+  );
+
+  const requisition = await prisma.request.findUnique({
+    where: {
+      id: parsedRequisitionId,
+    },
+    select: {
+      id: true,
+      products: {
+        select: {
+          name: true,
+          image_url: true,
+        },
+      },
+    },
+  });
+
+  if (!requisition) {
+    throw new NotFoundError("Requisition not found");
+  }
+
+  const groupedItems = new Map<
+    string,
+    {
+      current_item_name: string;
+      current_item_image_url: string | null;
+      matches: RequisitionPreApprovalSimilarItemsResponse["matched_items"][number]["matches"];
+    }
+  >();
+
+  for (const item of requisition.products) {
+    const normalizedName = normalizeItemName(item.name);
+    if (!normalizedName) {
+      continue;
+    }
+
+    if (!groupedItems.has(normalizedName)) {
+      groupedItems.set(normalizedName, {
+        current_item_name: item.name.trim() || item.name,
+        current_item_image_url: item.image_url || null,
+        matches: [],
+      });
+      continue;
+    }
+
+    const existingGroup = groupedItems.get(normalizedName);
+    if (existingGroup && !existingGroup.current_item_image_url && item.image_url) {
+      existingGroup.current_item_image_url = item.image_url;
+    }
+  }
+
+  const normalizedCurrentItemNames = Array.from(groupedItems.keys());
+  if (!normalizedCurrentItemNames.length) {
+    return {
+      lookback_days_used: lookbackDays,
+      matched_items: [],
+    };
+  }
+
+  const matchRows = await prisma.$queryRaw<SimilarItemMatchRow[]>(Prisma.sql`
+    SELECT
+      ri.name AS item_name,
+      ri.image_url AS image_url,
+      ri.quantity AS quantity,
+      r.id AS requisition_id,
+      r.request_id AS generated_id,
+      r.requisition_date AS request_date,
+      requester.name AS requester_name,
+      r.request_approval_status AS status
+    FROM \`requested_product_item\` ri
+    INNER JOIN \`request\` r
+      ON r.id = ri.request_id
+    LEFT JOIN \`user\` requester
+      ON requester.id = r.user_id
+    WHERE
+      (
+        r.requisition_date >= ${lookbackStartDate}
+        OR r.id = ${parsedRequisitionId}
+      )
+      AND LOWER(TRIM(ri.name)) IN (${Prisma.join(normalizedCurrentItemNames)})
+    ORDER BY r.requisition_date DESC, r.id DESC, ri.id DESC
+  `);
+
+  for (const row of matchRows) {
+    const normalizedName = normalizeItemName(row.item_name);
+    const group = groupedItems.get(normalizedName);
+    if (!group) {
+      continue;
+    }
+
+    group.matches.push({
+      item_name: row.item_name,
+      image_url: row.image_url || null,
+      requisition_id: Number(row.requisition_id),
+      generated_id: row.generated_id,
+      request_date: new Date(row.request_date),
+      requester_name: row.requester_name || null,
+      status: row.status,
+      quantity: Number(row.quantity),
+    });
+  }
+
+  return {
+    lookback_days_used: lookbackDays,
+    matched_items: Array.from(groupedItems.values()),
+  };
 };
 
 export const submitRequisition = async (requisitionId: unknown, user: any) => {
