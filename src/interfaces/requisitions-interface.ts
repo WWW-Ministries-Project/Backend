@@ -72,6 +72,7 @@ export interface RequisitionApprovalConfigPayload {
   requester_user_ids: number[];
   approvers: RequisitionApprovalConfigApprover[];
   notification_user_ids?: number[];
+  similar_item_lookback_days?: number;
   is_active?: boolean;
 }
 
@@ -79,4 +80,26 @@ export interface RequisitionApprovalActionPayload {
   requisition_id: number;
   action: "APPROVE" | "REJECT";
   comment?: string;
+}
+
+export interface RequisitionSimilarItemMatch {
+  item_name: string;
+  image_url: string | null;
+  requisition_id: number;
+  generated_id: string;
+  request_date: Date;
+  requester_name: string | null;
+  status: RequestApprovalStatus;
+  quantity: number;
+}
+
+export interface RequisitionSimilarItemGroup {
+  current_item_name: string;
+  current_item_image_url: string | null;
+  matches: RequisitionSimilarItemMatch[];
+}
+
+export interface RequisitionPreApprovalSimilarItemsResponse {
+  lookback_days_used: number;
+  matched_items: RequisitionSimilarItemGroup[];
 }

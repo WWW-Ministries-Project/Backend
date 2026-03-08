@@ -8,6 +8,7 @@ import {
   listRequisitionHandler,
   getRequisitionHandler,
   requisitionApprovalActionHandler,
+  preApprovalSimilarItemsHandler,
   submitRequisitionHandler,
   updateRequisitionHandler,
   deleteRequisitionHandler,
@@ -30,6 +31,7 @@ const requisitionControllers = {
   listRequisitionHandler,
   getRequisitionHandler,
   requisitionApprovalActionHandler,
+  preApprovalSimilarItemsHandler,
   submitRequisitionHandler,
   updateRequisitionHandler,
   deleteRequisitionHandler,
@@ -67,6 +69,11 @@ requisitionRouter.post(
   "/approval-action",
   [permissions.protect, permissions.can_manage_requisitions],
   wrappedControllers.requisitionApprovalActionHandler,
+);
+requisitionRouter.get(
+  "/pre-approval-similar-items",
+  [permissions.protect, permissions.can_manage_requisitions],
+  wrappedControllers.preApprovalSimilarItemsHandler,
 );
 requisitionRouter.get(
   "/list-requisition",

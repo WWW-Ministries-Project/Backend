@@ -424,6 +424,7 @@ model requisition_approval_configs {
   id         Int                                      @id @default(autoincrement())
   module     RequisitionApprovalModule                @unique
   is_active  Boolean                                  @default(true)
+  similar_item_lookback_days Int                      @default(30)
   created_by Int?
   updated_by Int?
   created_at DateTime                                 @default(now())
