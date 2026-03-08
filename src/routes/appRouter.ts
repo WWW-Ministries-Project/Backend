@@ -8,6 +8,7 @@ import {
   uploadRouter,
   assetRouter,
   eventRouter,
+  eventReportRouter,
   requisitionRouter,
   userRouter,
 } from "../modules";
@@ -44,6 +45,7 @@ appRouter.use("/access", accessRouter);
 appRouter.use("/upload", uploadRouter);
 appRouter.use("/assets", assetRouter);
 appRouter.use("/event", eventRouter);
+appRouter.use("/event-reports", eventReportRouter);
 appRouter.use("/requisitions", requisitionRouter);
 appRouter.use("/program", programRouter);
 appRouter.use("/visitor", visitorRouter);

@@ -14,6 +14,7 @@ import {
 } from "./src/middleWare/errorHandler";
 import "./src/cron-jobs/hubtelPaymentReconciliationCron";
 import "./src/cron-jobs/requisitionNotificationCron";
+import "./src/cron-jobs/eventReportNotificationCron";
 import "./src/cron-jobs/followUpNotificationCron";
 import "./src/cron-jobs/notificationRetentionCron";
 import "./src/cron-jobs/notificationPushRetryCron";

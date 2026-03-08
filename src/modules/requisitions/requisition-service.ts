@@ -29,6 +29,7 @@ import {
   buildRequisitionApprovalSnapshotTx,
   getRequisitionApprovalConfig,
   isRequisitionApprovalTableMissingError,
+  listRequisitionApprovalConfigs,
   processRequisitionApprovalAction,
   upsertRequisitionApprovalConfig,
   validateApprovalActionPayload,
@@ -1369,7 +1370,7 @@ export const saveRequisitionApprovalConfig = async (
 };
 
 export const fetchRequisitionApprovalConfig = async () => {
-  return getRequisitionApprovalConfig();
+  return listRequisitionApprovalConfigs();
 };
 
 const resolveSimilarItemLookbackDays = async (

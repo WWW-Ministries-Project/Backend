@@ -21,6 +21,8 @@ export * from "./assets/assetRouter";
 
 export * from "./events/eventContoller";
 export * from "./events/eventRoute";
+export * from "./eventReports/eventReportController";
+export * from "./eventReports/eventReportRoute";
 
 export * from "./uploadFile/uploadRoute";
 export * from "./uploadFile/uploads";
