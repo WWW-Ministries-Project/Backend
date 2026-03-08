@@ -76,6 +76,8 @@ type ApprovalAction = RequisitionApprovalActionPayload["action"];
 type ApprovalWorkflowTx = Prisma.TransactionClient;
 
 const REQUISITION_MODULE = RequisitionApprovalModule.REQUISITION;
+const EVENT_REPORT_MODULE = RequisitionApprovalModule.EVENT_REPORT;
+const SUPPORTED_APPROVAL_MODULES = Object.values(RequisitionApprovalModule);
 const REQUISITION_PERMISSION_KEYS = ["Requisition", "Requisitions"];
 const REQUISITION_MANAGE_PERMISSION_VALUES = ["Can_Manage", "Super_Admin"];
 const DEFAULT_SIMILAR_ITEM_LOOKBACK_DAYS = 30;
@@ -220,7 +222,7 @@ const ensureRequisitionApprovalWorkflowTables = async (): Promise<void> => {
     await prisma.$executeRawUnsafe(`
       CREATE TABLE IF NOT EXISTS \`requisition_approval_configs\` (
         \`id\` INTEGER NOT NULL AUTO_INCREMENT,
-        \`module\` ENUM('REQUISITION') NOT NULL,
+        \`module\` ENUM('REQUISITION', 'EVENT_REPORT') NOT NULL,
         \`is_active\` BOOLEAN NOT NULL DEFAULT true,
         \`similar_item_lookback_days\` INTEGER NOT NULL DEFAULT ${DEFAULT_SIMILAR_ITEM_LOOKBACK_DAYS},
         \`created_by\` INTEGER NULL,
@@ -329,6 +331,13 @@ const ensureRequisitionApprovalWorkflowTables = async (): Promise<void> => {
 
     try {
       await prisma.$executeRawUnsafe(`
+        ALTER TABLE \`requisition_approval_configs\`
+        MODIFY \`module\` ENUM('REQUISITION', 'EVENT_REPORT') NOT NULL;
+      `);
+    } catch (error) {}
+
+    try {
+      await prisma.$executeRawUnsafe(`
         ALTER TABLE \`requisition_approval_config_requesters\`
         ADD CONSTRAINT \`requisition_approval_config_requesters_config_id_fkey\`
         FOREIGN KEY (\`config_id\`) REFERENCES \`requisition_approval_configs\`(\`id\`)
@@ -403,15 +412,30 @@ const toTrimmedOptionalString = (value: unknown): string | undefined => {
 };
 
 const parseModule = (value: unknown): RequisitionApprovalModule => {
-  if (value !== REQUISITION_MODULE) {
-    throw new InputValidationError("module must be REQUISITION");
+  if (typeof value !== "string") {
+    throw new InputValidationError(
+      `module must be one of ${SUPPORTED_APPROVAL_MODULES.join(", ")}`,
+    );
   }
 
-  return REQUISITION_MODULE;
+  if (!SUPPORTED_APPROVAL_MODULES.includes(value as RequisitionApprovalModule)) {
+    throw new InputValidationError(
+      `module must be one of ${SUPPORTED_APPROVAL_MODULES.join(", ")}`,
+    );
+  }
+
+  return value as RequisitionApprovalModule;
 };
 
-const parseRequesterUserIds = (value: unknown): number[] => {
-  if (!Array.isArray(value) || !value.length) {
+const parseRequesterUserIds = (
+  value: unknown,
+  module: RequisitionApprovalModule,
+): number[] => {
+  if (!Array.isArray(value)) {
+    throw new InputValidationError("requester_user_ids must be an array");
+  }
+
+  if (module === REQUISITION_MODULE && !value.length) {
     throw new InputValidationError("requester_user_ids must be a non-empty array");
   }
 
@@ -427,7 +451,7 @@ const parseRequesterUserIds = (value: unknown): number[] => {
     throw new InputValidationError("requester_user_ids must be unique");
   }
 
-  return uniqueIds;
+  return uniqueIds.sort((first, second) => first - second);
 };
 
 const parseNotificationUserIds = (value: unknown): number[] => {
@@ -600,7 +624,10 @@ const normalizeConfigPayload = (
   }
 
   const module = parseModule(payload.module);
-  const requesterUserIds = parseRequesterUserIds(payload.requester_user_ids);
+  const requesterUserIds = parseRequesterUserIds(
+    payload.requester_user_ids,
+    module,
+  );
   const notificationUserIds = parseNotificationUserIds(
     payload.notification_user_ids,
   );
@@ -725,10 +752,13 @@ const mapConfigResponse = (config: {
   const configuredRequesterIds = config.requesters.map(
     (requester) => requester.user_id,
   );
-  const requesterUserIds = mergeUniqueIds([
-    ...configuredRequesterIds,
-    ...(config.effectiveRequesterUserIds || []),
-  ]);
+  const requesterUserIds =
+    config.module === REQUISITION_MODULE
+      ? mergeUniqueIds([
+          ...configuredRequesterIds,
+          ...(config.effectiveRequesterUserIds || []),
+        ])
+      : configuredRequesterIds;
   const similarItemLookbackDays =
     toPositiveInt(config.similar_item_lookback_days) ||
     DEFAULT_SIMILAR_ITEM_LOOKBACK_DAYS;
@@ -801,11 +831,79 @@ const getConfigByModuleTx = async (
     return null;
   }
 
-  const autoRequesterUserIds = await getAutoRequesterUserIdsTx(tx);
+  const autoRequesterUserIds =
+    module === REQUISITION_MODULE
+      ? await getAutoRequesterUserIdsTx(tx)
+      : [];
   return mapConfigResponse({
     ...config,
     effectiveRequesterUserIds: autoRequesterUserIds,
   });
+};
+
+const getConfigsByModuleTx = async (
+  tx: ApprovalWorkflowTx,
+): Promise<RequisitionApprovalConfigResponse[]> => {
+  let configs;
+  try {
+    configs = await tx.requisition_approval_configs.findMany({
+      where: {
+        module: {
+          in: SUPPORTED_APPROVAL_MODULES,
+        },
+      },
+      include: {
+        requesters: {
+          orderBy: {
+            user_id: "asc",
+          },
+          select: {
+            user_id: true,
+          },
+        },
+        notifications: {
+          orderBy: {
+            user_id: "asc",
+          },
+          select: {
+            user_id: true,
+          },
+        },
+        steps: {
+          orderBy: {
+            step_order: "asc",
+          },
+          select: {
+            step_order: true,
+            step_type: true,
+            position_id: true,
+            user_id: true,
+          },
+        },
+      },
+      orderBy: {
+        id: "asc",
+      },
+    });
+  } catch (error) {
+    if (isRequisitionApprovalTableMissingError(error)) {
+      return [];
+    }
+    throw error;
+  }
+
+  if (!configs.length) {
+    return [];
+  }
+
+  const autoRequesterUserIds = await getAutoRequesterUserIdsTx(tx);
+  return configs.map((config) =>
+    mapConfigResponse({
+      ...config,
+      effectiveRequesterUserIds:
+        config.module === REQUISITION_MODULE ? autoRequesterUserIds : [],
+    }),
+  );
 };
 
 const getActiveConfigForSubmissionTx = async (tx: ApprovalWorkflowTx) => {
@@ -1029,6 +1127,15 @@ export const getRequisitionApprovalConfig = async (): Promise<
   });
 };
 
+export const listRequisitionApprovalConfigs = async (): Promise<
+  RequisitionApprovalConfigResponse[]
+> => {
+  await ensureRequisitionApprovalWorkflowTables();
+  return prisma.$transaction(async (tx) => {
+    return getConfigsByModuleTx(tx);
+  });
+};
+
 export const upsertRequisitionApprovalConfig = async (
   payload: RequisitionApprovalConfigPayload,
   actorUserId?: number,
@@ -1078,12 +1185,14 @@ export const upsertRequisitionApprovalConfig = async (
         },
       });
 
-      await tx.requisition_approval_config_requesters.createMany({
-        data: normalizedPayload.requesterUserIds.map((userId) => ({
-          config_id: config.id,
-          user_id: userId,
-        })),
-      });
+      if (normalizedPayload.requesterUserIds.length) {
+        await tx.requisition_approval_config_requesters.createMany({
+          data: normalizedPayload.requesterUserIds.map((userId) => ({
+            config_id: config.id,
+            user_id: userId,
+          })),
+        });
+      }
 
       await tx.requisition_approval_config_steps.createMany({
         data: normalizedPayload.approvers.map((step) => ({

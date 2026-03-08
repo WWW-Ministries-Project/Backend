@@ -53,6 +53,18 @@ model user {
   notification_preferences notification_preference[]
   push_subscriptions       notification_push_subscription[]
   push_delivery_jobs       notification_push_delivery_job[] @relation("notification_push_delivery_user")
+  event_reports_created    event_reports[]                 @relation("event_report_created_by")
+  event_reports_updated    event_reports[]                 @relation("event_report_updated_by")
+  event_reports_final_acted event_reports[]                @relation("event_report_final_acted_by")
+  event_report_department_approvals event_report_department_approvals[] @relation("event_report_department_approved_by")
+  event_report_attendance_approvals event_report_attendance_approval[] @relation("event_report_attendance_approved_by")
+  event_report_finance_updates event_report_finance[]      @relation("event_report_finance_updated_by")
+  event_report_finance_approvals event_report_finance_approvals[] @relation("event_report_finance_approved_by")
+  event_report_finance_role_owner event_report_finance_approvals[] @relation("event_report_finance_role_owner")
+  event_report_final_approvals event_report_final_approval_instances[] @relation("event_report_final_acted_by")
+  event_report_final_assigned event_report_final_approval_instances[] @relation("event_report_final_assigned_to")
+  event_report_viewership   event_report_viewers[]
+  event_report_notification_events_actor event_report_notification_events[] @relation("event_report_notification_actor")
   request                  request[]
   hod_user                 request_approvals[]        @relation("hod_user")
   ps_user                  request_approvals[]        @relation("ps_user")
@@ -153,6 +165,7 @@ model department {
   department_positions department_positions[]
   position             position[]
   request              request[]
+  event_report_department_approvals event_report_department_approvals[]
   user_departments     user_departments[]
 
   @@index([department_head], map: "department_department_head_fkey")
@@ -265,6 +278,7 @@ model event_mgt {
   event_registers      event_registers[]
   markets              markets[]
   request              request[]
+  event_reports        event_reports[]
   visit                visit[]
 
   @@index([event_name_id], map: "event_mgt_event_name_id_fkey")
@@ -352,6 +366,161 @@ model request {
   @@index([request_approval_status], map: "request_approval_status_idx")
 }
 
+model event_reports {
+  id                   Int                                  @id @default(autoincrement())
+  event_id             Int
+  event_date           DateTime
+  status               EventReportStatus                    @default(DRAFT)
+  final_approver_user_id Int?
+  final_acted_by_user_id Int?
+  final_acted_at       DateTime?
+  created_by           Int
+  updated_by           Int?
+  created_at           DateTime                             @default(now())
+  updated_at           DateTime                             @default(now()) @updatedAt
+  event                event_mgt                            @relation(fields: [event_id], references: [id], onDelete: Cascade)
+  creator              user                                 @relation("event_report_created_by", fields: [created_by], references: [id])
+  updater              user?                                @relation("event_report_updated_by", fields: [updated_by], references: [id])
+  final_actor          user?                                @relation("event_report_final_acted_by", fields: [final_acted_by_user_id], references: [id])
+  department_approvals event_report_department_approvals[]
+  attendance_approval  event_report_attendance_approval?
+  finance              event_report_finance?
+  finance_approvals    event_report_finance_approvals[]
+  viewers              event_report_viewers[]
+  final_approval_instances event_report_final_approval_instances[]
+  notification_events  event_report_notification_events[]
+
+  @@unique([event_id, event_date])
+  @@index([event_id])
+  @@index([status])
+  @@index([final_approver_user_id])
+  @@index([created_by])
+  @@index([updated_by])
+  @@index([final_acted_by_user_id])
+}
+
+model event_report_department_approvals {
+  id                 Int                              @id @default(autoincrement())
+  event_report_id    Int
+  department_id      Int
+  status             EventReportSectionApprovalStatus @default(PENDING)
+  approved_by_user_id Int?
+  approved_at        DateTime?
+  event_report       event_reports                    @relation(fields: [event_report_id], references: [id], onDelete: Cascade)
+  department         department                       @relation(fields: [department_id], references: [id])
+  approved_by_user   user?                            @relation("event_report_department_approved_by", fields: [approved_by_user_id], references: [id])
+
+  @@unique([event_report_id, department_id])
+  @@index([department_id])
+  @@index([approved_by_user_id])
+}
+
+model event_report_attendance_approval {
+  id                 Int                              @id @default(autoincrement())
+  event_report_id    Int                              @unique
+  status             EventReportSectionApprovalStatus @default(PENDING)
+  approved_by_user_id Int?
+  approved_at        DateTime?
+  event_report       event_reports                    @relation(fields: [event_report_id], references: [id], onDelete: Cascade)
+  approved_by_user   user?                            @relation("event_report_attendance_approved_by", fields: [approved_by_user_id], references: [id])
+
+  @@index([approved_by_user_id])
+}
+
+model event_report_finance {
+  id                 Int       @id @default(autoincrement())
+  event_report_id    Int       @unique
+  income_json        String    @db.LongText
+  expense_json       String    @db.LongText
+  total_income       Float     @default(0)
+  total_expense      Float     @default(0)
+  surplus            Float     @default(0)
+  updated_by_user_id Int?
+  updated_at         DateTime  @default(now()) @updatedAt
+  event_report       event_reports @relation(fields: [event_report_id], references: [id], onDelete: Cascade)
+  updated_by_user    user?     @relation("event_report_finance_updated_by", fields: [updated_by_user_id], references: [id])
+
+  @@index([updated_by_user_id])
+}
+
+model event_report_finance_approvals {
+  id                 Int                              @id @default(autoincrement())
+  event_report_id    Int
+  role               EventReportFinanceRole
+  role_owner_user_id Int?
+  status             EventReportSectionApprovalStatus @default(PENDING)
+  approved_by_user_id Int?
+  approved_at        DateTime?
+  event_report       event_reports                    @relation(fields: [event_report_id], references: [id], onDelete: Cascade)
+  role_owner_user    user?                            @relation("event_report_finance_role_owner", fields: [role_owner_user_id], references: [id])
+  approved_by_user   user?                            @relation("event_report_finance_approved_by", fields: [approved_by_user_id], references: [id])
+
+  @@unique([event_report_id, role])
+  @@index([role_owner_user_id])
+  @@index([approved_by_user_id])
+}
+
+model event_report_viewers {
+  id              Int          @id @default(autoincrement())
+  event_report_id Int
+  user_id         Int
+  event_report    event_reports @relation(fields: [event_report_id], references: [id], onDelete: Cascade)
+  user            user         @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@unique([event_report_id, user_id])
+  @@index([user_id])
+}
+
+model event_report_final_approval_instances {
+  id                 Int                               @id @default(autoincrement())
+  event_report_id    Int
+  config_id          Int
+  step_order         Int
+  step_type          RequisitionApproverType
+  approver_user_id   Int
+  position_id        Int?
+  configured_user_id Int?
+  status             RequisitionApprovalInstanceStatus @default(WAITING)
+  acted_by_user_id   Int?
+  acted_at           DateTime?
+  comment            String?
+  created_at         DateTime                          @default(now())
+  updated_at         DateTime                          @default(now()) @updatedAt
+  event_report       event_reports                     @relation(fields: [event_report_id], references: [id], onDelete: Cascade)
+  config             requisition_approval_configs      @relation(fields: [config_id], references: [id], onDelete: Cascade)
+  approver_user      user                              @relation("event_report_final_assigned_to", fields: [approver_user_id], references: [id])
+  acted_by_user      user?                             @relation("event_report_final_acted_by", fields: [acted_by_user_id], references: [id])
+
+  @@unique([event_report_id, step_order])
+  @@index([approver_user_id])
+  @@index([status])
+  @@index([config_id])
+  @@index([acted_by_user_id])
+}
+
+model event_report_notification_events {
+  id                 Int                              @id @default(autoincrement())
+  idempotency_key    String                           @unique
+  event_type         String
+  event_report_id    Int
+  actor_user_id      Int?
+  decision           String?
+  recipient_user_ids String                           @db.LongText
+  status             RequisitionNotificationEventStatus @default(PENDING)
+  attempts           Int                              @default(0)
+  last_error         String?                          @db.LongText
+  sent_at            DateTime?
+  created_at         DateTime                         @default(now())
+  updated_at         DateTime                         @default(now()) @updatedAt
+  event_report       event_reports                    @relation(fields: [event_report_id], references: [id], onDelete: Cascade)
+  actor_user         user?                            @relation("event_report_notification_actor", fields: [actor_user_id], references: [id], onDelete: SetNull)
+
+  @@index([status, created_at])
+  @@index([event_report_id])
+  @@index([event_type])
+  @@index([actor_user_id])
+}
+
 model requisition_summary {
   requisition_id  Int      @unique
   user_id         Int
@@ -433,6 +602,7 @@ model requisition_approval_configs {
   steps      requisition_approval_config_steps[]
   notifications requisition_approval_config_notifications[]
   instances  requisition_approval_instances[]
+  event_report_instances event_report_final_approval_instances[]
 }
 
 model requisition_approval_config_notifications {
@@ -1373,6 +1543,25 @@ enum RequestApprovalStatus {
 
 enum RequisitionApprovalModule {
   REQUISITION
+  EVENT_REPORT
+}
+
+enum EventReportStatus {
+  DRAFT
+  PENDING_FINAL
+  APPROVED
+  REJECTED
+}
+
+enum EventReportSectionApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum EventReportFinanceRole {
+  COUNTING_LEADER
+  FINANCE_REP
 }
 
 enum RequisitionApproverType {

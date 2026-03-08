@@ -54,7 +54,7 @@ export interface RequestApprovals {
   ps_comment: string | null;
 }
 
-export type RequisitionApprovalModuleType = "REQUISITION";
+export type RequisitionApprovalModuleType = "REQUISITION" | "EVENT_REPORT";
 export type RequisitionApproverTypeValue =
   | "HEAD_OF_DEPARTMENT"
   | "POSITION"
