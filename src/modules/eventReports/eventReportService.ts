@@ -112,6 +112,19 @@ const toPositiveInt = (value: unknown): number | null => {
   return parsed;
 };
 
+const EVENT_REPORT_TX_MAX_WAIT_MS =
+  toPositiveInt(process.env.EVENT_REPORT_TX_MAX_WAIT_MS) || 10_000;
+const EVENT_REPORT_TX_TIMEOUT_MS =
+  toPositiveInt(process.env.EVENT_REPORT_TX_TIMEOUT_MS) || 90_000;
+
+const runEventReportTransaction = async <T>(
+  operation: (tx: ApprovalWorkflowTx) => Promise<T>,
+): Promise<T> =>
+  prisma.$transaction((tx) => operation(tx), {
+    maxWait: EVENT_REPORT_TX_MAX_WAIT_MS,
+    timeout: EVENT_REPORT_TX_TIMEOUT_MS,
+  });
+
 const normalizePermissionPayload = (
   permissions: Prisma.JsonValue | null | undefined,
 ): Prisma.JsonObject | null => {
@@ -1800,7 +1813,7 @@ export const getEventReportDetail = async (
       : parseEventDateString(query.event_date);
 
   const runQuery = async () =>
-    prisma.$transaction(async (tx) =>
+    runEventReportTransaction(async (tx) =>
       getEventReportDetailTx(tx, {
         eventId,
         eventDate,
@@ -1845,7 +1858,7 @@ export const upsertEventReportFinance = async (
   const actorUserId = getAuthenticatedUserId(user);
 
   const runUpsert = async () =>
-    prisma.$transaction(async (tx) => {
+    runEventReportTransaction(async (tx) => {
       const event = await loadEventByIdTx(tx, eventId);
 
       const report = await ensureEventReportTx(tx, {
@@ -1964,7 +1977,7 @@ export const departmentApprovalAction = async (
   const actorUserId = getAuthenticatedUserId(user);
 
   const runAction = async () =>
-    prisma.$transaction(async (tx) => {
+    runEventReportTransaction(async (tx) => {
       const event = await loadEventByIdTx(tx, eventId);
 
       const department = await tx.department.findUnique({
@@ -2075,7 +2088,7 @@ export const churchAttendanceApprovalAction = async (
   const actorUserId = getAuthenticatedUserId(user);
 
   const runAction = async () =>
-    prisma.$transaction(async (tx) => {
+    runEventReportTransaction(async (tx) => {
       const event = await loadEventByIdTx(tx, eventId);
 
       const approverIds = await getChurchAttendanceApproverUserIdsTx(tx);
@@ -2157,7 +2170,7 @@ export const financeApprovalAction = async (
   const actorUserId = getAuthenticatedUserId(user);
 
   const runAction = async () =>
-    prisma.$transaction(async (tx) => {
+    runEventReportTransaction(async (tx) => {
       const event = await loadEventByIdTx(tx, eventId);
 
       const report = await ensureEventReportTx(tx, {
@@ -2253,7 +2266,7 @@ export const submitEventReportForFinalApproval = async (
   const actorUserId = getAuthenticatedUserId(user);
 
   const runSubmit = async () =>
-    prisma.$transaction(async (tx) => {
+    runEventReportTransaction(async (tx) => {
       const event = await loadEventByIdTx(tx, eventId);
 
       const report = await ensureEventReportTx(tx, {
@@ -2475,7 +2488,7 @@ export const finalApprovalAction = async (
   const actorUserId = getAuthenticatedUserId(user);
 
   const runAction = async () =>
-    prisma.$transaction(async (tx) => {
+    runEventReportTransaction(async (tx) => {
       const event = await loadEventByIdTx(tx, eventId);
 
       const report = await ensureEventReportTx(tx, {
@@ -2740,6 +2753,51 @@ const isSupportedNotificationEventType = (
   value === FINAL_REJECTED_EVENT;
 
 let isProcessingNotificationEvents = false;
+let hasLoggedMissingNotificationDelegates = false;
+
+const resolveNotificationProcessingDelegates = () => {
+  const notificationEventsDelegate = (
+    prisma as unknown as {
+      event_report_notification_events?: {
+        findMany: typeof prisma.event_report_notification_events.findMany;
+        updateMany: typeof prisma.event_report_notification_events.updateMany;
+        update: typeof prisma.event_report_notification_events.update;
+      };
+    }
+  ).event_report_notification_events;
+
+  const eventReportsDelegate = (
+    prisma as unknown as {
+      event_reports?: {
+        findUnique: typeof prisma.event_reports.findUnique;
+      };
+    }
+  ).event_reports;
+
+  if (
+    !notificationEventsDelegate ||
+    typeof notificationEventsDelegate.findMany !== "function" ||
+    typeof notificationEventsDelegate.updateMany !== "function" ||
+    typeof notificationEventsDelegate.update !== "function" ||
+    !eventReportsDelegate ||
+    typeof eventReportsDelegate.findUnique !== "function"
+  ) {
+    if (!hasLoggedMissingNotificationDelegates) {
+      hasLoggedMissingNotificationDelegates = true;
+      console.error(
+        "[event-report-notification-events] Prisma client is missing event-report delegates. Run `npx prisma generate` and restart the server.",
+      );
+    }
+
+    return null;
+  }
+
+  hasLoggedMissingNotificationDelegates = false;
+  return {
+    notificationEventsDelegate,
+    eventReportsDelegate,
+  };
+};
 
 export const processPendingEventReportNotificationEvents = async (args?: {
   limit?: number;
@@ -2751,12 +2809,19 @@ export const processPendingEventReportNotificationEvents = async (args?: {
   isProcessingNotificationEvents = true;
 
   try {
+    const delegates = resolveNotificationProcessingDelegates();
+    if (!delegates) {
+      return;
+    }
+
+    const { notificationEventsDelegate, eventReportsDelegate } = delegates;
+
     const limit =
       Number.isInteger(args?.limit) && (args?.limit || 0) > 0
         ? Math.min(args?.limit || 0, 100)
         : NOTIFICATION_EVENT_BATCH_SIZE;
 
-    const events = await prisma.event_report_notification_events.findMany({
+    const events = await notificationEventsDelegate.findMany({
       where: {
         status: {
           in: [
@@ -2782,7 +2847,7 @@ export const processPendingEventReportNotificationEvents = async (args?: {
     });
 
     for (const event of events) {
-      const claim = await prisma.event_report_notification_events.updateMany({
+      const claim = await notificationEventsDelegate.updateMany({
         where: {
           id: event.id,
           status: {
@@ -2811,7 +2876,7 @@ export const processPendingEventReportNotificationEvents = async (args?: {
         );
 
         if (!recipientUserIds.length) {
-          await prisma.event_report_notification_events.update({
+          await notificationEventsDelegate.update({
             where: {
               id: event.id,
             },
@@ -2839,7 +2904,7 @@ export const processPendingEventReportNotificationEvents = async (args?: {
           : Promise.resolve<null>(null);
 
         const [report, actorUser, recipientUsers] = await Promise.all([
-          prisma.event_reports.findUnique({
+          eventReportsDelegate.findUnique({
             where: {
               id: event.event_report_id,
             },
@@ -2884,7 +2949,7 @@ export const processPendingEventReportNotificationEvents = async (args?: {
         }
 
         if (!recipientUsers.length) {
-          await prisma.event_report_notification_events.update({
+          await notificationEventsDelegate.update({
             where: {
               id: event.id,
             },
@@ -2938,7 +3003,7 @@ export const processPendingEventReportNotificationEvents = async (args?: {
           })),
         );
 
-        await prisma.event_report_notification_events.update({
+        await notificationEventsDelegate.update({
           where: {
             id: event.id,
           },
@@ -2955,7 +3020,7 @@ export const processPendingEventReportNotificationEvents = async (args?: {
         const normalizedError =
           error instanceof Error ? error.message : String(error);
 
-        await prisma.event_report_notification_events.update({
+        await notificationEventsDelegate.update({
           where: {
             id: event.id,
           },
