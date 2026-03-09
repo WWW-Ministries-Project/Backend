@@ -3,13 +3,8 @@ import {
   EventReportSectionApprovalStatus,
   EventReportStatus,
   Prisma,
-  RequisitionApprovalInstanceStatus,
-  RequisitionApprovalModule,
-  RequisitionApproverType,
-  RequisitionNotificationEventStatus,
 } from "@prisma/client";
 import { randomUUID } from "crypto";
-import { RequisitionApprovalConfigPayload } from "../../interfaces/requisitions-interface";
 import { prisma } from "../../Models/context";
 import {
   InputValidationError,
@@ -17,10 +12,6 @@ import {
   UnauthorizedError,
 } from "../../utils/custom-error-handlers";
 import { notificationService } from "../notifications/notificationService";
-import {
-  getApprovalConfigByModule,
-  upsertRequisitionApprovalConfig,
-} from "../requisitions/requisition-approval-workflow";
 
 type EventReportNotificationEventType =
   | "event_report.submitted_for_final_approval"
@@ -28,6 +19,24 @@ type EventReportNotificationEventType =
   | "event_report.final_rejected";
 
 type EventReportAction = "APPROVE" | "REJECT";
+
+type EventReportApproverType =
+  | "HEAD_OF_DEPARTMENT"
+  | "POSITION"
+  | "SPECIFIC_PERSON";
+
+type EventReportFinalApprovalStepStatus =
+  | "WAITING"
+  | "PENDING"
+  | "APPROVED"
+  | "REJECTED";
+
+type EventReportNotificationQueueStatus =
+  | "PENDING"
+  | "PROCESSING"
+  | "SENT"
+  | "FAILED"
+  | "SKIPPED_NO_RECIPIENTS";
 
 type ApprovalWorkflowTx = Prisma.TransactionClient;
 
@@ -52,9 +61,64 @@ type NotificationEventSummary = {
   actorUserId: number | null;
 };
 
-const EVENT_REPORT_MODULE =
-  ((RequisitionApprovalModule as Record<string, string> | undefined)
-    ?.EVENT_REPORT || "EVENT_REPORT") as RequisitionApprovalModule;
+type EventReportApprovalConfigPayload = {
+  module?: unknown;
+  requester_user_ids?: unknown;
+  notification_user_ids?: unknown;
+  similar_item_lookback_days?: unknown;
+  approvers?: unknown;
+  is_active?: unknown;
+};
+
+type EventReportApprovalConfigResponse = {
+  module: "EVENT_REPORT";
+  requester_user_ids: number[];
+  notification_user_ids: number[];
+  similar_item_lookback_days: number;
+  approvers: Array<{
+    order: number;
+    type: EventReportApproverType;
+    position_id?: number;
+    user_id?: number;
+  }>;
+  is_active: boolean;
+};
+
+type NormalizedApproverStep = {
+  order: number;
+  type: EventReportApproverType;
+  positionId: number | null;
+  userId: number | null;
+};
+
+type NormalizedEventReportApprovalConfig = {
+  notificationUserIds: number[];
+  similarItemLookbackDays: number;
+  approvers: NormalizedApproverStep[];
+  isActive: boolean;
+};
+
+const EVENT_REPORT_MODULE = "EVENT_REPORT" as const;
+const APPROVER_TYPE = {
+  HEAD_OF_DEPARTMENT: "HEAD_OF_DEPARTMENT",
+  POSITION: "POSITION",
+  SPECIFIC_PERSON: "SPECIFIC_PERSON",
+} as const;
+const FINAL_APPROVAL_STEP_STATUS = {
+  WAITING: "WAITING",
+  PENDING: "PENDING",
+  APPROVED: "APPROVED",
+  REJECTED: "REJECTED",
+} as const;
+const NOTIFICATION_QUEUE_STATUS = {
+  PENDING: "PENDING",
+  PROCESSING: "PROCESSING",
+  SENT: "SENT",
+  FAILED: "FAILED",
+  SKIPPED_NO_RECIPIENTS: "SKIPPED_NO_RECIPIENTS",
+} as const;
+const DEFAULT_SIMILAR_ITEM_LOOKBACK_DAYS = 30;
+const MAX_NOTIFICATION_RECIPIENTS = 50;
 const MANAGE_PERMISSION_VALUES = ["Can_Manage", "Super_Admin"];
 const NOTIFICATION_EVENT_RETRY_LIMIT = 5;
 const NOTIFICATION_EVENT_BATCH_SIZE = 5;
@@ -74,53 +138,121 @@ const EVENT_REPORT_TABLE_NAMES = [
   "event_report_viewers",
   "event_report_final_approval_instances",
   "event_report_notification_events",
+  "requisition_approval_configs",
+  "requisition_approval_config_requesters",
+  "requisition_approval_config_steps",
+  "requisition_approval_config_notifications",
 ];
-
-type EventReportApprovalConfigPayload = Omit<
-  RequisitionApprovalConfigPayload,
-  "module" | "requester_user_ids"
-> & {
-  requester_user_ids?: number[];
-  module?: unknown;
-};
 
 export const saveEventReportApprovalConfig = async (
   payload: EventReportApprovalConfigPayload,
   actorUserId?: number,
 ) => {
-  const requestedModule = payload?.module;
-  if (requestedModule !== undefined && requestedModule !== null) {
-    const normalizedModuleValue =
-      typeof requestedModule === "string"
-        ? requestedModule.trim().toUpperCase()
-        : "";
-    if (normalizedModuleValue !== EVENT_REPORT_MODULE) {
-      throw new InputValidationError(
-        "module must be EVENT_REPORT when provided",
-      );
-    }
-  }
+  const normalizedPayload = normalizeEventReportApprovalConfigPayload(payload);
 
-  return upsertRequisitionApprovalConfig(
-    {
-      ...payload,
-      module: EVENT_REPORT_MODULE,
-      requester_user_ids: [],
-    },
-    actorUserId,
-  );
+  const runUpsert = async () =>
+    runEventReportTransaction(async (tx) => {
+      await verifyEventReportApprovalConfigReferencesTx(tx, normalizedPayload);
+
+      const config = await tx.requisition_approval_configs.upsert({
+        where: {
+          module: EVENT_REPORT_MODULE,
+        },
+        update: {
+          is_active: normalizedPayload.isActive,
+          similar_item_lookback_days: normalizedPayload.similarItemLookbackDays,
+          updated_by: actorUserId,
+        },
+        create: {
+          module: EVENT_REPORT_MODULE,
+          is_active: normalizedPayload.isActive,
+          similar_item_lookback_days: normalizedPayload.similarItemLookbackDays,
+          created_by: actorUserId,
+          updated_by: actorUserId,
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      await tx.requisition_approval_config_requesters.deleteMany({
+        where: {
+          config_id: config.id,
+        },
+      });
+
+      await tx.requisition_approval_config_steps.deleteMany({
+        where: {
+          config_id: config.id,
+        },
+      });
+
+      await tx.requisition_approval_config_notifications.deleteMany({
+        where: {
+          config_id: config.id,
+        },
+      });
+
+      await tx.requisition_approval_config_steps.createMany({
+        data: normalizedPayload.approvers.map((step) => ({
+          config_id: config.id,
+          step_order: step.order,
+          step_type: step.type,
+          position_id: step.positionId,
+          user_id: step.userId,
+        })),
+      });
+
+      if (normalizedPayload.notificationUserIds.length) {
+        await tx.requisition_approval_config_notifications.createMany({
+          data: normalizedPayload.notificationUserIds.map((userId) => ({
+            config_id: config.id,
+            user_id: userId,
+          })),
+        });
+      }
+
+      const savedConfig = await getStoredEventReportApprovalConfigTx(tx);
+      if (!savedConfig) {
+        throw new NotFoundError("Unable to load event report approval config");
+      }
+
+      return mapEventReportApprovalConfigResponse(savedConfig);
+    });
+
+  try {
+    return await runUpsert();
+  } catch (error) {
+    if (!isEventReportTableMissingError(error)) {
+      throw error;
+    }
+
+    throw new InputValidationError(
+      "Event report approval tables are missing. Run database migrations first.",
+    );
+  }
 };
 
 export const fetchEventReportApprovalConfig = async () => {
-  const config = await getApprovalConfigByModule(EVENT_REPORT_MODULE);
-  if (!config) {
+  const runFetch = async () =>
+    runEventReportTransaction(async (tx) => {
+      const config = await getStoredEventReportApprovalConfigTx(tx);
+      if (!config) {
+        return null;
+      }
+
+      return mapEventReportApprovalConfigResponse(config);
+    });
+
+  try {
+    return await runFetch();
+  } catch (error) {
+    if (!isEventReportTableMissingError(error)) {
+      throw error;
+    }
+
     return null;
   }
-
-  return {
-    ...config,
-    requester_user_ids: [],
-  };
 };
 
 const isEventReportTableMissingError = (error: unknown): boolean => {
@@ -297,6 +429,354 @@ const uniquePositiveIds = (values: number[]): number[] =>
       values.filter((value) => Number.isInteger(value) && value > 0),
     ),
   ).sort((first, second) => first - second);
+
+const parseNotificationUserIds = (value: unknown): number[] => {
+  if (value === undefined || value === null) {
+    return [];
+  }
+
+  if (!Array.isArray(value)) {
+    throw new InputValidationError(
+      "notification_user_ids must be an array when provided",
+    );
+  }
+
+  const ids = value.map((item) => toPositiveInt(item));
+  if (ids.some((item) => item === null)) {
+    throw new InputValidationError(
+      "notification_user_ids must contain only positive integer user ids",
+    );
+  }
+
+  const uniqueSortedIds = Array.from(new Set(ids as number[])).sort(
+    (first, second) => first - second,
+  );
+
+  if (uniqueSortedIds.length > MAX_NOTIFICATION_RECIPIENTS) {
+    throw new InputValidationError(
+      `notification_user_ids cannot exceed ${MAX_NOTIFICATION_RECIPIENTS} users`,
+    );
+  }
+
+  return uniqueSortedIds;
+};
+
+const parseSimilarItemLookbackDays = (value: unknown): number => {
+  if (value === undefined || value === null || value === "") {
+    return DEFAULT_SIMILAR_ITEM_LOOKBACK_DAYS;
+  }
+
+  const parsed = toPositiveInt(value);
+  if (!parsed) {
+    throw new InputValidationError(
+      "similar_item_lookback_days must be a positive integer when provided",
+    );
+  }
+
+  return parsed;
+};
+
+const parseEventReportApprovers = (value: unknown): NormalizedApproverStep[] => {
+  if (!Array.isArray(value) || !value.length) {
+    throw new InputValidationError("approvers must be a non-empty array");
+  }
+
+  const parsed = value.map((rawStep, index) => {
+    if (typeof rawStep !== "object" || rawStep === null || Array.isArray(rawStep)) {
+      throw new InputValidationError(`approvers[${index}] must be an object`);
+    }
+
+    const step = rawStep as {
+      order?: unknown;
+      type?: unknown;
+      position_id?: unknown;
+      user_id?: unknown;
+    };
+
+    const order = toPositiveInt(step.order);
+    if (!order) {
+      throw new InputValidationError(
+        `approvers[${index}].order must be a positive integer`,
+      );
+    }
+
+    if (typeof step.type !== "string") {
+      throw new InputValidationError(`approvers[${index}].type is required`);
+    }
+
+    const type = step.type.trim().toUpperCase() as EventReportApproverType;
+    if (!Object.values(APPROVER_TYPE).includes(type)) {
+      throw new InputValidationError(
+        `approvers[${index}].type must be one of HEAD_OF_DEPARTMENT, POSITION, SPECIFIC_PERSON`,
+      );
+    }
+
+    const positionId =
+      step.position_id === undefined || step.position_id === null
+        ? null
+        : toPositiveInt(step.position_id);
+    const userId =
+      step.user_id === undefined || step.user_id === null
+        ? null
+        : toPositiveInt(step.user_id);
+
+    if (step.position_id !== undefined && step.position_id !== null && !positionId) {
+      throw new InputValidationError(
+        `approvers[${index}].position_id must be a positive integer when provided`,
+      );
+    }
+
+    if (step.user_id !== undefined && step.user_id !== null && !userId) {
+      throw new InputValidationError(
+        `approvers[${index}].user_id must be a positive integer when provided`,
+      );
+    }
+
+    if (type === APPROVER_TYPE.HEAD_OF_DEPARTMENT) {
+      if (positionId !== null || userId !== null) {
+        throw new InputValidationError(
+          `approvers[${index}] HEAD_OF_DEPARTMENT must not include position_id or user_id`,
+        );
+      }
+    }
+
+    if (type === APPROVER_TYPE.POSITION) {
+      if (!positionId) {
+        throw new InputValidationError(
+          `approvers[${index}] POSITION must include position_id`,
+        );
+      }
+
+      if (userId !== null) {
+        throw new InputValidationError(
+          `approvers[${index}] POSITION must not include user_id`,
+        );
+      }
+    }
+
+    if (type === APPROVER_TYPE.SPECIFIC_PERSON) {
+      if (!userId) {
+        throw new InputValidationError(
+          `approvers[${index}] SPECIFIC_PERSON must include user_id`,
+        );
+      }
+
+      if (positionId !== null) {
+        throw new InputValidationError(
+          `approvers[${index}] SPECIFIC_PERSON must not include position_id`,
+        );
+      }
+    }
+
+    return {
+      order,
+      type,
+      positionId,
+      userId,
+    };
+  });
+
+  const orders = parsed.map((step) => step.order);
+  const uniqueOrders = Array.from(new Set(orders));
+  if (uniqueOrders.length !== orders.length) {
+    throw new InputValidationError("approvers must have unique order values");
+  }
+
+  const sortedOrders = [...orders].sort((a, b) => a - b);
+  for (let index = 0; index < sortedOrders.length; index += 1) {
+    const expectedOrder = index + 1;
+    if (sortedOrders[index] !== expectedOrder) {
+      throw new InputValidationError(
+        "approvers order must be sequential starting from 1",
+      );
+    }
+  }
+
+  return parsed.sort((a, b) => a.order - b.order);
+};
+
+const normalizeEventReportApprovalConfigPayload = (
+  payload: EventReportApprovalConfigPayload,
+): NormalizedEventReportApprovalConfig => {
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+    throw new InputValidationError("Invalid payload");
+  }
+
+  const requestedModule = payload.module;
+  if (requestedModule !== undefined && requestedModule !== null) {
+    const normalizedModuleValue =
+      typeof requestedModule === "string"
+        ? requestedModule.trim().toUpperCase()
+        : "";
+    if (normalizedModuleValue !== EVENT_REPORT_MODULE) {
+      throw new InputValidationError(
+        "module must be EVENT_REPORT when provided",
+      );
+    }
+  }
+
+  let isActive = true;
+  if (payload.is_active !== undefined) {
+    if (typeof payload.is_active !== "boolean") {
+      throw new InputValidationError("is_active must be boolean when provided");
+    }
+    isActive = payload.is_active;
+  }
+
+  return {
+    notificationUserIds: parseNotificationUserIds(payload.notification_user_ids),
+    similarItemLookbackDays: parseSimilarItemLookbackDays(
+      payload.similar_item_lookback_days,
+    ),
+    approvers: parseEventReportApprovers(payload.approvers),
+    isActive,
+  };
+};
+
+const verifyEventReportApprovalConfigReferencesTx = async (
+  tx: ApprovalWorkflowTx,
+  payload: NormalizedEventReportApprovalConfig,
+): Promise<void> => {
+  const specificApproverUserIds = payload.approvers
+    .map((step) => step.userId)
+    .filter((id): id is number => Number.isInteger(id));
+
+  const userIdsToCheck = Array.from(
+    new Set([...specificApproverUserIds, ...payload.notificationUserIds]),
+  );
+
+  if (userIdsToCheck.length) {
+    const users = await tx.user.findMany({
+      where: {
+        id: { in: userIdsToCheck },
+      },
+      select: {
+        id: true,
+        is_active: true,
+      },
+    });
+
+    const missingUserIds = userIdsToCheck.filter(
+      (id) => !users.some((user) => user.id === id),
+    );
+    if (missingUserIds.length) {
+      throw new InputValidationError(
+        `These users do not exist: ${missingUserIds.join(", ")}`,
+      );
+    }
+
+    const inactiveUserIds = users
+      .filter((user) => user.is_active === false)
+      .map((user) => user.id);
+    if (inactiveUserIds.length) {
+      throw new InputValidationError(
+        `These users are inactive: ${inactiveUserIds.join(", ")}`,
+      );
+    }
+  }
+
+  const positionIdsToCheck = Array.from(
+    new Set(
+      payload.approvers
+        .map((step) => step.positionId)
+        .filter((id): id is number => Number.isInteger(id)),
+    ),
+  );
+
+  if (!positionIdsToCheck.length) {
+    return;
+  }
+
+  const positions = await tx.position.findMany({
+    where: {
+      id: {
+        in: positionIdsToCheck,
+      },
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  const missingPositionIds = positionIdsToCheck.filter(
+    (id) => !positions.some((position) => position.id === id),
+  );
+  if (missingPositionIds.length) {
+    throw new InputValidationError(
+      `These positions do not exist: ${missingPositionIds.join(", ")}`,
+    );
+  }
+};
+
+const getStoredEventReportApprovalConfigTx = async (tx: ApprovalWorkflowTx) => {
+  return tx.requisition_approval_configs.findUnique({
+    where: {
+      module: EVENT_REPORT_MODULE,
+    },
+    include: {
+      requesters: {
+        orderBy: {
+          user_id: "asc",
+        },
+        select: {
+          user_id: true,
+        },
+      },
+      notifications: {
+        orderBy: {
+          user_id: "asc",
+        },
+        select: {
+          user_id: true,
+        },
+      },
+      steps: {
+        orderBy: {
+          step_order: "asc",
+        },
+        select: {
+          step_order: true,
+          step_type: true,
+          position_id: true,
+          user_id: true,
+        },
+      },
+    },
+  });
+};
+
+const mapEventReportApprovalConfigResponse = (config: {
+  module: string;
+  is_active: boolean;
+  similar_item_lookback_days: number;
+  notifications: Array<{ user_id: number }>;
+  steps: Array<{
+    step_order: number;
+    step_type: string;
+    position_id: number | null;
+    user_id: number | null;
+  }>;
+}): EventReportApprovalConfigResponse => {
+  const similarItemLookbackDays =
+    toPositiveInt(config.similar_item_lookback_days) ||
+    DEFAULT_SIMILAR_ITEM_LOOKBACK_DAYS;
+
+  return {
+    module: EVENT_REPORT_MODULE,
+    requester_user_ids: [],
+    notification_user_ids: config.notifications.map(
+      (notification) => notification.user_id,
+    ),
+    similar_item_lookback_days: similarItemLookbackDays,
+    approvers: config.steps.map((step) => ({
+      order: step.step_order,
+      type: step.step_type as EventReportApproverType,
+      ...(step.position_id !== null && { position_id: step.position_id }),
+      ...(step.user_id !== null && { user_id: step.user_id }),
+    })),
+    is_active: config.is_active,
+  };
+};
 
 const parseApprovalAction = (value: unknown): "APPROVE" => {
   if (value !== "APPROVE") {
@@ -764,8 +1244,9 @@ const getFinanceRoleOwnerFromPermissionTx = async (
     hasPermissionValue(user.access?.permissions, [
       "Financials",
       "Settings",
-      "Requisition",
-      "Requisitions",
+      "Events",
+      "Church_Attendance",
+      "Church Attendance",
     ]),
   );
 
@@ -988,37 +1469,7 @@ const getChurchAttendanceApproverUserIdsTx = async (
 const getActiveEventReportApprovalConfigTx = async (
   tx: ApprovalWorkflowTx,
 ) => {
-  const config = await tx.requisition_approval_configs.findUnique({
-    where: {
-      module: EVENT_REPORT_MODULE,
-    },
-    include: {
-      requesters: {
-        select: {
-          user_id: true,
-        },
-      },
-      notifications: {
-        orderBy: {
-          user_id: "asc",
-        },
-        select: {
-          user_id: true,
-        },
-      },
-      steps: {
-        orderBy: {
-          step_order: "asc",
-        },
-        select: {
-          step_order: true,
-          step_type: true,
-          position_id: true,
-          user_id: true,
-        },
-      },
-    },
-  });
+  const config = await getStoredEventReportApprovalConfigTx(tx);
 
   if (!config || !config.is_active) {
     throw new InputValidationError(
@@ -1038,37 +1489,7 @@ const getActiveEventReportApprovalConfigTx = async (
 const getEventReportApprovalConfigOrNullTx = async (
   tx: ApprovalWorkflowTx,
 ) => {
-  const config = await tx.requisition_approval_configs.findUnique({
-    where: {
-      module: EVENT_REPORT_MODULE,
-    },
-    include: {
-      requesters: {
-        select: {
-          user_id: true,
-        },
-      },
-      notifications: {
-        orderBy: {
-          user_id: "asc",
-        },
-        select: {
-          user_id: true,
-        },
-      },
-      steps: {
-        orderBy: {
-          step_order: "asc",
-        },
-        select: {
-          step_order: true,
-          step_type: true,
-          position_id: true,
-          user_id: true,
-        },
-      },
-    },
-  });
+  const config = await getStoredEventReportApprovalConfigTx(tx);
 
   if (!config || !config.is_active) {
     return null;
@@ -1207,7 +1628,7 @@ const resolveApproverUserIdForStep = async (
   tx: ApprovalWorkflowTx,
   args: {
     step: {
-      step_type: RequisitionApproverType;
+      step_type: EventReportApproverType;
       position_id: number | null;
       user_id: number | null;
     };
@@ -1216,11 +1637,11 @@ const resolveApproverUserIdForStep = async (
 ): Promise<number> => {
   const { step, requesterId } = args;
 
-  if (step.step_type === RequisitionApproverType.HEAD_OF_DEPARTMENT) {
+  if (step.step_type === APPROVER_TYPE.HEAD_OF_DEPARTMENT) {
     return resolveHeadOfDepartmentApproverUserId(tx, requesterId);
   }
 
-  if (step.step_type === RequisitionApproverType.POSITION) {
+  if (step.step_type === APPROVER_TYPE.POSITION) {
     if (!step.position_id) {
       throw new InputValidationError("POSITION step is missing position_id");
     }
@@ -1243,11 +1664,11 @@ const isAdminLikeUser = (user: any): boolean => {
   }
 
   return hasPermissionValue(permissions, [
-    "Requisition",
-    "Requisitions",
     "Settings",
     "Events",
     "Financials",
+    "Church_Attendance",
+    "Church Attendance",
   ]);
 };
 
@@ -1590,8 +2011,8 @@ const createNotificationEventTx = async (
 ): Promise<NotificationEventSummary | null> => {
   const recipientUserIds = uniquePositiveIds(args.recipientUserIds);
   const status = recipientUserIds.length
-    ? RequisitionNotificationEventStatus.PENDING
-    : RequisitionNotificationEventStatus.SKIPPED_NO_RECIPIENTS;
+    ? NOTIFICATION_QUEUE_STATUS.PENDING
+    : NOTIFICATION_QUEUE_STATUS.SKIPPED_NO_RECIPIENTS;
 
   try {
     const event = await tx.event_report_notification_events.create({
@@ -1710,7 +2131,7 @@ const getEventReportDetailTx = async (
     {
       where: {
         event_report_id: report.id,
-        status: RequisitionApprovalInstanceStatus.PENDING,
+        status: FINAL_APPROVAL_STEP_STATUS.PENDING,
       },
       orderBy: {
         step_order: "asc",
@@ -2382,7 +2803,7 @@ export const submitEventReportForFinalApproval = async (
       const existingPending = await tx.event_report_final_approval_instances.findFirst({
         where: {
           event_report_id: report.id,
-          status: RequisitionApprovalInstanceStatus.PENDING,
+          status: FINAL_APPROVAL_STEP_STATUS.PENDING,
         },
         orderBy: {
           step_order: "asc",
@@ -2408,11 +2829,11 @@ export const submitEventReportForFinalApproval = async (
         event_report_id: number;
         config_id: number;
         step_order: number;
-        step_type: RequisitionApproverType;
+        step_type: EventReportApproverType;
         approver_user_id: number;
         position_id: number | null;
         configured_user_id: number | null;
-        status: RequisitionApprovalInstanceStatus;
+        status: EventReportFinalApprovalStepStatus;
       }> = [];
 
       for (let index = 0; index < config.steps.length; index += 1) {
@@ -2432,8 +2853,8 @@ export const submitEventReportForFinalApproval = async (
           configured_user_id: step.user_id,
           status:
             index === 0
-              ? RequisitionApprovalInstanceStatus.PENDING
-              : RequisitionApprovalInstanceStatus.WAITING,
+              ? FINAL_APPROVAL_STEP_STATUS.PENDING
+              : FINAL_APPROVAL_STEP_STATUS.WAITING,
         });
       }
 
@@ -2444,7 +2865,7 @@ export const submitEventReportForFinalApproval = async (
       const firstPendingStep = await tx.event_report_final_approval_instances.findFirst({
         where: {
           event_report_id: report.id,
-          status: RequisitionApprovalInstanceStatus.PENDING,
+          status: FINAL_APPROVAL_STEP_STATUS.PENDING,
         },
         orderBy: {
           step_order: "asc",
@@ -2562,7 +2983,7 @@ export const finalApprovalAction = async (
         await tx.event_report_final_approval_instances.findFirst({
           where: {
             event_report_id: report.id,
-            status: RequisitionApprovalInstanceStatus.PENDING,
+            status: FINAL_APPROVAL_STEP_STATUS.PENDING,
           },
           orderBy: {
             step_order: "asc",
@@ -2593,7 +3014,7 @@ export const finalApprovalAction = async (
             id: currentPendingStep.id,
           },
           data: {
-            status: RequisitionApprovalInstanceStatus.REJECTED,
+            status: FINAL_APPROVAL_STEP_STATUS.REJECTED,
             ...actionData,
           },
         });
@@ -2652,7 +3073,7 @@ export const finalApprovalAction = async (
           id: currentPendingStep.id,
         },
         data: {
-          status: RequisitionApprovalInstanceStatus.APPROVED,
+          status: FINAL_APPROVAL_STEP_STATUS.APPROVED,
           ...actionData,
         },
       });
@@ -2660,7 +3081,7 @@ export const finalApprovalAction = async (
       const nextStep = await tx.event_report_final_approval_instances.findFirst({
         where: {
           event_report_id: report.id,
-          status: RequisitionApprovalInstanceStatus.WAITING,
+          status: FINAL_APPROVAL_STEP_STATUS.WAITING,
           step_order: {
             gt: currentPendingStep.step_order,
           },
@@ -2676,7 +3097,7 @@ export const finalApprovalAction = async (
             id: nextStep.id,
           },
           data: {
-            status: RequisitionApprovalInstanceStatus.PENDING,
+            status: FINAL_APPROVAL_STEP_STATUS.PENDING,
           },
         });
 
@@ -2879,8 +3300,8 @@ export const processPendingEventReportNotificationEvents = async (args?: {
       where: {
         status: {
           in: [
-            RequisitionNotificationEventStatus.PENDING,
-            RequisitionNotificationEventStatus.FAILED,
+            NOTIFICATION_QUEUE_STATUS.PENDING,
+            NOTIFICATION_QUEUE_STATUS.FAILED,
           ],
         },
         attempts: {
@@ -2906,13 +3327,13 @@ export const processPendingEventReportNotificationEvents = async (args?: {
           id: event.id,
           status: {
             in: [
-              RequisitionNotificationEventStatus.PENDING,
-              RequisitionNotificationEventStatus.FAILED,
+              NOTIFICATION_QUEUE_STATUS.PENDING,
+              NOTIFICATION_QUEUE_STATUS.FAILED,
             ],
           },
         },
         data: {
-          status: RequisitionNotificationEventStatus.PROCESSING,
+          status: NOTIFICATION_QUEUE_STATUS.PROCESSING,
         },
       });
 
@@ -2935,7 +3356,7 @@ export const processPendingEventReportNotificationEvents = async (args?: {
               id: event.id,
             },
             data: {
-              status: RequisitionNotificationEventStatus.SKIPPED_NO_RECIPIENTS,
+              status: NOTIFICATION_QUEUE_STATUS.SKIPPED_NO_RECIPIENTS,
               attempts: {
                 increment: 1,
               },
@@ -3008,7 +3429,7 @@ export const processPendingEventReportNotificationEvents = async (args?: {
               id: event.id,
             },
             data: {
-              status: RequisitionNotificationEventStatus.SKIPPED_NO_RECIPIENTS,
+              status: NOTIFICATION_QUEUE_STATUS.SKIPPED_NO_RECIPIENTS,
               attempts: {
                 increment: 1,
               },
@@ -3062,7 +3483,7 @@ export const processPendingEventReportNotificationEvents = async (args?: {
             id: event.id,
           },
           data: {
-            status: RequisitionNotificationEventStatus.SENT,
+            status: NOTIFICATION_QUEUE_STATUS.SENT,
             sent_at: new Date(),
             attempts: {
               increment: 1,
@@ -3079,7 +3500,7 @@ export const processPendingEventReportNotificationEvents = async (args?: {
             id: event.id,
           },
           data: {
-            status: RequisitionNotificationEventStatus.FAILED,
+            status: NOTIFICATION_QUEUE_STATUS.FAILED,
             attempts: {
               increment: 1,
             },
