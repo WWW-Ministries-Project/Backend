@@ -75,9 +75,22 @@ type ApprovalAction = RequisitionApprovalActionPayload["action"];
 
 type ApprovalWorkflowTx = Prisma.TransactionClient;
 
-const REQUISITION_MODULE = RequisitionApprovalModule.REQUISITION;
-const EVENT_REPORT_MODULE = RequisitionApprovalModule.EVENT_REPORT;
-const SUPPORTED_APPROVAL_MODULES = Object.values(RequisitionApprovalModule);
+const APPROVAL_MODULE_LITERAL_VALUES = {
+  REQUISITION: "REQUISITION",
+  EVENT_REPORT: "EVENT_REPORT",
+} as const;
+const REQUISITION_MODULE =
+  ((RequisitionApprovalModule as Record<string, string> | undefined)
+    ?.REQUISITION ||
+    APPROVAL_MODULE_LITERAL_VALUES.REQUISITION) as RequisitionApprovalModule;
+const EVENT_REPORT_MODULE =
+  ((RequisitionApprovalModule as Record<string, string> | undefined)
+    ?.EVENT_REPORT ||
+    APPROVAL_MODULE_LITERAL_VALUES.EVENT_REPORT) as RequisitionApprovalModule;
+const SUPPORTED_APPROVAL_MODULES: RequisitionApprovalModule[] = [
+  APPROVAL_MODULE_LITERAL_VALUES.REQUISITION,
+  APPROVAL_MODULE_LITERAL_VALUES.EVENT_REPORT,
+] as RequisitionApprovalModule[];
 const REQUISITION_PERMISSION_KEYS = ["Requisition", "Requisitions"];
 const REQUISITION_MANAGE_PERMISSION_VALUES = ["Can_Manage", "Super_Admin"];
 const DEFAULT_SIMILAR_ITEM_LOOKBACK_DAYS = 30;
@@ -423,13 +436,18 @@ const parseModule = (value: unknown): RequisitionApprovalModule => {
     );
   }
 
-  if (!SUPPORTED_APPROVAL_MODULES.includes(value as RequisitionApprovalModule)) {
+  const normalizedValue = value.trim().toUpperCase();
+  if (
+    !SUPPORTED_APPROVAL_MODULES.includes(
+      normalizedValue as RequisitionApprovalModule,
+    )
+  ) {
     throw new InputValidationError(
       `module must be one of ${SUPPORTED_APPROVAL_MODULES.join(", ")}`,
     );
   }
 
-  return value as RequisitionApprovalModule;
+  return normalizedValue as RequisitionApprovalModule;
 };
 
 const parseRequesterUserIds = (
