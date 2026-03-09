@@ -35,7 +35,7 @@ CREATE TABLE `event_report_department_approvals` (
   `approved_by_user_id` INTEGER NULL,
   `approved_at` DATETIME(3) NULL,
 
-  UNIQUE INDEX `event_report_department_approvals_event_report_id_department_id_key`(`event_report_id`, `department_id`),
+  UNIQUE INDEX `er_dept_appr_erid_did_uk`(`event_report_id`, `department_id`),
   INDEX `event_report_department_approvals_department_id_idx`(`department_id`),
   INDEX `event_report_department_approvals_approved_by_user_id_idx`(`approved_by_user_id`),
   PRIMARY KEY (`id`)
@@ -115,7 +115,7 @@ CREATE TABLE `event_report_final_approval_instances` (
   `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   `updated_at` DATETIME(3) NOT NULL,
 
-  UNIQUE INDEX `event_report_final_approval_instances_event_report_id_step_order_key`(`event_report_id`, `step_order`),
+  UNIQUE INDEX `er_final_appr_erid_step_uk`(`event_report_id`, `step_order`),
   INDEX `event_report_final_approval_instances_approver_user_id_idx`(`approver_user_id`),
   INDEX `event_report_final_approval_instances_status_idx`(`status`),
   INDEX `event_report_final_approval_instances_config_id_idx`(`config_id`),
