@@ -1132,6 +1132,15 @@ export const getRequisitionApprovalConfig = async (): Promise<
   });
 };
 
+export const getApprovalConfigByModule = async (
+  module: RequisitionApprovalModule,
+): Promise<RequisitionApprovalConfigResponse | null> => {
+  await ensureRequisitionApprovalWorkflowTables();
+  return prisma.$transaction(async (tx) => {
+    return getConfigByModuleTx(tx, module);
+  });
+};
+
 export const listRequisitionApprovalConfigs = async (): Promise<
   RequisitionApprovalConfigResponse[]
 > => {

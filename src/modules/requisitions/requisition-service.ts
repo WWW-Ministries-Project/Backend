@@ -18,6 +18,7 @@ import {
 import {
   Prisma,
   RequestApprovalStatus,
+  RequisitionApprovalModule,
 } from "@prisma/client";
 import { cloudinary } from "../../utils";
 import {
@@ -27,9 +28,9 @@ import {
 } from "../../utils/custom-error-handlers";
 import {
   buildRequisitionApprovalSnapshotTx,
+  getApprovalConfigByModule,
   getRequisitionApprovalConfig,
   isRequisitionApprovalTableMissingError,
-  listRequisitionApprovalConfigs,
   processRequisitionApprovalAction,
   upsertRequisitionApprovalConfig,
   validateApprovalActionPayload,
@@ -1366,11 +1367,27 @@ export const saveRequisitionApprovalConfig = async (
   payload: RequisitionApprovalConfigPayload,
   actorUserId?: number,
 ) => {
-  return upsertRequisitionApprovalConfig(payload, actorUserId);
+  const requestedModule = payload?.module;
+  if (
+    requestedModule !== undefined &&
+    requestedModule !== RequisitionApprovalModule.REQUISITION
+  ) {
+    throw new InputValidationError(
+      "Use the event report approval config endpoint for EVENT_REPORT module",
+    );
+  }
+
+  return upsertRequisitionApprovalConfig(
+    {
+      ...payload,
+      module: RequisitionApprovalModule.REQUISITION,
+    },
+    actorUserId,
+  );
 };
 
 export const fetchRequisitionApprovalConfig = async () => {
-  return listRequisitionApprovalConfigs();
+  return getApprovalConfigByModule(RequisitionApprovalModule.REQUISITION);
 };
 
 const resolveSimilarItemLookbackDays = async (

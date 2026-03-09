@@ -5,7 +5,9 @@ import {
   departmentApprovalActionHandler,
   finalApprovalActionHandler,
   financeApprovalActionHandler,
+  getEventReportApprovalConfigHandler,
   getEventReportDetailHandler,
+  saveEventReportApprovalConfigHandler,
   submitFinalApprovalHandler,
   upsertEventReportFinanceHandler,
 } from "./eventReportController";
@@ -13,6 +15,18 @@ import {
 export const eventReportRouter = Router();
 const permissions = new Permissions();
 const protect = permissions.protect;
+
+eventReportRouter.post(
+  "/upsert-approval-config",
+  [protect, permissions.can_manage_events],
+  saveEventReportApprovalConfigHandler,
+);
+
+eventReportRouter.get(
+  "/get-approval-config",
+  [protect, permissions.can_view_events],
+  getEventReportApprovalConfigHandler,
+);
 
 eventReportRouter.get("/get-report", [protect], getEventReportDetailHandler);
 
