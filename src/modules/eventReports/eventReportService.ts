@@ -52,7 +52,9 @@ type NotificationEventSummary = {
   actorUserId: number | null;
 };
 
-const EVENT_REPORT_MODULE = RequisitionApprovalModule.EVENT_REPORT;
+const EVENT_REPORT_MODULE =
+  ((RequisitionApprovalModule as Record<string, string> | undefined)
+    ?.EVENT_REPORT || "EVENT_REPORT") as RequisitionApprovalModule;
 const MANAGE_PERMISSION_VALUES = ["Can_Manage", "Super_Admin"];
 const NOTIFICATION_EVENT_RETRY_LIMIT = 5;
 const NOTIFICATION_EVENT_BATCH_SIZE = 5;
@@ -87,19 +89,22 @@ export const saveEventReportApprovalConfig = async (
   actorUserId?: number,
 ) => {
   const requestedModule = payload?.module;
-  if (
-    requestedModule !== undefined &&
-    requestedModule !== RequisitionApprovalModule.EVENT_REPORT
-  ) {
-    throw new InputValidationError(
-      "module must be EVENT_REPORT when provided",
-    );
+  if (requestedModule !== undefined && requestedModule !== null) {
+    const normalizedModuleValue =
+      typeof requestedModule === "string"
+        ? requestedModule.trim().toUpperCase()
+        : "";
+    if (normalizedModuleValue !== EVENT_REPORT_MODULE) {
+      throw new InputValidationError(
+        "module must be EVENT_REPORT when provided",
+      );
+    }
   }
 
   return upsertRequisitionApprovalConfig(
     {
       ...payload,
-      module: RequisitionApprovalModule.EVENT_REPORT,
+      module: EVENT_REPORT_MODULE,
       requester_user_ids: [],
     },
     actorUserId,
