@@ -102,6 +102,7 @@ const REQUISITION_APPROVAL_TABLE_NAMES = [
 ];
 
 let ensureWorkflowTablesPromise: Promise<void> | null = null;
+let areWorkflowTablesEnsured = false;
 
 const toPositiveInt = (value: unknown): number | null => {
   const parsed = Number(value);
@@ -214,12 +215,13 @@ const mergeUniqueIds = (ids: number[]): number[] => {
 };
 
 const ensureRequisitionApprovalWorkflowTables = async (): Promise<void> => {
-  if (ensureWorkflowTablesPromise) {
-    return ensureWorkflowTablesPromise;
+  if (areWorkflowTablesEnsured) {
+    return;
   }
 
-  ensureWorkflowTablesPromise = (async () => {
-    await prisma.$executeRawUnsafe(`
+  if (!ensureWorkflowTablesPromise) {
+    ensureWorkflowTablesPromise = (async () => {
+      await prisma.$executeRawUnsafe(`
       CREATE TABLE IF NOT EXISTS \`requisition_approval_configs\` (
         \`id\` INTEGER NOT NULL AUTO_INCREMENT,
         \`module\` ENUM('REQUISITION', 'EVENT_REPORT') NOT NULL,
@@ -232,9 +234,9 @@ const ensureRequisitionApprovalWorkflowTables = async (): Promise<void> => {
         UNIQUE INDEX \`requisition_approval_configs_module_key\`(\`module\`),
         PRIMARY KEY (\`id\`)
       ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-    `);
+      `);
 
-    await prisma.$executeRawUnsafe(`
+      await prisma.$executeRawUnsafe(`
       CREATE TABLE IF NOT EXISTS \`requisition_approval_config_requesters\` (
         \`id\` INTEGER NOT NULL AUTO_INCREMENT,
         \`config_id\` INTEGER NOT NULL,
@@ -244,9 +246,9 @@ const ensureRequisitionApprovalWorkflowTables = async (): Promise<void> => {
         INDEX \`requisition_approval_config_requesters_config_id_idx\`(\`config_id\`),
         PRIMARY KEY (\`id\`)
       ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-    `);
+      `);
 
-    await prisma.$executeRawUnsafe(`
+      await prisma.$executeRawUnsafe(`
       CREATE TABLE IF NOT EXISTS \`requisition_approval_config_notifications\` (
         \`id\` INTEGER NOT NULL AUTO_INCREMENT,
         \`config_id\` INTEGER NOT NULL,
@@ -256,9 +258,9 @@ const ensureRequisitionApprovalWorkflowTables = async (): Promise<void> => {
         INDEX \`requisition_approval_config_notifications_config_id_idx\`(\`config_id\`),
         PRIMARY KEY (\`id\`)
       ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-    `);
+      `);
 
-    await prisma.$executeRawUnsafe(`
+      await prisma.$executeRawUnsafe(`
       CREATE TABLE IF NOT EXISTS \`requisition_approval_config_steps\` (
         \`id\` INTEGER NOT NULL AUTO_INCREMENT,
         \`config_id\` INTEGER NOT NULL,
@@ -272,9 +274,9 @@ const ensureRequisitionApprovalWorkflowTables = async (): Promise<void> => {
         INDEX \`requisition_approval_config_steps_config_id_idx\`(\`config_id\`),
         PRIMARY KEY (\`id\`)
       ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-    `);
+      `);
 
-    await prisma.$executeRawUnsafe(`
+      await prisma.$executeRawUnsafe(`
       CREATE TABLE IF NOT EXISTS \`requisition_approval_instances\` (
         \`id\` INTEGER NOT NULL AUTO_INCREMENT,
         \`request_id\` INTEGER NOT NULL,
@@ -296,9 +298,9 @@ const ensureRequisitionApprovalWorkflowTables = async (): Promise<void> => {
         INDEX \`requisition_approval_instances_config_id_idx\`(\`config_id\`),
         PRIMARY KEY (\`id\`)
       ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-    `);
+      `);
 
-    await prisma.$executeRawUnsafe(`
+      await prisma.$executeRawUnsafe(`
       CREATE TABLE IF NOT EXISTS \`requisition_notification_events\` (
         \`id\` INTEGER NOT NULL AUTO_INCREMENT,
         \`idempotency_key\` VARCHAR(191) NOT NULL,
@@ -319,83 +321,86 @@ const ensureRequisitionApprovalWorkflowTables = async (): Promise<void> => {
         INDEX \`requisition_notification_events_event_type_idx\`(\`event_type\`),
         PRIMARY KEY (\`id\`)
       ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-    `);
+      `);
 
-    // Best-effort FK wiring for environments where migrations were skipped.
-    try {
-      await prisma.$executeRawUnsafe(`
+      // Best-effort FK wiring for environments where migrations were skipped.
+      try {
+        await prisma.$executeRawUnsafe(`
         ALTER TABLE \`requisition_approval_configs\`
         ADD COLUMN \`similar_item_lookback_days\` INTEGER NOT NULL DEFAULT ${DEFAULT_SIMILAR_ITEM_LOOKBACK_DAYS};
       `);
-    } catch (error) {}
+      } catch (error) {}
 
-    try {
-      await prisma.$executeRawUnsafe(`
+      try {
+        await prisma.$executeRawUnsafe(`
         ALTER TABLE \`requisition_approval_configs\`
         MODIFY \`module\` ENUM('REQUISITION', 'EVENT_REPORT') NOT NULL;
       `);
-    } catch (error) {}
+      } catch (error) {}
 
-    try {
-      await prisma.$executeRawUnsafe(`
+      try {
+        await prisma.$executeRawUnsafe(`
         ALTER TABLE \`requisition_approval_config_requesters\`
         ADD CONSTRAINT \`requisition_approval_config_requesters_config_id_fkey\`
         FOREIGN KEY (\`config_id\`) REFERENCES \`requisition_approval_configs\`(\`id\`)
         ON DELETE CASCADE ON UPDATE CASCADE;
       `);
-    } catch (error) {}
+      } catch (error) {}
 
-    try {
-      await prisma.$executeRawUnsafe(`
+      try {
+        await prisma.$executeRawUnsafe(`
         ALTER TABLE \`requisition_approval_config_steps\`
         ADD CONSTRAINT \`requisition_approval_config_steps_config_id_fkey\`
         FOREIGN KEY (\`config_id\`) REFERENCES \`requisition_approval_configs\`(\`id\`)
         ON DELETE CASCADE ON UPDATE CASCADE;
       `);
-    } catch (error) {}
+      } catch (error) {}
 
-    try {
-      await prisma.$executeRawUnsafe(`
+      try {
+        await prisma.$executeRawUnsafe(`
         ALTER TABLE \`requisition_approval_config_notifications\`
         ADD CONSTRAINT \`requisition_approval_config_notifications_config_id_fkey\`
         FOREIGN KEY (\`config_id\`) REFERENCES \`requisition_approval_configs\`(\`id\`)
         ON DELETE CASCADE ON UPDATE CASCADE;
       `);
-    } catch (error) {}
+      } catch (error) {}
 
-    try {
-      await prisma.$executeRawUnsafe(`
+      try {
+        await prisma.$executeRawUnsafe(`
         ALTER TABLE \`requisition_approval_instances\`
         ADD CONSTRAINT \`requisition_approval_instances_config_id_fkey\`
         FOREIGN KEY (\`config_id\`) REFERENCES \`requisition_approval_configs\`(\`id\`)
         ON DELETE CASCADE ON UPDATE CASCADE;
       `);
-    } catch (error) {}
+      } catch (error) {}
 
-    try {
-      await prisma.$executeRawUnsafe(`
+      try {
+        await prisma.$executeRawUnsafe(`
         ALTER TABLE \`requisition_approval_instances\`
         ADD CONSTRAINT \`requisition_approval_instances_request_id_fkey\`
         FOREIGN KEY (\`request_id\`) REFERENCES \`request\`(\`id\`)
         ON DELETE CASCADE ON UPDATE CASCADE;
       `);
-    } catch (error) {}
+      } catch (error) {}
 
-    try {
-      await prisma.$executeRawUnsafe(`
+      try {
+        await prisma.$executeRawUnsafe(`
         ALTER TABLE \`requisition_notification_events\`
         ADD CONSTRAINT \`requisition_notification_events_requisition_id_fkey\`
         FOREIGN KEY (\`requisition_id\`) REFERENCES \`request\`(\`id\`)
         ON DELETE CASCADE ON UPDATE CASCADE;
       `);
-    } catch (error) {}
-  })();
-
-  try {
-    await ensureWorkflowTablesPromise;
-  } finally {
-    ensureWorkflowTablesPromise = null;
+      } catch (error) {}
+    })()
+      .then(() => {
+        areWorkflowTablesEnsured = true;
+      })
+      .finally(() => {
+        ensureWorkflowTablesPromise = null;
+      });
   }
+
+  await ensureWorkflowTablesPromise;
 };
 
 const toTrimmedOptionalString = (value: unknown): string | undefined => {

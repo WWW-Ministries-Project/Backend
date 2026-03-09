@@ -23,6 +23,6 @@ export async function processNotificationPushRetriesJob() {
   }
 }
 
-cron.schedule("* * * * *", async () => {
+cron.schedule("35 * * * * *", async () => {
   await processNotificationPushRetriesJob();
 });

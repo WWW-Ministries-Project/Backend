@@ -33,6 +33,6 @@ export async function processEventReportNotificationEventsJob() {
   }
 }
 
-cron.schedule("* * * * *", async () => {
+cron.schedule("20 * * * * *", async () => {
   await processEventReportNotificationEventsJob();
 });
