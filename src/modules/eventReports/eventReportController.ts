@@ -2,12 +2,36 @@ import { Request, Response } from "express";
 import {
   churchAttendanceApprovalAction,
   departmentApprovalAction,
+  fetchEventReportApprovalConfig,
   finalApprovalAction,
   financeApprovalAction,
   getEventReportDetail,
+  saveEventReportApprovalConfig,
   submitEventReportForFinalApproval,
   upsertEventReportFinance,
 } from "./eventReportService";
+
+export const saveEventReportApprovalConfigHandler = async (
+  req: Request,
+  res: Response,
+) => {
+  const data = await saveEventReportApprovalConfig(req.body, (req as any).user?.id);
+  res.status(200).json({
+    message: "Saved successfully",
+    data,
+  });
+};
+
+export const getEventReportApprovalConfigHandler = async (
+  req: Request,
+  res: Response,
+) => {
+  const data = await fetchEventReportApprovalConfig();
+  res.status(200).json({
+    message: "Operation successful",
+    data,
+  });
+};
 
 export const getEventReportDetailHandler = async (
   req: Request,

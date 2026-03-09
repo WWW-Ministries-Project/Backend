@@ -9,6 +9,7 @@ import {
   RequisitionNotificationEventStatus,
 } from "@prisma/client";
 import { randomUUID } from "crypto";
+import { RequisitionApprovalConfigPayload } from "../../interfaces/requisitions-interface";
 import { prisma } from "../../Models/context";
 import {
   InputValidationError,
@@ -16,6 +17,10 @@ import {
   UnauthorizedError,
 } from "../../utils/custom-error-handlers";
 import { notificationService } from "../notifications/notificationService";
+import {
+  getApprovalConfigByModule,
+  upsertRequisitionApprovalConfig,
+} from "../requisitions/requisition-approval-workflow";
 
 type EventReportNotificationEventType =
   | "event_report.submitted_for_final_approval"
@@ -68,6 +73,50 @@ const EVENT_REPORT_TABLE_NAMES = [
   "event_report_final_approval_instances",
   "event_report_notification_events",
 ];
+
+type EventReportApprovalConfigPayload = Omit<
+  RequisitionApprovalConfigPayload,
+  "module" | "requester_user_ids"
+> & {
+  requester_user_ids?: number[];
+  module?: unknown;
+};
+
+export const saveEventReportApprovalConfig = async (
+  payload: EventReportApprovalConfigPayload,
+  actorUserId?: number,
+) => {
+  const requestedModule = payload?.module;
+  if (
+    requestedModule !== undefined &&
+    requestedModule !== RequisitionApprovalModule.EVENT_REPORT
+  ) {
+    throw new InputValidationError(
+      "module must be EVENT_REPORT when provided",
+    );
+  }
+
+  return upsertRequisitionApprovalConfig(
+    {
+      ...payload,
+      module: RequisitionApprovalModule.EVENT_REPORT,
+      requester_user_ids: [],
+    },
+    actorUserId,
+  );
+};
+
+export const fetchEventReportApprovalConfig = async () => {
+  const config = await getApprovalConfigByModule(EVENT_REPORT_MODULE);
+  if (!config) {
+    return null;
+  }
+
+  return {
+    ...config,
+    requester_user_ids: [],
+  };
+};
 
 const isEventReportTableMissingError = (error: unknown): boolean => {
   if (!(error instanceof Prisma.PrismaClientKnownRequestError)) {
