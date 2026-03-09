@@ -410,7 +410,7 @@ model event_report_department_approvals {
   department         department                       @relation(fields: [department_id], references: [id])
   approved_by_user   user?                            @relation("event_report_department_approved_by", fields: [approved_by_user_id], references: [id])
 
-  @@unique([event_report_id, department_id])
+  @@unique([event_report_id, department_id], map: "er_dept_appr_erid_did_uk")
   @@index([department_id])
   @@index([approved_by_user_id])
 }
@@ -491,7 +491,7 @@ model event_report_final_approval_instances {
   approver_user      user                              @relation("event_report_final_assigned_to", fields: [approver_user_id], references: [id])
   acted_by_user      user?                             @relation("event_report_final_acted_by", fields: [acted_by_user_id], references: [id])
 
-  @@unique([event_report_id, step_order])
+  @@unique([event_report_id, step_order], map: "er_final_appr_erid_step_uk")
   @@index([approver_user_id])
   @@index([status])
   @@index([config_id])

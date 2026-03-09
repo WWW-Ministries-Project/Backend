@@ -397,6 +397,7 @@ const loadEventByIdTx = async (tx: ApprovalWorkflowTx, eventId: number) => {
     },
     select: {
       id: true,
+      created_by: true,
       start_date: true,
       event: {
         select: {
@@ -501,6 +502,7 @@ const ensureEventReportTx = async (
     eventId: number;
     eventDate: string;
     actorUserId: number;
+    reportOwnerUserId?: number;
   },
 ) => {
   const existing = await findEventReportByDateTx(tx, args.eventId, args.eventDate);
@@ -508,13 +510,16 @@ const ensureEventReportTx = async (
     return existing;
   }
 
+  const reportOwnerUserId =
+    toPositiveInt(args.reportOwnerUserId) || args.actorUserId;
+
   try {
     return await tx.event_reports.create({
       data: {
         event_id: args.eventId,
         event_date: toUtcDayDate(args.eventDate),
         status: EventReportStatus.DRAFT,
-        created_by: args.actorUserId,
+        created_by: reportOwnerUserId,
         updated_by: args.actorUserId,
       },
       select: {
@@ -1196,6 +1201,28 @@ const canUserSubmitFinal = (args: {
   return args.configuredRequesterUserIds.includes(args.actorUserId);
 };
 
+const assertReportOpenForSectionApproval = (reportStatus: EventReportStatus) => {
+  if (reportStatus === EventReportStatus.PENDING_FINAL) {
+    throw new InputValidationError(
+      "Section approvals cannot be changed while final approval is pending",
+    );
+  }
+
+  if (reportStatus === EventReportStatus.APPROVED) {
+    throw new InputValidationError(
+      "Section approvals cannot be changed after final approval",
+    );
+  }
+};
+
+const assertReportCanSubmitForFinal = (reportStatus: EventReportStatus) => {
+  if (reportStatus === EventReportStatus.APPROVED) {
+    throw new InputValidationError(
+      "Report has already been finally approved",
+    );
+  }
+};
+
 const buildApprovalBlock = (args: {
   status: EventReportSectionApprovalStatus;
   approvedByUserId: number | null;
@@ -1532,13 +1559,15 @@ const createNotificationEventTx = async (
 
 const buildFinalSubmitIdempotencyKey = (
   eventReportId: number,
-  stepOrder: number,
-) => `event-report:${eventReportId}:event:${FINAL_SUBMIT_EVENT}:step:${stepOrder}`;
+  approvalInstanceId: number,
+) =>
+  `event-report:${eventReportId}:event:${FINAL_SUBMIT_EVENT}:instance:${approvalInstanceId}`;
 
 const buildFinalDecisionIdempotencyKey = (
   eventReportId: number,
   eventType: EventReportNotificationEventType,
-) => `event-report:${eventReportId}:event:${eventType}`;
+  approvalInstanceId: number,
+) => `event-report:${eventReportId}:event:${eventType}:instance:${approvalInstanceId}`;
 
 const getPreFinalCompletionStatus = (args: {
   allDepartmentsApproved: boolean;
@@ -1578,6 +1607,7 @@ const getEventReportDetailTx = async (
     eventId: args.eventId,
     eventDate,
     actorUserId: args.actorUserId,
+    reportOwnerUserId: event.created_by,
   });
 
   const [departmentBlock, churchAttendanceBlock, financeBlock] =
@@ -1816,28 +1846,32 @@ export const upsertEventReportFinance = async (
 
   const runUpsert = async () =>
     prisma.$transaction(async (tx) => {
-      await loadEventByIdTx(tx, eventId);
+      const event = await loadEventByIdTx(tx, eventId);
 
       const report = await ensureEventReportTx(tx, {
         eventId,
         eventDate,
         actorUserId,
+        reportOwnerUserId: event.created_by,
       });
 
-      if (report.status === EventReportStatus.PENDING_FINAL) {
-        throw new InputValidationError(
-          "Finance cannot be edited while final approval is pending",
-        );
-      }
-
-      if (report.status === EventReportStatus.APPROVED) {
-        throw new InputValidationError(
-          "Finance cannot be edited after final approval",
-        );
-      }
+      assertReportOpenForSectionApproval(report.status);
 
       await ensureFinanceRowTx(tx, report.id);
-      await ensureFinanceApprovalRowsTx(tx, report.id);
+      const financeApprovals = await ensureFinanceApprovalRowsTx(tx, report.id);
+
+      const canEditFinance =
+        report.created_by === actorUserId ||
+        isAdminLikeUser(user) ||
+        financeApprovals.some(
+          (approval) => approval.role_owner_user_id === actorUserId,
+        );
+
+      if (!canEditFinance) {
+        throw new UnauthorizedError(
+          "You are not authorized to edit finance for this report",
+        );
+      }
 
       await tx.event_report_finance.update({
         where: {
@@ -1931,7 +1965,7 @@ export const departmentApprovalAction = async (
 
   const runAction = async () =>
     prisma.$transaction(async (tx) => {
-      await loadEventByIdTx(tx, eventId);
+      const event = await loadEventByIdTx(tx, eventId);
 
       const department = await tx.department.findUnique({
         where: {
@@ -1957,7 +1991,9 @@ export const departmentApprovalAction = async (
         eventId,
         eventDate,
         actorUserId,
+        reportOwnerUserId: event.created_by,
       });
+      assertReportOpenForSectionApproval(report.status);
 
       const existing = await tx.event_report_department_approvals.findUnique({
         where: {
@@ -2040,7 +2076,7 @@ export const churchAttendanceApprovalAction = async (
 
   const runAction = async () =>
     prisma.$transaction(async (tx) => {
-      await loadEventByIdTx(tx, eventId);
+      const event = await loadEventByIdTx(tx, eventId);
 
       const approverIds = await getChurchAttendanceApproverUserIdsTx(tx);
       if (!approverIds.includes(actorUserId)) {
@@ -2053,7 +2089,9 @@ export const churchAttendanceApprovalAction = async (
         eventId,
         eventDate,
         actorUserId,
+        reportOwnerUserId: event.created_by,
       });
+      assertReportOpenForSectionApproval(report.status);
 
       const approval = await ensureAttendanceApprovalRowTx(tx, report.id);
       if (approval.status !== EventReportSectionApprovalStatus.APPROVED) {
@@ -2120,13 +2158,15 @@ export const financeApprovalAction = async (
 
   const runAction = async () =>
     prisma.$transaction(async (tx) => {
-      await loadEventByIdTx(tx, eventId);
+      const event = await loadEventByIdTx(tx, eventId);
 
       const report = await ensureEventReportTx(tx, {
         eventId,
         eventDate,
         actorUserId,
+        reportOwnerUserId: event.created_by,
       });
+      assertReportOpenForSectionApproval(report.status);
 
       await ensureFinanceRowTx(tx, report.id);
       await ensureFinanceApprovalRowsTx(tx, report.id);
@@ -2214,13 +2254,15 @@ export const submitEventReportForFinalApproval = async (
 
   const runSubmit = async () =>
     prisma.$transaction(async (tx) => {
-      await loadEventByIdTx(tx, eventId);
+      const event = await loadEventByIdTx(tx, eventId);
 
       const report = await ensureEventReportTx(tx, {
         eventId,
         eventDate,
         actorUserId,
+        reportOwnerUserId: event.created_by,
       });
+      assertReportCanSubmitForFinal(report.status);
 
       const departmentBlock = await getDepartmentBreakdownTx(tx, {
         eventReportId: report.id,
@@ -2310,7 +2352,7 @@ export const submitEventReportForFinalApproval = async (
         const step = config.steps[index];
         const approverUserId = await resolveApproverUserIdForStep(tx, {
           step,
-          requesterId: report.created_by,
+          requesterId: actorUserId,
         });
 
         snapshotRows.push({
@@ -2332,8 +2374,22 @@ export const submitEventReportForFinalApproval = async (
         data: snapshotRows,
       });
 
-      const firstStep = snapshotRows[0];
-      if (!firstStep) {
+      const firstPendingStep = await tx.event_report_final_approval_instances.findFirst({
+        where: {
+          event_report_id: report.id,
+          status: RequisitionApprovalInstanceStatus.PENDING,
+        },
+        orderBy: {
+          step_order: "asc",
+        },
+        select: {
+          id: true,
+          step_order: true,
+          approver_user_id: true,
+        },
+      });
+
+      if (!firstPendingStep) {
         throw new InputValidationError(
           "Active EVENT_REPORT approval config has no approver steps",
         );
@@ -2345,7 +2401,7 @@ export const submitEventReportForFinalApproval = async (
         },
         data: {
           status: EventReportStatus.PENDING_FINAL,
-          final_approver_user_id: firstStep.approver_user_id,
+          final_approver_user_id: firstPendingStep.approver_user_id,
           final_acted_by_user_id: null,
           final_acted_at: null,
           updated_by: actorUserId,
@@ -2359,12 +2415,15 @@ export const submitEventReportForFinalApproval = async (
 
       const recipientUserIds = await resolveActiveRecipientUserIdsTx(
         tx,
-        [firstStep.approver_user_id],
+        [firstPendingStep.approver_user_id],
         actorUserId,
       );
 
       await createNotificationEventTx(tx, {
-        idempotencyKey: buildFinalSubmitIdempotencyKey(report.id, firstStep.step_order),
+        idempotencyKey: buildFinalSubmitIdempotencyKey(
+          report.id,
+          firstPendingStep.id,
+        ),
         eventType: FINAL_SUBMIT_EVENT,
         eventReportId: report.id,
         actorUserId,
@@ -2417,12 +2476,13 @@ export const finalApprovalAction = async (
 
   const runAction = async () =>
     prisma.$transaction(async (tx) => {
-      await loadEventByIdTx(tx, eventId);
+      const event = await loadEventByIdTx(tx, eventId);
 
       const report = await ensureEventReportTx(tx, {
         eventId,
         eventDate,
         actorUserId,
+        reportOwnerUserId: event.created_by,
       });
 
       if (report.status !== EventReportStatus.PENDING_FINAL) {
@@ -2503,6 +2563,7 @@ export const finalApprovalAction = async (
           idempotencyKey: buildFinalDecisionIdempotencyKey(
             report.id,
             FINAL_REJECTED_EVENT,
+            currentPendingStep.id,
           ),
           eventType: FINAL_REJECTED_EVENT,
           eventReportId: report.id,
@@ -2572,7 +2633,7 @@ export const finalApprovalAction = async (
         await createNotificationEventTx(tx, {
           idempotencyKey: buildFinalSubmitIdempotencyKey(
             report.id,
-            nextStep.step_order,
+            nextStep.id,
           ),
           eventType: FINAL_SUBMIT_EVENT,
           eventReportId: report.id,
@@ -2620,6 +2681,7 @@ export const finalApprovalAction = async (
         idempotencyKey: buildFinalDecisionIdempotencyKey(
           report.id,
           FINAL_APPROVED_EVENT,
+          currentPendingStep.id,
         ),
         eventType: FINAL_APPROVED_EVENT,
         eventReportId: report.id,
