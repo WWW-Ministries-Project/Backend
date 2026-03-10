@@ -2,17 +2,22 @@ import cron from "node-cron";
 import { processPendingEventReportNotificationEvents } from "../modules/eventReports/eventReportService";
 import { notificationService } from "../modules/notifications/notificationService";
 
-let isRunning = false;
+let isEventReportNotificationJobRunning = false;
 
 export async function processEventReportNotificationEventsJob() {
-  if (isRunning) {
+  if (isEventReportNotificationJobRunning) {
     return;
   }
 
-  isRunning = true;
+  isEventReportNotificationJobRunning = true;
+  const startedAt = Date.now();
 
   try {
+    console.info("[INFO] Starting event report notification event processing job");
     await processPendingEventReportNotificationEvents();
+    console.info("[INFO] Event report notification event processing completed", {
+      durationMs: Date.now() - startedAt,
+    });
   } catch (error: any) {
     const normalizedError = error?.message || String(error);
     console.error(
@@ -29,7 +34,7 @@ export async function processEventReportNotificationEventsJob() {
         .slice(0, 13)}`,
     });
   } finally {
-    isRunning = false;
+    isEventReportNotificationJobRunning = false;
   }
 }
 
