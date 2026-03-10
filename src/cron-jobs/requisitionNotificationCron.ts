@@ -2,17 +2,22 @@ import cron from "node-cron";
 import { processPendingRequisitionNotificationEvents } from "../modules/requisitions/requisition-approval-workflow";
 import { notificationService } from "../modules/notifications/notificationService";
 
-let isRunning = false;
+let isRequisitionNotificationJobRunning = false;
 
 export async function processRequisitionNotificationEventsJob() {
-  if (isRunning) {
+  if (isRequisitionNotificationJobRunning) {
     return;
   }
 
-  isRunning = true;
+  isRequisitionNotificationJobRunning = true;
+  const startedAt = Date.now();
 
   try {
+    console.info("[INFO] Starting requisition notification event processing job");
     await processPendingRequisitionNotificationEvents();
+    console.info("[INFO] Requisition notification event processing completed", {
+      durationMs: Date.now() - startedAt,
+    });
   } catch (error: any) {
     const normalizedError = error?.message || String(error);
     console.error(
@@ -26,7 +31,7 @@ export async function processRequisitionNotificationEventsJob() {
       dedupeKey: `job:requisition-notification-events:${new Date().toISOString().slice(0, 13)}`,
     });
   } finally {
-    isRunning = false;
+    isRequisitionNotificationJobRunning = false;
   }
 }
 

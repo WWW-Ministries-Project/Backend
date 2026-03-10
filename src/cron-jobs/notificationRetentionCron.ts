@@ -2,6 +2,15 @@ import cron from "node-cron";
 import { notificationService } from "../modules/notifications/notificationService";
 
 let isRetentionJobRunning = false;
+const NOTIFICATION_RETENTION_CRON =
+  process.env.NOTIFICATION_RETENTION_CRON || "45 23 * * *";
+const NOTIFICATION_RETENTION_DAYS = (() => {
+  const parsed = Number(process.env.NOTIFICATION_RETENTION_DAYS);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return 90;
+  }
+  return Math.min(parsed, 3650);
+})();
 
 export async function pruneOldNotificationsJob() {
   if (isRetentionJobRunning) {
@@ -11,8 +20,13 @@ export async function pruneOldNotificationsJob() {
   isRetentionJobRunning = true;
 
   try {
-    const result = await notificationService.pruneOldNotifications(90);
-    console.info("[INFO] Notification retention job:", result);
+    const result = await notificationService.pruneOldNotifications(
+      NOTIFICATION_RETENTION_DAYS,
+    );
+    console.info("[INFO] Notification retention job:", {
+      ...result,
+      retentionDays: NOTIFICATION_RETENTION_DAYS,
+    });
   } catch (error: any) {
     const normalizedError = error?.message || String(error);
     console.error("[ERROR] Notification retention job failed:", normalizedError);
@@ -28,8 +42,7 @@ export async function pruneOldNotificationsJob() {
   }
 }
 
-// 03:00 daily server time
-cron.schedule("0 3 * * *", async () => {
+// Daily in off-peak window (11pm-1am), server timezone.
+cron.schedule(NOTIFICATION_RETENTION_CRON, async () => {
   await pruneOldNotificationsJob();
 });
-
