@@ -57,6 +57,21 @@ const parseOptionalLastEventId = (req: Request): number | undefined => {
 };
 
 export class NotificationController {
+  private isPushDisabledBySseOnlyMode(res: Response): boolean {
+    if (!notificationService.isSseOnlyModeEnabled()) {
+      return false;
+    }
+
+    res.status(503).json({
+      message: "Push notifications are disabled. Notifications are delivered via SSE.",
+      data: {
+        pushEnabled: false,
+        reason: "sse_only_mode",
+      },
+    });
+    return true;
+  }
+
   async issueStreamToken(req: Request, res: Response) {
     const userId = getAuthenticatedUserId(req);
     const streamTokenData = issueNotificationStreamToken(userId);
@@ -71,6 +86,10 @@ export class NotificationController {
   }
 
   async getPushPublicKey(req: Request, res: Response) {
+    if (this.isPushDisabledBySseOnlyMode(res)) {
+      return;
+    }
+
     if (!notificationPushService.isPushConfigured()) {
       return res.status(503).json({
         message: "Web push is not configured for this environment.",
@@ -94,6 +113,10 @@ export class NotificationController {
   }
 
   async subscribePush(req: Request, res: Response) {
+    if (this.isPushDisabledBySseOnlyMode(res)) {
+      return;
+    }
+
     const userId = getAuthenticatedUserId(req);
     const data = await notificationPushService.subscribe(userId, req.body);
 
@@ -104,6 +127,10 @@ export class NotificationController {
   }
 
   async unsubscribePush(req: Request, res: Response) {
+    if (this.isPushDisabledBySseOnlyMode(res)) {
+      return;
+    }
+
     const userId = getAuthenticatedUserId(req);
     const data = await notificationPushService.unsubscribe(userId, req.body);
 

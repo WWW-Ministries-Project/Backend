@@ -1956,7 +1956,6 @@ export const processPendingRequisitionNotificationEvents = async (args?: {
         const requesterName = requisition.user?.name || "Requester";
         const departmentName = requisition.department?.name || "Not specified";
         const requisitionActionUrl = buildRequisitionActionUrl(requisition.id);
-        const emailActionUrl = toAbsoluteActionUrl(requisitionActionUrl);
 
         const inAppType =
           event.event_type === SUBMITTED_EVENT
@@ -2013,17 +2012,20 @@ export const processPendingRequisitionNotificationEvents = async (args?: {
           ),
         );
 
-        const { subject, html } = buildNotificationEmail({
-          eventType: event.event_type,
-          decision,
-          requisitionReference,
-          requesterName,
-          departmentName,
-          actorName,
-          actionUrl: emailActionUrl,
-        });
+        if (
+          !notificationService.isSseOnlyModeEnabled() &&
+          recipientEmails.length
+        ) {
+          const { subject, html } = buildNotificationEmail({
+            eventType: event.event_type,
+            decision,
+            requisitionReference,
+            requesterName,
+            departmentName,
+            actorName,
+            actionUrl: toAbsoluteActionUrl(requisitionActionUrl),
+          });
 
-        if (recipientEmails.length) {
           await sendEmail(html, recipientEmails.join(","), subject, {
             throwOnError: true,
           });

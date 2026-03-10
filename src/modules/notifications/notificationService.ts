@@ -134,6 +134,22 @@ const NOTIFICATION_SMS_DEFAULT_ENABLED = (() => {
   }
   return true;
 })();
+const NOTIFICATIONS_SSE_ONLY = (() => {
+  const value = process.env.NOTIFICATIONS_SSE_ONLY;
+  if (value === undefined) {
+    return true;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (["true", "1", "yes", "on"].includes(normalized)) {
+    return true;
+  }
+  if (["false", "0", "no", "off"].includes(normalized)) {
+    return false;
+  }
+  return true;
+})();
+const isSseOnlyModeEnabled = (): boolean => NOTIFICATIONS_SSE_ONLY;
 
 const sseClientsByUserId = new Map<number, Set<SseClient>>();
 const sseReplayBufferByUserId = new Map<number, SseEventEnvelope[]>();
@@ -759,7 +775,8 @@ const createInAppNotification = async (
     }
   }
 
-  const shouldSendEmail = (input.sendEmail ?? true) && preference.emailEnabled;
+  const shouldSendEmail =
+    !NOTIFICATIONS_SSE_ONLY && (input.sendEmail ?? true) && preference.emailEnabled;
   const recipientEmail = recipientUser.email?.trim() || "";
   if (shouldSendEmail && recipientEmail) {
     const actionUrlForEmail = toAbsoluteActionUrl(actionUrl);
@@ -795,6 +812,7 @@ const createInAppNotification = async (
   }
 
   const shouldSendSms =
+    !NOTIFICATIONS_SSE_ONLY &&
     (input.sendSms ?? NOTIFICATION_SMS_DEFAULT_ENABLED) === true &&
     notificationSmsService.isSmsEnabled();
   if (shouldSendSms) {
@@ -828,31 +846,33 @@ const createInAppNotification = async (
   void sendUnreadCountToUser(recipientUserId);
   void updateUnreadBacklogMetric();
 
-  enqueueNotificationDelivery(async () => {
-    try {
-      const pushDelivery = await notificationPushService.deliverNotificationPush({
-        id: payload.id,
-        dedupeKey: payload.dedupeKey,
-        recipientUserId: payload.recipientUserId,
-        type: payload.type,
-        title: payload.title,
-        body: payload.body,
-        actionUrl: payload.actionUrl,
-        entityType: payload.entityType,
-        entityId: payload.entityId,
-        priority: payload.priority,
-        createdAt: payload.createdAt,
-      });
+  if (!NOTIFICATIONS_SSE_ONLY) {
+    enqueueNotificationDelivery(async () => {
+      try {
+        const pushDelivery = await notificationPushService.deliverNotificationPush({
+          id: payload.id,
+          dedupeKey: payload.dedupeKey,
+          recipientUserId: payload.recipientUserId,
+          type: payload.type,
+          title: payload.title,
+          body: payload.body,
+          actionUrl: payload.actionUrl,
+          entityType: payload.entityType,
+          entityId: payload.entityId,
+          priority: payload.priority,
+          createdAt: payload.createdAt,
+        });
 
-      if (pushDelivery.failed > 0) {
-        notificationDeliveryFailureCounter.labels("push", trimmedType).inc(
-          pushDelivery.failed,
-        );
+        if (pushDelivery.failed > 0) {
+          notificationDeliveryFailureCounter.labels("push", trimmedType).inc(
+            pushDelivery.failed,
+          );
+        }
+      } catch (error) {
+        notificationDeliveryFailureCounter.labels("push", trimmedType).inc();
       }
-    } catch (error) {
-      notificationDeliveryFailureCounter.labels("push", trimmedType).inc();
-    }
-  });
+    });
+  }
 
   return payload;
 };
@@ -1184,4 +1204,5 @@ export const notificationService = {
   startSseStream,
   pruneOldNotifications,
   notifyAdminsJobFailed,
+  isSseOnlyModeEnabled,
 };
