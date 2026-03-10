@@ -33,8 +33,26 @@ const FOLLOW_UP_MAX_ROWS_PER_WINDOW = (() => {
 })();
 
 const ACTIVE_FOLLOW_UP_STATUSES_EXCLUSION = ["completed", "cancelled", "done"];
-const FOLLOW_UP_NOTIFICATION_CRON =
-  process.env.FOLLOW_UP_NOTIFICATION_CRON || "10 23 * * *";
+const FOLLOW_UP_CRITICAL_JOB_DEFAULT_CRONS = ["30 5 * * *", "30 11 * * *"];
+const FOLLOW_UP_NOTIFICATION_CRONS = (() => {
+  const configured = process.env.FOLLOW_UP_NOTIFICATION_CRONS;
+  if (configured) {
+    const parsed = configured
+      .split(",")
+      .map((value) => value.trim())
+      .filter((value) => Boolean(value));
+    if (parsed.length) {
+      return parsed;
+    }
+  }
+
+  const legacySingle = process.env.FOLLOW_UP_NOTIFICATION_CRON?.trim();
+  if (legacySingle) {
+    return [legacySingle];
+  }
+
+  return FOLLOW_UP_CRITICAL_JOB_DEFAULT_CRONS;
+})();
 
 const toPositiveInt = (value: unknown): number | null => {
   if (typeof value === "number") {
@@ -223,7 +241,16 @@ export async function processFollowUpDueNotificationsJob() {
   }
 }
 
-// Daily in off-peak window (11pm-1am), server timezone.
-cron.schedule(FOLLOW_UP_NOTIFICATION_CRON, async () => {
-  await processFollowUpDueNotificationsJob();
-});
+for (const cronExpression of FOLLOW_UP_NOTIFICATION_CRONS) {
+  if (!cron.validate(cronExpression)) {
+    console.warn(
+      `[WARN] Skipping invalid FOLLOW_UP_NOTIFICATION_CRONS expression: ${cronExpression}`,
+    );
+    continue;
+  }
+
+  // Critical notification job runs twice daily (5-6am and 11am-12pm), server timezone.
+  cron.schedule(cronExpression, async () => {
+    await processFollowUpDueNotificationsJob();
+  });
+}

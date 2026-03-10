@@ -3,6 +3,22 @@ import { processPendingEventReportNotificationEvents } from "../modules/eventRep
 import { notificationService } from "../modules/notifications/notificationService";
 
 let isEventReportNotificationJobRunning = false;
+const EVENT_REPORT_CRITICAL_JOB_DEFAULT_CRONS = ["20 5 * * *", "20 11 * * *"];
+const EVENT_REPORT_CRITICAL_JOB_CRONS = (() => {
+  const configured = process.env.EVENT_REPORT_NOTIFICATION_CRONS;
+  if (!configured) {
+    return EVENT_REPORT_CRITICAL_JOB_DEFAULT_CRONS;
+  }
+
+  const parsed = configured
+    .split(",")
+    .map((value) => value.trim())
+    .filter((value) => Boolean(value));
+
+  return parsed.length
+    ? parsed
+    : EVENT_REPORT_CRITICAL_JOB_DEFAULT_CRONS;
+})();
 
 export async function processEventReportNotificationEventsJob() {
   if (isEventReportNotificationJobRunning) {
@@ -38,6 +54,16 @@ export async function processEventReportNotificationEventsJob() {
   }
 }
 
-cron.schedule("20 * * * * *", async () => {
-  await processEventReportNotificationEventsJob();
-});
+for (const cronExpression of EVENT_REPORT_CRITICAL_JOB_CRONS) {
+  if (!cron.validate(cronExpression)) {
+    console.warn(
+      `[WARN] Skipping invalid EVENT_REPORT_NOTIFICATION_CRONS expression: ${cronExpression}`,
+    );
+    continue;
+  }
+
+  // Critical notification job runs twice daily (5-6am and 11am-12pm), server timezone.
+  cron.schedule(cronExpression, async () => {
+    await processEventReportNotificationEventsJob();
+  });
+}
