@@ -8,6 +8,7 @@ import {
   toFamilyRelationLabel,
   upsertBidirectionalFamilyRelation,
 } from "./familyRelations";
+import { roleEligibilityService } from "../settings/roleEligibilityService";
 
 export class UserService {
   private normalizeOptionalEmail(email?: string | null) {
@@ -88,9 +89,20 @@ export class UserService {
     const isLoginUser =
       is_user === true || is_user === "true" || is_user === 1 || is_user === "1";
     const userEmail = this.normalizeOptionalEmail(email);
+    const normalizedStatus = String(status || "")
+      .trim()
+      .toUpperCase();
 
     if (isLoginUser && !this.isRealEmail(userEmail)) {
       throw new Error("A valid non-temporary email is required for login users.");
+    }
+
+    if (normalizedStatus === "MEMBER") {
+      await roleEligibilityService.assertEligible("member");
+    }
+
+    if (isLoginUser) {
+      await roleEligibilityService.assertEligible("ministry_worker");
     }
 
     // Hash password for all users
@@ -648,67 +660,7 @@ export class UserService {
     id: number,
     memberName: string,
   ) {
-    const allRequiredMemberPrograms = await prisma.program.findMany({
-      where: {
-        member_required: true,
-      },
-      select: {
-        id: true,
-        title: true,
-      },
-    });
-
-    if (allRequiredMemberPrograms.length === 0) {
-      return {
-        message: "",
-        error:
-          "Cannot make member functional. No member_required program has been configured.",
-      };
-    }
-
-    const programIds = allRequiredMemberPrograms.map((entry) => entry.id);
-    const completionResults = await this.checkMultipleProgramCompletion(
-      id,
-      programIds,
-    );
-
-    const completedPrograms = completionResults
-      .filter((result) => result.enrolled && result.completed)
-      .map((result) => result.programId);
-
-    if (completedPrograms.length === 0) {
-      const notEnrolledPrograms = completionResults
-        .filter((result) => !result.enrolled)
-        .map((result) => result.programId);
-
-      const incompletePrograms = completionResults
-        .filter((result) => result.enrolled && !result.completed)
-        .map((result) => result.programId);
-
-      const getProgramTitles = (ids: number[]) =>
-        allRequiredMemberPrograms
-          .filter((program) => ids.includes(program.id))
-          .map((program) => program.title);
-
-      const notEnrolledTitles = getProgramTitles(notEnrolledPrograms);
-      const incompleteTitles = getProgramTitles(incompletePrograms);
-
-      let errorMsg =
-        "Cannot make member functional. Complete at least one required program.";
-
-      if (notEnrolledTitles.length > 0) {
-        errorMsg += ` Not enrolled in: ${notEnrolledTitles.join(", ")}.`;
-      }
-
-      if (incompleteTitles.length > 0) {
-        errorMsg += ` Incomplete programs: ${incompleteTitles.join(", ")}.`;
-      }
-
-      return {
-        message: "",
-        error: errorMsg.trim(),
-      };
-    }
+    await roleEligibilityService.assertEligible("member", id);
 
     return this.updateMemberStatus(
       id,
@@ -742,54 +694,6 @@ export class UserService {
       message: "",
       error: `Failed to update membership status for ${updatedMember.name}.`,
     };
-  }
-
-  private async checkMultipleProgramCompletion(
-    userId: number,
-    programIds: number[],
-  ) {
-    const results = await Promise.all(
-      programIds.map(async (programId) => {
-        // 1. Check enrollment
-        const enrollment = await prisma.enrollment.findFirst({
-          where: {
-            user_id: userId,
-            course: {
-              cohort: {
-                programId,
-              },
-            },
-          },
-          select: { id: true },
-        });
-
-        if (!enrollment) {
-          return { programId, enrolled: false, completed: false };
-        }
-
-        // 2. Get topic IDs
-        const topics = await prisma.topic.findMany({
-          where: { programId },
-          select: { id: true },
-        });
-        const topicIds = topics.map((t: any) => t.id);
-
-        // 3. Check progress
-        const passedCount = await prisma.progress.count({
-          where: {
-            enrollmentId: enrollment.id,
-            topicId: { in: topicIds },
-            status: "PASS",
-          },
-        });
-
-        const completed = passedCount === topicIds.length;
-
-        return { programId, enrolled: true, completed };
-      }),
-    );
-
-    return results;
   }
 
   async linkSpouses(userId1: number, userId2: number) {

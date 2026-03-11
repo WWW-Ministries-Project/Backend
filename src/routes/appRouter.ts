@@ -28,6 +28,7 @@ import titheBreakdownConfigRouter from "../modules/finance/TitheBreakdownConfig/
 import financialsRouter from "../modules/finance/Financials/route";
 import aiRouter from "../modules/ai/aiRoute";
 import notificationRouter from "../modules/notifications/notificationRoute";
+import settingsRouter from "../modules/settings/route";
 import { FollowUPController } from "../modules/visitorManagement/followUpController";
 import { Permissions } from "../middleWare/authorization";
 dotenv.config();
@@ -63,6 +64,7 @@ appRouter.use("/tithebreakdownconfig", titheBreakdownConfigRouter);
 appRouter.use("/financials", financialsRouter);
 appRouter.use("/ai", aiRouter);
 appRouter.use("/notifications", notificationRouter);
+appRouter.use("/settings", settingsRouter);
 appRouter.use("/api/ai", aiRouter);
 appRouter.use("/api/v1/ai", aiRouter);
 

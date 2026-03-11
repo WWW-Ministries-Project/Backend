@@ -1,6 +1,20 @@
 import { prisma } from "../../Models/context";
 import { Request, Response } from "express";
 import { departmentSchema, toCapitalizeEachWord } from "../../utils";
+import {
+  buildRoleEligibilityFailureResponse,
+  isRoleEligibilityValidationError,
+  roleEligibilityService,
+} from "../settings/roleEligibilityService";
+
+const toPositiveInt = (value: unknown) => {
+  const parsedValue = Number(value);
+  if (!Number.isInteger(parsedValue) || parsedValue <= 0) {
+    return null;
+  }
+
+  return parsedValue;
+};
 
 export const createDepartment = async (req: Request, res: Response) => {
   const { name, department_head, description, created_by } = req.body;
@@ -12,6 +26,15 @@ export const createDepartment = async (req: Request, res: Response) => {
         data: null,
       });
     }
+
+    const departmentHeadId = toPositiveInt(department_head);
+    if (departmentHeadId) {
+      await roleEligibilityService.assertEligible(
+        "head_of_department",
+        departmentHeadId,
+      );
+    }
+
     const existing = await prisma.department.findFirst({
       where: {
         name: toCapitalizeEachWord(name),
@@ -53,6 +76,12 @@ export const createDepartment = async (req: Request, res: Response) => {
       .status(200)
       .json({ message: "Department Created Succesfully", data: data });
   } catch (error: any) {
+    if (isRoleEligibilityValidationError(error)) {
+      return res
+        .status(error.statusCode)
+        .json(buildRoleEligibilityFailureResponse(error));
+    }
+
     return res
       .status(500)
       .json({ message: "Department failed to create", data: error });
@@ -68,6 +97,14 @@ export const updateDepartment = async (req: Request, res: Response) => {
         message: "We cannot have an empty department name, you get it?",
         data: null,
       });
+    }
+
+    const departmentHeadId = toPositiveInt(department_head);
+    if (departmentHeadId) {
+      await roleEligibilityService.assertEligible(
+        "head_of_department",
+        departmentHeadId,
+      );
     }
 
     const response = await prisma.department.update({
@@ -98,6 +135,12 @@ export const updateDepartment = async (req: Request, res: Response) => {
       .status(200)
       .json({ message: "Department Updated Succesfully", data: response });
   } catch (error) {
+    if (isRoleEligibilityValidationError(error)) {
+      return res
+        .status(error.statusCode)
+        .json(buildRoleEligibilityFailureResponse(error));
+    }
+
     return res
       .status(503)
       .json({ message: "Department failed to update", data: error });

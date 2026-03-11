@@ -1,5 +1,9 @@
 import { Request, Response } from "express";
 import { LifeCenterService } from "./lifeCenterService";
+import {
+  buildRoleEligibilityFailureResponse,
+  isRoleEligibilityValidationError,
+} from "../settings/roleEligibilityService";
 
 const lifeCenterService = new LifeCenterService();
 
@@ -178,13 +182,19 @@ export class LifeCenterController {
 
       res.status(201).json(member);
     } catch (error: any) {
+      if (isRoleEligibilityValidationError(error)) {
+        return res
+          .status(error.statusCode)
+          .json(buildRoleEligibilityFailureResponse(error));
+      }
+
       if (error.code === "P2002") {
-        res
+        return res
           .status(400)
           .json({ message: "Member already exists in this Life Center" });
-      } else {
-        res.status(500).json({ error: error.message });
       }
+
+      return res.status(500).json({ error: error.message });
     }
   }
 
@@ -202,6 +212,12 @@ export class LifeCenterController {
 
       res.status(201).json({ message: "Operation successfull", data: member });
     } catch (error: any) {
+      if (isRoleEligibilityValidationError(error)) {
+        return res
+          .status(error.statusCode)
+          .json(buildRoleEligibilityFailureResponse(error));
+      }
+
       res.status(500).json({ error: error.message });
     }
   }

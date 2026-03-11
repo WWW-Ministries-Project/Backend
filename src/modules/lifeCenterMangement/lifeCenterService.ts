@@ -1,5 +1,6 @@
 import { tr } from "date-fns/locale";
 import { prisma } from "../../Models/context";
+import { roleEligibilityService } from "../settings/roleEligibilityService";
 
 export class LifeCenterService {
   /**
@@ -172,6 +173,11 @@ export class LifeCenterService {
     lifeCenterId: number;
     roleId: number;
   }) {
+    await roleEligibilityService.assertEligible(
+      "life_center_leader",
+      data.userId,
+    );
+
     const member = await prisma.life_center_member.create({
       data: {
         userId: data.userId,
@@ -204,6 +210,11 @@ export class LifeCenterService {
     lifeCenterId: number;
     roleId: number;
   }) {
+    await roleEligibilityService.assertEligible(
+      "life_center_leader",
+      data.userId,
+    );
+
     const member = await prisma.life_center_member.update({
       where: {
         userId_lifeCenterId: {

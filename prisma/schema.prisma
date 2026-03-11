@@ -808,6 +808,19 @@ model program {
   requiredForPrograms  program_prerequisites[] @relation("ProgramToRequired")
   prerequisitePrograms program_prerequisites[] @relation("ProgramToPrerequisite")
   topics               topic[]
+  eligibility_rules    role_eligibility_rules[]
+}
+
+model role_eligibility_rules {
+  id         Int      @id @default(autoincrement())
+  role_key   String   @db.VarChar(64)
+  program_id Int
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  program     program  @relation(fields: [program_id], references: [id], onDelete: Cascade)
+
+  @@unique([role_key, program_id])
+  @@index([program_id], map: "role_eligibility_rules_program_id_idx")
 }
 
 model program_prerequisites {

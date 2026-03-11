@@ -1,5 +1,10 @@
 import { Request, Response } from "express";
 import { CourseService } from "./courseService";
+import { AppError } from "../../utils/custom-error-handlers";
+import {
+  buildRoleEligibilityFailureResponse,
+  isRoleEligibilityValidationError,
+} from "../settings/roleEligibilityService";
 
 const courseService = new CourseService();
 export class CourseController {
@@ -19,6 +24,19 @@ export class CourseController {
         .status(201)
         .json({ message: "Course created", data: newCourse });
     } catch (error: any) {
+      if (isRoleEligibilityValidationError(error)) {
+        return res
+          .status(error.statusCode)
+          .json(buildRoleEligibilityFailureResponse(error));
+      }
+
+      if (error instanceof AppError) {
+        return res.status(error.statusCode).json({
+          message: error.message,
+          data: null,
+        });
+      }
+
       return res
         .status(500)
         .json({ message: "Error creating class", error: error.message });
@@ -97,6 +115,19 @@ export class CourseController {
         .status(200)
         .json({ message: "Course updated", data: updatedProgram });
     } catch (error: any) {
+      if (isRoleEligibilityValidationError(error)) {
+        return res
+          .status(error.statusCode)
+          .json(buildRoleEligibilityFailureResponse(error));
+      }
+
+      if (error instanceof AppError) {
+        return res.status(error.statusCode).json({
+          message: error.message,
+          data: null,
+        });
+      }
+
       return res
         .status(500)
         .json({ message: "Error updating course", error: error.message });
