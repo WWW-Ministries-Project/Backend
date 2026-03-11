@@ -24,6 +24,11 @@ import {
   toFamilyRelationLabel,
   upsertBidirectionalFamilyRelation,
 } from "./familyRelations";
+import {
+  buildRoleEligibilityFailureResponse,
+  isRoleEligibilityValidationError,
+  roleEligibilityService,
+} from "../settings/roleEligibilityService";
 
 dotenv.config();
 
@@ -224,6 +229,12 @@ export const registerUser = async (req: Request, res: Response) => {
   } catch (error: any) {
     console.error(error);
 
+    if (isRoleEligibilityValidationError(error)) {
+      return res
+        .status(error.statusCode)
+        .json(buildRoleEligibilityFailureResponse(error));
+    }
+
     if (isFamilyRelationValidationError(error?.message)) {
       return res.status(400).json({
         message: error?.message,
@@ -316,6 +327,9 @@ export const updateUser = async (req: Request, res: Response) => {
           : userExists?.is_user;
     const nextEmail = hasEmailField ? incomingEmail : existingEmail;
     const nextAccessLevelId = nextIsUser ? userExists?.access_level_id : null;
+    const nextStatus = String(status || userExists?.status || "")
+      .trim()
+      .toUpperCase();
 
     if (nextIsUser && !isRealEmail(nextEmail)) {
       return res.status(400).json({
@@ -336,6 +350,14 @@ export const updateUser = async (req: Request, res: Response) => {
           data: null,
         });
       }
+    }
+
+    if (nextIsUser && !userExists?.is_user) {
+      await roleEligibilityService.assertEligible("ministry_worker", Number(user_id));
+    }
+
+    if (nextStatus === "MEMBER" && userExists?.status !== "MEMBER") {
+      await roleEligibilityService.assertEligible("member", Number(user_id));
     }
 
     const hasValue = (value: any) =>
@@ -510,6 +532,12 @@ export const updateUser = async (req: Request, res: Response) => {
       .json({ message: "User updated successfully", data: data });
   } catch (error: any) {
     console.error(error);
+
+    if (isRoleEligibilityValidationError(error)) {
+      return res
+        .status(error.statusCode)
+        .json(buildRoleEligibilityFailureResponse(error));
+    }
 
     if (isFamilyRelationValidationError(error?.message)) {
       return res.status(400).json({
@@ -2108,6 +2136,12 @@ export const convertMemeberToConfirmedMember = async (
       data: result,
     });
   } catch (error) {
+    if (isRoleEligibilityValidationError(error)) {
+      return res
+        .status(error.statusCode)
+        .json(buildRoleEligibilityFailureResponse(error));
+    }
+
     return res.status(500).json({
       message: "Operation failed",
       data: error,
