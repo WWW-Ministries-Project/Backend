@@ -57,6 +57,99 @@ const isRealEmail = (email?: string | null) => {
   );
 };
 
+const hasOwn = (obj: unknown, key: string) =>
+  !!obj &&
+  typeof obj === "object" &&
+  Object.prototype.hasOwnProperty.call(obj, key);
+
+const normalizeMemberPayload = (payload: any = {}) => {
+  const personalInfo = { ...(payload?.personal_info || {}) };
+  const contactInfo = { ...(payload?.contact_info || {}) };
+  const contactPhone = { ...(contactInfo?.phone || {}) };
+  const churchInfo = { ...(payload?.church_info || {}) };
+  const workInfo = { ...(payload?.work_info || {}) };
+
+  const topLevelToPersonalInfo: Record<string, string> = {
+    title: "title",
+    first_name: "first_name",
+    last_name: "last_name",
+    other_name: "other_name",
+    date_of_birth: "date_of_birth",
+    gender: "gender",
+    marital_status: "marital_status",
+    nationality: "nationality",
+    has_children: "has_children",
+  };
+
+  for (const [sourceKey, targetKey] of Object.entries(topLevelToPersonalInfo)) {
+    if (!hasOwn(personalInfo, targetKey) && hasOwn(payload, sourceKey)) {
+      personalInfo[targetKey] = payload[sourceKey];
+    }
+  }
+
+  const topLevelToContactInfo: Record<string, string> = {
+    email: "email",
+    resident_country: "resident_country",
+    state_region: "state_region",
+    city: "city",
+  };
+
+  for (const [sourceKey, targetKey] of Object.entries(topLevelToContactInfo)) {
+    if (!hasOwn(contactInfo, targetKey) && hasOwn(payload, sourceKey)) {
+      contactInfo[targetKey] = payload[sourceKey];
+    }
+  }
+
+  if (!hasOwn(contactPhone, "country_code") && hasOwn(payload, "country_code")) {
+    contactPhone.country_code = payload.country_code;
+  }
+
+  if (!hasOwn(contactPhone, "number")) {
+    if (hasOwn(payload, "primary_number")) {
+      contactPhone.number = payload.primary_number;
+    } else if (hasOwn(payload, "phone_number")) {
+      contactPhone.number = payload.phone_number;
+    }
+  }
+
+  contactInfo.phone = contactPhone;
+
+  const topLevelToChurchInfo: Record<string, string> = {
+    membership_type: "membership_type",
+    position_id: "position_id",
+    department_id: "department_id",
+    member_since: "member_since",
+  };
+
+  for (const [sourceKey, targetKey] of Object.entries(topLevelToChurchInfo)) {
+    if (!hasOwn(churchInfo, targetKey) && hasOwn(payload, sourceKey)) {
+      churchInfo[targetKey] = payload[sourceKey];
+    }
+  }
+
+  const topLevelToWorkInfo: Record<string, string> = {
+    employment_status: "employment_status",
+    work_name: "work_name",
+    work_industry: "work_industry",
+    work_position: "work_position",
+    school_name: "school_name",
+  };
+
+  for (const [sourceKey, targetKey] of Object.entries(topLevelToWorkInfo)) {
+    if (!hasOwn(workInfo, targetKey) && hasOwn(payload, sourceKey)) {
+      workInfo[targetKey] = payload[sourceKey];
+    }
+  }
+
+  return {
+    ...payload,
+    personal_info: personalInfo,
+    contact_info: contactInfo,
+    church_info: churchInfo,
+    work_info: workInfo,
+  };
+};
+
 const parsePermissionsObject = (permissions: any): Record<string, any> | null => {
   if (!permissions) return null;
 
@@ -186,6 +279,7 @@ const selectQuery = {
 
 export const registerUser = async (req: Request, res: Response) => {
   try {
+    const normalizedPayload = normalizeMemberPayload(req.body);
     const {
       personal_info: { first_name } = {},
 
@@ -193,7 +287,7 @@ export const registerUser = async (req: Request, res: Response) => {
 
       password,
       is_user,
-    } = req.body;
+    } = normalizedPayload;
 
     const normalizedEmail = normalizeOptionalEmail(email);
     const isLoginUser =
@@ -222,7 +316,7 @@ export const registerUser = async (req: Request, res: Response) => {
         });
     }
 
-    const response = await userService.registerUser(req.body);
+    const response = await userService.registerUser(normalizedPayload);
 
     return res
       .status(201)
@@ -258,8 +352,9 @@ export const registerUser = async (req: Request, res: Response) => {
 
 export const updateUser = async (req: Request, res: Response) => {
   try {
+    const normalizedPayload = normalizeMemberPayload(req.body);
     const { user_id } = req.query;
-    const contactInfoPayload = req.body?.contact_info || {};
+    const contactInfoPayload = normalizedPayload?.contact_info || {};
     const hasEmailField = Object.prototype.hasOwnProperty.call(
       contactInfoPayload,
       "email",
@@ -304,8 +399,11 @@ export const updateUser = async (req: Request, res: Response) => {
       status,
       is_user,
       department_positions,
-    } = req.body;
-    const hasFamilyField = Object.prototype.hasOwnProperty.call(req.body, "family");
+    } = normalizedPayload;
+    const hasFamilyField = Object.prototype.hasOwnProperty.call(
+      normalizedPayload,
+      "family",
+    );
 
     const userExists = await prisma.user.findUnique({
       where: { id: Number(user_id) },
