@@ -1,4 +1,5 @@
 import { prisma } from "../../Models/context";
+import { InputValidationError } from "../../utils/custom-error-handlers";
 import { UserService } from "../user/userService";
 import { VisitService } from "./visitService";
 import { toSentenceCase } from "../../utils";
@@ -6,7 +7,9 @@ import { toSentenceCase } from "../../utils";
 const userService = new UserService();
 const visitService = new VisitService();
 const RESPONSIBLE_MEMBERS_VALIDATION_MESSAGE =
-  "responsibleMembers must be an array of valid member ids.";
+  "Responsible member is optional. If you provide it, send one or more valid member IDs as an array, for example [12] or [12, 34]. Leave it empty if you do not want to assign anyone yet.";
+const DUPLICATE_VISIT_VALIDATION_MESSAGE =
+  "This visit has already been recorded for the selected visitor and event on that date. Change the date or event, or use the existing visit to continue.";
 
 const normalizeOptionalEmail = (email?: string | null) => {
   const normalizedEmail = String(email || "")
@@ -57,6 +60,30 @@ const normalizeResponsibleMembersInput = (responsibleMembers: unknown): unknown[
   return [];
 };
 
+const isEmptyResponsibleMembersValue = (responsibleMembers: unknown) => {
+  if (responsibleMembers === null || responsibleMembers === undefined) {
+    return true;
+  }
+
+  if (Array.isArray(responsibleMembers)) {
+    return responsibleMembers.length === 0;
+  }
+
+  if (typeof responsibleMembers === "string") {
+    const trimmedMembers = responsibleMembers.trim();
+    if (!trimmedMembers) return true;
+
+    try {
+      const parsedMembers = JSON.parse(trimmedMembers);
+      return Array.isArray(parsedMembers) && parsedMembers.length === 0;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  return false;
+};
+
 const serializeResponsibleMemberIds = (memberIds: number[]) =>
   JSON.stringify(
     Array.from(
@@ -78,13 +105,8 @@ const parseResponsibleMemberIds = (
 
   const normalizedMembers = normalizeResponsibleMembersInput(responsibleMembers);
   if (!normalizedMembers.length) {
-    if (strict) {
-      const isEmptyAllowed =
-        typeof responsibleMembers === "string" &&
-        responsibleMembers.trim().length === 0;
-      if (!isEmptyAllowed) {
-        throw new Error(RESPONSIBLE_MEMBERS_VALIDATION_MESSAGE);
-      }
+    if (strict && !isEmptyResponsibleMembersValue(responsibleMembers)) {
+      throw new InputValidationError(RESPONSIBLE_MEMBERS_VALIDATION_MESSAGE);
     }
     return [];
   }
@@ -95,7 +117,7 @@ const parseResponsibleMemberIds = (
   );
 
   if (strict && hasInvalidMemberIds) {
-    throw new Error(RESPONSIBLE_MEMBERS_VALIDATION_MESSAGE);
+    throw new InputValidationError(RESPONSIBLE_MEMBERS_VALIDATION_MESSAGE);
   }
 
   return Array.from(
@@ -126,6 +148,13 @@ const getResponsibleMemberNames = (
         typeof member.name === "string" && member.name.length > 0,
     );
 
+const buildMissingResponsibleMembersMessage = (missingMemberIds: number[]) => {
+  const pronoun = missingMemberIds.length === 1 ? "it" : "them";
+  const memberLabel = missingMemberIds.length === 1 ? "this member" : "these members";
+
+  return `Responsible member is optional. If you provide it, select only existing members. We could not find ${memberLabel}: ${missingMemberIds.join(", ")}. Remove ${pronoun} or choose valid members to continue.`;
+};
+
 export class VisitorService {
   private async validateResponsibleMemberIds(responsibleMembers: unknown) {
     const memberIds = parseResponsibleMemberIds(responsibleMembers);
@@ -145,8 +174,8 @@ export class VisitorService {
     const missingMemberIds = memberIds.filter((id) => !existingMemberIdSet.has(id));
 
     if (missingMemberIds.length) {
-      throw new Error(
-        `Invalid responsibleMembers member ids: ${missingMemberIds.join(", ")}`,
+      throw new InputValidationError(
+        buildMissingResponsibleMembersMessage(missingMemberIds),
       );
     }
 
@@ -489,9 +518,7 @@ export class VisitorService {
       });
 
       if (existingVisit) {
-        throw new Error(
-          "Visit has already been recorded for this Visitor and Event.",
-        );
+        throw new InputValidationError(DUPLICATE_VISIT_VALIDATION_MESSAGE);
       }
 
       const updatedExistingVisitor = hasResponsibleMembers

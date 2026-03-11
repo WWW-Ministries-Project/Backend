@@ -1,7 +1,18 @@
+import { Prisma } from "@prisma/client";
 import { Request, Response } from "express";
+import { InputValidationError } from "../../utils/custom-error-handlers";
 import { VisitorService } from "./visitorService";
 
 const visitorService = new VisitorService();
+
+const getErrorMessage = (error: unknown, fallback: string) =>
+  error instanceof Error && error.message ? error.message : fallback;
+
+const isVisitorValidationError = (error: unknown) =>
+  error instanceof InputValidationError;
+
+const isVisitorRecordNotFoundError = (error: unknown) =>
+  error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2025";
 
 export class VisitorController {
   async createVisitor(req: Request, res: Response) {
@@ -10,16 +21,28 @@ export class VisitorController {
       return res
         .status(201)
         .json({ message: "Visitor Added", data: newVisitor });
-    } catch (error: any) {
-      if (String(error?.message || "").includes("responsibleMembers")) {
+    } catch (error: unknown) {
+      if (isVisitorValidationError(error)) {
         return res
           .status(400)
-          .json({ message: "Error creating visitor", error: error.message });
+          .json({
+            message: "Please correct the visitor details and try again.",
+            error: getErrorMessage(
+              error,
+              "Please review the visitor details and try again.",
+            ),
+          });
       }
 
       return res
         .status(500)
-        .json({ message: "Error creating visitor", error: error.message });
+        .json({
+          message: "Error creating visitor",
+          error: getErrorMessage(
+            error,
+            "We could not save the visitor right now. Please try again.",
+          ),
+        });
     }
   }
 
@@ -65,16 +88,36 @@ export class VisitorController {
       return res
         .status(200)
         .json({ message: "Visitor updated", data: updatedProgram });
-    } catch (error: any) {
-      if (String(error?.message || "").includes("responsibleMembers")) {
+    } catch (error: unknown) {
+      if (isVisitorValidationError(error)) {
         return res
           .status(400)
-          .json({ message: "Error updating visitor", error: error.message });
+          .json({
+            message: "Please correct the visitor details and try again.",
+            error: getErrorMessage(
+              error,
+              "Please review the visitor details and try again.",
+            ),
+          });
+      }
+
+      if (isVisitorRecordNotFoundError(error)) {
+        return res.status(404).json({
+          message: "Visitor not found",
+          error:
+            "We could not find the visitor you are trying to update. Refresh the page and try again.",
+        });
       }
 
       return res
         .status(500)
-        .json({ message: "Error updating visitor", error: error.message });
+        .json({
+          message: "Error updating visitor",
+          error: getErrorMessage(
+            error,
+            "We could not update the visitor right now. Please try again.",
+          ),
+        });
     }
   }
 
