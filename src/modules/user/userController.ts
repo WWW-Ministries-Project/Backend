@@ -236,6 +236,13 @@ export const registerUser = async (req: Request, res: Response) => {
         .json(buildRoleEligibilityFailureResponse(error));
     }
 
+    if (error instanceof InputValidationError) {
+      return res.status(400).json({
+        message: error.message,
+        data: null,
+      });
+    }
+
     if (isFamilyRelationValidationError(error?.message)) {
       return res.status(400).json({
         message: error?.message,

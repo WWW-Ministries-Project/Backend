@@ -40,6 +40,27 @@ type BulkMemberStatusResult =
   | BulkMemberStatusFailureResult;
 
 export class UserService {
+  private hasValue(value: unknown) {
+    return value !== undefined && value !== null && String(value).trim() !== "";
+  }
+
+  private normalizeOptionalText(value: unknown) {
+    if (!this.hasValue(value)) return null;
+    return String(value).trim();
+  }
+
+  private normalizeGenderValue(value: unknown) {
+    const normalizedValue = this.normalizeOptionalText(value);
+    if (!normalizedValue) return null;
+
+    const normalizedLower = normalizedValue.toLowerCase();
+    if (normalizedLower === "male" || normalizedLower === "m") return "Male";
+    if (normalizedLower === "female" || normalizedLower === "f") return "Female";
+    if (normalizedLower === "other") return "Other";
+
+    return normalizedValue;
+  }
+
   private normalizeOptionalEmail(email?: string | null) {
     const normalizedEmail = String(email || "")
       .trim()
@@ -121,9 +142,49 @@ export class UserService {
     const normalizedStatus = String(status || "")
       .trim()
       .toUpperCase();
+    const normalizedGender = this.normalizeGenderValue(gender);
+    const hasEmergencyContactPayload =
+      this.hasValue(emergency_contact_name) ||
+      this.hasValue(emergency_contact_relation) ||
+      this.hasValue(emergency_country_code) ||
+      this.hasValue(emergency_phone_number);
+    const hasWorkInfoPayload =
+      this.hasValue(employment_status) ||
+      this.hasValue(work_name) ||
+      this.hasValue(work_industry) ||
+      this.hasValue(work_position) ||
+      this.hasValue(school_name);
 
     if (isLoginUser && !this.isRealEmail(userEmail)) {
       throw new Error("A valid non-temporary email is required for login users.");
+    }
+
+    if (!normalizedGender) {
+      throw new InputValidationError(
+        "Gender is required to create a user. Please select Male, Female, or Other.",
+      );
+    }
+
+    if (
+      hasEmergencyContactPayload &&
+      (!this.hasValue(emergency_contact_name) ||
+        !this.hasValue(emergency_contact_relation) ||
+        !this.hasValue(emergency_phone_number))
+    ) {
+      throw new InputValidationError(
+        "Emergency contact name, relation, and phone number are required when adding an emergency contact.",
+      );
+    }
+
+    if (
+      hasWorkInfoPayload &&
+      (!this.hasValue(work_name) ||
+        !this.hasValue(work_industry) ||
+        !this.hasValue(work_position))
+    ) {
+      throw new InputValidationError(
+        "Work name, industry, and position are required when adding work information.",
+      );
     }
 
     if (normalizedStatus === "MEMBER") {
@@ -146,6 +207,47 @@ export class UserService {
       isNaN(parseInt(position_id)) || parseInt(position_id) === 0
         ? null
         : parseInt(position_id);
+    const userInfoCreateData: any = {
+      title,
+      first_name,
+      last_name,
+      other_name,
+      date_of_birth: date_of_birth ? new Date(date_of_birth) : null,
+      gender: normalizedGender,
+      marital_status,
+      nationality,
+      photo: picture?.src || "",
+      primary_number,
+      country_code,
+      member_since: member_since ? new Date(member_since) : null,
+      email: userEmail,
+      country: resident_country,
+      state_region,
+      city,
+    };
+
+    if (hasEmergencyContactPayload) {
+      userInfoCreateData.emergency_contact = {
+        create: {
+          name: emergency_contact_name,
+          relation: emergency_contact_relation,
+          country_code: emergency_country_code,
+          phone_number: emergency_phone_number,
+        },
+      };
+    }
+
+    if (hasWorkInfoPayload) {
+      userInfoCreateData.work_info = {
+        create: {
+          employment_status,
+          name_of_institution: work_name,
+          industry: work_industry,
+          position: work_position,
+          school_name,
+        },
+      };
+    }
 
     // Create user in database
     const user = await prisma.user.create({
@@ -162,41 +264,7 @@ export class UserService {
         position_id: positionId,
         membership_type,
         user_info: {
-          create: {
-            title,
-            first_name,
-            last_name,
-            other_name,
-            date_of_birth: date_of_birth ? new Date(date_of_birth) : null,
-            gender,
-            marital_status,
-            nationality,
-            photo: picture?.src || "",
-            primary_number,
-            country_code,
-            member_since: member_since ? new Date(member_since) : null,
-            email: userEmail,
-            country: resident_country,
-            state_region,
-            city,
-            emergency_contact: {
-              create: {
-                name: emergency_contact_name,
-                relation: emergency_contact_relation,
-                country_code: emergency_country_code,
-                phone_number: emergency_phone_number,
-              },
-            },
-            work_info: {
-              create: {
-                employment_status,
-                name_of_institution: work_name,
-                industry: work_industry,
-                position: work_position,
-                school_name,
-              },
-            },
-          },
+          create: userInfoCreateData,
         },
       },
     });

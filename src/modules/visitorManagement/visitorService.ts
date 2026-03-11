@@ -1,5 +1,8 @@
 import { prisma } from "../../Models/context";
-import { InputValidationError } from "../../utils/custom-error-handlers";
+import {
+  InputValidationError,
+  NotFoundError,
+} from "../../utils/custom-error-handlers";
 import { UserService } from "../user/userService";
 import { VisitService } from "./visitService";
 import { toSentenceCase } from "../../utils";
@@ -10,6 +13,12 @@ const RESPONSIBLE_MEMBERS_VALIDATION_MESSAGE =
   "Responsible member is optional. If you provide it, send one or more valid member IDs as an array, for example [12] or [12, 34]. Leave it empty if you do not want to assign anyone yet.";
 const DUPLICATE_VISIT_VALIDATION_MESSAGE =
   "This visit has already been recorded for the selected visitor and event on that date. Change the date or event, or use the existing visit to continue.";
+const INVALID_CONVERSION_EMAIL_MESSAGE =
+  "A valid non-temporary email is required to convert a visitor to a login user. Please update the email address and try again.";
+const CONVERSION_NAME_VALIDATION_MESSAGE =
+  "First name and last name are required to convert a visitor to a member. Please update the visitor details and try again.";
+const MEMBERSHIP_TYPE_VALIDATION_MESSAGE =
+  "Membership type must be either ONLINE or IN_HOUSE.";
 
 const normalizeOptionalEmail = (email?: string | null) => {
   const normalizedEmail = String(email || "")
@@ -34,6 +43,50 @@ const hasOwnProperty = (obj: unknown, key: string) =>
   !!obj &&
   typeof obj === "object" &&
   Object.prototype.hasOwnProperty.call(obj, key);
+
+const hasTextValue = (value: unknown) =>
+  value !== undefined && value !== null && String(value).trim().length > 0;
+
+const normalizeOptionalText = (value: unknown) => {
+  if (!hasTextValue(value)) return null;
+  return String(value).trim();
+};
+
+const normalizeConversionGender = (value: unknown) => {
+  const normalizedValue = normalizeOptionalText(value);
+  if (!normalizedValue) return "Other";
+
+  const normalizedLower = normalizedValue.toLowerCase();
+  if (normalizedLower === "male" || normalizedLower === "m") return "Male";
+  if (normalizedLower === "female" || normalizedLower === "f") return "Female";
+  if (
+    normalizedLower === "other" ||
+    normalizedLower === "unknown" ||
+    normalizedLower === "prefer not to say"
+  ) {
+    return "Other";
+  }
+
+  return toSentenceCase(normalizedValue);
+};
+
+const normalizeMembershipType = (value: unknown) => {
+  const normalizedValue = normalizeOptionalText(value);
+  if (!normalizedValue) return "IN_HOUSE";
+
+  const normalizedMembershipType = normalizedValue
+    .toUpperCase()
+    .replace(/\s+/g, "_");
+
+  if (
+    normalizedMembershipType === "ONLINE" ||
+    normalizedMembershipType === "IN_HOUSE"
+  ) {
+    return normalizedMembershipType;
+  }
+
+  throw new InputValidationError(MEMBERSHIP_TYPE_VALIDATION_MESSAGE);
+};
 
 const normalizeResponsibleMembersInput = (responsibleMembers: unknown): unknown[] => {
   if (Array.isArray(responsibleMembers)) {
@@ -600,20 +653,76 @@ export class VisitorService {
     return { start, end };
   }
 
-  async changeVisitorStatusToMember(id: number) {
+  async changeVisitorStatusToMember(id: number, payload: any = {}) {
     const visitor = await this.getVisitorById(id);
-    if (!visitor) throw new Error("Visitor not found");
+    if (!visitor) throw new NotFoundError("Visitor not found");
 
-    const { firstName, lastName, email, phone, country } = visitor;
-    const normalizedEmail = normalizeOptionalEmail(email);
+    const personalInfoPayload = payload?.personal_info || {};
+    const contactInfoPayload = payload?.contact_info || {};
+    const churchInfoPayload = payload?.church_info || {};
+    const contactPhonePayload = contactInfoPayload?.phone || {};
+    const resolvedFirstName = normalizeOptionalText(
+      personalInfoPayload.first_name ?? payload?.first_name ?? visitor.firstName,
+    );
+    const resolvedLastName = normalizeOptionalText(
+      personalInfoPayload.last_name ?? payload?.last_name ?? visitor.lastName,
+    );
+    const resolvedOtherName =
+      normalizeOptionalText(
+        personalInfoPayload.other_name ?? payload?.other_name ?? visitor.otherName,
+      ) || "";
+    const resolvedTitle = normalizeOptionalText(
+      personalInfoPayload.title ?? payload?.title ?? visitor.title,
+    );
+    const resolvedEmail = normalizeOptionalEmail(
+      contactInfoPayload.email ?? payload?.email ?? visitor.email,
+    );
+    const resolvedCountry = normalizeOptionalText(
+      contactInfoPayload.resident_country ??
+        payload?.resident_country ??
+        payload?.country ??
+        visitor.country,
+    );
+    const resolvedCountryCode = normalizeOptionalText(
+      contactPhonePayload.country_code ??
+        payload?.country_code ??
+        visitor.country_code,
+    );
+    const resolvedPrimaryNumber = normalizeOptionalText(
+      contactPhonePayload.number ?? payload?.primary_number ?? visitor.phone,
+    );
+    const resolvedStateRegion = normalizeOptionalText(
+      contactInfoPayload.state_region ?? payload?.state_region ?? visitor.state,
+    );
+    const resolvedCity = normalizeOptionalText(
+      contactInfoPayload.city ?? payload?.city ?? visitor.city,
+    );
+    const resolvedGender = normalizeConversionGender(
+      personalInfoPayload.gender ?? payload?.gender,
+    );
+    const resolvedMembershipType = normalizeMembershipType(
+      churchInfoPayload.membership_type ?? payload?.membership_type,
+    );
+    const resolvedMemberSince =
+      churchInfoPayload.member_since ?? payload?.member_since ?? new Date();
+    const resolvedDateOfBirth =
+      personalInfoPayload.date_of_birth ?? payload?.date_of_birth ?? null;
+    const resolvedMaritalStatus =
+      personalInfoPayload.marital_status ?? payload?.marital_status ?? null;
+    const resolvedNationality =
+      normalizeOptionalText(
+        personalInfoPayload.nationality ?? payload?.nationality ?? resolvedCountry,
+      ) || resolvedCountry;
 
-    if (!isRealEmail(normalizedEmail)) {
-      throw new Error(
-        "A valid non-temporary email is required to convert a visitor to a login user.",
-      );
+    if (!resolvedFirstName || !resolvedLastName) {
+      throw new InputValidationError(CONVERSION_NAME_VALIDATION_MESSAGE);
     }
 
-    const loginEmail = normalizedEmail as string;
+    if (!isRealEmail(resolvedEmail)) {
+      throw new InputValidationError(INVALID_CONVERSION_EMAIL_MESSAGE);
+    }
+
+    const loginEmail = resolvedEmail as string;
 
     const existingUser = await prisma.user.findUnique({
       where: { email: loginEmail },
@@ -621,39 +730,40 @@ export class VisitorService {
     });
 
     if (existingUser) {
-      throw new Error("User exist with this email " + loginEmail);
+      throw new Error(
+        `A user with the email ${loginEmail} already exists. Use a different email address or sign in with the existing account.`,
+      );
     }
-
-    // Split phone into country_code and number (if possible)
-    const country_code = phone?.slice(0, 4) || ""; // adjust slicing if needed
-    const primary_number = phone?.slice(4) || phone || "";
 
     const userData = {
       personal_info: {
-        first_name: firstName,
-        last_name: lastName,
-        other_name: "",
-        gender: null,
-        date_of_birth: null,
-        marital_status: null,
-        nationality: country,
+        title: resolvedTitle,
+        first_name: resolvedFirstName,
+        last_name: resolvedLastName,
+        other_name: resolvedOtherName,
+        gender: resolvedGender,
+        date_of_birth: resolvedDateOfBirth,
+        marital_status: resolvedMaritalStatus,
+        nationality: resolvedNationality,
         has_children: false,
       },
       contact_info: {
         email: loginEmail,
-        resident_country: country,
+        resident_country: resolvedCountry,
+        state_region: resolvedStateRegion,
+        city: resolvedCity,
         phone: {
-          country_code,
-          number: primary_number,
+          country_code: resolvedCountryCode,
+          number: resolvedPrimaryNumber,
         },
       },
       work_info: {},
       emergency_contact: {},
       church_info: {
-        membership_type: "IN_HOUSE",
+        membership_type: resolvedMembershipType,
         department_id: null,
         position_id: null,
-        member_since: new Date(),
+        member_since: resolvedMemberSince,
       },
       picture: {},
       children: [],
