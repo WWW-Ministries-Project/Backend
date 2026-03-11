@@ -29,6 +29,7 @@ import {
   isRoleEligibilityValidationError,
   roleEligibilityService,
 } from "../settings/roleEligibilityService";
+import { InputValidationError } from "../../utils/custom-error-handlers";
 
 dotenv.config();
 
@@ -2140,6 +2141,53 @@ export const convertMemeberToConfirmedMember = async (
       return res
         .status(error.statusCode)
         .json(buildRoleEligibilityFailureResponse(error));
+    }
+
+    return res.status(500).json({
+      message: "Operation failed",
+      data: error,
+    });
+  }
+};
+
+export const bulkUpdateMemberStatus = async (req: Request, res: Response) => {
+  const { status, user_ids } = req.body ?? {};
+
+  if (typeof status !== "string" || status.trim() === "") {
+    return res.status(400).json({
+      message: "Operation failed",
+      data: {
+        message: "",
+        error: "Invalid or missing status.",
+      },
+    });
+  }
+
+  if (!Array.isArray(user_ids) || user_ids.length === 0) {
+    return res.status(400).json({
+      message: "Operation failed",
+      data: {
+        message: "",
+        error: "user_ids must be a non-empty array.",
+      },
+    });
+  }
+
+  try {
+    const result = await userService.bulkUpdateMemberStatus(status, user_ids);
+
+    return res.status(200).json({
+      data: result,
+    });
+  } catch (error: any) {
+    if (error instanceof InputValidationError) {
+      return res.status(400).json({
+        message: "Operation failed",
+        data: {
+          message: "",
+          error: error.message,
+        },
+      });
     }
 
     return res.status(500).json({

@@ -2,6 +2,7 @@ import { prisma } from "../../Models/context";
 import { toCapitalizeEachWord, hashPassword, sendEmail } from "../../utils";
 import axios from "axios";
 import { applicationLiveTemplate } from "../../utils/mail_templates/applicationLiveTemplate";
+import { InputValidationError } from "../../utils/custom-error-handlers";
 import {
   FAMILY_RELATION,
   normalizeFamilyRelation,
@@ -9,6 +10,34 @@ import {
   upsertBidirectionalFamilyRelation,
 } from "./familyRelations";
 import { roleEligibilityService } from "../settings/roleEligibilityService";
+
+type MemberStatusTransitionTarget = "CONFIRMED" | "MEMBER";
+type MemberStatusValue = "UNCONFIRMED" | "CONFIRMED" | "MEMBER" | null;
+type ResolvedMemberStatus = Exclude<MemberStatusValue, null> | "UNKNOWN";
+type BulkMemberStatusFailureCode =
+  | "INVALID_USER_ID"
+  | "NOT_FOUND"
+  | "INVALID_STATUS_TRANSITION"
+  | "MEMBER_PROGRAM_REQUIRED"
+  | "INTERNAL_ERROR";
+
+type BulkMemberStatusSuccessResult = {
+  user_id: string;
+  success: true;
+  previous_status: Exclude<MemberStatusValue, null>;
+  current_status: MemberStatusTransitionTarget;
+};
+
+type BulkMemberStatusFailureResult = {
+  user_id: string;
+  success: false;
+  code: BulkMemberStatusFailureCode;
+  message: string;
+};
+
+type BulkMemberStatusResult =
+  | BulkMemberStatusSuccessResult
+  | BulkMemberStatusFailureResult;
 
 export class UserService {
   private normalizeOptionalEmail(email?: string | null) {
@@ -614,9 +643,69 @@ export class UserService {
     };
   }
 
+  async bulkUpdateMemberStatus(
+    requestedStatus: string,
+    userIds: unknown[],
+  ): Promise<{
+    status: MemberStatusTransitionTarget;
+    requested_count: number;
+    success_count: number;
+    failure_count: number;
+    results: BulkMemberStatusResult[];
+  }> {
+    const targetStatus = this.normalizeRequestedMemberStatus(requestedStatus);
+
+    if (!targetStatus) {
+      throw new InputValidationError("status must be CONFIRMED or MEMBER.");
+    }
+
+    if (!Array.isArray(userIds) || userIds.length === 0) {
+      throw new InputValidationError("user_ids must be a non-empty array.");
+    }
+
+    const normalizedUserIds = this.normalizeBulkRequestedUserIds(userIds);
+    const parsedUserIds = normalizedUserIds
+      .map((userId) => this.parseRequestedUserId(userId))
+      .filter((userId): userId is number => userId !== null);
+    const uniqueParsedUserIds = Array.from(new Set(parsedUserIds));
+    const existingMembers = await prisma.user.findMany({
+      where: {
+        id: {
+          in: uniqueParsedUserIds,
+        },
+      },
+      select: {
+        id: true,
+        status: true,
+      },
+    });
+    const existingMembersById = new Map(
+      existingMembers.map((member) => [member.id, member]),
+    );
+
+    const results = await Promise.all(
+      normalizedUserIds.map((userId) =>
+        this.buildBulkMemberStatusResult(
+          userId,
+          targetStatus,
+          existingMembersById,
+        ),
+      ),
+    );
+    const successCount = results.filter((result) => result.success).length;
+
+    return {
+      status: targetStatus,
+      requested_count: normalizedUserIds.length,
+      success_count: successCount,
+      failure_count: results.length - successCount,
+      results,
+    };
+  }
+
   private normalizeRequestedMemberStatus(
     requestedStatus?: string,
-  ): "CONFIRMED" | "MEMBER" | null {
+  ): MemberStatusTransitionTarget | null {
     if (!requestedStatus) return null;
 
     const normalized = requestedStatus.toUpperCase().trim();
@@ -639,7 +728,7 @@ export class UserService {
   private resolveTargetMemberStatus(
     currentStatus: string | null,
     requestedStatus?: string,
-  ): "CONFIRMED" | "MEMBER" | null {
+  ): MemberStatusTransitionTarget | null {
     const normalizedRequestedStatus =
       this.normalizeRequestedMemberStatus(requestedStatus);
 
@@ -669,19 +758,203 @@ export class UserService {
     );
   }
 
+  private normalizeBulkRequestedUserIds(userIds: unknown[]) {
+    const seenUserIds = new Set<string>();
+    const normalizedUserIds: string[] = [];
+
+    for (const userId of userIds) {
+      const rawUserId = String(userId ?? "").trim();
+      const parsedUserId = this.parseRequestedUserId(rawUserId);
+      const normalizedUserId =
+        parsedUserId === null ? rawUserId : String(parsedUserId);
+      const dedupeKey =
+        parsedUserId === null
+          ? `invalid:${normalizedUserId}`
+          : `valid:${normalizedUserId}`;
+
+      if (seenUserIds.has(dedupeKey)) {
+        continue;
+      }
+
+      seenUserIds.add(dedupeKey);
+      normalizedUserIds.push(normalizedUserId);
+    }
+
+    return normalizedUserIds;
+  }
+
+  private parseRequestedUserId(userId: string) {
+    const parsedUserId = Number(userId);
+
+    if (!Number.isInteger(parsedUserId) || parsedUserId <= 0) {
+      return null;
+    }
+
+    return parsedUserId;
+  }
+
+  private resolveStoredMemberStatus(status: string | null): ResolvedMemberStatus {
+    if (status === null) return "UNCONFIRMED";
+
+    const normalizedStatus = String(status).trim().toUpperCase();
+
+    if (
+      normalizedStatus === "UNCONFIRMED" ||
+      normalizedStatus === "CONFIRMED" ||
+      normalizedStatus === "MEMBER"
+    ) {
+      return normalizedStatus;
+    }
+
+    return "UNKNOWN";
+  }
+
+  private buildBulkFailureResult(
+    userId: string,
+    code: BulkMemberStatusFailureCode,
+    message: string,
+  ): BulkMemberStatusFailureResult {
+    return {
+      user_id: userId,
+      success: false,
+      code,
+      message,
+    };
+  }
+
+  private async buildBulkMemberStatusResult(
+    userId: string,
+    targetStatus: MemberStatusTransitionTarget,
+    existingMembersById: Map<number, { id: number; status: string | null }>,
+  ): Promise<BulkMemberStatusResult> {
+    const parsedUserId = this.parseRequestedUserId(userId);
+
+    if (parsedUserId === null) {
+      return this.buildBulkFailureResult(
+        userId,
+        "INVALID_USER_ID",
+        "User ID must be a positive integer.",
+      );
+    }
+
+    const member = existingMembersById.get(parsedUserId);
+
+    if (!member) {
+      return this.buildBulkFailureResult(
+        userId,
+        "NOT_FOUND",
+        "User not found.",
+      );
+    }
+
+    try {
+      return await this.applyBulkMemberStatusTransition(
+        userId,
+        member,
+        targetStatus,
+      );
+    } catch (error) {
+      console.error("Failed to bulk update member status", {
+        userId,
+        targetStatus,
+        error,
+      });
+
+      return this.buildBulkFailureResult(
+        userId,
+        "INTERNAL_ERROR",
+        "Failed to update member status.",
+      );
+    }
+  }
+
+  private async applyBulkMemberStatusTransition(
+    userId: string,
+    member: { id: number; status: string | null },
+    targetStatus: MemberStatusTransitionTarget,
+  ): Promise<BulkMemberStatusResult> {
+    const previousStatus = this.resolveStoredMemberStatus(member.status);
+
+    if (previousStatus === "UNKNOWN") {
+      return this.buildBulkFailureResult(
+        userId,
+        "INVALID_STATUS_TRANSITION",
+        "Current member status is invalid for this action.",
+      );
+    }
+
+    if (targetStatus === "CONFIRMED") {
+      if (previousStatus !== "UNCONFIRMED") {
+        return this.buildBulkFailureResult(
+          userId,
+          "INVALID_STATUS_TRANSITION",
+          "Only unconfirmed members can be updated to CONFIRMED.",
+        );
+      }
+
+      const updatedMember = await this.persistMemberStatus(member.id, "CONFIRMED");
+
+      if (updatedMember.status !== "CONFIRMED") {
+        return this.buildBulkFailureResult(
+          userId,
+          "INTERNAL_ERROR",
+          "Failed to update member status.",
+        );
+      }
+
+      return {
+        user_id: userId,
+        success: true,
+        previous_status: previousStatus,
+        current_status: "CONFIRMED",
+      };
+    }
+
+    if (previousStatus !== "CONFIRMED") {
+      return this.buildBulkFailureResult(
+        userId,
+        "INVALID_STATUS_TRANSITION",
+        "Only confirmed members can be updated to MEMBER.",
+      );
+    }
+
+    const missingPrograms = await roleEligibilityService.getMissingProgramsForUser(
+      "member",
+      member.id,
+    );
+
+    if (missingPrograms.length > 0) {
+      return this.buildBulkFailureResult(
+        userId,
+        "MEMBER_PROGRAM_REQUIRED",
+        "Required member program is incomplete.",
+      );
+    }
+
+    const updatedMember = await this.persistMemberStatus(member.id, "MEMBER");
+
+    if (updatedMember.status !== "MEMBER") {
+      return this.buildBulkFailureResult(
+        userId,
+        "INTERNAL_ERROR",
+        "Failed to update member status.",
+      );
+    }
+
+    return {
+      user_id: userId,
+      success: true,
+      previous_status: previousStatus,
+      current_status: "MEMBER",
+    };
+  }
+
   private async updateMemberStatus(
     id: number,
-    status: "CONFIRMED" | "MEMBER",
+    status: MemberStatusTransitionTarget,
     successMessage: string,
   ) {
-    const updatedMember = await prisma.user.update({
-      where: {
-        id,
-      },
-      data: {
-        status,
-      },
-    });
+    const updatedMember = await this.persistMemberStatus(id, status);
 
     if (updatedMember.status === status) {
       return {
@@ -694,6 +967,24 @@ export class UserService {
       message: "",
       error: `Failed to update membership status for ${updatedMember.name}.`,
     };
+  }
+
+  private async persistMemberStatus(
+    id: number,
+    status: MemberStatusTransitionTarget,
+  ) {
+    return prisma.user.update({
+      where: {
+        id,
+      },
+      data: {
+        status,
+      },
+      select: {
+        name: true,
+        status: true,
+      },
+    });
   }
 
   async linkSpouses(userId1: number, userId2: number) {
