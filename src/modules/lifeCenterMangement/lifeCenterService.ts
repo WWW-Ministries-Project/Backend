@@ -91,8 +91,18 @@ export class LifeCenterService {
             other_name: true,
             contact_number: true,
             country_code: true,
+            memberId: true,
             wonBy: {
               select: { id: true, name: true },
+            },
+            member: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                member_id: true,
+                status: true,
+              },
             },
           },
         },
@@ -136,6 +146,10 @@ export class LifeCenterService {
         wonById: soul.wonBy.id,
         wonByName: soul.wonBy.name,
         lifeCenterId: id,
+        isMember: Boolean(soul.memberId),
+        memberId: soul.member?.id ?? null,
+        memberName: soul.member?.name ?? "",
+        memberMemberId: soul.member?.member_id ?? "",
       })),
     };
   }
@@ -286,6 +300,15 @@ export class LifeCenterService {
       include: {
         wonBy: true,
         lifeCenter: true,
+        member: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            member_id: true,
+            status: true,
+          },
+        },
       },
     });
   }
@@ -296,6 +319,15 @@ export class LifeCenterService {
       include: {
         wonBy: true,
         lifeCenter: true,
+        member: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            member_id: true,
+            status: true,
+          },
+        },
       },
     });
 

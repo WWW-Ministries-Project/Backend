@@ -70,6 +70,7 @@ model user {
   ps_user                  request_approvals[]        @relation("ps_user")
   user_request_comments    request_comments[]
   soul_won                 soul_won[]                 @relation("user_soul_winner")
+  soul_won_membership      soul_won?                  @relation("soul_won_member")
   access                   access_level?              @relation(fields: [access_level_id], references: [id])
   parent                   user?                      @relation("UserParent", fields: [parent_id], references: [id])
   children                 user[]                     @relation("UserParent")
@@ -1105,8 +1106,10 @@ model soul_won {
   date_won       DateTime
   wonById        Int
   lifeCenterId   Int
+  memberId       Int?        @unique
   lifeCenter     life_center @relation("life_center_soul_won", fields: [lifeCenterId], references: [id], map: "soulwon_lifecenter_fkey")
   wonBy          user        @relation("user_soul_winner", fields: [wonById], references: [id], map: "soulwon_wonby_fkey")
+  member         user?       @relation("soul_won_member", fields: [memberId], references: [id], map: "soulwon_member_fkey")
 
   @@index([lifeCenterId], map: "soulwon_lifecenter_fkey")
   @@index([wonById], map: "soulwon_wonby_fkey")
