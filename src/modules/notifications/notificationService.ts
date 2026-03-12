@@ -79,8 +79,19 @@ type NotificationListResult = {
 };
 
 type NotificationPreference = {
+  type: string;
   inAppEnabled: boolean;
   emailEnabled: boolean;
+  smsEnabled: boolean;
+  hasStoredPreference: boolean;
+};
+
+export type NotificationPreferencePayload = NotificationPreference;
+
+export type UpdateNotificationPreferenceInput = {
+  inAppEnabled?: boolean;
+  emailEnabled?: boolean;
+  smsEnabled?: boolean;
 };
 
 type SseClient = {
@@ -118,21 +129,6 @@ const NOTIFICATION_DELIVERY_CONCURRENCY = (() => {
     return 2;
   }
   return Math.min(parsed, 10);
-})();
-const NOTIFICATION_SMS_DEFAULT_ENABLED = (() => {
-  const value = process.env.NOTIFICATION_SMS_DEFAULT_ENABLED;
-  if (value === undefined) {
-    return true;
-  }
-
-  const normalized = value.trim().toLowerCase();
-  if (["true", "1", "yes", "on"].includes(normalized)) {
-    return true;
-  }
-  if (["false", "0", "no", "off"].includes(normalized)) {
-    return false;
-  }
-  return true;
 })();
 const NOTIFICATIONS_SSE_ONLY = (() => {
   const value = process.env.NOTIFICATIONS_SSE_ONLY;
@@ -553,34 +549,169 @@ const hasSuperAdminPermission = (permissions: unknown): boolean => {
   );
 };
 
+const normalizeNotificationType = (value: unknown): string => {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) {
+    throw new InputValidationError("Notification type is required");
+  }
+
+  return trimmed;
+};
+
+const toNotificationPreferencePayload = (
+  notificationType: string,
+  preference:
+    | {
+        in_app_enabled: boolean;
+        email_enabled: boolean;
+        sms_enabled: boolean;
+      }
+    | null,
+): NotificationPreference => {
+  if (!preference) {
+    return {
+      type: notificationType,
+      inAppEnabled: true,
+      emailEnabled: true,
+      smsEnabled: false,
+      hasStoredPreference: false,
+    };
+  }
+
+  return {
+    type: notificationType,
+    inAppEnabled: preference.in_app_enabled !== false,
+    emailEnabled: preference.email_enabled !== false,
+    smsEnabled: preference.sms_enabled === true,
+    hasStoredPreference: true,
+  };
+};
+
 const getNotificationPreference = async (
   userId: number,
   notificationType: string,
 ): Promise<NotificationPreference> => {
+  const normalizedType = normalizeNotificationType(notificationType);
   const preference = await prisma.notification_preference.findUnique({
     where: {
       user_id_type: {
         user_id: userId,
-        type: notificationType,
+        type: normalizedType,
       },
     },
     select: {
       in_app_enabled: true,
       email_enabled: true,
+      sms_enabled: true,
     },
   });
 
-  if (!preference) {
-    return {
-      inAppEnabled: true,
-      emailEnabled: true,
-    };
+  return toNotificationPreferencePayload(normalizedType, preference);
+};
+
+const listNotificationPreferences = async (
+  userId: number,
+  notificationTypes?: string[],
+): Promise<NotificationPreferencePayload[]> => {
+  const normalizedTypes = Array.from(
+    new Set((notificationTypes || []).map((type) => normalizeNotificationType(type))),
+  );
+
+  if (normalizedTypes.length > 0) {
+    const storedPreferences = await prisma.notification_preference.findMany({
+      where: {
+        user_id: userId,
+        type: {
+          in: normalizedTypes,
+        },
+      },
+      select: {
+        type: true,
+        in_app_enabled: true,
+        email_enabled: true,
+        sms_enabled: true,
+      },
+    });
+
+    const storedByType = new Map(
+      storedPreferences.map((preference) => [preference.type, preference]),
+    );
+
+    return normalizedTypes.map((type) =>
+      toNotificationPreferencePayload(type, storedByType.get(type) || null),
+    );
   }
 
-  return {
-    inAppEnabled: preference.in_app_enabled !== false,
-    emailEnabled: preference.email_enabled !== false,
-  };
+  const storedPreferences = await prisma.notification_preference.findMany({
+    where: {
+      user_id: userId,
+    },
+    orderBy: {
+      type: "asc",
+    },
+    select: {
+      type: true,
+      in_app_enabled: true,
+      email_enabled: true,
+      sms_enabled: true,
+    },
+  });
+
+  return storedPreferences.map((preference) =>
+    toNotificationPreferencePayload(preference.type, preference),
+  );
+};
+
+const updateNotificationPreference = async (
+  userId: number,
+  notificationType: string,
+  updates: UpdateNotificationPreferenceInput,
+): Promise<NotificationPreferencePayload> => {
+  const normalizedType = normalizeNotificationType(notificationType);
+  const data: {
+    in_app_enabled?: boolean;
+    email_enabled?: boolean;
+    sms_enabled?: boolean;
+  } = {};
+
+  if (updates.inAppEnabled !== undefined) {
+    data.in_app_enabled = updates.inAppEnabled;
+  }
+  if (updates.emailEnabled !== undefined) {
+    data.email_enabled = updates.emailEnabled;
+  }
+  if (updates.smsEnabled !== undefined) {
+    data.sms_enabled = updates.smsEnabled;
+  }
+
+  if (!Object.keys(data).length) {
+    throw new InputValidationError("At least one preference value is required");
+  }
+
+  const updated = await prisma.notification_preference.upsert({
+    where: {
+      user_id_type: {
+        user_id: userId,
+        type: normalizedType,
+      },
+    },
+    update: data,
+    create: {
+      user_id: userId,
+      type: normalizedType,
+      in_app_enabled: updates.inAppEnabled ?? true,
+      email_enabled: updates.emailEnabled ?? true,
+      sms_enabled: updates.smsEnabled ?? false,
+    },
+    select: {
+      type: true,
+      in_app_enabled: true,
+      email_enabled: true,
+      sms_enabled: true,
+    },
+  });
+
+  return toNotificationPreferencePayload(updated.type, updated);
 };
 
 const buildEmailTemplate = (args: {
@@ -813,12 +944,14 @@ const createInAppNotification = async (
 
   const shouldSendSms =
     !NOTIFICATIONS_SSE_ONLY &&
-    (input.sendSms ?? NOTIFICATION_SMS_DEFAULT_ENABLED) === true &&
+    input.sendSms === true &&
+    preference.smsEnabled &&
     notificationSmsService.isSmsEnabled();
   if (shouldSendSms) {
     const smsBody = String(input.smsBody || trimmedBody).trim();
     if (smsBody) {
-      const smsResult = notificationSmsService.queueNotificationSms({
+      const smsResult = await notificationSmsService.queueNotificationSms({
+        notificationId: row?.id || null,
         notificationType: trimmedType,
         recipientUserId,
         phoneNumber: recipientUser.user_info?.primary_number || null,
@@ -1196,6 +1329,9 @@ const notifyAdminsJobFailed = async (args: {
 export const notificationService = {
   createInAppNotification,
   createManyInAppNotifications,
+  getNotificationPreference,
+  listNotificationPreferences,
+  updateNotificationPreference,
   listNotifications,
   getUnreadCount,
   markNotificationAsRead,

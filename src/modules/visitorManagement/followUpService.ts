@@ -48,6 +48,8 @@ export class FollowUpService {
         actionUrl: `/home/visitors/visitor/${createdFollowUp.visitorId}`,
         priority: "MEDIUM",
         dedupeKey: `follow-up:${createdFollowUp.id}:assigned:${createdFollowUp.assignedTo}`,
+        sendSms: true,
+        smsBody: "A visitor follow-up has been assigned to you. Open the app for details.",
       });
     }
 
@@ -151,6 +153,8 @@ export class FollowUpService {
         actionUrl: `/home/visitors/visitor/${updated.visitorId}`,
         priority: "MEDIUM",
         dedupeKey: `follow-up:${updated.id}:assigned:${newAssignee}`,
+        sendSms: true,
+        smsBody: "A visitor follow-up has been assigned to you. Open the app for details.",
       });
     }
 

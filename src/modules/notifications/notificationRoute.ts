@@ -69,6 +69,24 @@ notificationRouter.get(
 );
 
 notificationRouter.get(
+  "/preferences",
+  [permissions.protect],
+  notificationController.listPreferences,
+);
+
+notificationRouter.get(
+  "/preferences/:type",
+  [permissions.protect],
+  notificationController.getPreference,
+);
+
+notificationRouter.patch(
+  "/preferences/:type",
+  [permissions.protect],
+  notificationController.updatePreference,
+);
+
+notificationRouter.get(
   "/unread-count",
   [permissions.protect],
   notificationController.getUnreadCount,

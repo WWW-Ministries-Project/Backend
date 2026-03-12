@@ -47,6 +47,48 @@ export const departmentRouter = Router();
  *             name:
  *               type: string
  *               example: John Doe
+ *         member_count:
+ *           type: integer
+ *           example: 24
+ *     DepartmentMember:
+ *       type: object
+ *       properties:
+ *         id:
+ *           type: integer
+ *           example: 91
+ *         name:
+ *           type: string
+ *           example: Kofi Mensah
+ *         email:
+ *           type: string
+ *           example: kofi@example.com
+ *         member_id:
+ *           type: string
+ *           example: WWM-0021
+ *         membership_type:
+ *           type: string
+ *           example: IN_HOUSE
+ *         status:
+ *           type: string
+ *           example: MEMBER
+ *         primary_number:
+ *           type: string
+ *           example: 241234567
+ *         country_code:
+ *           type: string
+ *           example: +233
+ *         photo:
+ *           type: string
+ *           example: https://example.com/photo.jpg
+ *     DepartmentDetail:
+ *       allOf:
+ *         - $ref: '#/components/schemas/Department'
+ *         - type: object
+ *           properties:
+ *             members:
+ *               type: array
+ *               items:
+ *                 $ref: '#/components/schemas/DepartmentMember'
  *     CreateDepartmentRequest:
  *       type: object
  *       required:
@@ -236,6 +278,23 @@ departmentRouter.get(
  *         schema:
  *           type: integer
  *         description: The ID of the department to retrieve
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *         description: Member page number
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 12
+ *         description: Number of members to return
+ *       - in: query
+ *         name: name
+ *         schema:
+ *           type: string
+ *         description: Search term for department members
  *     responses:
  *       200:
  *         description: Department details
@@ -247,8 +306,16 @@ departmentRouter.get(
  *                 message:
  *                   type: string
  *                   example: Success
+ *                 current_page:
+ *                   type: integer
+ *                 page_size:
+ *                   type: integer
+ *                 total:
+ *                   type: integer
+ *                 totalPages:
+ *                   type: integer
  *                 data:
- *                   $ref: '#/components/schemas/Department'
+ *                   $ref: '#/components/schemas/DepartmentDetail'
  */
 departmentRouter.get(
   "/get-department",
