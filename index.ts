@@ -18,6 +18,7 @@ import "./src/cron-jobs/eventReportNotificationCron";
 import "./src/cron-jobs/followUpNotificationCron";
 import "./src/cron-jobs/notificationRetentionCron";
 import "./src/cron-jobs/notificationPushRetryCron";
+import "./src/cron-jobs/notificationSmsRetryCron";
 dotenv.config();
 const collectDefaultMetrics = client.collectDefaultMetrics;
 collectDefaultMetrics();

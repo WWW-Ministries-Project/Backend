@@ -1,5 +1,7 @@
+import { Prisma } from "@prisma/client";
 import { createHash } from "crypto";
 import client from "prom-client";
+import { prisma } from "../../Models/context";
 
 type SmsQueueDropReason =
   | "disabled"
@@ -9,6 +11,7 @@ type SmsQueueDropReason =
   | "deduped";
 
 type QueueNotificationSmsInput = {
+  notificationId?: number | null;
   notificationType: string;
   recipientUserId: number;
   phoneNumber: string | null | undefined;
@@ -23,12 +26,11 @@ type QueueNotificationSmsResult = {
   reason: SmsQueueDropReason | null;
 };
 
-type SmsQueueJob = {
+type SmsJobPayload = {
   notificationType: string;
   recipientUserId: number;
   phoneNumber: string;
   message: string;
-  attempt: number;
 };
 
 type SmsConfig = {
@@ -38,11 +40,17 @@ type SmsConfig = {
   authHeader: string;
   timeoutMs: number;
   maxRetries: number;
-  concurrency: number;
   retryBaseDelayMs: number;
-  maxQueueSize: number;
+  maxPendingJobs: number;
   maxMessageLength: number;
   dedupeWindowMs: number;
+};
+
+type SmsRetryProcessingSummary = {
+  processed: number;
+  sent: number;
+  requeued: number;
+  dead: number;
 };
 
 class HubtelSmsRequestError extends Error {
@@ -67,19 +75,16 @@ class HubtelSmsRequestError extends Error {
 const DEFAULT_HUBTEL_SMS_ENDPOINT = "https://smsc.hubtel.com/v1/messages/send";
 const DEFAULT_HUBTEL_SMS_TIMEOUT_MS = 5_000;
 const DEFAULT_HUBTEL_SMS_MAX_RETRIES = 3;
-const DEFAULT_HUBTEL_SMS_CONCURRENCY = 4;
 const DEFAULT_HUBTEL_SMS_RETRY_BASE_DELAY_MS = 250;
 const DEFAULT_HUBTEL_SMS_MAX_QUEUE_SIZE = 2_000;
 const DEFAULT_HUBTEL_SMS_MAX_MESSAGE_LENGTH = 612;
 const DEFAULT_HUBTEL_SMS_DEDUPE_WINDOW_MS = 20_000;
+const DEFAULT_RETRY_BATCH_SIZE = 50;
 const TRANSIENT_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504]);
 const MAX_LOG_ERROR_MESSAGE_LENGTH = 500;
 
-const smsQueue: SmsQueueJob[] = [];
-const dedupeTracker = new Map<string, number>();
-let activeWorkers = 0;
-let queuePumpScheduled = false;
-let lastDedupePruneAt = 0;
+let configCache: SmsConfig | null = null;
+let backgroundProcessingScheduled = false;
 
 const getOrCreateCounter = (
   name: string,
@@ -154,15 +159,8 @@ const trimToNull = (value: unknown): string | null => {
   return trimmed || null;
 };
 
-const toBoundedPositiveInt = (
-  value: string | undefined,
-  fallback: number,
-  max: number,
-): number => {
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed <= 0) return fallback;
-  return Math.min(parsed, max);
-};
+const truncate = (value: string, maxLength: number): string =>
+  value.length <= maxLength ? value : value.slice(0, maxLength);
 
 const parseBooleanEnv = (value: string | undefined, fallback: boolean): boolean => {
   if (value === undefined) return fallback;
@@ -173,11 +171,32 @@ const parseBooleanEnv = (value: string | undefined, fallback: boolean): boolean 
   return fallback;
 };
 
+const toBoundedPositiveInt = (
+  value: string | undefined,
+  fallback: number,
+  max: number,
+): number => {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) return fallback;
+  return Math.min(parsed, max);
+};
+
+const toPositiveInt = (value: unknown): number | null => {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return null;
+  }
+
+  return parsed;
+};
+
 const normalizeEndpoint = (value: string | null): string =>
   (value || DEFAULT_HUBTEL_SMS_ENDPOINT).replace(/\/+$/, "");
 
 const normalizeAuthHeader = (): string | null => {
-  const providedToken = trimToNull(process.env.HUBTEL_SMS_AUTH_B64 || process.env.HUBTEL_AUTH);
+  const providedToken = trimToNull(
+    process.env.HUBTEL_SMS_AUTH_B64 || process.env.HUBTEL_AUTH,
+  );
   if (providedToken) {
     const token = providedToken.replace(/^Basic\s+/i, "").trim();
     return token ? `Basic ${token}` : null;
@@ -273,7 +292,10 @@ const hasExplicitFailure = (payload: unknown): boolean => {
   }
 
   const status = getFirstStringValue(record, ["status", "Status"]);
-  if (status && ["failed", "error", "rejected", "unsuccessful"].includes(status.toLowerCase())) {
+  if (
+    status &&
+    ["failed", "error", "rejected", "unsuccessful"].includes(status.toLowerCase())
+  ) {
     return true;
   }
 
@@ -323,134 +345,40 @@ const delayForRetry = (attempt: number, baseDelayMs: number): number => {
   return Math.min(baseDelayMs * 2 ** Math.max(attempt - 1, 0) + jitter, 5_000);
 };
 
-const buildDedupeToken = (args: {
+const getRetryBatchSize = (value: unknown): number => {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return DEFAULT_RETRY_BATCH_SIZE;
+  }
+
+  return Math.min(parsed, 500);
+};
+
+const buildIdempotencyKey = (args: {
+  notificationId?: number | null;
   recipientUserId: number;
   notificationType: string;
   dedupeKey?: string | null;
   phoneNumber: string;
   message: string;
+  dedupeWindowMs: number;
 }): string => {
+  const notificationId = toPositiveInt(args.notificationId);
+  if (notificationId) {
+    return `notification:${notificationId}`;
+  }
+
   const explicit = trimToNull(args.dedupeKey);
   if (explicit) {
-    return `${args.recipientUserId}:${args.notificationType}:${explicit}`;
+    return `dedupe:${args.recipientUserId}:${args.notificationType}:${explicit}`;
   }
 
+  const windowBucket = Math.floor(Date.now() / Math.max(args.dedupeWindowMs, 1_000));
   return createHash("sha1")
     .update(
-      `${args.recipientUserId}|${args.notificationType}|${args.phoneNumber}|${args.message}`,
+      `${args.recipientUserId}|${args.notificationType}|${args.phoneNumber}|${args.message}|${windowBucket}`,
     )
     .digest("hex");
-};
-
-const pruneOldDedupeTokens = (dedupeWindowMs: number) => {
-  const now = Date.now();
-  if (now - lastDedupePruneAt < Math.max(Math.floor(dedupeWindowMs / 2), 5_000)) {
-    return;
-  }
-  lastDedupePruneAt = now;
-
-  for (const [token, timestamp] of dedupeTracker.entries()) {
-    if (now - timestamp > dedupeWindowMs) {
-      dedupeTracker.delete(token);
-    }
-  }
-};
-
-let configCache: SmsConfig | null = null;
-
-const resolveConfig = (): SmsConfig => {
-  const enabledByEnv = parseBooleanEnv(process.env.HUBTEL_SMS_ENABLED, true);
-  const endpoint = normalizeEndpoint(
-    trimToNull(process.env.HUBTEL_SMS_URL || process.env.HUBTEL_SMS_ENDPOINT),
-  );
-  const senderId =
-    trimToNull(process.env.HUBTEL_SMS_SENDER_ID || process.env.HUBTEL_SENDER_ID) || "";
-  const authHeader = normalizeAuthHeader() || "";
-  const timeoutMs = toBoundedPositiveInt(
-    process.env.HUBTEL_SMS_TIMEOUT_MS,
-    DEFAULT_HUBTEL_SMS_TIMEOUT_MS,
-    60_000,
-  );
-  const maxRetries = toBoundedPositiveInt(
-    process.env.HUBTEL_SMS_MAX_RETRIES,
-    DEFAULT_HUBTEL_SMS_MAX_RETRIES,
-    10,
-  );
-  const concurrency = toBoundedPositiveInt(
-    process.env.HUBTEL_SMS_CONCURRENCY,
-    DEFAULT_HUBTEL_SMS_CONCURRENCY,
-    20,
-  );
-  const retryBaseDelayMs = toBoundedPositiveInt(
-    process.env.HUBTEL_SMS_RETRY_BASE_DELAY_MS,
-    DEFAULT_HUBTEL_SMS_RETRY_BASE_DELAY_MS,
-    30_000,
-  );
-  const maxQueueSize = toBoundedPositiveInt(
-    process.env.HUBTEL_SMS_MAX_QUEUE_SIZE,
-    DEFAULT_HUBTEL_SMS_MAX_QUEUE_SIZE,
-    50_000,
-  );
-  const maxMessageLength = toBoundedPositiveInt(
-    process.env.HUBTEL_SMS_MAX_MESSAGE_LENGTH,
-    DEFAULT_HUBTEL_SMS_MAX_MESSAGE_LENGTH,
-    2_000,
-  );
-  const dedupeWindowMs = toBoundedPositiveInt(
-    process.env.HUBTEL_SMS_DEDUPE_WINDOW_MS,
-    DEFAULT_HUBTEL_SMS_DEDUPE_WINDOW_MS,
-    600_000,
-  );
-
-  const enabled = enabledByEnv && Boolean(endpoint && senderId && authHeader);
-
-  return {
-    enabled,
-    endpoint,
-    senderId,
-    authHeader,
-    timeoutMs,
-    maxRetries,
-    concurrency,
-    retryBaseDelayMs,
-    maxQueueSize,
-    maxMessageLength,
-    dedupeWindowMs,
-  };
-};
-
-const getConfig = (): SmsConfig => {
-  if (!configCache) {
-    configCache = resolveConfig();
-  }
-  return configCache;
-};
-
-const scheduleQueuePump = () => {
-  if (queuePumpScheduled) return;
-
-  queuePumpScheduled = true;
-  setImmediate(() => {
-    queuePumpScheduled = false;
-    runQueueWorkers();
-  });
-};
-
-const enqueueJob = (
-  job: SmsQueueJob,
-  config: SmsConfig,
-  reasonOnDrop: "queue_full" = "queue_full",
-): boolean => {
-  if (smsQueue.length >= config.maxQueueSize) {
-    notificationSmsDroppedCounter.labels(job.notificationType, reasonOnDrop).inc();
-    return false;
-  }
-
-  smsQueue.push(job);
-  notificationSmsQueueDepthGauge.set(smsQueue.length);
-  notificationSmsQueuedCounter.labels(job.notificationType).inc();
-  scheduleQueuePump();
-  return true;
 };
 
 const normalizeErrorForMetrics = (
@@ -475,6 +403,122 @@ const normalizeErrorForMetrics = (
     message,
     statusCode: null,
   };
+};
+
+const resolveConfig = (): SmsConfig => {
+  const enabledByEnv = parseBooleanEnv(process.env.HUBTEL_SMS_ENABLED, true);
+  const endpoint = normalizeEndpoint(
+    trimToNull(process.env.HUBTEL_SMS_URL || process.env.HUBTEL_SMS_ENDPOINT),
+  );
+  const senderId =
+    trimToNull(process.env.HUBTEL_SMS_SENDER_ID || process.env.HUBTEL_SENDER_ID) || "";
+  const authHeader = normalizeAuthHeader() || "";
+  const timeoutMs = toBoundedPositiveInt(
+    process.env.HUBTEL_SMS_TIMEOUT_MS,
+    DEFAULT_HUBTEL_SMS_TIMEOUT_MS,
+    60_000,
+  );
+  const maxRetries = toBoundedPositiveInt(
+    process.env.HUBTEL_SMS_MAX_RETRIES,
+    DEFAULT_HUBTEL_SMS_MAX_RETRIES,
+    10,
+  );
+  const retryBaseDelayMs = toBoundedPositiveInt(
+    process.env.HUBTEL_SMS_RETRY_BASE_DELAY_MS,
+    DEFAULT_HUBTEL_SMS_RETRY_BASE_DELAY_MS,
+    30_000,
+  );
+  const maxPendingJobs = toBoundedPositiveInt(
+    process.env.HUBTEL_SMS_MAX_QUEUE_SIZE,
+    DEFAULT_HUBTEL_SMS_MAX_QUEUE_SIZE,
+    50_000,
+  );
+  const maxMessageLength = toBoundedPositiveInt(
+    process.env.HUBTEL_SMS_MAX_MESSAGE_LENGTH,
+    DEFAULT_HUBTEL_SMS_MAX_MESSAGE_LENGTH,
+    2_000,
+  );
+  const dedupeWindowMs = toBoundedPositiveInt(
+    process.env.HUBTEL_SMS_DEDUPE_WINDOW_MS,
+    DEFAULT_HUBTEL_SMS_DEDUPE_WINDOW_MS,
+    600_000,
+  );
+
+  const enabled = enabledByEnv && Boolean(endpoint && senderId && authHeader);
+
+  return {
+    enabled,
+    endpoint,
+    senderId,
+    authHeader,
+    timeoutMs,
+    maxRetries,
+    retryBaseDelayMs,
+    maxPendingJobs,
+    maxMessageLength,
+    dedupeWindowMs,
+  };
+};
+
+const getConfig = (): SmsConfig => {
+  if (!configCache) {
+    configCache = resolveConfig();
+  }
+
+  return configCache;
+};
+
+const refreshSmsQueueDepthGauge = async () => {
+  try {
+    const pendingCount = await prisma.notification_sms_delivery_job.count({
+      where: {
+        status: "PENDING",
+      },
+    });
+    notificationSmsQueueDepthGauge.set(pendingCount);
+  } catch (error) {
+    // Metric updates should never interrupt request flow.
+  }
+};
+
+const updateNotificationSmsState = async (args: {
+  notificationId?: number | null;
+  status: "PENDING" | "PROCESSING" | "SENT" | "DEAD";
+  queuedAt?: Date | null;
+  lastAttemptAt?: Date | null;
+  sentAt?: Date | null;
+  errorCode?: string | null;
+  errorMessage?: string | null;
+}) => {
+  const notificationId = toPositiveInt(args.notificationId);
+  if (!notificationId) {
+    return;
+  }
+
+  await prisma.in_app_notification.updateMany({
+    where: {
+      id: notificationId,
+    },
+    data: {
+      sms_delivery_status: args.status,
+      sms_queued_at: args.queuedAt === undefined ? undefined : args.queuedAt,
+      sms_last_attempt_at:
+        args.lastAttemptAt === undefined ? undefined : args.lastAttemptAt,
+      sms_sent_at: args.sentAt === undefined ? undefined : args.sentAt,
+      sms_last_error_code:
+        args.errorCode === undefined
+          ? undefined
+          : args.errorCode
+            ? truncate(args.errorCode, 64)
+            : null,
+      sms_last_error_message:
+        args.errorMessage === undefined
+          ? undefined
+          : args.errorMessage
+            ? truncate(args.errorMessage, 1024)
+            : null,
+    },
+  });
 };
 
 const postJson = async (
@@ -530,7 +574,7 @@ const postJson = async (
 };
 
 const sendHubtelSms = async (
-  job: SmsQueueJob,
+  job: SmsJobPayload,
   config: SmsConfig,
 ): Promise<void> => {
   const headers = {
@@ -583,7 +627,6 @@ const sendHubtelSms = async (
         shouldRetry,
       );
 
-      // Try another payload shape for 4xx validation issues only.
       if (response.status >= 400 && response.status < 500) {
         continue;
       }
@@ -612,75 +655,58 @@ const sendHubtelSms = async (
   );
 };
 
-const scheduleRetry = (job: SmsQueueJob, config: SmsConfig) => {
-  const nextAttempt = job.attempt + 1;
-  notificationSmsRetryCounter.labels(job.notificationType).inc();
-  const delayMs = delayForRetry(nextAttempt, config.retryBaseDelayMs);
-
-  setTimeout(() => {
-    const queued = enqueueJob(
-      {
-        ...job,
-        attempt: nextAttempt,
+const findExistingJobForDedupedRequest = async (args: {
+  notificationId?: number | null;
+  idempotencyKey: string;
+}) => {
+  const notificationId = toPositiveInt(args.notificationId);
+  if (notificationId) {
+    return prisma.notification_sms_delivery_job.findUnique({
+      where: {
+        notification_id: notificationId,
       },
-      config,
-      "queue_full",
-    );
-
-    if (!queued) {
-      notificationSmsFailureCounter
-        .labels(job.notificationType, "queue_full_retry")
-        .inc();
-    }
-  }, delayMs);
-};
-
-const dispatchJob = async (job: SmsQueueJob, config: SmsConfig) => {
-  try {
-    await sendHubtelSms(job, config);
-    notificationSmsSentCounter.labels(job.notificationType).inc();
-  } catch (error) {
-    const normalized = normalizeErrorForMetrics(error);
-    if (normalized.transient && job.attempt < config.maxRetries) {
-      scheduleRetry(job, config);
-      return;
-    }
-
-    notificationSmsFailureCounter.labels(job.notificationType, normalized.code).inc();
-    const safeMessage = normalized.message.slice(0, MAX_LOG_ERROR_MESSAGE_LENGTH);
-    console.warn(
-      `[WARN] SMS delivery failed: type=${job.notificationType} recipient=${job.recipientUserId} status=${normalized.statusCode ?? "unknown"} code=${normalized.code} error=${safeMessage}`,
-    );
-  }
-};
-
-const runQueueWorkers = () => {
-  const config = getConfig();
-
-  while (activeWorkers < config.concurrency) {
-    const job = smsQueue.shift();
-    if (!job) {
-      notificationSmsQueueDepthGauge.set(0);
-      return;
-    }
-
-    notificationSmsQueueDepthGauge.set(smsQueue.length);
-    activeWorkers += 1;
-    void dispatchJob(job, config).finally(() => {
-      activeWorkers -= 1;
-      scheduleQueuePump();
+      select: {
+        id: true,
+      },
     });
   }
+
+  return prisma.notification_sms_delivery_job.findUnique({
+    where: {
+      idempotency_key: args.idempotencyKey,
+    },
+    select: {
+      id: true,
+    },
+  });
 };
 
-const queueNotificationSms = (
+const markNotificationDeadOnDrop = async (args: {
+  notificationId?: number | null;
+  code: SmsQueueDropReason;
+  message: string;
+}) => {
+  await updateNotificationSmsState({
+    notificationId: args.notificationId,
+    status: "DEAD",
+    errorCode: args.code.toUpperCase(),
+    errorMessage: args.message,
+  });
+};
+
+const queueNotificationSms = async (
   input: QueueNotificationSmsInput,
-): QueueNotificationSmsResult => {
+): Promise<QueueNotificationSmsResult> => {
   const config = getConfig();
   const notificationType = String(input.notificationType || "generic").trim() || "generic";
 
   if (!config.enabled) {
     notificationSmsDroppedCounter.labels(notificationType, "disabled").inc();
+    await markNotificationDeadOnDrop({
+      notificationId: input.notificationId,
+      code: "disabled",
+      message: "SMS delivery is not configured for this environment",
+    });
     return {
       queued: false,
       disabled: true,
@@ -691,6 +717,11 @@ const queueNotificationSms = (
   const normalizedMessage = normalizeMessage(input.message, config.maxMessageLength);
   if (!normalizedMessage) {
     notificationSmsDroppedCounter.labels(notificationType, "empty_message").inc();
+    await markNotificationDeadOnDrop({
+      notificationId: input.notificationId,
+      code: "empty_message",
+      message: "SMS message is empty after normalization",
+    });
     return {
       queued: false,
       disabled: false,
@@ -701,6 +732,11 @@ const queueNotificationSms = (
   const normalizedPhone = normalizePhoneForHubtel(input.phoneNumber, input.countryCode);
   if (!normalizedPhone) {
     notificationSmsDroppedCounter.labels(notificationType, "invalid_phone").inc();
+    await markNotificationDeadOnDrop({
+      notificationId: input.notificationId,
+      code: "invalid_phone",
+      message: "Recipient phone number is invalid for SMS delivery",
+    });
     return {
       queued: false,
       disabled: false,
@@ -708,38 +744,20 @@ const queueNotificationSms = (
     };
   }
 
-  pruneOldDedupeTokens(config.dedupeWindowMs);
-  const dedupeToken = buildDedupeToken({
-    recipientUserId: input.recipientUserId,
-    notificationType,
-    dedupeKey: input.dedupeKey,
-    phoneNumber: normalizedPhone,
-    message: normalizedMessage,
-  });
-
-  const existingTimestamp = dedupeTracker.get(dedupeToken);
-  if (existingTimestamp && Date.now() - existingTimestamp < config.dedupeWindowMs) {
-    notificationSmsDroppedCounter.labels(notificationType, "deduped").inc();
-    return {
-      queued: false,
-      disabled: false,
-      reason: "deduped",
-    };
-  }
-
-  const queued = enqueueJob(
-    {
-      notificationType,
-      recipientUserId: input.recipientUserId,
-      phoneNumber: normalizedPhone,
-      message: normalizedMessage,
-      attempt: 0,
+  const queuedCount = await prisma.notification_sms_delivery_job.count({
+    where: {
+      status: {
+        in: ["PENDING", "PROCESSING"],
+      },
     },
-    config,
-    "queue_full",
-  );
-
-  if (!queued) {
+  });
+  if (queuedCount >= config.maxPendingJobs) {
+    notificationSmsDroppedCounter.labels(notificationType, "queue_full").inc();
+    await markNotificationDeadOnDrop({
+      notificationId: input.notificationId,
+      code: "queue_full",
+      message: "SMS delivery queue is at capacity",
+    });
     return {
       queued: false,
       disabled: false,
@@ -747,12 +765,287 @@ const queueNotificationSms = (
     };
   }
 
-  dedupeTracker.set(dedupeToken, Date.now());
+  const notificationId = toPositiveInt(input.notificationId);
+  const idempotencyKey = buildIdempotencyKey({
+    notificationId,
+    recipientUserId: input.recipientUserId,
+    notificationType,
+    dedupeKey: input.dedupeKey,
+    phoneNumber: normalizedPhone,
+    message: normalizedMessage,
+    dedupeWindowMs: config.dedupeWindowMs,
+  });
+  const dedupeKey = trimToNull(input.dedupeKey);
+  const now = new Date();
+
+  try {
+    await prisma.notification_sms_delivery_job.create({
+      data: {
+        notification_id: notificationId,
+        user_id: input.recipientUserId,
+        notification_type: notificationType,
+        dedupe_key: dedupeKey,
+        idempotency_key: idempotencyKey,
+        phone_number: normalizedPhone,
+        message: normalizedMessage,
+        status: "PENDING",
+        next_attempt_at: now,
+      },
+    });
+  } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    ) {
+      const existing = await findExistingJobForDedupedRequest({
+        notificationId,
+        idempotencyKey,
+      });
+      if (existing) {
+        notificationSmsDroppedCounter.labels(notificationType, "deduped").inc();
+        return {
+          queued: false,
+          disabled: false,
+          reason: "deduped",
+        };
+      }
+    }
+
+    throw error;
+  }
+
+  notificationSmsQueuedCounter.labels(notificationType).inc();
+  await updateNotificationSmsState({
+    notificationId,
+    status: "PENDING",
+    queuedAt: now,
+    errorCode: null,
+    errorMessage: null,
+  });
+  await refreshSmsQueueDepthGauge();
+  triggerPendingSmsDeliveryJobProcessing();
+
   return {
     queued: true,
     disabled: false,
     reason: null,
   };
+};
+
+const processPendingSmsDeliveryJobs = async (args?: {
+  batchSize?: number;
+}): Promise<SmsRetryProcessingSummary> => {
+  const config = getConfig();
+  if (!config.enabled) {
+    return {
+      processed: 0,
+      sent: 0,
+      requeued: 0,
+      dead: 0,
+    };
+  }
+
+  const batchSize = getRetryBatchSize(
+    args?.batchSize ?? process.env.HUBTEL_SMS_RETRY_BATCH_SIZE,
+  );
+  const now = new Date();
+  const dueJobs = await prisma.notification_sms_delivery_job.findMany({
+    where: {
+      status: "PENDING",
+      next_attempt_at: {
+        lte: now,
+      },
+    },
+    orderBy: {
+      next_attempt_at: "asc",
+    },
+    take: batchSize,
+  });
+
+  let processed = 0;
+  let sent = 0;
+  let requeued = 0;
+  let dead = 0;
+
+  for (const dueJob of dueJobs) {
+    try {
+      const claimed = await prisma.notification_sms_delivery_job.updateMany({
+        where: {
+          id: dueJob.id,
+          status: "PENDING",
+        },
+        data: {
+          status: "PROCESSING",
+        },
+      });
+
+      if (!claimed.count) {
+        continue;
+      }
+
+      processed += 1;
+      const attemptStartedAt = new Date();
+      await updateNotificationSmsState({
+        notificationId: dueJob.notification_id,
+        status: "PROCESSING",
+        lastAttemptAt: attemptStartedAt,
+      });
+
+      const retryAttemptNumber = dueJob.attempts + 1;
+
+      try {
+        await sendHubtelSms(
+          {
+            notificationType: dueJob.notification_type,
+            recipientUserId: dueJob.user_id,
+            phoneNumber: dueJob.phone_number,
+            message: dueJob.message,
+          },
+          config,
+        );
+
+        await prisma.notification_sms_delivery_job.updateMany({
+          where: {
+            id: dueJob.id,
+          },
+          data: {
+            status: "SENT",
+            attempts: retryAttemptNumber,
+            sent_at: new Date(),
+            last_error_code: null,
+            last_error_message: null,
+            last_error_at: null,
+          },
+        });
+
+        notificationSmsSentCounter.labels(dueJob.notification_type).inc();
+        await updateNotificationSmsState({
+          notificationId: dueJob.notification_id,
+          status: "SENT",
+          lastAttemptAt: attemptStartedAt,
+          sentAt: new Date(),
+          errorCode: null,
+          errorMessage: null,
+        });
+        sent += 1;
+      } catch (error) {
+        const normalized = normalizeErrorForMetrics(error);
+        const retryAt = new Date();
+
+        if (normalized.transient && retryAttemptNumber < config.maxRetries) {
+          notificationSmsRetryCounter.labels(dueJob.notification_type).inc();
+          await prisma.notification_sms_delivery_job.updateMany({
+            where: {
+              id: dueJob.id,
+            },
+            data: {
+              status: "PENDING",
+              attempts: retryAttemptNumber,
+              next_attempt_at: new Date(
+                Date.now() + delayForRetry(retryAttemptNumber, config.retryBaseDelayMs),
+              ),
+              last_error_code: truncate(normalized.code, 64),
+              last_error_message: truncate(normalized.message, 1024),
+              last_error_at: retryAt,
+            },
+          });
+
+          await updateNotificationSmsState({
+            notificationId: dueJob.notification_id,
+            status: "PENDING",
+            lastAttemptAt: attemptStartedAt,
+            errorCode: normalized.code,
+            errorMessage: normalized.message,
+          });
+          requeued += 1;
+          continue;
+        }
+
+        notificationSmsFailureCounter
+          .labels(dueJob.notification_type, normalized.code)
+          .inc();
+        await prisma.notification_sms_delivery_job.updateMany({
+          where: {
+            id: dueJob.id,
+          },
+          data: {
+            status: "DEAD",
+            attempts: retryAttemptNumber,
+            last_error_code: truncate(normalized.code, 64),
+            last_error_message: truncate(normalized.message, 1024),
+            last_error_at: retryAt,
+          },
+        });
+
+        await updateNotificationSmsState({
+          notificationId: dueJob.notification_id,
+          status: "DEAD",
+          lastAttemptAt: attemptStartedAt,
+          errorCode: normalized.code,
+          errorMessage: normalized.message,
+        });
+
+        const safeMessage = truncate(normalized.message, MAX_LOG_ERROR_MESSAGE_LENGTH);
+        console.warn(
+          `[WARN] SMS delivery failed: type=${dueJob.notification_type} recipient=${dueJob.user_id} status=${normalized.statusCode ?? "unknown"} code=${normalized.code} error=${safeMessage}`,
+        );
+        dead += 1;
+      }
+    } catch (error) {
+      const normalized = normalizeErrorForMetrics(error);
+      await prisma.notification_sms_delivery_job.updateMany({
+        where: {
+          id: dueJob.id,
+          status: "PROCESSING",
+        },
+        data: {
+          status: "PENDING",
+          next_attempt_at: new Date(
+            Date.now() + delayForRetry(1, config.retryBaseDelayMs),
+          ),
+          last_error_code: "PROCESSING_ERROR",
+          last_error_message: truncate(normalized.message, 1024),
+          last_error_at: new Date(),
+        },
+      });
+
+      await updateNotificationSmsState({
+        notificationId: dueJob.notification_id,
+        status: "PENDING",
+        errorCode: "PROCESSING_ERROR",
+        errorMessage: normalized.message,
+      });
+
+      console.error(
+        `[ERROR] SMS retry processing failed for job=${dueJob.id}: ${normalized.message}`,
+      );
+    }
+  }
+
+  await refreshSmsQueueDepthGauge();
+  return {
+    processed,
+    sent,
+    requeued,
+    dead,
+  };
+};
+
+const triggerPendingSmsDeliveryJobProcessing = () => {
+  if (backgroundProcessingScheduled) {
+    return;
+  }
+
+  backgroundProcessingScheduled = true;
+  setImmediate(() => {
+    backgroundProcessingScheduled = false;
+    void processPendingSmsDeliveryJobs().catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(
+        `[ERROR] Background SMS delivery processing failed: ${truncate(message, MAX_LOG_ERROR_MESSAGE_LENGTH)}`,
+      );
+    });
+  });
 };
 
 const isSmsEnabled = (): boolean => getConfig().enabled;
@@ -761,4 +1054,6 @@ export const notificationSmsService = {
   isSmsEnabled,
   normalizePhoneForHubtel,
   queueNotificationSms,
+  processPendingSmsDeliveryJobs,
+  triggerPendingSmsDeliveryJobProcessing,
 };

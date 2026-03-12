@@ -56,6 +56,53 @@ const parseOptionalLastEventId = (req: Request): number | undefined => {
   return parsed;
 };
 
+const parseOptionalBoolean = (
+  value: unknown,
+  fieldName: string,
+): boolean | undefined => {
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["true", "1", "yes", "on"].includes(normalized)) {
+      return true;
+    }
+    if (["false", "0", "no", "off"].includes(normalized)) {
+      return false;
+    }
+  }
+
+  throw new InputValidationError(`${fieldName} must be a boolean`);
+};
+
+const parseNotificationType = (value: unknown): string => {
+  const parsed = String(value || "").trim();
+  if (!parsed) {
+    throw new InputValidationError("Notification type is required");
+  }
+
+  return parsed;
+};
+
+const parseNotificationTypeList = (value: unknown): string[] => {
+  const rawValues = Array.isArray(value) ? value : [value];
+
+  return Array.from(
+    new Set(
+      rawValues
+        .flatMap((entry) => String(entry || "").split(","))
+        .map((entry) => entry.trim())
+        .filter(Boolean),
+    ),
+  );
+};
+
 export class NotificationController {
   private isPushDisabledBySseOnlyMode(res: Response): boolean {
     if (!notificationService.isSseOnlyModeEnabled()) {
@@ -155,6 +202,62 @@ export class NotificationController {
     res.status(200).json({
       message: "Notifications retrieved successfully",
       data: response,
+    });
+  }
+
+  async listPreferences(req: Request, res: Response) {
+    const userId = getAuthenticatedUserId(req);
+    const types = parseNotificationTypeList(req.query.types);
+    const data = await notificationService.listNotificationPreferences(
+      userId,
+      types.length ? types : undefined,
+    );
+
+    res.status(200).json({
+      message: "Notification preferences retrieved successfully",
+      data,
+    });
+  }
+
+  async getPreference(req: Request, res: Response) {
+    const userId = getAuthenticatedUserId(req);
+    const notificationType = parseNotificationType(req.params.type);
+    const data = await notificationService.getNotificationPreference(
+      userId,
+      notificationType,
+    );
+
+    res.status(200).json({
+      message: "Notification preference retrieved successfully",
+      data,
+    });
+  }
+
+  async updatePreference(req: Request, res: Response) {
+    const userId = getAuthenticatedUserId(req);
+    const notificationType = parseNotificationType(req.params.type);
+    const data = await notificationService.updateNotificationPreference(
+      userId,
+      notificationType,
+      {
+        inAppEnabled: parseOptionalBoolean(
+          req.body?.inAppEnabled ?? req.body?.in_app_enabled,
+          "inAppEnabled",
+        ),
+        emailEnabled: parseOptionalBoolean(
+          req.body?.emailEnabled ?? req.body?.email_enabled,
+          "emailEnabled",
+        ),
+        smsEnabled: parseOptionalBoolean(
+          req.body?.smsEnabled ?? req.body?.sms_enabled,
+          "smsEnabled",
+        ),
+      },
+    );
+
+    res.status(200).json({
+      message: "Notification preference updated successfully",
+      data,
     });
   }
 

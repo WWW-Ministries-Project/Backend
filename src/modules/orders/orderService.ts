@@ -365,6 +365,11 @@ export class OrderService {
         actionUrl: "/member/market/orders",
         priority: status === "success" ? "MEDIUM" : "HIGH",
         dedupeKey: `order:${updatedOrder.id}:payment:${status}`,
+        sendSms: true,
+        smsBody:
+          status === "success"
+            ? `Payment successful for order ${updatedOrder.order_number || `#${updatedOrder.id}`}.`
+            : `Payment failed for order ${updatedOrder.order_number || `#${updatedOrder.id}`}. Open the app for details.`,
       });
     }
 

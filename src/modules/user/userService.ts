@@ -135,12 +135,18 @@ export class UserService {
       is_user,
       department_positions,
       source_soul_won_id,
+      source_visitor_id,
     } = userData;
 
     const parsedSourceSoulWonId = Number(source_soul_won_id);
     const sourceSoulWonId =
       Number.isInteger(parsedSourceSoulWonId) && parsedSourceSoulWonId > 0
         ? parsedSourceSoulWonId
+        : null;
+    const parsedSourceVisitorId = Number(source_visitor_id);
+    const sourceVisitorId =
+      Number.isInteger(parsedSourceVisitorId) && parsedSourceVisitorId > 0
+        ? parsedSourceVisitorId
         : null;
 
     const isLoginUser =
@@ -181,6 +187,25 @@ export class UserService {
       if (sourceSoulRecord.memberId) {
         throw new InputValidationError(
           "This soul-winning record is already linked to a member.",
+        );
+      }
+    }
+
+    if (sourceVisitorId) {
+      const sourceVisitorRecord = await prisma.visitor.findUnique({
+        where: { id: sourceVisitorId },
+        select: { id: true, is_member: true },
+      });
+
+      if (!sourceVisitorRecord) {
+        throw new InputValidationError(
+          "The selected visitor record could not be found.",
+        );
+      }
+
+      if (sourceVisitorRecord.is_member) {
+        throw new InputValidationError(
+          "This visitor record has already been linked to a member.",
         );
       }
     }
@@ -299,6 +324,13 @@ export class UserService {
       await prisma.soul_won.update({
         where: { id: sourceSoulWonId },
         data: { memberId: user.id },
+      });
+    }
+
+    if (sourceVisitorId) {
+      await prisma.visitor.update({
+        where: { id: sourceVisitorId },
+        data: { is_member: true },
       });
     }
 

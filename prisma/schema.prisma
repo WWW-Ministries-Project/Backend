@@ -53,6 +53,7 @@ model user {
   notification_preferences notification_preference[]
   push_subscriptions       notification_push_subscription[]
   push_delivery_jobs       notification_push_delivery_job[] @relation("notification_push_delivery_user")
+  sms_delivery_jobs        notification_sms_delivery_job[]  @relation("notification_sms_delivery_user")
   event_reports_created    event_reports[]                 @relation("event_report_created_by")
   event_reports_updated    event_reports[]                 @relation("event_report_updated_by")
   event_reports_final_acted event_reports[]                @relation("event_report_final_acted_by")
@@ -715,11 +716,18 @@ model in_app_notification {
   is_read           Boolean               @default(false)
   read_at           DateTime?
   email_sent_at     DateTime?
+  sms_delivery_status notification_sms_delivery_status?
+  sms_queued_at     DateTime?
+  sms_last_attempt_at DateTime?
+  sms_sent_at       DateTime?
+  sms_last_error_code String?             @db.VarChar(64)
+  sms_last_error_message String?          @db.VarChar(1024)
   created_at        DateTime              @default(now())
   updated_at        DateTime              @default(now()) @updatedAt
   actor             user?                 @relation("notification_actor", fields: [actor_user_id], references: [id], onDelete: SetNull)
   recipient         user                  @relation("notification_recipient", fields: [recipient_user_id], references: [id], onDelete: Cascade)
   push_delivery_jobs notification_push_delivery_job[]
+  sms_delivery_jobs notification_sms_delivery_job[]
 
   @@index([recipient_user_id, is_read, created_at], map: "in_app_notification_recipient_read_created_idx")
   @@index([recipient_user_id, created_at], map: "in_app_notification_recipient_created_idx")
@@ -734,6 +742,7 @@ model notification_preference {
   type           String
   in_app_enabled Boolean  @default(true)
   email_enabled  Boolean  @default(true)
+  sms_enabled    Boolean  @default(false)
   created_at     DateTime @default(now())
   updated_at     DateTime @default(now()) @updatedAt
   user           user     @relation(fields: [user_id], references: [id], onDelete: Cascade)
@@ -792,6 +801,33 @@ model notification_push_delivery_job {
   @@index([notification_id], map: "notification_push_delivery_jobs_notification_idx")
   @@index([user_id], map: "notification_push_delivery_jobs_user_idx")
   @@map("notification_push_delivery_jobs")
+}
+
+model notification_sms_delivery_job {
+  id                 String                           @id @default(uuid())
+  notification_id    Int?                             @unique
+  user_id            Int
+  notification_type  String                           @db.VarChar(191)
+  dedupe_key         String?                          @db.VarChar(191)
+  idempotency_key    String?                          @unique @db.VarChar(191)
+  phone_number       String                           @db.VarChar(32)
+  message            String                           @db.VarChar(2000)
+  status             notification_sms_delivery_status @default(PENDING)
+  attempts           Int                              @default(0)
+  next_attempt_at    DateTime                         @default(now())
+  last_error_code    String?                          @db.VarChar(64)
+  last_error_message String?                          @db.VarChar(1024)
+  last_error_at      DateTime?
+  sent_at            DateTime?
+  created_at         DateTime                         @default(now())
+  updated_at         DateTime                         @default(now()) @updatedAt
+  notification       in_app_notification?             @relation(fields: [notification_id], references: [id], onDelete: Cascade)
+  user               user                             @relation("notification_sms_delivery_user", fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([status, next_attempt_at], map: "notification_sms_delivery_jobs_status_next_attempt_idx")
+  @@index([user_id], map: "notification_sms_delivery_jobs_user_idx")
+  @@index([notification_type], map: "notification_sms_delivery_jobs_type_idx")
+  @@map("notification_sms_delivery_jobs")
 }
 
 model program {
@@ -1673,6 +1709,13 @@ enum notification_priority {
 }
 
 enum notification_push_delivery_status {
+  PENDING
+  PROCESSING
+  SENT
+  DEAD
+}
+
+enum notification_sms_delivery_status {
   PENDING
   PROCESSING
   SENT
