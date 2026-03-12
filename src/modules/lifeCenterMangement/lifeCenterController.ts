@@ -7,6 +7,18 @@ import {
 
 const lifeCenterService = new LifeCenterService();
 
+const mapSoulWonResponse = (soul: any) => ({
+  ...soul,
+  phone: {
+    number: soul.contact_number,
+    country_code: soul.country_code,
+  },
+  isMember: Boolean(soul.memberId || soul.member?.id),
+  memberId: soul.member?.id ?? soul.memberId ?? null,
+  memberName: soul.member?.name ?? "",
+  memberMemberId: soul.member?.member_id ?? "",
+});
+
 export class LifeCenterController {
   async mylifecenter(req: Request, res: Response) {
     try {
@@ -310,7 +322,10 @@ export class LifeCenterController {
             )
           : souls;
 
-      res.status(200).json({ message: "Operation successful", data: scopedSouls });
+      res.status(200).json({
+        message: "Operation successful",
+        data: scopedSouls.map((soul: any) => mapSoulWonResponse(soul)),
+      });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -332,13 +347,7 @@ export class LifeCenterController {
           .json({ message: "Not authorized to view soul won data" });
       }
 
-      const returningSoul = {
-        ...soul,
-        phone: {
-          number: soul.contact_number,
-          country_code: soul.country_code,
-        },
-      };
+      const returningSoul = mapSoulWonResponse(soul);
 
       res
         .status(200)

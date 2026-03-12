@@ -134,7 +134,14 @@ export class UserService {
       password,
       is_user,
       department_positions,
+      source_soul_won_id,
     } = userData;
+
+    const parsedSourceSoulWonId = Number(source_soul_won_id);
+    const sourceSoulWonId =
+      Number.isInteger(parsedSourceSoulWonId) && parsedSourceSoulWonId > 0
+        ? parsedSourceSoulWonId
+        : null;
 
     const isLoginUser =
       is_user === true || is_user === "true" || is_user === 1 || is_user === "1";
@@ -157,6 +164,25 @@ export class UserService {
 
     if (isLoginUser && !this.isRealEmail(userEmail)) {
       throw new Error("A valid non-temporary email is required for login users.");
+    }
+
+    if (sourceSoulWonId) {
+      const sourceSoulRecord = await prisma.soul_won.findUnique({
+        where: { id: sourceSoulWonId },
+        select: { id: true, memberId: true },
+      });
+
+      if (!sourceSoulRecord) {
+        throw new InputValidationError(
+          "The selected soul-winning record could not be found.",
+        );
+      }
+
+      if (sourceSoulRecord.memberId) {
+        throw new InputValidationError(
+          "This soul-winning record is already linked to a member.",
+        );
+      }
     }
 
     if (!normalizedGender) {
@@ -268,6 +294,13 @@ export class UserService {
         },
       },
     });
+
+    if (sourceSoulWonId) {
+      await prisma.soul_won.update({
+        where: { id: sourceSoulWonId },
+        data: { memberId: user.id },
+      });
+    }
 
     await this.generateUserId(user).catch((err) =>
       console.error("Error generating user ID:", err),
