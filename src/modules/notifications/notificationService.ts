@@ -8,6 +8,7 @@ import {
   InputValidationError,
   NotFoundError,
 } from "../../utils/custom-error-handlers";
+import { systemNotificationSettingsService } from "../settings/systemNotificationSettingsService";
 import { notificationPushService } from "./notificationPushService";
 import { notificationSmsService } from "./notificationSmsService";
 
@@ -1298,21 +1299,32 @@ const listAdminUserIds = async (): Promise<number[]> => {
     .map((user) => user.id);
 };
 
+const listSystemFailureRecipientUserIds = async (): Promise<number[]> => {
+  const configuredRecipients =
+    await systemNotificationSettingsService.getConfiguredSystemFailureRecipientUserIds();
+
+  if (configuredRecipients.length > 0) {
+    return configuredRecipients;
+  }
+
+  return listAdminUserIds();
+};
+
 const notifyAdminsJobFailed = async (args: {
   jobName: string;
   errorMessage: string;
   actionUrl?: string | null;
   dedupeKey?: string | null;
 }) => {
-  const adminUserIds = await listAdminUserIds();
-  if (!adminUserIds.length) {
+  const recipientUserIds = await listSystemFailureRecipientUserIds();
+  if (!recipientUserIds.length) {
     return;
   }
 
   const body = `${args.jobName} failed: ${args.errorMessage}`;
 
   await createManyInAppNotifications(
-    adminUserIds.map((recipientUserId) => ({
+    recipientUserIds.map((recipientUserId) => ({
       type: "system.job_failed",
       title: "System Job Failure",
       body,

@@ -1,6 +1,5 @@
 import "express-async-errors";
 import express from "express";
-import bodyParser from "body-parser";
 import * as dotenv from "dotenv";
 import cors from "cors";
 import { appRouter } from "./src/routes/appRouter";
@@ -12,14 +11,26 @@ import {
   globalErrorHandler,
   notFoundHandler,
 } from "./src/middleWare/errorHandler";
-import "./src/cron-jobs/hubtelPaymentReconciliationCron";
-import "./src/cron-jobs/requisitionNotificationCron";
-import "./src/cron-jobs/eventReportNotificationCron";
-import "./src/cron-jobs/followUpNotificationCron";
-import "./src/cron-jobs/notificationRetentionCron";
-import "./src/cron-jobs/notificationPushRetryCron";
-import "./src/cron-jobs/notificationSmsRetryCron";
 dotenv.config();
+
+const shouldRunBackgroundJobs = !["false", "0", "no"].includes(
+  String(process.env.RUN_BACKGROUND_JOBS ?? "true")
+    .trim()
+    .toLowerCase(),
+);
+
+if (shouldRunBackgroundJobs) {
+  require("./src/cron-jobs/hubtelPaymentReconciliationCron");
+  require("./src/cron-jobs/requisitionNotificationCron");
+  require("./src/cron-jobs/eventReportNotificationCron");
+  require("./src/cron-jobs/followUpNotificationCron");
+  require("./src/cron-jobs/notificationRetentionCron");
+  require("./src/cron-jobs/notificationPushRetryCron");
+  require("./src/cron-jobs/notificationSmsRetryCron");
+} else {
+  logger.info("Background cron jobs are disabled for this process.");
+}
+
 const collectDefaultMetrics = client.collectDefaultMetrics;
 collectDefaultMetrics();
 
@@ -32,12 +43,11 @@ const app = express();
 
 app.disable("x-powered-by");
 app.use(cors());
-app.use(bodyParser.json({ limit: "1mb" }));
 app.use(express.json({ limit: "1mb" }));
-app.use(bodyParser.urlencoded({ extended: true, limit: "1mb" }));
+app.use(express.urlencoded({ extended: true, limit: "1mb" }));
+app.use(logRequests);
 app.use(responseMessageEnhancer);
 app.use(appRouter);
-app.use(logRequests);
 
 const specs = swaggerJsdoc(swaggerOptions);
 

@@ -83,6 +83,17 @@ const toPositiveInt = (value: any) => {
   return parsed;
 };
 
+const toUniquePositiveIds = (
+  values: Array<number | null | undefined>,
+): number[] =>
+  Array.from(
+    new Set(
+      values
+        .map((value) => toPositiveInt(value))
+        .filter((value): value is number => Boolean(value)),
+    ),
+  );
+
 const parsePositiveIntArray = (value: any): number[] => {
   if (!Array.isArray(value)) return [];
   const ids = value
@@ -302,57 +313,94 @@ const setCachedAuthContextSnapshot = (
 const fetchAuthContextSnapshotFromDb = async (
   userId: number,
 ): Promise<AccessContextSnapshot | null> => {
-  const currentUser = await prisma.user.findUnique({
-    where: { id: userId },
-    select: {
-      id: true,
-      is_user: true,
-      access_level_id: true,
-      department_id: true,
-      department_positions: {
-        select: {
-          department_id: true,
-        },
-      },
-      life_center_member: {
-        select: {
-          lifeCenterId: true,
-        },
-      },
-      access: {
-        select: {
-          permissions: true,
-        },
-      },
-    },
-  });
+  const rows = await prisma.$queryRaw<
+    Array<{
+      id: number;
+      is_user: boolean | number | null;
+      access_level_id: number | null;
+      department_id: number | null;
+      permissions: string | null;
+      scoped_department_id: number | null;
+      life_center_id: number | null;
+    }>
+  >`
+    SELECT
+      u.id,
+      u.is_user,
+      u.access_level_id,
+      u.department_id,
+      al.permissions,
+      dp.department_id AS scoped_department_id,
+      lcm.lifeCenterId AS life_center_id
+    FROM \`user\` u
+    LEFT JOIN \`access_level\` al
+      ON al.id = u.access_level_id
+    LEFT JOIN \`department_positions\` dp
+      ON dp.user_id = u.id
+    LEFT JOIN \`life_center_member\` lcm
+      ON lcm.userId = u.id
+    WHERE u.id = ${userId}
+  `;
 
-  if (!currentUser) {
+  if (!rows.length) {
     authContextCache.delete(userId);
     return null;
   }
 
-  const permissions = parsePermissionsObject(currentUser?.access?.permissions);
+  const firstRow = rows[0];
+  const departmentIdsFromRows = toUniquePositiveIds(
+    rows.map((row) => row.scoped_department_id),
+  );
+  const lifeCenterIdsFromRows = toUniquePositiveIds(
+    rows.map((row) => row.life_center_id),
+  );
+
+  const snapshotUser = {
+    id: firstRow.id,
+    is_user: Boolean(firstRow.is_user),
+    access_level_id: firstRow.access_level_id,
+    department_id: firstRow.department_id,
+    department_positions: departmentIdsFromRows.map((departmentId) => ({
+      department_id: departmentId,
+    })),
+    life_center_member: lifeCenterIdsFromRows.map((lifeCenterId) => ({
+      lifeCenterId,
+    })),
+    access: firstRow.access_level_id
+      ? {
+          permissions: firstRow.permissions,
+        }
+      : null,
+  };
+
+  const permissions = parsePermissionsObject(snapshotUser?.access?.permissions);
   const departmentIds = Array.from(
     new Set(
-      [currentUser?.department_id, ...(currentUser?.department_positions || []).map((item: any) => item.department_id)]
+      [
+        snapshotUser?.department_id,
+        ...(snapshotUser?.department_positions || []).map(
+          (item: any) => item.department_id,
+        ),
+      ]
         .map((id) => toPositiveInt(id))
         .filter((id): id is number => Boolean(id)),
     ),
   );
   const lifeCenterIds = Array.from(
     new Set(
-      (currentUser?.life_center_member || [])
+      (snapshotUser?.life_center_member || [])
         .map((item: any) => toPositiveInt(item?.lifeCenterId))
         .filter((id: number | null): id is number => Boolean(id)),
     ),
   );
   const isPrivilegedUser = Boolean(
-    currentUser?.is_user && currentUser?.access_level_id && currentUser?.access,
+    snapshotUser?.is_user &&
+      snapshotUser?.access_level_id &&
+      snapshotUser?.access,
   );
 
   return {
-    currentUser,
+    currentUser: snapshotUser,
     permissions,
     isPrivilegedUser,
     departmentIds,

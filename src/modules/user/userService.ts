@@ -10,6 +10,10 @@ import {
   upsertBidirectionalFamilyRelation,
 } from "./familyRelations";
 import { roleEligibilityService } from "../settings/roleEligibilityService";
+import {
+  buildZtecoServiceRequestConfig,
+  getZtecoServiceUrl,
+} from "../integrationUtils/ztecoServiceClient";
 
 type MemberStatusTransitionTarget = "CONFIRMED" | "MEMBER";
 type MemberStatusValue = "UNCONFIRMED" | "CONFIRMED" | "MEMBER" | null;
@@ -677,29 +681,52 @@ export class UserService {
       process.env.SAVE_TO_ZKDEVICE === "false"
     )
       return false;
-
     if (!process.env.ZTECO_SERVICE) return false;
 
-    const URL = process.env.ZTECO_SERVICE;
-    console.log(`${URL}`);
-
     const userId = member_id.slice(-8);
+    const requestConfig = buildZtecoServiceRequestConfig();
+    const payload = {
+      id,
+      member_id: userId,
+      name,
+      password,
+    };
 
     try {
-      console.log(`attempting to save user to ${URL}/zteco`);
-      await axios
-        .post(`${URL}/zteco`, {
-          id,
-          member_id: userId,
-          name,
-          password,
-        })
-        .then((res) => {
-          console.log(`User ${name} is saved to ZKdevice sucessfully`);
-          console.log(res.data);
-          return res.data[0];
-        });
+      console.log("attempting to save user to zteco internal sync endpoint");
+      const response = await axios.post(
+        getZtecoServiceUrl("/zteco/internal/sync-user"),
+        payload,
+        requestConfig,
+      );
+      console.log(`User ${name} is saved to ZKdevice sucessfully`);
+      console.log(response.data);
+      return response.data?.[0] ?? true;
     } catch (error: any) {
+      if (error?.response?.status === 404) {
+        try {
+          const fallbackResponse = await axios.post(
+            getZtecoServiceUrl("/zteco"),
+            {
+              id,
+              member_id: userId,
+              name,
+              password,
+            },
+            requestConfig,
+          );
+          console.log(`User ${name} is saved to ZKdevice sucessfully`);
+          console.log(fallbackResponse.data);
+          return fallbackResponse.data?.[0] ?? true;
+        } catch (fallbackError: any) {
+          console.error(
+            "❌ Failed to call ZKTeco fallback service:",
+            fallbackError.message,
+          );
+          return false;
+        }
+      }
+
       console.error("❌ Failed to call ZKTeco service:", error.message);
       return false;
     }

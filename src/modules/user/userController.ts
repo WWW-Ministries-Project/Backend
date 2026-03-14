@@ -1398,6 +1398,199 @@ export const seedUser = async (req: Request, res: Response) => {
       .json({ message: "Something went wrong", data: error });
   }
 };
+const toUniquePositiveIds = (values: Array<number | null | undefined>) =>
+  Array.from(
+    new Set(
+      values.filter(
+        (value): value is number =>
+          typeof value === "number" &&
+          Number.isInteger(value) &&
+          value > 0,
+      ),
+    ),
+  );
+
+const buildLookupById = <T extends { id: number }>(rows: T[]) =>
+  new Map<number, T>(rows.map((row) => [row.id, row]));
+
+const groupRowsByUserId = <T extends { user_id: number }>(rows: T[]) => {
+  const grouped = new Map<number, T[]>();
+
+  for (const row of rows) {
+    const existingRows = grouped.get(row.user_id);
+    if (existingRows) {
+      existingRows.push(row);
+      continue;
+    }
+
+    grouped.set(row.user_id, [row]);
+  }
+
+  return grouped;
+};
+
+const fetchUserDirectoryRelations = async (
+  userIds: number[],
+  primaryDepartmentIds: number[],
+  primaryPositionIds: number[],
+) => {
+  if (!userIds.length) {
+    return {
+      userInfoByUserId: new Map<number, any>(),
+      positionById: new Map<number, any>(),
+      departmentById: new Map<number, any>(),
+      departmentPositionsByUserId: new Map<number, any[]>(),
+    };
+  }
+
+  const [userInfos, departmentPositions] = await Promise.all([
+    prisma.user_info.findMany({
+      where: {
+        user_id: {
+          in: userIds,
+        },
+      },
+      select: {
+        user_id: true,
+        country_code: true,
+        primary_number: true,
+        title: true,
+        photo: true,
+        country: true,
+        member_since: true,
+        date_of_birth: true,
+        marital_status: true,
+        work_info_id: true,
+      },
+    }),
+    prisma.department_positions.findMany({
+      where: {
+        user_id: {
+          in: userIds,
+        },
+      },
+      select: {
+        user_id: true,
+        department_id: true,
+        position_id: true,
+      },
+      orderBy: {
+        id: "asc",
+      },
+    }),
+  ]);
+
+  const workInfoIds = toUniquePositiveIds(
+    userInfos.map((info) => info.work_info_id),
+  );
+  const departmentIds = toUniquePositiveIds([
+    ...primaryDepartmentIds,
+    ...departmentPositions.map((entry) => entry.department_id),
+  ]);
+  const positionIds = toUniquePositiveIds([
+    ...primaryPositionIds,
+    ...departmentPositions.map((entry) => entry.position_id),
+  ]);
+
+  const [workInfos, departments, positions] = await Promise.all([
+    workInfoIds.length
+      ? prisma.user_work_info.findMany({
+          where: {
+            id: {
+              in: workInfoIds,
+            },
+          },
+          select: {
+            id: true,
+            employment_status: true,
+          },
+        })
+      : Promise.resolve([] as any[]),
+    departmentIds.length
+      ? prisma.department.findMany({
+          where: {
+            id: {
+              in: departmentIds,
+            },
+          },
+          select: {
+            id: true,
+            name: true,
+          },
+        })
+      : Promise.resolve([] as any[]),
+    positionIds.length
+      ? prisma.position.findMany({
+          where: {
+            id: {
+              in: positionIds,
+            },
+          },
+          select: {
+            id: true,
+            name: true,
+          },
+        })
+      : Promise.resolve([] as any[]),
+  ]);
+
+  const workInfoById = buildLookupById(workInfos);
+  const departmentById = buildLookupById(departments);
+  const positionById = buildLookupById(positions);
+
+  const userInfoByUserId = new Map(
+    userInfos.map((info) => [
+      info.user_id,
+      {
+        country_code: info.country_code,
+        primary_number: info.primary_number,
+        title: info.title,
+        photo: info.photo,
+        country: info.country,
+        member_since: info.member_since,
+        date_of_birth: info.date_of_birth,
+        marital_status: info.marital_status,
+        work_info: info.work_info_id
+          ? workInfoById.get(info.work_info_id) || null
+          : null,
+      },
+    ]),
+  );
+
+  const normalizedDepartmentPositions = departmentPositions.map((entry) => ({
+    user_id: entry.user_id,
+    department_id: entry.department_id,
+    department_name: departmentById.get(entry.department_id)?.name ?? null,
+    position_id: entry.position_id ?? null,
+    position_name: entry.position_id
+      ? positionById.get(entry.position_id)?.name ?? null
+      : null,
+  }));
+
+  return {
+    userInfoByUserId,
+    positionById,
+    departmentById,
+    departmentPositionsByUserId: groupRowsByUserId(normalizedDepartmentPositions),
+  };
+};
+
+const flattenListedUsers = (data: any[]) => {
+  return data.map(({ user_info, ...rest }) => {
+    const info = user_info || {};
+    const workInfo = info.work_info || null;
+    const { work_info, ...flatInfo } = info;
+
+    return {
+      ...rest,
+      ...flatInfo,
+      marital_status: flatInfo?.marital_status ?? null,
+      employment_status: workInfo?.employment_status ?? null,
+      date_joined: flatInfo?.member_since ?? rest?.created_at ?? null,
+    };
+  });
+};
+
 export const ListUsers = async (req: Request, res: Response) => {
   const {
     is_user,
@@ -1421,15 +1614,6 @@ export const ListUsers = async (req: Request, res: Response) => {
     : [];
 
   try {
-    const departments = await prisma.department.findMany({
-      select: {
-        id: true,
-        name: true,
-      },
-    });
-
-    const departmentMap = new Map(departments.map((d) => [d.id, d.name]));
-
     const whereFilter: any = {};
 
     if (is_active !== undefined) whereFilter.is_active = is_active;
@@ -1451,119 +1635,94 @@ export const ListUsers = async (req: Request, res: Response) => {
       whereFilter.id = { notIn: excludedMemberIds };
     }
 
-    const total = await prisma.user.count({ where: whereFilter });
+    const [total, users] = await Promise.all([
+      prisma.user.count({ where: whereFilter }),
+      prisma.user.findMany({
+        skip,
+        take: pageSize,
+        orderBy: {
+          name: "asc",
+        },
+        where: whereFilter,
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          member_id: true,
+          created_at: true,
+          is_active: true,
+          is_user: true,
+          department_id: true,
+          membership_type: true,
+          status: true,
+          position_id: true,
+        },
+      }),
+    ]);
 
-    const users = await prisma.user.findMany({
-      skip,
-      take: pageSize,
-      orderBy: {
-        name: "asc",
-      },
-      where: whereFilter,
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        member_id: true,
-        created_at: true,
-        is_active: true,
-        is_user: true,
-        department_id: true,
-        membership_type: true,
-        status: true,
-        user_info: {
-          select: {
-            country_code: true,
-            primary_number: true,
-            title: true,
-            photo: true,
-            country: true,
-            member_since: true,
-            date_of_birth: true,
-            marital_status: true,
-            work_info: {
-              select: {
-                employment_status: true,
-              },
-            },
-          },
-        },
-        position: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
-        department_positions: {
-          select: {
-            department_id: true,
-            position_id: true,
-            department: {
-              select: {
-                id: true,
-                name: true,
-              },
-            },
-            position: {
-              select: {
-                id: true,
-                name: true,
-              },
-            },
-          },
-        },
-      },
-    });
+    const userIds = users.map((user) => user.id);
+    const primaryPositionIds = toUniquePositiveIds(
+      users.map((user) => user.position_id),
+    );
+    const primaryDepartmentIds = toUniquePositiveIds(
+      users.map((user) => user.department_id),
+    );
+    const {
+      userInfoByUserId,
+      positionById,
+      departmentById,
+      departmentPositionsByUserId,
+    } = await fetchUserDirectoryRelations(
+      userIds,
+      primaryDepartmentIds,
+      primaryPositionIds,
+    );
 
     const usersWithDeptName = users.map((user: any) => {
+      const userInfo = userInfoByUserId.get(user.id) || null;
+      const departmentPositions =
+        departmentPositionsByUserId.get(user.id) || [];
       const departmentIdsFromPositions = Array.from(
         new Set(
-          (user.department_positions || [])
-            .map((entry: any) => entry?.department?.id ?? entry?.department_id)
-            .filter((value: number | undefined): value is number => Number.isInteger(value)),
+          departmentPositions
+            .map((entry: any) => entry.department_id)
+            .filter((value: number | null): value is number => Boolean(value)),
         ),
       );
       const departmentNamesFromPositions = Array.from(
         new Set(
-          (user.department_positions || [])
-            .map((entry: any) => entry?.department?.name)
-            .filter((value: string | undefined): value is string => Boolean(value)),
+          departmentPositions
+            .map((entry: any) => entry.department_name)
+            .filter((value: string | null): value is string => Boolean(value)),
         ),
       );
 
-      const primaryDepartmentId = user.department_id || departmentIdsFromPositions[0] || null;
+      const primaryDepartmentId =
+        user.department_id || departmentIdsFromPositions[0] || null;
       const primaryDepartmentName =
-        departmentMap.get(primaryDepartmentId) || departmentNamesFromPositions[0] || null;
+        (primaryDepartmentId
+          ? departmentById.get(primaryDepartmentId)?.name
+          : null) ||
+        departmentNamesFromPositions[0] ||
+        null;
 
       return {
         ...user,
+        position: user.position_id
+          ? positionById.get(user.position_id) || null
+          : null,
+        user_info: userInfo,
         department_id: primaryDepartmentId,
         department_name: primaryDepartmentName,
         department_names: departmentNamesFromPositions,
-        department_positions: (user.department_positions || []).map((entry: any) => ({
-          department_id: entry?.department?.id ?? entry?.department_id ?? null,
-          department_name: entry?.department?.name ?? null,
-          position_id: entry?.position?.id ?? entry?.position_id ?? null,
-          position_name: entry?.position?.name ?? null,
+        department_positions: departmentPositions.map((entry: any) => ({
+          department_id: entry.department_id,
+          department_name: entry.department_name,
+          position_id: entry.position_id,
+          position_name: entry.position_name,
         })),
       };
     });
-
-    const destructure = (data: any[]) => {
-      return data.map(({ user_info, ...rest }) => {
-        const info = user_info || {};
-        const workInfo = info.work_info || null;
-        const { work_info, ...flatInfo } = info;
-
-        return {
-          ...rest,
-          ...flatInfo,
-          marital_status: flatInfo?.marital_status ?? null,
-          employment_status: workInfo?.employment_status ?? null,
-          date_joined: flatInfo?.member_since ?? rest?.created_at ?? null,
-        };
-      });
-    };
 
     res.status(200).json({
       message: "Operation Successful",
@@ -1571,7 +1730,7 @@ export const ListUsers = async (req: Request, res: Response) => {
       page_size: pageSize,
       total,
       totalPages: Math.ceil(total / pageSize),
-      data: destructure(usersWithDeptName),
+      data: flattenListedUsers(usersWithDeptName),
     });
   } catch (error) {
     return res.status(500).json({ message: "Something Went Wrong", error });
@@ -1600,51 +1759,112 @@ export const ListUsersLight = async (req: Request, res: Response) => {
         name: true,
         email: true,
         is_user: true,
-        department: {
-          select: {
-            department_info: {
-              select: {
-                id: true,
-                name: true,
-              },
-            },
-          },
-        },
-        position: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
-        department_positions: {
-          select: {
-            department: {
-              select: {
-                id: true,
-                name: true,
-              },
-            },
-            position: {
-              select: {
-                id: true,
-                name: true,
-              },
-            },
-          },
-          orderBy: {
-            id: "asc",
-          },
-        },
+        position_id: true,
       },
     });
+
+    const userIds = users.map((user) => user.id);
+    const [userDepartments, departmentPositions] = await Promise.all([
+      userIds.length
+        ? prisma.user_departments.findMany({
+            where: {
+              user_id: {
+                in: userIds,
+              },
+            },
+            select: {
+              user_id: true,
+              department_id: true,
+            },
+          })
+        : Promise.resolve([] as any[]),
+      userIds.length
+        ? prisma.department_positions.findMany({
+            where: {
+              user_id: {
+                in: userIds,
+              },
+            },
+            select: {
+              user_id: true,
+              department_id: true,
+              position_id: true,
+            },
+            orderBy: {
+              id: "asc",
+            },
+          })
+        : Promise.resolve([] as any[]),
+    ]);
+
+    const departmentIds = toUniquePositiveIds([
+      ...userDepartments.map((entry) => entry.department_id),
+      ...departmentPositions.map((entry) => entry.department_id),
+    ]);
+    const positionIds = toUniquePositiveIds([
+      ...users.map((user) => user.position_id),
+      ...departmentPositions.map((entry) => entry.position_id),
+    ]);
+
+    const [departments, positions] = await Promise.all([
+      departmentIds.length
+        ? prisma.department.findMany({
+            where: {
+              id: {
+                in: departmentIds,
+              },
+            },
+            select: {
+              id: true,
+              name: true,
+            },
+          })
+        : Promise.resolve([] as any[]),
+      positionIds.length
+        ? prisma.position.findMany({
+            where: {
+              id: {
+                in: positionIds,
+              },
+            },
+            select: {
+              id: true,
+              name: true,
+            },
+          })
+        : Promise.resolve([] as any[]),
+    ]);
+
+    const departmentById = buildLookupById(departments);
+    const positionById = buildLookupById(positions);
+    const userDepartmentByUserId = new Map(
+      userDepartments.map((entry) => [
+        entry.user_id,
+        entry.department_id
+          ? departmentById.get(entry.department_id) || null
+          : null,
+      ]),
+    );
+    const departmentPositionsByUserId = groupRowsByUserId(
+      departmentPositions.map((entry) => ({
+        user_id: entry.user_id,
+        department: entry.department_id
+          ? departmentById.get(entry.department_id) || null
+          : null,
+        position: entry.position_id
+          ? positionById.get(entry.position_id) || null
+          : null,
+      })),
+    );
 
     res.status(200).json({
       message: "Operation Successful",
       data: users.map((user) => {
-        const fallbackDepartment = user.department_positions?.find(
+        const fallbackRows = departmentPositionsByUserId.get(user.id) || [];
+        const fallbackDepartment = fallbackRows.find(
           (item) => item.department,
         )?.department;
-        const fallbackPosition = user.department_positions?.find(
+        const fallbackPosition = fallbackRows.find(
           (item) => item.position,
         )?.position;
 
@@ -1653,8 +1873,14 @@ export const ListUsersLight = async (req: Request, res: Response) => {
           name: user.name,
           email: user.email,
           ministry_worker: Boolean(user.is_user),
-          department: user.department?.department_info || fallbackDepartment || null,
-          position: user.position || fallbackPosition || null,
+          department:
+            userDepartmentByUserId.get(user.id) || fallbackDepartment || null,
+          position:
+            (user.position_id
+              ? positionById.get(user.position_id) || null
+              : null) ||
+            fallbackPosition ||
+            null,
         };
       }),
     });
@@ -1677,7 +1903,6 @@ export const filterUsersInfo = async (req: Request, res: Response) => {
     const excludedMemberIds: number[] = Array.isArray(memberScope?.exclusions)
       ? memberScope.exclusions
       : [];
-    // Convert pagination params to numbers
     const pageNum = parseInt(page as string, 10) || 1;
     const limitNum = parseInt(take as string, 10) || 10;
     const skip = (pageNum - 1) * limitNum;
@@ -1704,21 +1929,20 @@ export const filterUsersInfo = async (req: Request, res: Response) => {
       };
     }
 
-    // Fetch total count for pagination info
-    const total = await prisma.user.count({ where: filters });
-
-    // Fetch paginated users
-    const users = await prisma.user.findMany({
-      where: filters,
-      include: {
-        user_info: true,
-      },
-      orderBy: {
-        created_at: "asc",
-      },
-      skip,
-      take: limitNum,
-    });
+    const [total, users] = await Promise.all([
+      prisma.user.count({ where: filters }),
+      prisma.user.findMany({
+        where: filters,
+        include: {
+          user_info: true,
+        },
+        orderBy: {
+          created_at: "asc",
+        },
+        skip,
+        take: limitNum,
+      }),
+    ]);
 
     const totalPages = Math.ceil(total / limitNum);
 
@@ -2398,13 +2622,10 @@ export const currentuser = async (req: Request, res: Response) => {
 
     const user = await prisma.user.findUnique({
       where: { id: authenticatedUserId },
-      include: {
-        user_info: true,
-        department_positions: {
-          include: {
-            department: true,
-          },
-        },
+      select: {
+        name: true,
+        email: true,
+        membership_type: true,
       },
     });
 
@@ -2412,15 +2633,50 @@ export const currentuser = async (req: Request, res: Response) => {
       return res.status(404).json({ message: "User not found." });
     }
 
-    const department: string[] = user.department_positions.map(
-      (dept) => dept.department.name,
+    const [userInfo, departmentPositions] = await Promise.all([
+      prisma.user_info.findUnique({
+        where: { user_id: authenticatedUserId },
+        select: {
+          primary_number: true,
+          member_since: true,
+        },
+      }),
+      prisma.department_positions.findMany({
+        where: { user_id: authenticatedUserId },
+        select: {
+          department_id: true,
+        },
+        orderBy: {
+          id: "asc",
+        },
+      }),
+    ]);
+    const departmentIds = toUniquePositiveIds(
+      departmentPositions.map((dept) => dept.department_id),
     );
+    const departments = departmentIds.length
+      ? await prisma.department.findMany({
+          where: {
+            id: {
+              in: departmentIds,
+            },
+          },
+          select: {
+            id: true,
+            name: true,
+          },
+        })
+      : [];
+    const departmentById = buildLookupById(departments);
+    const department = departmentPositions
+      .map((dept) => departmentById.get(dept.department_id)?.name ?? null)
+      .filter((value): value is string => Boolean(value));
 
     const data = {
       name: user.name,
       email: user.email,
-      phone: user.user_info?.primary_number || null,
-      member_since: user.user_info?.member_since || null,
+      phone: userInfo?.primary_number || null,
+      member_since: userInfo?.member_since || null,
       department,
       membership_type: user.membership_type || null,
     };

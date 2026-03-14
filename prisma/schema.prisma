@@ -54,6 +54,11 @@ model user {
   push_subscriptions       notification_push_subscription[]
   push_delivery_jobs       notification_push_delivery_job[] @relation("notification_push_delivery_user")
   sms_delivery_jobs        notification_sms_delivery_job[]  @relation("notification_sms_delivery_user")
+  system_failure_notification_settings system_notification_settings[] @relation("system_failure_notification_recipient")
+  system_failure_notification_settings_updates system_notification_settings[] @relation("system_failure_notification_updated_by")
+  matched_biometric_punches event_biometric_punch[] @relation("event_biometric_punch_matched_user")
+  imported_biometric_punches event_biometric_punch[] @relation("event_biometric_punch_imported_by_user")
+  created_biometric_import_jobs event_biometric_import_job[] @relation("event_biometric_import_job_created_by_user")
   event_reports_created    event_reports[]                 @relation("event_report_created_by")
   event_reports_updated    event_reports[]                 @relation("event_report_updated_by")
   event_reports_final_acted event_reports[]                @relation("event_report_final_acted_by")
@@ -84,6 +89,24 @@ model user {
   @@index([access_level_id], map: "user_access_level_id_fkey")
   @@index([position_id], map: "user_position_id_fkey")
   @@index([parent_id], map: "user_parent_id_fkey")
+  @@index([department_id], map: "user_department_id_idx")
+  @@index([membership_type], map: "user_membership_type_idx")
+  @@index([is_user], map: "user_is_user_idx")
+  @@index([is_active], map: "user_is_active_idx")
+  @@index([name], map: "user_name_idx")
+}
+
+model system_notification_settings {
+  id                              Int      @id
+  system_failure_recipient_user_id Int?
+  updated_by_user_id              Int?
+  created_at                      DateTime @default(now())
+  updated_at                      DateTime @updatedAt
+  system_failure_recipient        user?    @relation("system_failure_notification_recipient", fields: [system_failure_recipient_user_id], references: [id], map: "sys_notif_settings_recipient_fk")
+  updated_by                      user?    @relation("system_failure_notification_updated_by", fields: [updated_by_user_id], references: [id], map: "sys_notif_settings_updated_by_fk")
+
+  @@index([system_failure_recipient_user_id], map: "system_notification_settings_recipient_idx")
+  @@index([updated_by_user_id], map: "system_notification_settings_updated_by_idx")
 }
 
 model user_info {
@@ -265,17 +288,25 @@ model event_mgt {
   description          String?
   poster               String?
   qr_code              String?
+  public_registration_token String               @default(uuid()) @unique
   created_by           Int
   created_at           DateTime                   @default(now())
   updated_by           Int?
   updated_at           DateTime?
   end_date             DateTime?
   start_date           DateTime?
+  recurrence_end_date  DateTime?
   event_status         event_status?
   event_type           event_type?
+  requires_registration Boolean                  @default(false)
+  registration_end_date DateTime?
+  registration_capacity Int?
+  registration_audience event_registration_audience @default(MEMBERS_AND_NON_MEMBERS)
   event_name_id        Int
   event_attendance     event_attendance[]
   attendance_summaries event_attendance_summary[]
+  biometric_punches    event_biometric_punch[]
+  biometric_import_jobs event_biometric_import_job[]
   event                event_act                  @relation(fields: [event_name_id], references: [id])
   event_registers      event_registers[]
   markets              markets[]
@@ -327,16 +358,79 @@ model event_attendance {
   @@index([user_id], map: "event_attendance_user_id_fkey")
 }
 
-model event_registers {
-  id         Int       @id @default(autoincrement())
-  event_id   Int
-  user_id    Int
-  created_at DateTime  @default(now())
-  event      event_mgt @relation(fields: [event_id], references: [id])
-  user       user      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+model event_biometric_punch {
+  id                Int       @id @default(autoincrement())
+  event_mgt_id      Int
+  device_id         Int?
+  device_ip         String
+  device_port       String?
+  device_user_id    String
+  device_user_name  String?
+  matched_user_id   Int?
+  matched_member_id String?
+  matched_user_name String?
+  record_time       DateTime
+  state             Int       @default(-1)
+  raw_payload       Json
+  imported_by       Int
+  imported_by_name  String
+  imported_at       DateTime  @default(now())
+  event             event_mgt @relation(fields: [event_mgt_id], references: [id])
+  matched_user      user?     @relation("event_biometric_punch_matched_user", fields: [matched_user_id], references: [id])
+  imported_by_user  user      @relation("event_biometric_punch_imported_by_user", fields: [imported_by], references: [id])
 
+  @@unique([event_mgt_id, device_ip, device_user_id, record_time, state], map: "event_biometric_punch_event_device_user_time_state_key")
+  @@index([event_mgt_id, record_time], map: "event_biometric_punch_event_time_idx")
+  @@index([matched_user_id, record_time], map: "event_biometric_punch_matched_user_time_idx")
+  @@index([imported_by, imported_at], map: "event_biometric_punch_imported_by_time_idx")
+}
+
+model event_biometric_import_job {
+  id                  Int                           @id @default(autoincrement())
+  event_mgt_id        Int
+  occurrence_date     DateTime
+  dry_run             Boolean                       @default(false)
+  status              biometric_import_job_status   @default(QUEUED)
+  progress_percentage Int                           @default(0)
+  current_step        String?
+  progress_payload    Json?
+  request_payload     Json
+  result_payload      Json?
+  error_message       String?                       @db.Text
+  created_by          Int
+  created_by_name     String
+  created_at          DateTime                      @default(now())
+  started_at          DateTime?
+  completed_at        DateTime?
+  failed_at           DateTime?
+  updated_at          DateTime                      @updatedAt
+  event               event_mgt                     @relation(fields: [event_mgt_id], references: [id])
+  created_by_user     user                          @relation("event_biometric_import_job_created_by_user", fields: [created_by], references: [id])
+
+  @@index([event_mgt_id, occurrence_date], map: "event_biometric_import_job_event_date_idx")
+  @@index([status, created_at], map: "event_biometric_import_job_status_created_idx")
+  @@index([created_by, created_at], map: "event_biometric_import_job_created_by_time_idx")
+}
+
+model event_registers {
+  id                Int       @id @default(autoincrement())
+  event_id          Int
+  user_id           Int?
+  attendee_name     String?
+  attendee_email    String?
+  attendee_phone    String?
+  attendee_location String?
+  is_member         Boolean   @default(false)
+  member_id         String?
+  created_at        DateTime  @default(now())
+  event             event_mgt @relation(fields: [event_id], references: [id])
+  user              user?     @relation(fields: [user_id], references: [id], onDelete: SetNull)
+
+  @@unique([event_id, user_id], map: "event_registers_event_id_user_id_key")
+  @@unique([event_id, attendee_email], map: "event_registers_event_id_attendee_email_key")
   @@index([event_id], map: "event_attendance_event_id_fkey")
   @@index([user_id], map: "event_attendance_user_id_fkey")
+  @@index([member_id], map: "event_registers_member_id_idx")
 }
 
 model request {
@@ -1585,6 +1679,13 @@ enum progress_status {
   PENDING
 }
 
+enum biometric_import_job_status {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
 enum RequestApprovalStatus {
   Draft
   Awaiting_HOD_Approval
@@ -1680,6 +1781,11 @@ enum event_type {
 enum event_status {
   CONFIRMED
   TENTATIVE
+}
+
+enum event_registration_audience {
+  MEMBERS_ONLY
+  MEMBERS_AND_NON_MEMBERS
 }
 
 enum payment_status {

@@ -285,6 +285,9 @@ export class AiUsageService {
     if (provider === "openai") {
       return this.getEnvFloat("OPENAI_INPUT_TOKEN_COST_PER_1K", 0);
     }
+    if (provider === "claude") {
+      return this.getEnvFloat("CLAUDE_INPUT_TOKEN_COST_PER_1K", 0);
+    }
     if (provider === "gemini") {
       return this.getEnvFloat("GEMINI_INPUT_TOKEN_COST_PER_1K", 0);
     }
@@ -294,6 +297,9 @@ export class AiUsageService {
   private getDefaultOutputCostPer1k(provider: string): number {
     if (provider === "openai") {
       return this.getEnvFloat("OPENAI_OUTPUT_TOKEN_COST_PER_1K", 0);
+    }
+    if (provider === "claude") {
+      return this.getEnvFloat("CLAUDE_OUTPUT_TOKEN_COST_PER_1K", 0);
     }
     if (provider === "gemini") {
       return this.getEnvFloat("GEMINI_OUTPUT_TOKEN_COST_PER_1K", 0);

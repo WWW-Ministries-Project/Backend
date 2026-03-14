@@ -5,7 +5,7 @@ This guide documents how the frontend should integrate with the backend AI modul
 ## 1. Base Routes
 
 Primary backend routes:
-- `GET /ai/credentials?provider=openai|gemini` (admin settings)
+- `GET /ai/credentials?provider=openai|gemini|claude` (admin settings)
 - `POST /ai/credentials` (admin settings)
 - `PUT /ai/credentials/{id}` (admin settings)
 - `POST /ai/chat`
@@ -39,7 +39,7 @@ Provider credentials are no longer read directly from `.env`.
 The backend stores provider credentials encrypted at rest (AES-GCM) and uses active records for runtime calls.
 
 ### 3.1 List credentials
-`GET /ai/credentials?provider=openai`
+`GET /ai/credentials?provider=claude`
 
 Response:
 
@@ -48,7 +48,7 @@ Response:
   "data": [
     {
       "id": "uuid",
-      "provider": "openai",
+      "provider": "claude",
       "is_active": true,
       "has_secret": false,
       "created_by": 12,
@@ -67,7 +67,7 @@ Request:
 
 ```json
 {
-  "provider": "openai",
+  "provider": "claude",
   "api_key": "provider-api-key",
   "api_secret": null,
   "is_active": true
@@ -80,7 +80,7 @@ Response:
 {
   "data": {
     "id": "uuid",
-    "provider": "openai",
+    "provider": "claude",
     "is_active": true,
     "has_secret": false,
     "created_by": 12,
@@ -110,7 +110,7 @@ Response:
 {
   "data": {
     "id": "uuid",
-    "provider": "openai",
+    "provider": "claude",
     "is_active": true,
     "has_secret": false,
     "created_by": 12,
@@ -130,6 +130,7 @@ Only metadata is returned; raw keys/secrets are never returned.
 
 ```json
 {
+  "model": "claude-sonnet-4-6",
   "message": "Summarize visitor follow-up risk for this week",
   "conversation_id": "optional-uuid",
   "context": {
@@ -141,7 +142,6 @@ Only metadata is returned; raw keys/secrets are never returned.
 ```
 
 ### Response
-Response shape is unchanged:
 
 ```json
 {
@@ -150,6 +150,9 @@ Response shape is unchanged:
     "message_id": "uuid",
     "reply": "Here are the highest-risk visitors...",
     "created_at": "2026-02-28T08:30:00.000Z",
+    "provider": "claude",
+    "model": "claude-sonnet-4-6",
+    "fallback_used": false,
     "usage": {
       "prompt_tokens": 640,
       "completion_tokens": 372,
@@ -241,6 +244,7 @@ Example:
 
 ```json
 {
+  "model": "claude-sonnet-4-6",
   "message": "Focus on conversion and overdue follow-ups.",
   "context": {
     "module": "visitors",
@@ -259,6 +263,9 @@ Example:
     "message_id": "uuid",
     "reply": "Insight summary...",
     "created_at": "2026-02-28T08:30:00.000Z",
+    "provider": "claude",
+    "model": "claude-sonnet-4-6",
+    "fallback_used": false,
     "usage": {
       "prompt_tokens": 640,
       "completion_tokens": 372,
@@ -307,11 +314,12 @@ Example:
 
 ## 10. Provider Routing Behavior
 
-Provider strategy is backend-managed:
-- OpenAI is primary.
-- If OpenAI tokens/quota are exhausted, backend automatically falls back to Gemini.
+Provider selection is request-driven and `model` is required on `/ai/chat` and `/ai/insights/{module}`:
+- `gpt-*` / `o*` routes to OpenAI
+- `claude-*` / `anthropic/claude-*` routes to Claude
+- `gemini-*` / `models/gemini-*` routes to Gemini
 
-No frontend branching is required for provider selection.
+No automatic provider fallback is currently implemented, so frontend should send an explicit supported model for each request.
 
 ## 11. Frontend Checklist
 
