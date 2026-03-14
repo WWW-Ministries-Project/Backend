@@ -29,6 +29,21 @@ eventRouter.get(
   eventContoller.listUpcomingEvents,
 );
 
+eventRouter.get(
+  "/public-event",
+  eventContoller.publicEventDetails,
+);
+
+eventRouter.post(
+  "/public-validate-member",
+  eventContoller.validatePublicMemberRegistration,
+);
+
+eventRouter.post(
+  "/public-register",
+  eventContoller.publicRegister,
+);
+
 eventRouter.post(
   "/create-event",
   [protect, permissions.can_manage_events],
@@ -80,6 +95,18 @@ eventRouter.get(
   eventContoller.registeredMember,
 );
 
+eventRouter.post(
+  "/import-biometric-attendance",
+  [protect, permissions.can_manage_church_attendance],
+  eventContoller.importBiometricAttendance,
+);
+
+eventRouter.get(
+  "/import-biometric-attendance-job",
+  [protect, permissions.can_view_church_attendance],
+  eventContoller.getBiometricAttendanceImportJob,
+);
+
 /**
  * Create attendance summary
  */
@@ -97,6 +124,12 @@ eventRouter.get(
   "/church-attendance",
   [protect, permissions.can_view_church_attendance],
   eventContoller.getAttendances,
+);
+
+eventRouter.get(
+  "/biometric-attendance",
+  [protect, permissions.can_view_church_attendance],
+  eventContoller.getBiometricAttendances,
 );
 
 /**

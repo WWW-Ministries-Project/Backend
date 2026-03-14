@@ -1,9 +1,9 @@
 import { prisma } from "../../Models/context";
 import { AiCredentialCrypto, AiCredentialCryptoError } from "./aiCredentialCrypto";
 
-const SUPPORTED_PROVIDERS = new Set(["openai", "gemini"]);
+const SUPPORTED_PROVIDERS = new Set(["openai", "gemini", "claude"]);
 
-type CredentialProvider = "openai" | "gemini";
+type CredentialProvider = "openai" | "gemini" | "claude";
 
 type CreateCredentialPayload = {
   provider: string;
@@ -204,7 +204,7 @@ export class AiCredentialService {
     const normalized = String(provider || "").trim().toLowerCase();
     if (!SUPPORTED_PROVIDERS.has(normalized)) {
       throw new AiCredentialServiceError(
-        "provider must be one of: openai, gemini",
+        "provider must be one of: openai, gemini, claude",
         400,
       );
     }

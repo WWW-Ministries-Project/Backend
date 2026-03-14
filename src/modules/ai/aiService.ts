@@ -1,4 +1,5 @@
-import OpenAI, { APIError } from "openai";
+import Anthropic, { APIError as AnthropicAPIError } from "@anthropic-ai/sdk";
+import OpenAI, { APIError as OpenAiAPIError } from "openai";
 import { AiPolicyService } from "./aiPolicyService";
 import { AiChatHistoryMessage, AiContext, AiProviderResult, AiUsage } from "./aiTypes";
 import { AiCredentialService, AiCredentialServiceError } from "./aiCredentialService";
@@ -6,8 +7,15 @@ import { AiReadOnlyDataService } from "./aiReadOnlyDataService";
 
 const DEFAULT_TEMPERATURE = 0.3;
 const DEFAULT_OPENAI_MAX_TOKENS = 500;
+const DEFAULT_CLAUDE_MAX_TOKENS = 500;
 const DEFAULT_GEMINI_MAX_OUTPUT_TOKENS = 500;
 const DEFAULT_GEMINI_API_VERSION = "v1";
+const CLAUDE_MODEL_PREFIXES = ["claude-"];
+const CLAUDE_RECOMMENDED_MODELS = [
+  "claude-sonnet-4-6",
+  "claude-opus-4-6",
+  "claude-haiku-4-5",
+];
 const OPENAI_MODEL_PREFIXES = ["gpt-", "o1", "o3", "o4"];
 const GEMINI_RESTRICTED_PREFIXES = ["gemini-1.5-"];
 const GEMINI_DEPRECATED_MODELS = new Set(["gemini-2.0-flash"]);
@@ -16,8 +24,8 @@ const GEMINI_RECOMMENDED_MODELS = [
   "gemini-2.5-pro",
   "gemini-2.5-flash-lite",
 ];
-const OPENAI_TOOL_MAX_ROUNDS = 4;
-const OPENAI_TOOL_MAX_CALLS_PER_ROUND = 3;
+const AI_TOOL_MAX_ROUNDS = 4;
+const AI_TOOL_MAX_CALLS_PER_ROUND = 3;
 const OPENAI_TOOL_NAME_LIST_CONTRACTS = "list_read_only_query_contracts";
 const OPENAI_TOOL_NAME_READ_MODULE = "read_module_data";
 
@@ -40,7 +48,7 @@ const loadGeminiSdk = async (): Promise<GeminiSdkModule> => {
   return geminiSdkModulePromise;
 };
 
-type AiProvider = "openai" | "gemini";
+type AiProvider = "openai" | "gemini" | "claude";
 type AiGenerationOptions = {
   model?: string;
   actorId?: number;
@@ -66,6 +74,11 @@ type OpenAiChatMessage = {
 type GeminiMessage = {
   role: "user" | "model";
   parts: Array<{ text: string }>;
+};
+
+type ClaudeMessage = {
+  role: "user" | "assistant";
+  content: string | any[];
 };
 
 export class AiProviderError extends Error {
@@ -113,7 +126,7 @@ export class AiService {
 
     if (!requestedProvider) {
       throw new AiProviderError(
-        "Unsupported model. Use an OpenAI (gpt-/o*) or Gemini (gemini-*) model",
+        "Unsupported model. Use an OpenAI (gpt-/o*), Claude (claude-*), or Gemini (gemini-*) model",
         400,
         "ai",
       );
@@ -141,6 +154,41 @@ export class AiService {
 
       return {
         ...openAiResult,
+        fallback_used: false,
+      };
+    }
+
+    if (requestedProvider === "claude") {
+      const resolvedClaudeModel = this.normalizeClaudeModelName(requestedModel);
+      if (!resolvedClaudeModel) {
+        throw new AiProviderError(
+          "Unsupported Claude model format. Use claude-* or anthropic/claude-*",
+          400,
+          "claude",
+        );
+      }
+
+      const claudeCredential = await this.safeGetActiveCredential("claude");
+      if (!claudeCredential?.api_key) {
+        throw new AiProviderError(
+          "Selected Claude model requires an active Claude credential",
+          400,
+          "claude",
+        );
+      }
+
+      const claudeResult = await this.callClaude(
+        claudeCredential.api_key,
+        resolvedClaudeModel,
+        systemPrompt,
+        sanitizedMessage,
+        sanitizedContext,
+        sanitizedHistory,
+        options.actorId,
+      );
+
+      return {
+        ...claudeResult,
         fallback_used: false,
       };
     }
@@ -203,7 +251,7 @@ export class AiService {
         total_tokens: 0,
       };
 
-      for (let round = 0; round < OPENAI_TOOL_MAX_ROUNDS; round += 1) {
+      for (let round = 0; round < AI_TOOL_MAX_ROUNDS; round += 1) {
         const completion = await openai.chat.completions.create({
           model,
           temperature: this.getTemperature(),
@@ -223,7 +271,7 @@ export class AiService {
         }
 
         const toolCalls = Array.isArray((assistantMessage as any).tool_calls)
-          ? ((assistantMessage as any).tool_calls as any[]).slice(0, OPENAI_TOOL_MAX_CALLS_PER_ROUND)
+          ? ((assistantMessage as any).tool_calls as any[]).slice(0, AI_TOOL_MAX_CALLS_PER_ROUND)
           : [];
 
         if (!toolCalls.length) {
@@ -266,7 +314,7 @@ export class AiService {
         throw error;
       }
 
-      if (error instanceof APIError) {
+      if (error instanceof OpenAiAPIError) {
         throw new AiProviderError(
           error.message || "OpenAI request failed",
           Number(error.status || 502),
@@ -285,6 +333,129 @@ export class AiService {
         error?.message || "OpenAI request failed",
         Number(error?.status || 500),
         "openai",
+      );
+    }
+  }
+
+  private async callClaude(
+    apiKey: string,
+    model: string,
+    systemPrompt: string,
+    message: string,
+    context: AiContext,
+    history: AiChatHistoryMessage[],
+    actorId?: number,
+  ): Promise<{ reply: string; provider: string; model: string; usage: AiUsage }> {
+    try {
+      const anthropic = new Anthropic({ apiKey });
+      const messages: ClaudeMessage[] = this.buildClaudeMessages(
+        message,
+        context,
+        history,
+      );
+      const tools = this.buildClaudeTools();
+      const usage: AiUsage = {
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        total_tokens: 0,
+      };
+
+      for (let round = 0; round < AI_TOOL_MAX_ROUNDS; round += 1) {
+        const response = await anthropic.messages.create({
+          model,
+          system: systemPrompt,
+          temperature: this.getClaudeTemperature(),
+          max_tokens: this.getClaudeMaxTokens(),
+          messages: messages as any,
+          tools: tools as any,
+        });
+
+        const roundUsage = this.extractClaudeUsage(response?.usage);
+        usage.prompt_tokens += roundUsage.prompt_tokens;
+        usage.completion_tokens += roundUsage.completion_tokens;
+        usage.total_tokens += roundUsage.total_tokens;
+
+        const contentBlocks = Array.isArray(response?.content)
+          ? (response.content as any[])
+          : [];
+        const toolUses = contentBlocks
+          .filter((block) => block?.type === "tool_use")
+          .slice(0, AI_TOOL_MAX_CALLS_PER_ROUND);
+
+        if (!toolUses.length) {
+          const reply = this.extractClaudeReply(contentBlocks);
+          if (!reply) {
+            throw new AiProviderError("Claude returned an empty response", 502, "claude");
+          }
+
+          return {
+            reply,
+            provider: "claude",
+            model,
+            usage,
+          };
+        }
+
+        const selectedToolIds = new Set(
+          toolUses.map((toolUse) => String(toolUse?.id || "")).filter(Boolean),
+        );
+        const assistantContent = contentBlocks.filter(
+          (block) =>
+            block?.type !== "tool_use" || selectedToolIds.has(String(block?.id || "")),
+        );
+
+        messages.push({
+          role: "assistant",
+          content: assistantContent,
+        });
+
+        const toolResults: Array<Record<string, unknown>> = [];
+        for (const toolUse of toolUses) {
+          const toolResult = await this.executeClaudeToolCall(toolUse, actorId);
+          toolResults.push({
+            type: "tool_result",
+            tool_use_id: String(toolUse?.id || ""),
+            content: JSON.stringify(toolResult),
+            is_error: toolResult.ok === false,
+          });
+        }
+
+        messages.push({
+          role: "user",
+          content: toolResults,
+        });
+      }
+
+      throw new AiProviderError(
+        "Claude tool-calling did not produce a final response",
+        502,
+        "claude",
+      );
+    } catch (error: any) {
+      if (error instanceof AiProviderError) {
+        throw error;
+      }
+
+      if (error instanceof AnthropicAPIError) {
+        throw new AiProviderError(
+          this.buildClaudeModelErrorMessage(
+            model,
+            error.message || "Claude request failed",
+          ),
+          Number(error.status || 502),
+          "claude",
+          {
+            status: error.status,
+            request_id: error.requestID,
+            error: error.error,
+          },
+        );
+      }
+
+      throw new AiProviderError(
+        error?.message || "Claude request failed",
+        Number(error?.status || 500),
+        "claude",
       );
     }
   }
@@ -505,6 +676,56 @@ export class AiService {
     ];
   }
 
+  private buildClaudeTools(): any[] {
+    return [
+      {
+        name: OPENAI_TOOL_NAME_LIST_CONTRACTS,
+        description:
+          "List read-only query contracts by module so you know what data can be fetched safely.",
+        input_schema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            module: {
+              type: "string",
+              description: "Optional module name (e.g., event, user, requisitions).",
+            },
+          },
+        },
+      },
+      {
+        name: OPENAI_TOOL_NAME_READ_MODULE,
+        description:
+          "Run a read-only query contract against a backend module to fetch grounded facts.",
+        input_schema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["module", "operation"],
+          properties: {
+            module: {
+              type: "string",
+              description: "Module name from list_read_only_query_contracts.",
+            },
+            operation: {
+              type: "string",
+              description:
+                "Operation name from the selected module contract (summary, recent, search, attendance_lookup).",
+            },
+            input: {
+              type: "object",
+              description: "Operation input arguments (e.g., q, date, event_id, limit).",
+            },
+            cross_module: {
+              type: "boolean",
+              description:
+                "Optional. Set true when answering a question that requires data from multiple modules.",
+            },
+          },
+        },
+      },
+    ];
+  }
+
   private parseToolArguments(raw: unknown): Record<string, unknown> {
     if (typeof raw !== "string" || !raw.trim()) {
       return {};
@@ -525,6 +746,24 @@ export class AiService {
     const toolName = String(toolCall?.function?.name || "").trim();
     const args = this.parseToolArguments(toolCall?.function?.arguments);
 
+    return this.executeToolCall(toolName, args, actorId);
+  }
+
+  private async executeClaudeToolCall(toolUse: any, actorId?: number) {
+    const toolName = String(toolUse?.name || "").trim();
+    const args =
+      toolUse?.input && typeof toolUse.input === "object" && !Array.isArray(toolUse.input)
+        ? (toolUse.input as Record<string, unknown>)
+        : {};
+
+    return this.executeToolCall(toolName, args, actorId);
+  }
+
+  private async executeToolCall(
+    toolName: string,
+    args: Record<string, unknown>,
+    actorId?: number,
+  ) {
     try {
       if (toolName === OPENAI_TOOL_NAME_LIST_CONTRACTS) {
         const moduleName = typeof args.module === "string" ? args.module : undefined;
@@ -571,6 +810,59 @@ export class AiService {
     }
   }
 
+  private buildClaudeMessages(
+    message: string,
+    context: AiContext,
+    history: AiChatHistoryMessage[],
+  ): ClaudeMessage[] {
+    const messages: ClaudeMessage[] = [];
+
+    for (const historyEntry of history) {
+      messages.push({
+        role: historyEntry.role,
+        content: historyEntry.content,
+      });
+    }
+
+    messages.push({
+      role: "user",
+      content: this.composeUserPrompt(message, context),
+    });
+
+    return messages;
+  }
+
+  private extractClaudeReply(content: unknown): string {
+    if (!Array.isArray(content)) {
+      return "";
+    }
+
+    return content
+      .map((block) => {
+        if (block && typeof block === "object" && (block as any).type === "text") {
+          const text = (block as { text?: unknown }).text;
+          return typeof text === "string" ? text : "";
+        }
+        return "";
+      })
+      .join(" ")
+      .trim();
+  }
+
+  private extractClaudeUsage(rawUsage: any): AiUsage {
+    const baseInput = Number(rawUsage?.input_tokens || 0);
+    const cacheCreation = Number(rawUsage?.cache_creation_input_tokens || 0);
+    const cacheRead = Number(rawUsage?.cache_read_input_tokens || 0);
+    const promptTokens = baseInput + cacheCreation + cacheRead;
+    const completionTokens = Number(rawUsage?.output_tokens || 0);
+
+    return {
+      prompt_tokens: promptTokens,
+      completion_tokens: completionTokens,
+      total_tokens: promptTokens + completionTokens,
+    };
+  }
+
   private buildGeminiContents(
     message: string,
     context: AiContext,
@@ -612,6 +904,17 @@ export class AiService {
     return getPositiveIntEnv("OPENAI_MAX_TOKENS", DEFAULT_OPENAI_MAX_TOKENS);
   }
 
+  private getClaudeMaxTokens(): number {
+    return getPositiveIntEnv("CLAUDE_MAX_TOKENS", DEFAULT_CLAUDE_MAX_TOKENS);
+  }
+
+  private getClaudeTemperature(): number {
+    const value = this.getTemperature();
+    if (value < 0) return 0;
+    if (value > 1) return 1;
+    return value;
+  }
+
   private getGeminiMaxOutputTokens(): number {
     return getPositiveIntEnv(
       "GEMINI_MAX_OUTPUT_TOKENS",
@@ -625,6 +928,11 @@ export class AiService {
   }
 
   private inferProviderFromModel(model: string): AiProvider | null {
+    const claudeModel = this.normalizeClaudeModelName(model);
+    if (claudeModel) {
+      return "claude";
+    }
+
     const geminiModel = this.normalizeGeminiModelName(model);
     if (geminiModel) {
       return "gemini";
@@ -634,6 +942,36 @@ export class AiService {
 
     if (OPENAI_MODEL_PREFIXES.some((prefix) => normalized.startsWith(prefix))) {
       return "openai";
+    }
+
+    return null;
+  }
+
+  private normalizeClaudeModelName(modelInput: string): string | null {
+    const model = String(modelInput || "").trim();
+    if (!model) {
+      return null;
+    }
+
+    const normalized = model.toLowerCase();
+
+    if (normalized.startsWith("anthropic/claude-")) {
+      return model.slice("anthropic/".length);
+    }
+
+    if (normalized.startsWith("models/claude-")) {
+      return model.slice("models/".length);
+    }
+
+    if (normalized.includes("/models/claude-")) {
+      const marker = normalized.lastIndexOf("/models/");
+      if (marker >= 0) {
+        return model.slice(marker + "/models/".length);
+      }
+    }
+
+    if (CLAUDE_MODEL_PREFIXES.some((prefix) => normalized.startsWith(prefix))) {
+      return model;
     }
 
     return null;
@@ -745,6 +1083,27 @@ export class AiService {
     return `Model "${model}" is unavailable for this API key/version. Use @google/genai with apiVersion=v1 and try: ${GEMINI_RECOMMENDED_MODELS.join(", ")}.`;
   }
 
+  private buildClaudeModelErrorMessage(
+    model: string,
+    providerMessage: string,
+  ): string {
+    const base = String(providerMessage || "Claude request failed");
+    const lowered = base.toLowerCase();
+    const modelMismatch = [
+      "invalid model",
+      "model not found",
+      "unsupported model",
+      "unknown model",
+      "not_found_error",
+    ].some((needle) => lowered.includes(needle));
+
+    if (!modelMismatch) {
+      return base;
+    }
+
+    return `Model "${model}" is unavailable for this Anthropic API key. Try: ${CLAUDE_RECOMMENDED_MODELS.join(", ")}.`;
+  }
+
   private getGeminiApiVersion(): "v1" | "v1beta" | "v1alpha" {
     const value = String(process.env.GEMINI_API_VERSION || DEFAULT_GEMINI_API_VERSION)
       .trim()
@@ -757,7 +1116,7 @@ export class AiService {
     return "v1";
   }
 
-  private async safeGetActiveCredential(provider: "openai" | "gemini") {
+  private async safeGetActiveCredential(provider: "openai" | "gemini" | "claude") {
     try {
       return await this.credentialService.getActiveCredential(provider);
     } catch (error: any) {

@@ -105,6 +105,7 @@ Request:
 
 ```json
 {
+  "model": "claude-sonnet-4-6",
   "message": "Summarize visitor follow-up risk for this week",
   "conversation_id": "optional-uuid",
   "context": {
@@ -115,7 +116,11 @@ Request:
 }
 ```
 
-Response (unchanged):
+Notes:
+- `model` is required.
+- Provider is inferred from the model prefix: `gpt-/o*` => OpenAI, `claude-*` => Claude, `gemini-*` => Gemini.
+
+Response:
 
 ```json
 {
@@ -124,6 +129,9 @@ Response (unchanged):
     "message_id": "uuid",
     "reply": "Here are the highest-risk visitors...",
     "created_at": "2026-02-28T08:30:00.000Z",
+    "provider": "claude",
+    "model": "claude-sonnet-4-6",
+    "fallback_used": false,
     "usage": {
       "prompt_tokens": 640,
       "completion_tokens": 372,
@@ -190,7 +198,7 @@ Used for deterministic module insights (attendance, requisition risk, visitor fo
 
 ### 3.5 Provider credential endpoints (admin)
 
-`GET /ai/credentials?provider=openai|gemini`  
+`GET /ai/credentials?provider=openai|gemini|claude`  
 `POST /ai/credentials`  
 `PUT /ai/credentials/:id`
 
