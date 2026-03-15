@@ -430,6 +430,85 @@ const uniquePositiveIds = (values: number[]): number[] =>
     ),
   ).sort((first, second) => first - second);
 
+const getExistingDepartmentIdSetTx = async (
+  tx: ApprovalWorkflowTx,
+  departmentIds: number[],
+): Promise<Set<number>> => {
+  const uniqueDepartmentIds = uniquePositiveIds(departmentIds);
+  if (!uniqueDepartmentIds.length) {
+    return new Set<number>();
+  }
+
+  const rows = await tx.department.findMany({
+    where: {
+      id: {
+        in: uniqueDepartmentIds,
+      },
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  return new Set(rows.map((row) => row.id));
+};
+
+const getDepartmentMemberIdsByDepartmentTx = async (
+  tx: ApprovalWorkflowTx,
+  validDepartmentIdSet: Set<number>,
+) => {
+  const users = await tx.user.findMany({
+    select: {
+      id: true,
+      department_id: true,
+      department: {
+        select: {
+          department_id: true,
+        },
+      },
+      department_positions: {
+        select: {
+          department_id: true,
+        },
+      },
+    },
+  });
+
+  const memberIdsByDepartment = new Map<number, Set<number>>();
+
+  for (const user of users) {
+    const departmentIds = new Set<number>();
+
+    if (
+      typeof user.department?.department_id === "number" &&
+      validDepartmentIdSet.has(user.department.department_id)
+    ) {
+      departmentIds.add(user.department.department_id);
+    }
+
+    if (
+      typeof user.department_id === "number" &&
+      validDepartmentIdSet.has(user.department_id)
+    ) {
+      departmentIds.add(user.department_id);
+    }
+
+    for (const departmentPosition of user.department_positions) {
+      if (validDepartmentIdSet.has(departmentPosition.department_id)) {
+        departmentIds.add(departmentPosition.department_id);
+      }
+    }
+
+    for (const departmentId of departmentIds) {
+      const memberIds = memberIdsByDepartment.get(departmentId) || new Set<number>();
+      memberIds.add(user.id);
+      memberIdsByDepartment.set(departmentId, memberIds);
+    }
+  }
+
+  return memberIdsByDepartment;
+};
+
 const parseNotificationUserIds = (value: unknown): number[] => {
   if (value === undefined || value === null) {
     return [];
@@ -1366,11 +1445,22 @@ const ensureDepartmentApprovalRowsTx = async (
     return;
   }
 
+  const validDepartmentIdSet = await getExistingDepartmentIdSetTx(
+    tx,
+    uniqueDepartmentIds,
+  );
+  const validDepartmentIds = uniqueDepartmentIds.filter((departmentId) =>
+    validDepartmentIdSet.has(departmentId),
+  );
+  if (!validDepartmentIds.length) {
+    return;
+  }
+
   const existingRows = await tx.event_report_department_approvals.findMany({
     where: {
       event_report_id: args.eventReportId,
       department_id: {
-        in: uniqueDepartmentIds,
+        in: validDepartmentIds,
       },
     },
     select: {
@@ -1378,12 +1468,12 @@ const ensureDepartmentApprovalRowsTx = async (
     },
   });
 
-  const existingDepartmentIdSet = new Set(
+  const existingApprovalDepartmentIdSet = new Set(
     existingRows.map((row) => row.department_id),
   );
 
-  const missingDepartmentIds = uniqueDepartmentIds.filter(
-    (departmentId) => !existingDepartmentIdSet.has(departmentId),
+  const missingDepartmentIds = validDepartmentIds.filter(
+    (departmentId) => !existingApprovalDepartmentIdSet.has(departmentId),
   );
 
   if (!missingDepartmentIds.length) {
@@ -1774,72 +1864,7 @@ const getDepartmentBreakdownTx = async (
     },
   });
 
-  const attendeeByDepartment = new Map<number, Array<{
-    id: number;
-    user_id: number;
-    name: string;
-    arrival_time: string;
-  }>>();
-
-  for (const row of attendanceRows) {
-    const primaryDepartmentId =
-      row.user.department?.department_id ||
-      row.user.department_id ||
-      row.user.department_positions[0]?.department_id ||
-      null;
-
-    if (!primaryDepartmentId) {
-      continue;
-    }
-
-    const bucket = attendeeByDepartment.get(primaryDepartmentId) || [];
-    bucket.push({
-      id: row.id,
-      user_id: row.user_id,
-      name: row.user.name,
-      arrival_time: row.created_at.toISOString(),
-    });
-    attendeeByDepartment.set(primaryDepartmentId, bucket);
-  }
-
-  const departmentIds = Array.from(attendeeByDepartment.keys());
-  await ensureDepartmentApprovalRowsTx(tx, {
-    eventReportId: args.eventReportId,
-    departmentIds,
-  });
-
-  const approvals = await tx.event_report_department_approvals.findMany({
-    where: {
-      event_report_id: args.eventReportId,
-    },
-    include: {
-      approved_by_user: {
-        select: {
-          id: true,
-          name: true,
-        },
-      },
-    },
-  });
-
-  const allDepartmentIds = uniquePositiveIds([
-    ...departmentIds,
-    ...approvals.map((approval) => approval.department_id),
-  ]);
-
-  if (!allDepartmentIds.length) {
-    return {
-      departments: [] as any[],
-      allApproved: true,
-    };
-  }
-
   const departments = await tx.department.findMany({
-    where: {
-      id: {
-        in: allDepartmentIds,
-      },
-    },
     include: {
       department_head_info: {
         select: {
@@ -1853,41 +1878,94 @@ const getDepartmentBreakdownTx = async (
     },
   });
 
-  const approvalByDepartmentId = new Map(
-    approvals.map((approval) => [approval.department_id, approval]),
+  const validDepartmentIdSet = new Set(departments.map((department) => department.id));
+  const memberIdsByDepartment = await getDepartmentMemberIdsByDepartmentTx(
+    tx,
+    validDepartmentIdSet,
   );
 
+  const attendeeByDepartment = new Map<number, Map<number, {
+    id: number;
+    user_id: number;
+    name: string;
+    arrival_time: Date;
+  }>>();
+
+  for (const row of attendanceRows) {
+    const primaryDepartmentId =
+      [
+        row.user.department?.department_id ?? null,
+        ...row.user.department_positions.map((entry) => entry.department_id),
+        row.user.department_id ?? null,
+      ].find(
+        (departmentId): departmentId is number =>
+          typeof departmentId === "number" &&
+          validDepartmentIdSet.has(departmentId),
+      ) || null;
+
+    if (!primaryDepartmentId) {
+      continue;
+    }
+
+    const bucket = attendeeByDepartment.get(primaryDepartmentId) || new Map();
+    const existingAttendee = bucket.get(row.user_id);
+
+    if (!existingAttendee || row.created_at < existingAttendee.arrival_time) {
+      bucket.set(row.user_id, {
+        id: row.id,
+        user_id: row.user_id,
+        name: row.user.name,
+        arrival_time: row.created_at,
+      });
+    }
+
+    attendeeByDepartment.set(primaryDepartmentId, bucket);
+  }
+
   const departmentBlocks = departments.map((department) => {
-    const approval = approvalByDepartmentId.get(department.id);
-    const status =
-      approval?.status || EventReportSectionApprovalStatus.PENDING;
+    const attendees = Array.from(
+      (attendeeByDepartment.get(department.id) || new Map()).values(),
+    )
+      .sort(
+        (left, right) => left.arrival_time.getTime() - right.arrival_time.getTime(),
+      )
+      .map((attendee) => ({
+        ...attendee,
+        arrival_time: attendee.arrival_time.toISOString(),
+      }));
+    const totalMembers = memberIdsByDepartment.get(department.id)?.size || 0;
+    const presentMembers = attendees.length;
+    const absentMembers = Math.max(totalMembers - presentMembers, 0);
+    const attendancePercentage =
+      totalMembers > 0
+        ? Number(((presentMembers / totalMembers) * 100).toFixed(1))
+        : 0;
 
     return {
       department_id: department.id,
       department_name: department.name,
       head_user_id: department.department_head || null,
       head_name: department.department_head_info?.name || null,
-      attendees: attendeeByDepartment.get(department.id) || [],
-      approval: buildApprovalBlock({
-        status,
-        approvedByUserId: approval?.approved_by_user_id || null,
-        approvedByName: approval?.approved_by_user?.name || null,
-        approvedAt: approval?.approved_at || null,
-        canCurrentUserApprove:
-          department.department_head === args.actorUserId &&
-          status !== EventReportSectionApprovalStatus.APPROVED,
-      }),
+      total_members: totalMembers,
+      present_members: presentMembers,
+      absent_members: absentMembers,
+      attendance_percentage: attendancePercentage,
+      attendees,
     };
-  });
-
-  const allApproved = departmentBlocks.every(
-    (department) =>
-      department.approval.status === EventReportSectionApprovalStatus.APPROVED,
+  }).filter(
+    (department) => department.total_members > 0 || department.present_members > 0,
   );
 
   return {
     departments: departmentBlocks,
-    allApproved,
+    total_members: departmentBlocks.reduce(
+      (total, department) => total + department.total_members,
+      0,
+    ),
+    present_members: departmentBlocks.reduce(
+      (total, department) => total + department.present_members,
+      0,
+    ),
   };
 };
 
@@ -2058,13 +2136,11 @@ const buildFinalDecisionIdempotencyKey = (
 ) => `event-report:${eventReportId}:event:${eventType}:instance:${approvalInstanceId}`;
 
 const getPreFinalCompletionStatus = (args: {
-  allDepartmentsApproved: boolean;
   churchAttendanceApproved: boolean;
   countingLeaderApproved: boolean;
   financeRepApproved: boolean;
 }) => {
   const allComplete =
-    args.allDepartmentsApproved &&
     args.churchAttendanceApproved &&
     args.countingLeaderApproved &&
     args.financeRepApproved;
@@ -2119,7 +2195,6 @@ const getEventReportDetailTx = async (
     ]);
 
   const completion = getPreFinalCompletionStatus({
-    allDepartmentsApproved: departmentBlock.allApproved,
     churchAttendanceApproved: churchAttendanceBlock.isApproved,
     countingLeaderApproved: financeBlock.countingLeaderApproved,
     financeRepApproved: financeBlock.financeRepApproved,
@@ -2243,13 +2318,26 @@ const getEventReportDetailTx = async (
     });
 
   return {
-    data: {
-      event_id: report.event_id,
-      event_name: event.event?.event_name || "Unknown Event",
-      event_date: eventDate,
-      departments: departmentBlock.departments,
-      church_attendance: churchAttendanceBlock.church_attendance,
-      finance: financeBlock.finance,
+      data: {
+        event_id: report.event_id,
+        event_name: event.event?.event_name || "Unknown Event",
+        event_date: eventDate,
+        departments: departmentBlock.departments,
+        department_summary: {
+          total_members: departmentBlock.total_members,
+          present_members: departmentBlock.present_members,
+          attendance_percentage:
+            departmentBlock.total_members > 0
+              ? Number(
+                  (
+                    (departmentBlock.present_members / departmentBlock.total_members) *
+                    100
+                  ).toFixed(1),
+                )
+              : 0,
+        },
+        church_attendance: churchAttendanceBlock.church_attendance,
+        finance: financeBlock.finance,
       final_approval: {
         status: finalStatus,
         approver_user_id:
@@ -2770,7 +2858,6 @@ export const submitEventReportForFinalApproval = async (
       });
 
       const completion = getPreFinalCompletionStatus({
-        allDepartmentsApproved: departmentBlock.allApproved,
         churchAttendanceApproved: churchAttendanceBlock.isApproved,
         countingLeaderApproved: financeBlock.countingLeaderApproved,
         financeRepApproved: financeBlock.financeRepApproved,

@@ -2,7 +2,6 @@ import Router from "express";
 import { Permissions } from "../../middleWare/authorization";
 import {
   churchAttendanceApprovalActionHandler,
-  departmentApprovalActionHandler,
   finalApprovalActionHandler,
   financeApprovalActionHandler,
   getEventReportApprovalConfigHandler,
@@ -34,12 +33,6 @@ eventReportRouter.post(
   "/upsert-finance",
   [protect],
   upsertEventReportFinanceHandler,
-);
-
-eventReportRouter.post(
-  "/department-approval-action",
-  [protect],
-  departmentApprovalActionHandler,
 );
 
 eventReportRouter.post(

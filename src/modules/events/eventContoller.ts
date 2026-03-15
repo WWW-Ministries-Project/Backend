@@ -23,6 +23,43 @@ const eventAttendanceSelect = {
   created_at: true,
   user: {
     select: {
+      id: true,
+      name: true,
+      member_id: true,
+      email: true,
+      department_id: true,
+      department: {
+        select: {
+          department_id: true,
+          department_info: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+        },
+      },
+      department_positions: {
+        orderBy: {
+          department_id: "asc" as const,
+        },
+        select: {
+          department_id: true,
+          position_id: true,
+          department: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+          position: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+        },
+      },
       user_info: {
         select: {
           user: {
@@ -2664,6 +2701,22 @@ export class eventManagement {
               id: true,
               name: true,
               member_id: true,
+              department_positions: {
+                select: {
+                  department_id: true,
+                  position_id: true,
+                  department: {
+                    select: {
+                      name: true,
+                    },
+                  },
+                  position: {
+                    select: {
+                      name: true,
+                    },
+                  },
+                },
+              },
             },
           },
         },
@@ -2681,6 +2734,12 @@ export class eventManagement {
           user_id: number;
           user_name: string | null;
           member_id: string | null;
+          department_positions: Array<{
+            department_id: number;
+            department_name: string | null;
+            position_id: number | null;
+            position_name: string | null;
+          }>;
           attendance_date: string;
           first_punch_at: Date;
           last_punch_at: Date;
@@ -2695,6 +2754,14 @@ export class eventManagement {
         }
 
         const attendanceDate = punch.record_time.toISOString().slice(0, 10);
+        const departmentPositions = (
+          punch.matched_user.department_positions || []
+        ).map((entry) => ({
+          department_id: entry.department_id,
+          department_name: entry.department?.name ?? null,
+          position_id: entry.position_id ?? null,
+          position_name: entry.position?.name ?? null,
+        }));
         const key = [
           punch.event_mgt_id,
           punch.matched_user_id,
@@ -2710,6 +2777,7 @@ export class eventManagement {
             user_id: punch.matched_user_id,
             user_name: punch.matched_user.name,
             member_id: punch.matched_user.member_id,
+            department_positions: departmentPositions,
             attendance_date: attendanceDate,
             first_punch_at: punch.record_time,
             last_punch_at: punch.record_time,
@@ -2822,6 +2890,7 @@ export class eventManagement {
             user_id: record.user_id,
             user_name: record.user_name,
             member_id: record.member_id,
+            department_positions: record.department_positions,
             attendance_date: record.attendance_date,
             first_punch_at: record.first_punch_at.toISOString(),
             last_punch_at: record.last_punch_at.toISOString(),
