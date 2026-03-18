@@ -1,4 +1,5 @@
 import { Router } from "express";
+import attendanceTimingSettingsController from "./attendanceTimingSettingsController";
 import roleEligibilityController from "./roleEligibilityController";
 import systemNotificationSettingsController from "./systemNotificationSettingsController";
 import { Permissions } from "../../middleWare/authorization";
@@ -6,6 +7,18 @@ import { Permissions } from "../../middleWare/authorization";
 const settingsRouter = Router();
 const permissions = new Permissions();
 const protect = permissions.protect;
+
+settingsRouter.get(
+  "/attendance-timing-config",
+  [protect, permissions.can_view_settings],
+  attendanceTimingSettingsController.getConfig,
+);
+
+settingsRouter.post(
+  "/upsert-attendance-timing-config",
+  [protect, permissions.can_manage_settings],
+  attendanceTimingSettingsController.upsertConfig,
+);
 
 settingsRouter.get(
   "/get-role-eligibility-config",

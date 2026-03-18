@@ -1,0 +1,5 @@
+ALTER TABLE `visitor`
+  ADD COLUMN `isClergy` BOOLEAN NOT NULL DEFAULT false,
+  ADD COLUMN `churchName` VARCHAR(191) NULL,
+  ADD COLUMN `churchLocation` VARCHAR(191) NULL,
+  ADD COLUMN `churchRole` VARCHAR(191) NULL;

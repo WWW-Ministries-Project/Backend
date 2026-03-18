@@ -97,6 +97,11 @@ programRouter.delete(
 programRouter.get("/users", [protect], courseController.getAllUsers);
 
 //enrollment endpoint
+programRouter.get(
+  "/certificate/verify/:certificateNumber",
+  enrollmentController.verifyCertificate,
+);
+programRouter.get("/certificate", [protect], enrollmentController.getCertificate);
 programRouter.post(
   "/enroll",
   [protect, permissions.can_manage_programs_or_facilitator],

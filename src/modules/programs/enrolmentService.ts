@@ -1,12 +1,40 @@
 import { Prisma, progress_status } from "@prisma/client";
+import { randomInt } from "crypto";
 import { prisma } from "../../Models/context";
 import {
   InputValidationError,
   NotFoundError,
   ResourceDuplicationError,
 } from "../../utils/custom-error-handlers";
-import { certificateTemplate } from "../../utils/mail_templates/certificateTemplate";
-import { sendEmail } from "../../utils";
+import { generateQRDataUrl } from "../../utils";
+
+type CompletedProgramContext = {
+  program: {
+    id: number;
+    title: string;
+    topics: Array<{ id: number }>;
+  };
+  user: {
+    id: number;
+    name: string;
+  };
+  completionDate: Date;
+};
+
+type ProgramCertificatePayload = {
+  recipientFullName: string;
+  programTitle: string;
+  completionDate: string;
+  issueDate: string;
+  certificateNumber: string;
+  verificationUrl: string;
+  qrCodeDataUrl: string;
+};
+
+const CERTIFICATE_NUMBER_PREFIX = "WWMHCSM";
+const CERTIFICATE_NUMBER_MIN = 100000;
+const CERTIFICATE_NUMBER_MAX = 1000000;
+const CERTIFICATE_VERIFICATION_PATH = "/certificate/verify";
 
 export class EnrollmentService {
   async enrollUser(payload: { course_id: number; user_id: number }) {
@@ -375,68 +403,240 @@ export class EnrollmentService {
     }
   }
 
-  async generateCertificate(programId: number, userId: number) {
-    const [program, user, topics] = await Promise.all([
+  private buildCertificateVerificationUrl(certificateNumber: string) {
+    const frontendBaseUrl = String(process.env.Frontend_URL || "")
+      .trim()
+      .replace(/\/+$/, "");
+    const verificationPath = `${CERTIFICATE_VERIFICATION_PATH}/${encodeURIComponent(
+      certificateNumber,
+    )}`;
+
+    return frontendBaseUrl
+      ? `${frontendBaseUrl}${verificationPath}`
+      : verificationPath;
+  }
+
+  private generateCertificateNumberCandidate() {
+    return `${CERTIFICATE_NUMBER_PREFIX}${randomInt(
+      CERTIFICATE_NUMBER_MIN,
+      CERTIFICATE_NUMBER_MAX,
+    )}`;
+  }
+
+  private async resolveProgramCompletionContext(
+    programId: number,
+    userId: number,
+  ): Promise<CompletedProgramContext> {
+    const [program, user, enrollment] = await Promise.all([
       prisma.program.findUnique({
         where: { id: programId },
-        select: { id: true, title: true },
+        select: {
+          id: true,
+          title: true,
+          topics: {
+            select: {
+              id: true,
+            },
+          },
+        },
       }),
       prisma.user.findUnique({
         where: { id: userId },
-        select: { id: true, name: true, email: true },
+        select: { id: true, name: true },
       }),
-      prisma.topic.findMany({
-        where: { programId },
-        select: { id: true },
+      prisma.enrollment.findFirst({
+        where: {
+          user_id: userId,
+          course: {
+            cohort: {
+              programId,
+            },
+          },
+        },
+        select: {
+          id: true,
+          completed: true,
+          completedAt: true,
+          progress: {
+            select: {
+              topicId: true,
+              status: true,
+              completedAt: true,
+            },
+          },
+        },
       }),
     ]);
 
-    if (!program) throw new Error("Program not found");
-    if (!user) throw new Error("User not found");
-    if (topics.length === 0) throw new Error("Program has no topics");
-
-    const topicIds = topics.map((t) => t.id);
-
-    const passedTopicsCount = await prisma.progress.count({
-      where: {
-        topicId: { in: topicIds },
-        enrollment: { user_id: userId },
-        status: "PASS",
-      },
-    });
-
-    if (passedTopicsCount !== topicIds.length) {
-      throw new Error("User has not completed all topics in the program");
+    if (!program) throw new NotFoundError("Program not found");
+    if (!user) throw new NotFoundError("User not found");
+    if (!enrollment) {
+      throw new NotFoundError("User is not enrolled in this program");
+    }
+    if (program.topics.length === 0) {
+      throw new InputValidationError("Program has no topics");
     }
 
-    const certificateNumber = `CERT-${programId}-${userId}-${Date.now()}`;
-
-    const certHtml = certificateTemplate(
-      user.name,
-      certificateNumber,
-      program.title,
+    const passedTopicIds = new Set(
+      enrollment.progress
+        .filter((progress) => progress.status === "PASS")
+        .map((progress) => progress.topicId),
     );
 
-    const certificate = await prisma.certificate.create({
-      data: {
-        userId,
-        programId,
-        issuedAt: new Date(),
-        certificateNumber,
+    if (passedTopicIds.size !== program.topics.length) {
+      throw new InputValidationError(
+        "User has not completed all topics in the program",
+      );
+    }
+
+    const latestCompletedTopicDate = enrollment.progress.reduce<Date | null>(
+      (latestDate, progress) => {
+        if (!progress.completedAt) {
+          return latestDate;
+        }
+
+        if (!latestDate || progress.completedAt > latestDate) {
+          return progress.completedAt;
+        }
+
+        return latestDate;
+      },
+      null,
+    );
+
+    const completionDate =
+      enrollment.completedAt ?? latestCompletedTopicDate ?? new Date();
+
+    if (!enrollment.completed || !enrollment.completedAt) {
+      await prisma.enrollment.update({
+        where: { id: enrollment.id },
+        data: {
+          completed: true,
+          completedAt: completionDate,
+        },
+      });
+    }
+
+    return {
+      program,
+      user,
+      completionDate,
+    };
+  }
+
+  private async ensureCertificateRecord(programId: number, userId: number) {
+    const existingCertificate = await prisma.certificate.findUnique({
+      where: {
+        userId_programId: {
+          userId,
+          programId,
+        },
       },
     });
 
-    const attachementArray: string[] = [];
-    attachementArray.push(certHtml);
+    if (existingCertificate) {
+      return existingCertificate;
+    }
 
-    // sendEmailWithAttachmentAsString(
-    //   certHtml,
-    //   String(user?.email),
-    //   "Your Certificate of Completion",
-    //   attachementArray,
-    // );
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      try {
+        return await prisma.certificate.create({
+          data: {
+            userId,
+            programId,
+            issuedAt: new Date(),
+            certificateNumber: this.generateCertificateNumberCandidate(),
+          },
+        });
+      } catch (error) {
+        if (
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === "P2002"
+        ) {
+          const createdCertificate = await prisma.certificate.findUnique({
+            where: {
+              userId_programId: {
+                userId,
+                programId,
+              },
+            },
+          });
 
-    return certificate;
+          if (createdCertificate) {
+            return createdCertificate;
+          }
+
+          continue;
+        }
+
+        throw error;
+      }
+    }
+
+    throw new Error("Unable to generate a unique certificate number");
+  }
+
+  private async buildCertificatePayload(
+    context: CompletedProgramContext,
+    certificate: {
+      issuedAt: Date;
+      certificateNumber: string;
+    },
+  ): Promise<ProgramCertificatePayload> {
+    const verificationUrl = this.buildCertificateVerificationUrl(
+      certificate.certificateNumber,
+    );
+    const qrCodeDataUrl = await generateQRDataUrl(verificationUrl);
+
+    return {
+      recipientFullName: context.user.name,
+      programTitle: context.program.title,
+      completionDate: context.completionDate.toISOString(),
+      issueDate: certificate.issuedAt.toISOString(),
+      certificateNumber: certificate.certificateNumber,
+      verificationUrl,
+      qrCodeDataUrl,
+    };
+  }
+
+  async getProgramCertificate(programId: number, userId: number) {
+    const completionContext = await this.resolveProgramCompletionContext(
+      programId,
+      userId,
+    );
+    const certificate = await this.ensureCertificateRecord(programId, userId);
+
+    return this.buildCertificatePayload(completionContext, certificate);
+  }
+
+  async verifyCertificate(certificateNumber: string) {
+    const normalizedCertificateNumber = certificateNumber.trim().toUpperCase();
+    if (!normalizedCertificateNumber) {
+      throw new InputValidationError("Certificate number is required");
+    }
+
+    const certificate = await prisma.certificate.findUnique({
+      where: {
+        certificateNumber: normalizedCertificateNumber,
+      },
+      select: {
+        issuedAt: true,
+        certificateNumber: true,
+        programId: true,
+        userId: true,
+      },
+    });
+
+    if (!certificate) {
+      throw new NotFoundError("Certificate not found");
+    }
+
+    const completionContext = await this.resolveProgramCompletionContext(
+      certificate.programId,
+      certificate.userId,
+    );
+
+    return this.buildCertificatePayload(completionContext, certificate);
   }
 
   async completeEnrollment(topicId: number) {

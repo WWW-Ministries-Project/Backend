@@ -9,3 +9,14 @@ export const generateQR = async (text: any) => {
     console.error(err);
   }
 };
+
+export const generateQRDataUrl = async (
+  text: string,
+  options?: QRCode.QRCodeToDataURLOptions,
+) => {
+  return QRCode.toDataURL(text, {
+    margin: 1,
+    width: 180,
+    ...options,
+  });
+};

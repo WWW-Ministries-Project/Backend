@@ -12,6 +12,10 @@ import {
   UnauthorizedError,
 } from "../../utils/custom-error-handlers";
 import { notificationService } from "../notifications/notificationService";
+import {
+  buildAttendanceVisitorCountsMap,
+  getAttendanceVisitorCountsForRecord,
+} from "../events/attendanceVisitorCounts";
 
 type EventReportNotificationEventType =
   | "event_report.submitted_for_final_approval"
@@ -44,6 +48,31 @@ type FinanceItem = {
   id: string;
   name: string;
   amount: number;
+};
+
+type DepartmentLinkedUser = {
+  department_id: number | null;
+  department: {
+    department_id: number | null;
+  } | null;
+  department_positions: Array<{
+    department_id: number;
+  }>;
+};
+
+type DepartmentMemberInfo = {
+  user_id: number;
+  name: string;
+};
+
+type DepartmentAttendanceDetail = {
+  id: number | null;
+  user_id: number;
+  name: string;
+  arrival_time: string | null;
+  reported_time: string;
+  relative_to_start: string;
+  status: "early" | "on_time" | "late" | "absent";
 };
 
 type ApprovalBlock = {
@@ -430,6 +459,108 @@ const uniquePositiveIds = (values: number[]): number[] =>
     ),
   ).sort((first, second) => first - second);
 
+const getUserDepartmentIds = (
+  user: DepartmentLinkedUser,
+  validDepartmentIdSet: Set<number>,
+): number[] => {
+  const departmentIds = new Set<number>();
+
+  if (
+    typeof user.department?.department_id === "number" &&
+    validDepartmentIdSet.has(user.department.department_id)
+  ) {
+    departmentIds.add(user.department.department_id);
+  }
+
+  if (
+    typeof user.department_id === "number" &&
+    validDepartmentIdSet.has(user.department_id)
+  ) {
+    departmentIds.add(user.department_id);
+  }
+
+  for (const departmentPosition of user.department_positions) {
+    if (validDepartmentIdSet.has(departmentPosition.department_id)) {
+      departmentIds.add(departmentPosition.department_id);
+    }
+  }
+
+  return Array.from(departmentIds).sort((first, second) => first - second);
+};
+
+const buildReportEventStartDateTime = (
+  eventDate: string,
+  eventStartDate: Date | null | undefined,
+): Date | null => {
+  if (!eventStartDate) {
+    return null;
+  }
+
+  const reportEventStart = toUtcDayDate(eventDate);
+  reportEventStart.setUTCHours(
+    eventStartDate.getUTCHours(),
+    eventStartDate.getUTCMinutes(),
+    eventStartDate.getUTCSeconds(),
+    eventStartDate.getUTCMilliseconds(),
+  );
+
+  return reportEventStart;
+};
+
+const formatReportedTime = (value: Date | null | undefined): string | null => {
+  if (!value || Number.isNaN(value.getTime())) {
+    return null;
+  }
+
+  return value.toISOString().slice(11, 19);
+};
+
+const formatRelativeToStart = (
+  arrivalTime: Date,
+  eventStartTime: Date | null,
+): string => {
+  if (!eventStartTime) {
+    return "-";
+  }
+
+  const differenceInMinutes = Math.round(
+    (arrivalTime.getTime() - eventStartTime.getTime()) / 60000,
+  );
+
+  if (differenceInMinutes === 0) {
+    return "0m";
+  }
+
+  const absoluteMinutes = Math.abs(differenceInMinutes);
+  const hours = Math.floor(absoluteMinutes / 60);
+  const minutes = absoluteMinutes % 60;
+  const parts = [
+    ...(hours ? [`${hours}h`] : []),
+    ...(minutes || !hours ? [`${minutes}m`] : []),
+  ];
+
+  return `${differenceInMinutes > 0 ? "+" : "-"}${parts.join(" ")}`;
+};
+
+const getReportedAttendanceStatus = (
+  arrivalTime: Date,
+  eventStartTime: Date | null,
+): "early" | "on_time" | "late" => {
+  if (!eventStartTime) {
+    return "on_time";
+  }
+
+  if (arrivalTime.getTime() < eventStartTime.getTime()) {
+    return "early";
+  }
+
+  if (arrivalTime.getTime() > eventStartTime.getTime()) {
+    return "late";
+  }
+
+  return "on_time";
+};
+
 const getExistingDepartmentIdSetTx = async (
   tx: ApprovalWorkflowTx,
   departmentIds: number[],
@@ -453,13 +584,14 @@ const getExistingDepartmentIdSetTx = async (
   return new Set(rows.map((row) => row.id));
 };
 
-const getDepartmentMemberIdsByDepartmentTx = async (
+const getDepartmentMembersByDepartmentTx = async (
   tx: ApprovalWorkflowTx,
   validDepartmentIdSet: Set<number>,
 ) => {
   const users = await tx.user.findMany({
     select: {
       id: true,
+      name: true,
       department_id: true,
       department: {
         select: {
@@ -474,39 +606,22 @@ const getDepartmentMemberIdsByDepartmentTx = async (
     },
   });
 
-  const memberIdsByDepartment = new Map<number, Set<number>>();
+  const membersByDepartment = new Map<number, Map<number, DepartmentMemberInfo>>();
 
   for (const user of users) {
-    const departmentIds = new Set<number>();
-
-    if (
-      typeof user.department?.department_id === "number" &&
-      validDepartmentIdSet.has(user.department.department_id)
-    ) {
-      departmentIds.add(user.department.department_id);
-    }
-
-    if (
-      typeof user.department_id === "number" &&
-      validDepartmentIdSet.has(user.department_id)
-    ) {
-      departmentIds.add(user.department_id);
-    }
-
-    for (const departmentPosition of user.department_positions) {
-      if (validDepartmentIdSet.has(departmentPosition.department_id)) {
-        departmentIds.add(departmentPosition.department_id);
-      }
-    }
+    const departmentIds = getUserDepartmentIds(user, validDepartmentIdSet);
 
     for (const departmentId of departmentIds) {
-      const memberIds = memberIdsByDepartment.get(departmentId) || new Set<number>();
-      memberIds.add(user.id);
-      memberIdsByDepartment.set(departmentId, memberIds);
+      const members = membersByDepartment.get(departmentId) || new Map();
+      members.set(user.id, {
+        user_id: user.id,
+        name: user.name,
+      });
+      membersByDepartment.set(departmentId, members);
     }
   }
 
-  return memberIdsByDepartment;
+  return membersByDepartment;
 };
 
 const parseNotificationUserIds = (value: unknown): number[] => {
@@ -1821,10 +1936,15 @@ const getDepartmentBreakdownTx = async (
     eventReportId: number;
     eventId: number;
     eventDate: string;
+    eventStartDate: Date | null;
     actorUserId: number;
   },
 ) => {
   const { start, end } = getUtcDayBounds(args.eventDate);
+  const reportEventStartTime = buildReportEventStartDateTime(
+    args.eventDate,
+    args.eventStartDate,
+  );
 
   const attendanceRows = await tx.event_attendance.findMany({
     where: {
@@ -1879,7 +1999,7 @@ const getDepartmentBreakdownTx = async (
   });
 
   const validDepartmentIdSet = new Set(departments.map((department) => department.id));
-  const memberIdsByDepartment = await getDepartmentMemberIdsByDepartmentTx(
+  const membersByDepartment = await getDepartmentMembersByDepartmentTx(
     tx,
     validDepartmentIdSet,
   );
@@ -1892,49 +2012,78 @@ const getDepartmentBreakdownTx = async (
   }>>();
 
   for (const row of attendanceRows) {
-    const primaryDepartmentId =
-      [
-        row.user.department?.department_id ?? null,
-        ...row.user.department_positions.map((entry) => entry.department_id),
-        row.user.department_id ?? null,
-      ].find(
-        (departmentId): departmentId is number =>
-          typeof departmentId === "number" &&
-          validDepartmentIdSet.has(departmentId),
-      ) || null;
+    const departmentIds = getUserDepartmentIds(row.user, validDepartmentIdSet);
 
-    if (!primaryDepartmentId) {
+    if (!departmentIds.length) {
       continue;
     }
 
-    const bucket = attendeeByDepartment.get(primaryDepartmentId) || new Map();
-    const existingAttendee = bucket.get(row.user_id);
+    for (const departmentId of departmentIds) {
+      const bucket = attendeeByDepartment.get(departmentId) || new Map();
+      const existingAttendee = bucket.get(row.user_id);
 
-    if (!existingAttendee || row.created_at < existingAttendee.arrival_time) {
-      bucket.set(row.user_id, {
-        id: row.id,
-        user_id: row.user_id,
-        name: row.user.name,
-        arrival_time: row.created_at,
-      });
+      if (!existingAttendee || row.created_at < existingAttendee.arrival_time) {
+        bucket.set(row.user_id, {
+          id: row.id,
+          user_id: row.user_id,
+          name: row.user.name,
+          arrival_time: row.created_at,
+        });
+      }
+
+      attendeeByDepartment.set(departmentId, bucket);
     }
-
-    attendeeByDepartment.set(primaryDepartmentId, bucket);
   }
 
   const departmentBlocks = departments.map((department) => {
-    const attendees = Array.from(
-      (attendeeByDepartment.get(department.id) || new Map()).values(),
-    )
-      .sort(
-        (left, right) => left.arrival_time.getTime() - right.arrival_time.getTime(),
-      )
-      .map((attendee) => ({
-        ...attendee,
+    const attendeeMap = attendeeByDepartment.get(department.id) || new Map();
+    const memberMap = membersByDepartment.get(department.id) || new Map();
+    const absentAttendees: DepartmentAttendanceDetail[] = [];
+    const presentAttendees: DepartmentAttendanceDetail[] = [];
+
+    for (const member of memberMap.values()) {
+      const attendee = attendeeMap.get(member.user_id);
+      const reportedTime = formatReportedTime(attendee?.arrival_time);
+
+      if (!attendee || !reportedTime) {
+        absentAttendees.push({
+          id: null,
+          user_id: member.user_id,
+          name: member.name,
+          arrival_time: null,
+          reported_time: "-",
+          relative_to_start: "-",
+          status: "absent",
+        });
+        continue;
+      }
+
+      presentAttendees.push({
+        id: attendee.id,
+        user_id: attendee.user_id,
+        name: attendee.name,
         arrival_time: attendee.arrival_time.toISOString(),
-      }));
-    const totalMembers = memberIdsByDepartment.get(department.id)?.size || 0;
-    const presentMembers = attendees.length;
+        reported_time: reportedTime,
+        relative_to_start: formatRelativeToStart(
+          attendee.arrival_time,
+          reportEventStartTime,
+        ),
+        status: getReportedAttendanceStatus(
+          attendee.arrival_time,
+          reportEventStartTime,
+        ),
+      });
+    }
+
+    presentAttendees.sort(
+      (left, right) =>
+        new Date(left.arrival_time || 0).getTime() -
+        new Date(right.arrival_time || 0).getTime(),
+    );
+    absentAttendees.sort((left, right) => left.name.localeCompare(right.name));
+
+    const totalMembers = memberMap.size;
+    const presentMembers = presentAttendees.length;
     const absentMembers = Math.max(totalMembers - presentMembers, 0);
     const attendancePercentage =
       totalMembers > 0
@@ -1950,7 +2099,7 @@ const getDepartmentBreakdownTx = async (
       present_members: presentMembers,
       absent_members: absentMembers,
       attendance_percentage: attendancePercentage,
-      attendees,
+      attendees: [...presentAttendees, ...absentAttendees],
     };
   }).filter(
     (department) => department.total_members > 0 || department.present_members > 0,
@@ -1995,6 +2144,21 @@ const getChurchAttendanceBlockTx = async (
 
   const approval = await ensureAttendanceApprovalRowTx(tx, args.eventReportId);
   const approverIds = await getChurchAttendanceApproverUserIdsTx(tx);
+  const attendanceReferenceDate = attendanceSummary?.date || new Date(args.eventDate);
+  const visitorCountsByKey = await buildAttendanceVisitorCountsMap(
+    [
+      {
+        eventId: args.eventId,
+        date: attendanceReferenceDate,
+      },
+    ],
+    tx,
+  );
+  const visitorCounts = getAttendanceVisitorCountsForRecord(
+    visitorCountsByKey,
+    args.eventId,
+    attendanceReferenceDate,
+  );
 
   return {
     church_attendance: {
@@ -2004,8 +2168,21 @@ const getChurchAttendanceBlockTx = async (
       children_female: Number(attendanceSummary?.childrenFemale || 0),
       youth_male: Number(attendanceSummary?.youthMale || 0),
       youth_female: Number(attendanceSummary?.youthFemale || 0),
-      visiting_pastors: Number(attendanceSummary?.visitingPastors || 0),
-      visitors: Number(attendanceSummary?.visitors || 0),
+      visitors: visitorCounts.total.total,
+      visitor_breakdown: {
+        visitors: visitorCounts.visitors,
+        visitor_clergy: visitorCounts.visitorClergy,
+        total: visitorCounts.total,
+      },
+      visitors_male: visitorCounts.visitors.male,
+      visitors_female: visitorCounts.visitors.female,
+      visitors_total: visitorCounts.visitors.total,
+      visitor_clergy_male: visitorCounts.visitorClergy.male,
+      visitor_clergy_female: visitorCounts.visitorClergy.female,
+      visitor_clergy_total: visitorCounts.visitorClergy.total,
+      visitor_total_male: visitorCounts.total.male,
+      visitor_total_female: visitorCounts.total.female,
+      visitor_total: visitorCounts.total.total,
       approval: buildApprovalBlock({
         status: approval.status,
         approvedByUserId: approval.approved_by_user_id || null,
@@ -2180,6 +2357,7 @@ const getEventReportDetailTx = async (
         eventReportId: report.id,
         eventId: report.event_id,
         eventDate,
+        eventStartDate: event.start_date,
         actorUserId: args.actorUserId,
       }),
       getChurchAttendanceBlockTx(tx, {
@@ -2844,6 +3022,7 @@ export const submitEventReportForFinalApproval = async (
         eventReportId: report.id,
         eventId,
         eventDate,
+        eventStartDate: event.start_date,
         actorUserId,
       });
       const churchAttendanceBlock = await getChurchAttendanceBlockTx(tx, {
@@ -3561,7 +3740,8 @@ export const processPendingEventReportNotificationEvents = async (args?: {
             actionUrl,
             priority,
             dedupeKey: `event-report:event:${event.id}:recipient:${recipient.id}`,
-            sendEmail: false,
+            sendSms: true,
+            smsBody: body,
           })),
         );
 

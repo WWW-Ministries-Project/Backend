@@ -19,6 +19,8 @@ const CONVERSION_NAME_VALIDATION_MESSAGE =
   "First name and last name are required to convert a visitor to a member. Please update the visitor details and try again.";
 const MEMBERSHIP_TYPE_VALIDATION_MESSAGE =
   "Membership type must be either ONLINE or IN_HOUSE.";
+const CLERGY_VALIDATION_MESSAGE =
+  "If the visitor is clergy, provide the church and church location. Role in the church is optional.";
 
 const normalizeOptionalEmail = (email?: string | null) => {
   const normalizedEmail = String(email || "")
@@ -34,8 +36,7 @@ const isRealEmail = (email?: string | null) => {
 
   const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   return (
-    emailPattern.test(normalizedEmail) &&
-    !normalizedEmail.endsWith("@temp.com")
+    emailPattern.test(normalizedEmail) && !normalizedEmail.endsWith("@temp.com")
   );
 };
 
@@ -50,6 +51,146 @@ const hasTextValue = (value: unknown) =>
 const normalizeOptionalText = (value: unknown) => {
   if (!hasTextValue(value)) return null;
   return String(value).trim();
+};
+
+const getFirstDefinedValue = (...values: unknown[]) =>
+  values.find((value) => value !== undefined);
+
+const parseBooleanInput = (value: unknown) => {
+  if (typeof value === "boolean") return value;
+
+  if (typeof value === "number") {
+    if (value === 1) return true;
+    if (value === 0) return false;
+    return undefined;
+  }
+
+  if (typeof value === "string") {
+    const normalizedValue = value.trim().toLowerCase();
+    if (!normalizedValue) return undefined;
+
+    if (["true", "1", "yes", "y", "on"].includes(normalizedValue)) {
+      return true;
+    }
+
+    if (["false", "0", "no", "n", "off"].includes(normalizedValue)) {
+      return false;
+    }
+  }
+
+  return undefined;
+};
+
+type ResolvedVisitorClergyFields = {
+  shouldApply: boolean;
+  hasExplicitInput: boolean;
+  isClergy: boolean;
+  churchName: string | null;
+  churchLocation: string | null;
+  churchRole: string | null;
+};
+
+const resolveVisitorClergyFields = (
+  body: any,
+  options: { defaultToFalse?: boolean } = {},
+): ResolvedVisitorClergyFields => {
+  const clergyInfo =
+    body?.clergy_info && typeof body.clergy_info === "object"
+      ? body.clergy_info
+      : body?.clergyInfo && typeof body.clergyInfo === "object"
+        ? body.clergyInfo
+        : {};
+
+  const isClergyInput = getFirstDefinedValue(
+    body?.isClergy,
+    body?.is_clergy,
+    clergyInfo?.isClergy,
+    clergyInfo?.is_clergy,
+  );
+  const churchNameInput = getFirstDefinedValue(
+    body?.churchName,
+    body?.church_name,
+    body?.church,
+    clergyInfo?.churchName,
+    clergyInfo?.church_name,
+    clergyInfo?.church,
+  );
+  const churchLocationInput = getFirstDefinedValue(
+    body?.churchLocation,
+    body?.church_location,
+    body?.locationOfChurch,
+    body?.location_of_church,
+    clergyInfo?.churchLocation,
+    clergyInfo?.church_location,
+    clergyInfo?.location,
+    clergyInfo?.locationOfChurch,
+    clergyInfo?.location_of_church,
+  );
+  const churchRoleInput = getFirstDefinedValue(
+    body?.churchRole,
+    body?.church_role,
+    body?.roleInChurch,
+    body?.role_in_church,
+    clergyInfo?.churchRole,
+    clergyInfo?.church_role,
+    clergyInfo?.role,
+    clergyInfo?.roleInChurch,
+    clergyInfo?.role_in_church,
+  );
+
+  const hasExplicitInput = [
+    isClergyInput,
+    churchNameInput,
+    churchLocationInput,
+    churchRoleInput,
+  ].some((value) => value !== undefined);
+
+  if (!hasExplicitInput && !options.defaultToFalse) {
+    return {
+      shouldApply: false,
+      hasExplicitInput: false,
+      isClergy: false,
+      churchName: null,
+      churchLocation: null,
+      churchRole: null,
+    };
+  }
+
+  const hasClergyDetails = [
+    churchNameInput,
+    churchLocationInput,
+    churchRoleInput,
+  ].some((value) => value !== undefined);
+  const isClergy =
+    parseBooleanInput(isClergyInput) ??
+    (hasClergyDetails ? true : Boolean(options.defaultToFalse));
+
+  if (isClergy) {
+    const churchName = normalizeOptionalText(churchNameInput);
+    const churchLocation = normalizeOptionalText(churchLocationInput);
+
+    if (!churchName || !churchLocation) {
+      throw new InputValidationError(CLERGY_VALIDATION_MESSAGE);
+    }
+
+    return {
+      shouldApply: true,
+      hasExplicitInput,
+      isClergy: true,
+      churchName,
+      churchLocation,
+      churchRole: normalizeOptionalText(churchRoleInput),
+    };
+  }
+
+  return {
+    shouldApply: true,
+    hasExplicitInput,
+    isClergy: false,
+    churchName: null,
+    churchLocation: null,
+    churchRole: null,
+  };
 };
 
 const normalizeConversionGender = (value: unknown) => {
@@ -88,7 +229,9 @@ const normalizeMembershipType = (value: unknown) => {
   throw new InputValidationError(MEMBERSHIP_TYPE_VALIDATION_MESSAGE);
 };
 
-const normalizeResponsibleMembersInput = (responsibleMembers: unknown): unknown[] => {
+const normalizeResponsibleMembersInput = (
+  responsibleMembers: unknown,
+): unknown[] => {
   if (Array.isArray(responsibleMembers)) {
     return responsibleMembers;
   }
@@ -141,7 +284,9 @@ const serializeResponsibleMemberIds = (memberIds: number[]) =>
   JSON.stringify(
     Array.from(
       new Set(
-        memberIds.filter((memberId) => Number.isInteger(memberId) && memberId > 0),
+        memberIds.filter(
+          (memberId) => Number.isInteger(memberId) && memberId > 0,
+        ),
       ),
     ),
   );
@@ -156,7 +301,8 @@ const parseResponsibleMemberIds = (
     return [];
   }
 
-  const normalizedMembers = normalizeResponsibleMembersInput(responsibleMembers);
+  const normalizedMembers =
+    normalizeResponsibleMembersInput(responsibleMembers);
   if (!normalizedMembers.length) {
     if (strict && !isEmptyResponsibleMembersValue(responsibleMembers)) {
       throw new InputValidationError(RESPONSIBLE_MEMBERS_VALIDATION_MESSAGE);
@@ -203,7 +349,8 @@ const getResponsibleMemberNames = (
 
 const buildMissingResponsibleMembersMessage = (missingMemberIds: number[]) => {
   const pronoun = missingMemberIds.length === 1 ? "it" : "them";
-  const memberLabel = missingMemberIds.length === 1 ? "this member" : "these members";
+  const memberLabel =
+    missingMemberIds.length === 1 ? "this member" : "these members";
 
   return `Responsible member is optional. If you provide it, select only existing members. We could not find ${memberLabel}: ${missingMemberIds.join(", ")}. Remove ${pronoun} or choose valid members to continue.`;
 };
@@ -223,8 +370,12 @@ export class VisitorService {
       select: { id: true },
     });
 
-    const existingMemberIdSet = new Set(existingMembers.map((member) => member.id));
-    const missingMemberIds = memberIds.filter((id) => !existingMemberIdSet.has(id));
+    const existingMemberIdSet = new Set(
+      existingMembers.map((member) => member.id),
+    );
+    const missingMemberIds = memberIds.filter(
+      (id) => !existingMemberIdSet.has(id),
+    );
 
     if (missingMemberIds.length) {
       throw new InputValidationError(
@@ -253,12 +404,14 @@ export class VisitorService {
     const responsibleMembers = hasResponsibleMembers
       ? await this.validateResponsibleMemberIds(body.responsibleMembers)
       : undefined;
+    const clergyFields = resolveVisitorClergyFields(body);
 
     const visitorData = {
       title: personal_info.title,
       firstName: toSentenceCase(personal_info.first_name),
       lastName: toSentenceCase(personal_info.last_name),
       otherName: toSentenceCase(personal_info.other_name),
+      gender: normalizeOptionalText(personal_info.gender),
       email: contact_info.email.toLowerCase(),
       phone: contact_info.phone?.number ?? null,
       country: contact_info.resident_country,
@@ -272,9 +425,19 @@ export class VisitorService {
       consentToContact:
         consentToContact === "true" || consentToContact === true,
       membershipWish: membershipWish === "true" || membershipWish === true,
+      ...(clergyFields.shouldApply
+        ? {
+            isClergy: clergyFields.isClergy,
+            churchName: clergyFields.churchName,
+            churchLocation: clergyFields.churchLocation,
+            churchRole: clergyFields.churchRole,
+          }
+        : {}),
       ...(hasResponsibleMembers
         ? {
-            responsibleMembers: serializeResponsibleMemberIds(responsibleMembers || []),
+            responsibleMembers: serializeResponsibleMemberIds(
+              responsibleMembers || [],
+            ),
           }
         : {}),
       // is_member is not included here; optionally set it if needed
@@ -372,6 +535,7 @@ export class VisitorService {
       createdMonth?: string;
       visitMonth?: string;
       eventId?: string;
+      referral?: string;
       page?: string;
       limit?: string;
       take?: string;
@@ -386,10 +550,12 @@ export class VisitorService {
       createdMonth,
       visitMonth,
       eventId,
+      referral,
       page = "1",
       limit = "10",
       take,
     } = query;
+    const normalizedSearch = typeof search === "string" ? search.trim() : "";
 
     const parsedPageNumber = Number(page);
     const pageNumber =
@@ -406,13 +572,13 @@ export class VisitorService {
 
     const where: any = {};
 
-    if (search) {
+    if (normalizedSearch) {
       where.OR = [
-        { firstName: { contains: toSentenceCase(search) } },
-        { lastName: { contains: toSentenceCase(search) } },
-        { otherName: { contains: toSentenceCase(search) } },
-        { email: { contains: toSentenceCase(search) } },
-        { phone: { contains: toSentenceCase(search) } },
+        { firstName: { contains: normalizedSearch } },
+        { lastName: { contains: normalizedSearch } },
+        { otherName: { contains: normalizedSearch } },
+        { email: { contains: normalizedSearch } },
+        { phone: { contains: normalizedSearch } },
       ];
     }
 
@@ -440,6 +606,10 @@ export class VisitorService {
           eventId: Number(eventId),
         },
       };
+    }
+
+    if (referral) {
+      where.howHeard = referral;
     }
 
     const shouldScopeByResponsibleMember =
@@ -547,6 +717,9 @@ export class VisitorService {
     const responsibleMembers = hasResponsibleMembers
       ? await this.validateResponsibleMemberIds(body.responsibleMembers)
       : [];
+    const clergyFields = resolveVisitorClergyFields(body, {
+      defaultToFalse: true,
+    });
 
     const visitDate = new Date(visit.date);
     const email = contact_info.email;
@@ -574,14 +747,35 @@ export class VisitorService {
         throw new InputValidationError(DUPLICATE_VISIT_VALIDATION_MESSAGE);
       }
 
-      const updatedExistingVisitor = hasResponsibleMembers
-        ? await prisma.visitor.update({
-            where: { id: existingVisitor.id },
-            data: {
-              responsibleMembers: serializeResponsibleMemberIds(responsibleMembers),
-            },
-          })
-        : existingVisitor;
+      const updatedExistingVisitor =
+        hasResponsibleMembers ||
+        (clergyFields.hasExplicitInput && clergyFields.isClergy) ||
+        hasTextValue(personal_info?.gender)
+          ? await prisma.visitor.update({
+              where: { id: existingVisitor.id },
+              data: {
+                ...(hasTextValue(personal_info?.gender)
+                  ? {
+                      gender: normalizeOptionalText(personal_info.gender),
+                    }
+                  : {}),
+                ...(hasResponsibleMembers
+                  ? {
+                      responsibleMembers:
+                        serializeResponsibleMemberIds(responsibleMembers),
+                    }
+                  : {}),
+                ...(clergyFields.hasExplicitInput && clergyFields.isClergy
+                  ? {
+                      isClergy: true,
+                      churchName: clergyFields.churchName,
+                      churchLocation: clergyFields.churchLocation,
+                      churchRole: clergyFields.churchRole,
+                    }
+                  : {}),
+              },
+            })
+          : existingVisitor;
 
       const newVisit = await visitService.createVisit({
         visitorId: existingVisitor.id,
@@ -607,6 +801,7 @@ export class VisitorService {
       firstName: toSentenceCase(personal_info.first_name),
       lastName: toSentenceCase(personal_info.last_name),
       otherName: toSentenceCase(personal_info.other_name),
+      gender: normalizeOptionalText(personal_info.gender),
       email: contact_info.email.toLowerCase(),
       phone: contact_info.phone?.number ?? null,
       country: contact_info.resident_country,
@@ -620,6 +815,10 @@ export class VisitorService {
       consentToContact:
         consentToContact === "true" || consentToContact === true,
       membershipWish: membershipWish === "true" || membershipWish === true,
+      isClergy: clergyFields.isClergy,
+      churchName: clergyFields.churchName,
+      churchLocation: clergyFields.churchLocation,
+      churchRole: clergyFields.churchRole,
       responsibleMembers: serializeResponsibleMemberIds(responsibleMembers),
       is_member: false,
     };
@@ -662,14 +861,18 @@ export class VisitorService {
     const churchInfoPayload = payload?.church_info || {};
     const contactPhonePayload = contactInfoPayload?.phone || {};
     const resolvedFirstName = normalizeOptionalText(
-      personalInfoPayload.first_name ?? payload?.first_name ?? visitor.firstName,
+      personalInfoPayload.first_name ??
+        payload?.first_name ??
+        visitor.firstName,
     );
     const resolvedLastName = normalizeOptionalText(
       personalInfoPayload.last_name ?? payload?.last_name ?? visitor.lastName,
     );
     const resolvedOtherName =
       normalizeOptionalText(
-        personalInfoPayload.other_name ?? payload?.other_name ?? visitor.otherName,
+        personalInfoPayload.other_name ??
+          payload?.other_name ??
+          visitor.otherName,
       ) || "";
     const resolvedTitle = normalizeOptionalText(
       personalInfoPayload.title ?? payload?.title ?? visitor.title,
@@ -711,7 +914,9 @@ export class VisitorService {
       personalInfoPayload.marital_status ?? payload?.marital_status ?? null;
     const resolvedNationality =
       normalizeOptionalText(
-        personalInfoPayload.nationality ?? payload?.nationality ?? resolvedCountry,
+        personalInfoPayload.nationality ??
+          payload?.nationality ??
+          resolvedCountry,
       ) || resolvedCountry;
 
     if (!resolvedFirstName || !resolvedLastName) {

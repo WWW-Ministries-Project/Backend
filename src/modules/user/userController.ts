@@ -52,8 +52,7 @@ const isRealEmail = (email?: string | null) => {
 
   const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   return (
-    emailPattern.test(normalizedEmail) &&
-    !normalizedEmail.endsWith("@temp.com")
+    emailPattern.test(normalizedEmail) && !normalizedEmail.endsWith("@temp.com")
   );
 };
 
@@ -100,7 +99,10 @@ const normalizeMemberPayload = (payload: any = {}) => {
     }
   }
 
-  if (!hasOwn(contactPhone, "country_code") && hasOwn(payload, "country_code")) {
+  if (
+    !hasOwn(contactPhone, "country_code") &&
+    hasOwn(payload, "country_code")
+  ) {
     contactPhone.country_code = payload.country_code;
   }
 
@@ -150,7 +152,9 @@ const normalizeMemberPayload = (payload: any = {}) => {
   };
 };
 
-const parsePermissionsObject = (permissions: any): Record<string, any> | null => {
+const parsePermissionsObject = (
+  permissions: any,
+): Record<string, any> | null => {
   if (!permissions) return null;
 
   if (typeof permissions === "string") {
@@ -291,7 +295,10 @@ export const registerUser = async (req: Request, res: Response) => {
 
     const normalizedEmail = normalizeOptionalEmail(email);
     const isLoginUser =
-      is_user === true || is_user === "true" || is_user === 1 || is_user === "1";
+      is_user === true ||
+      is_user === "true" ||
+      is_user === 1 ||
+      is_user === "1";
 
     if (isLoginUser && !isRealEmail(normalizedEmail)) {
       return res.status(400).json({
@@ -308,12 +315,10 @@ export const registerUser = async (req: Request, res: Response) => {
       : null;
 
     if (existance) {
-      return res
-        .status(404)
-        .json({
-          message: "User exist with this email " + normalizedEmail,
-          data: null,
-        });
+      return res.status(404).json({
+        message: "User exist with this email " + normalizedEmail,
+        data: null,
+      });
     }
 
     const response = await userService.registerUser(normalizedPayload);
@@ -430,7 +435,7 @@ export const updateUser = async (req: Request, res: Response) => {
           ? true
           : is_user === "false" || is_user === "0"
             ? false
-          : userExists?.is_user;
+            : userExists?.is_user;
     const nextEmail = hasEmailField ? incomingEmail : existingEmail;
     const nextAccessLevelId = nextIsUser ? userExists?.access_level_id : null;
     const nextStatus = String(status || userExists?.status || "")
@@ -459,7 +464,10 @@ export const updateUser = async (req: Request, res: Response) => {
     }
 
     if (nextIsUser && !userExists?.is_user) {
-      await roleEligibilityService.assertEligible("ministry_worker", Number(user_id));
+      await roleEligibilityService.assertEligible(
+        "ministry_worker",
+        Number(user_id),
+      );
     }
 
     if (nextStatus === "MEMBER" && userExists?.status !== "MEMBER") {
@@ -674,14 +682,19 @@ async function updateFamilyMembers(family: any[], primaryUser: any) {
     }
 
     if (member.user_id) {
-      const hasEmailField = Object.prototype.hasOwnProperty.call(member, "email");
+      const hasEmailField = Object.prototype.hasOwnProperty.call(
+        member,
+        "email",
+      );
       spouseUser = await prisma.user.update({
         where: { id: Number(member.user_id) },
         data: {
           name: toCapitalizeEachWord(
             `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
           ),
-          ...(hasEmailField ? { email: normalizeOptionalEmail(member.email) } : {}),
+          ...(hasEmailField
+            ? { email: normalizeOptionalEmail(member.email) }
+            : {}),
           user_info: {
             upsert: {
               create: {
@@ -755,14 +768,19 @@ async function updateFamilyMembers(family: any[], primaryUser: any) {
     }
 
     if (member.user_id) {
-      const hasEmailField = Object.prototype.hasOwnProperty.call(member, "email");
+      const hasEmailField = Object.prototype.hasOwnProperty.call(
+        member,
+        "email",
+      );
       familyUser = await prisma.user.update({
         where: { id: Number(member.user_id) },
         data: {
           name: toCapitalizeEachWord(
             `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
           ),
-          ...(hasEmailField ? { email: normalizeOptionalEmail(member.email) } : {}),
+          ...(hasEmailField
+            ? { email: normalizeOptionalEmail(member.email) }
+            : {}),
           user_info: {
             upsert: {
               create: {
@@ -880,7 +898,10 @@ async function updateFamilyMembers(family: any[], primaryUser: any) {
     updatedMembers.push(familyUser);
   }
 
-  await pruneMissingBidirectionalFamilyRelations(primaryUser.id, retainedFamilyIds);
+  await pruneMissingBidirectionalFamilyRelations(
+    primaryUser.id,
+    retainedFamilyIds,
+  );
   return updatedMembers;
 }
 
@@ -1094,7 +1115,8 @@ export const login = async (req: Request, res: Response) => {
 
     const department_positions = (existance.department_positions || []).map(
       (deptPos: any) => ({
-        department_id: deptPos?.department?.id ?? deptPos?.department_id ?? null,
+        department_id:
+          deptPos?.department?.id ?? deptPos?.department_id ?? null,
         department_name: deptPos?.department?.name ?? null,
         position_id: deptPos?.position?.id ?? deptPos?.position_id ?? null,
         position_name: deptPos?.position?.name ?? null,
@@ -1111,7 +1133,9 @@ export const login = async (req: Request, res: Response) => {
 
     const ministry_worker = Boolean(existance.is_user);
     const user_category =
-      ministry_worker && Boolean(existance.access_level_id) ? "admin" : "member";
+      ministry_worker && Boolean(existance.access_level_id)
+        ? "admin"
+        : "member";
     const tokenPermissions =
       user_category === "admin"
         ? parsePermissionsObject(existance.access?.permissions) || {}
@@ -1403,9 +1427,7 @@ const toUniquePositiveIds = (values: Array<number | null | undefined>) =>
     new Set(
       values.filter(
         (value): value is number =>
-          typeof value === "number" &&
-          Number.isInteger(value) &&
-          value > 0,
+          typeof value === "number" && Number.isInteger(value) && value > 0,
       ),
     ),
   );
@@ -1563,7 +1585,7 @@ const fetchUserDirectoryRelations = async (
     department_name: departmentById.get(entry.department_id)?.name ?? null,
     position_id: entry.position_id ?? null,
     position_name: entry.position_id
-      ? positionById.get(entry.position_id)?.name ?? null
+      ? (positionById.get(entry.position_id)?.name ?? null)
       : null,
   }));
 
@@ -1571,7 +1593,9 @@ const fetchUserDirectoryRelations = async (
     userInfoByUserId,
     positionById,
     departmentById,
-    departmentPositionsByUserId: groupRowsByUserId(normalizedDepartmentPositions),
+    departmentPositionsByUserId: groupRowsByUserId(
+      normalizedDepartmentPositions,
+    ),
   };
 };
 
@@ -1596,17 +1620,42 @@ export const ListUsers = async (req: Request, res: Response) => {
     is_user,
     department_id,
     page = "1",
-    take = "12",
+    take,
+    limit,
     is_active,
     name,
+    search,
     ministry_worker,
     membership_type,
+    status,
   } = req.query;
   const isUser =
     is_user === "true" || ministry_worker === "true" ? true : false;
+  const resolvedTake =
+    typeof take === "string" && take.trim()
+      ? take
+      : typeof limit === "string" && limit.trim()
+        ? limit
+        : "12";
+  const searchTerm =
+    typeof search === "string" && search.trim()
+      ? search.trim()
+      : typeof name === "string" && name.trim()
+        ? name.trim()
+        : "";
+  const normalizedStatus =
+    typeof status === "string" && status.trim()
+      ? status.trim().toUpperCase()
+      : "";
 
-  const pageNum = parseInt(page as string, 10);
-  const pageSize = parseInt(take as string, 10);
+  const parsedPageNum = parseInt(page as string, 10);
+  const pageNum =
+    Number.isInteger(parsedPageNum) && parsedPageNum > 0 ? parsedPageNum : 1;
+  const parsedPageSize = parseInt(resolvedTake as string, 10);
+  const pageSize =
+    Number.isInteger(parsedPageSize) && parsedPageSize > 0
+      ? parsedPageSize
+      : 12;
   const skip = (pageNum - 1) * pageSize;
   const memberScope = (req as any).memberScope;
   const excludedMemberIds: number[] = Array.isArray(memberScope?.exclusions)
@@ -1614,26 +1663,87 @@ export const ListUsers = async (req: Request, res: Response) => {
     : [];
 
   try {
-    const whereFilter: any = {};
+    const whereConditions: any[] = [];
 
-    if (is_active !== undefined) whereFilter.is_active = is_active;
-    if (is_user !== undefined) whereFilter.is_user = isUser;
-    if (department_id) {
-      const parsedDepartmentId = Number(department_id);
-      if (!Number.isNaN(parsedDepartmentId) && parsedDepartmentId > 0) {
-        whereFilter.OR = [
-          { department_id: parsedDepartmentId },
-          { department_positions: { some: { department_id: parsedDepartmentId } } },
-        ];
+    if (is_active !== undefined) {
+      whereConditions.push({
+        is_active:
+          is_active === "true"
+            ? true
+            : is_active === "false"
+              ? false
+              : is_active,
+      });
+    }
+    if (is_user !== undefined || ministry_worker !== undefined) {
+      whereConditions.push({ is_user: isUser });
+    }
+    if (typeof department_id === "string" && department_id.trim()) {
+      if (department_id === "unassigned") {
+        whereConditions.push({
+          AND: [
+            { department_id: null },
+            {
+              department_positions: {
+                none: {},
+              },
+            },
+          ],
+        });
+      } else {
+        const parsedDepartmentId = Number(department_id);
+        if (!Number.isNaN(parsedDepartmentId) && parsedDepartmentId > 0) {
+          whereConditions.push({
+            OR: [
+              { department_id: parsedDepartmentId },
+              {
+                department_positions: {
+                  some: { department_id: parsedDepartmentId },
+                },
+              },
+            ],
+          });
+        }
       }
     }
-    if (membership_type) whereFilter.membership_type = membership_type;
-    if (typeof name === "string" && name.trim()) {
-      whereFilter.name = { contains: name.trim() };
+    if (normalizedStatus) {
+      if (normalizedStatus === "UNCONFIRMED") {
+        whereConditions.push({
+          OR: [{ status: "UNCONFIRMED" }, { status: null }],
+        });
+      } else if (
+        normalizedStatus === "CONFIRMED" ||
+        normalizedStatus === "MEMBER"
+      ) {
+        whereConditions.push({ status: normalizedStatus });
+      }
+    }
+    if (membership_type) {
+      whereConditions.push({ membership_type });
+    }
+    if (searchTerm) {
+      whereConditions.push({
+        OR: [
+          { name: { contains: searchTerm } },
+          { email: { contains: searchTerm } },
+          { member_id: { contains: searchTerm } },
+          {
+            user_info: {
+              is: {
+                primary_number: { contains: searchTerm },
+              },
+            },
+          },
+        ],
+      });
     }
     if (excludedMemberIds.length > 0) {
-      whereFilter.id = { notIn: excludedMemberIds };
+      whereConditions.push({
+        id: { notIn: excludedMemberIds },
+      });
     }
+    const whereFilter =
+      whereConditions.length > 0 ? { AND: whereConditions } : undefined;
 
     const [total, users] = await Promise.all([
       prisma.user.count({ where: whereFilter }),
@@ -1727,6 +1837,7 @@ export const ListUsers = async (req: Request, res: Response) => {
     res.status(200).json({
       message: "Operation Successful",
       current_page: pageNum,
+      take: pageSize,
       page_size: pageSize,
       total,
       totalPages: Math.ceil(total / pageSize),
@@ -2365,12 +2476,17 @@ export const getUserByEmailPhone = async (req: Request, res: Response) => {
     // If email is passed, find user
     if (email) {
       const userLookupWhere: any =
-        isOwnScope && Number.isInteger(authenticatedUserId) && authenticatedUserId > 0
+        isOwnScope &&
+        Number.isInteger(authenticatedUserId) &&
+        authenticatedUserId > 0
           ? {
               user_id: authenticatedUserId,
             }
           : {
-              OR: [{ email: email as string }, { primary_number: email as string }],
+              OR: [
+                { email: email as string },
+                { primary_number: email as string },
+              ],
             };
 
       user = await prisma.user_info.findFirst({

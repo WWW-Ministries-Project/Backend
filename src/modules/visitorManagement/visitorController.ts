@@ -16,7 +16,8 @@ const isVisitorValidationError = (error: unknown) =>
 
 const isVisitorRecordNotFoundError = (error: unknown) =>
   error instanceof NotFoundError ||
-  (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2025");
+  (error instanceof Prisma.PrismaClientKnownRequestError &&
+    error.code === "P2025");
 
 export class VisitorController {
   async createVisitor(req: Request, res: Response) {
@@ -27,26 +28,22 @@ export class VisitorController {
         .json({ message: "Visitor Added", data: newVisitor });
     } catch (error: unknown) {
       if (isVisitorValidationError(error)) {
-        return res
-          .status(400)
-          .json({
-            message: "Please correct the visitor details and try again.",
-            error: getErrorMessage(
-              error,
-              "Please review the visitor details and try again.",
-            ),
-          });
-      }
-
-      return res
-        .status(500)
-        .json({
-          message: "Error creating visitor",
+        return res.status(400).json({
+          message: "Please correct the visitor details and try again.",
           error: getErrorMessage(
             error,
-            "We could not save the visitor right now. Please try again.",
+            "Please review the visitor details and try again.",
           ),
         });
+      }
+
+      return res.status(500).json({
+        message: "Error creating visitor",
+        error: getErrorMessage(
+          error,
+          "We could not save the visitor right now. Please try again.",
+        ),
+      });
     }
   }
 
@@ -54,11 +51,19 @@ export class VisitorController {
     try {
       const queryParams = req.query as any;
       const visitorScope = (req as any).visitorScope;
-      const programs = await visitorService.getAllVisitors(
+      const response = await visitorService.getAllVisitors(
         queryParams,
         visitorScope,
       );
-      return res.status(200).json({ data: programs });
+      return res.status(200).json({
+        message: "Visitors fetched successfully",
+        current_page: response.meta.page,
+        page_size: response.meta.limit,
+        take: response.meta.take,
+        total: response.meta.total,
+        totalPages: response.meta.totalPages,
+        data: response.data,
+      });
     } catch (error: any) {
       return res
         .status(500)
@@ -94,15 +99,13 @@ export class VisitorController {
         .json({ message: "Visitor updated", data: updatedProgram });
     } catch (error: unknown) {
       if (isVisitorValidationError(error)) {
-        return res
-          .status(400)
-          .json({
-            message: "Please correct the visitor details and try again.",
-            error: getErrorMessage(
-              error,
-              "Please review the visitor details and try again.",
-            ),
-          });
+        return res.status(400).json({
+          message: "Please correct the visitor details and try again.",
+          error: getErrorMessage(
+            error,
+            "Please review the visitor details and try again.",
+          ),
+        });
       }
 
       if (isVisitorRecordNotFoundError(error)) {
@@ -113,15 +116,13 @@ export class VisitorController {
         });
       }
 
-      return res
-        .status(500)
-        .json({
-          message: "Error updating visitor",
-          error: getErrorMessage(
-            error,
-            "We could not update the visitor right now. Please try again.",
-          ),
-        });
+      return res.status(500).json({
+        message: "Error updating visitor",
+        error: getErrorMessage(
+          error,
+          "We could not update the visitor right now. Please try again.",
+        ),
+      });
     }
   }
 
@@ -183,9 +184,7 @@ export class VisitorController {
       }
 
       if (
-        String(getErrorMessage(error, "")).startsWith(
-          "A user with the email ",
-        )
+        String(getErrorMessage(error, "")).startsWith("A user with the email ")
       ) {
         return res.status(409).json({
           message: "A member account with this email already exists.",

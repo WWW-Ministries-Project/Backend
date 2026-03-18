@@ -56,6 +56,7 @@ model user {
   sms_delivery_jobs        notification_sms_delivery_job[]  @relation("notification_sms_delivery_user")
   system_failure_notification_settings system_notification_settings[] @relation("system_failure_notification_recipient")
   system_failure_notification_settings_updates system_notification_settings[] @relation("system_failure_notification_updated_by")
+  attendance_timing_settings_updates attendance_timing_settings[] @relation("attendance_timing_settings_updated_by")
   matched_biometric_punches event_biometric_punch[] @relation("event_biometric_punch_matched_user")
   imported_biometric_punches event_biometric_punch[] @relation("event_biometric_punch_imported_by_user")
   created_biometric_import_jobs event_biometric_import_job[] @relation("event_biometric_import_job_created_by_user")
@@ -107,6 +108,22 @@ model system_notification_settings {
 
   @@index([system_failure_recipient_user_id], map: "system_notification_settings_recipient_idx")
   @@index([updated_by_user_id], map: "system_notification_settings_updated_by_idx")
+}
+
+model attendance_timing_settings {
+  id                Int                    @id
+  early_value       Int                    @default(15)
+  early_unit        attendance_timing_unit @default(MINUTES)
+  on_time_value     Int                    @default(15)
+  on_time_unit      attendance_timing_unit @default(MINUTES)
+  late_value        Int                    @default(15)
+  late_unit         attendance_timing_unit @default(MINUTES)
+  updated_by_user_id Int?
+  created_at        DateTime               @default(now())
+  updated_at        DateTime               @updatedAt
+  updated_by        user?                  @relation("attendance_timing_settings_updated_by", fields: [updated_by_user_id], references: [id], map: "attendance_timing_settings_updated_by_fk")
+
+  @@index([updated_by_user_id], map: "attendance_timing_settings_updated_by_idx")
 }
 
 model user_info {
@@ -1101,6 +1118,7 @@ model visitor {
   id                 Int              @id @default(autoincrement())
   firstName          String
   lastName           String
+  gender             String?
   email              String?          @unique
   phone              String?
   country            String?
@@ -1113,6 +1131,10 @@ model visitor {
   howHeard           String?
   consentToContact   Boolean          @default(false)
   membershipWish     Boolean          @default(false)
+  isClergy           Boolean          @default(false)
+  churchName         String?
+  churchLocation     String?
+  churchRole         String?
   createdAt          DateTime         @default(now())
   updatedAt          DateTime         @updatedAt
   country_code       String?
@@ -1684,6 +1706,11 @@ enum biometric_import_job_status {
   RUNNING
   COMPLETED
   FAILED
+}
+
+enum attendance_timing_unit {
+  MINUTES
+  HOURS
 }
 
 enum RequestApprovalStatus {
