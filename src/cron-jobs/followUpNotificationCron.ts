@@ -158,6 +158,11 @@ const processFollowUpWindowNotifications = async (args: {
           actionUrl: `/home/visitors/visitor/${followUp.visitorId}`,
           priority: "HIGH" as const,
           dedupeKey: `follow-up:${followUp.id}:${args.window}:${args.dayKey}:recipient:${recipientUserId}`,
+          sendSms: true,
+          smsBody:
+            args.window === "due"
+              ? "A visitor follow-up assigned to you is due today. Open the app for details."
+              : "A visitor follow-up assigned to you is overdue and needs attention. Open the app for details.",
         },
       ];
     });

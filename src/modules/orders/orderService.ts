@@ -415,6 +415,8 @@ export class OrderService {
         actionUrl: "/member/market/orders",
         priority: "MEDIUM",
         dedupeKey: `order:${updatedOrder.id}:delivery:${normalizedStatus}`,
+        sendSms: true,
+        smsBody: `Delivery status for order ${updatedOrder.order_number || `#${updatedOrder.id}`} is now ${normalizedStatus}.`,
       });
     }
 

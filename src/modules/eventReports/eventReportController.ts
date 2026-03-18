@@ -1,7 +1,6 @@
 import { Request, Response } from "express";
 import {
   churchAttendanceApprovalAction,
-  departmentApprovalAction,
   fetchEventReportApprovalConfig,
   finalApprovalAction,
   financeApprovalAction,
@@ -51,17 +50,6 @@ export const upsertEventReportFinanceHandler = async (
   const data = await upsertEventReportFinance(req.body, (req as any).user);
   res.status(200).json({
     message: "Finance updated successfully",
-    ...data,
-  });
-};
-
-export const departmentApprovalActionHandler = async (
-  req: Request,
-  res: Response,
-) => {
-  const data = await departmentApprovalAction(req.body, (req as any).user);
-  res.status(200).json({
-    message: "Department approval updated successfully",
     ...data,
   });
 };

@@ -170,6 +170,8 @@ export class AppointmentController {
           actionUrl: "/home/appointments",
           priority: "MEDIUM",
           dedupeKey: `appointment:${newBooking.id}:booked:recipient:${staffRecipientId}`,
+          sendSms: true,
+          smsBody: `${newBooking.fullName || "A member"} booked an appointment for ${newBooking.date} (${newBooking.session.start} - ${newBooking.session.end}).`,
         });
       }
 
@@ -434,6 +436,8 @@ export class AppointmentController {
             priority: "MEDIUM",
             dedupeKey: `appointment:${updated.id}:status:${newStatus}:recipient:${recipientUserId}`,
             emailSubject: `Appointment ${newStatus === "CONFIRMED" ? "Confirmed" : "Updated"}`,
+            sendSms: true,
+            smsBody: `Appointment on ${updated.date} (${updated.session.start} - ${updated.session.end}) is now ${statusWord}.`,
           })),
         );
       }

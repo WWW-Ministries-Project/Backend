@@ -1,0 +1,2 @@
+ALTER TABLE `visitor`
+  ADD COLUMN `gender` VARCHAR(191) NULL;

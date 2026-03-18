@@ -14,6 +14,11 @@ import {
   EventBiometricAttendanceImportError,
   EventBiometricAttendanceService,
 } from "./biometricAttendanceService";
+import {
+  buildAttendanceVisitorCountsMap,
+  createEmptyAttendanceVisitorCounts,
+  getAttendanceVisitorCountsForRecord,
+} from "./attendanceVisitorCounts";
 
 dotenv.config();
 
@@ -23,6 +28,43 @@ const eventAttendanceSelect = {
   created_at: true,
   user: {
     select: {
+      id: true,
+      name: true,
+      member_id: true,
+      email: true,
+      department_id: true,
+      department: {
+        select: {
+          department_id: true,
+          department_info: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+        },
+      },
+      department_positions: {
+        orderBy: {
+          department_id: "asc" as const,
+        },
+        select: {
+          department_id: true,
+          position_id: true,
+          department: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+          position: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+        },
+      },
       user_info: {
         select: {
           user: {
@@ -184,10 +226,77 @@ const publicEventSelect = {
   },
 };
 
+const formatAttendanceSummaryRecord = (
+  record: {
+    id: number;
+    date: Date;
+    adultMale: number;
+    adultFemale: number;
+    childrenMale: number;
+    childrenFemale: number;
+    youthMale: number;
+    youthFemale: number;
+    recordedBy: number;
+    recordedByName: string;
+    created_at: Date;
+    updated_at: Date | null;
+    event_mgt_id: number;
+    event?: {
+      event?: {
+        event_name?: string | null;
+      } | null;
+    } | null;
+  },
+  visitorCounts = createEmptyAttendanceVisitorCounts(),
+) => ({
+  id: record.id,
+  date: record.date,
+  adultMale: record.adultMale,
+  adultFemale: record.adultFemale,
+  childrenMale: record.childrenMale,
+  childrenFemale: record.childrenFemale,
+  youthMale: record.youthMale,
+  youthFemale: record.youthFemale,
+  recordedBy: record.recordedBy,
+  recordedByName: record.recordedByName,
+  created_at: record.created_at,
+  updated_at: record.updated_at,
+  eventId: record.event_mgt_id,
+  event_name: record.event?.event?.event_name || null,
+  visitors: visitorCounts.total.total,
+  visitorBreakdown: visitorCounts,
+  visitorsMale: visitorCounts.visitors.male,
+  visitorsFemale: visitorCounts.visitors.female,
+  visitorsTotal: visitorCounts.visitors.total,
+  visitorClergyMale: visitorCounts.visitorClergy.male,
+  visitorClergyFemale: visitorCounts.visitorClergy.female,
+  visitorClergyTotal: visitorCounts.visitorClergy.total,
+  visitorTotalMale: visitorCounts.total.male,
+  visitorTotalFemale: visitorCounts.total.female,
+  visitorTotal: visitorCounts.total.total,
+});
+
 export class eventManagement {
+  private static readonly SHOW_PRESENT_UPCOMING_QUERY_KEYS = [
+    "show_present_upcoming_events",
+    "show_present_and_upcoming_events",
+    "show_present_upcoming",
+    "present_upcoming",
+    "include_upcoming",
+  ] as const;
+
   private getStartOfToday() {
     const now = new Date();
     return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  }
+
+  private getCurrentYearDateRange(referenceDate: Date = new Date()) {
+    const currentYear = referenceDate.getFullYear();
+
+    return {
+      gte: new Date(currentYear, 0, 1),
+      lt: new Date(currentYear + 1, 0, 1),
+    };
   }
 
   private toPositiveInt(value: unknown) {
@@ -247,6 +356,23 @@ export class eventManagement {
     };
   }
 
+  private getYearDateRange(year: any) {
+    const hasYear = year !== undefined && year !== null && year !== "";
+    if (!hasYear) {
+      return null;
+    }
+
+    const parsedYear = Number(year);
+    if (!Number.isInteger(parsedYear) || parsedYear <= 0) {
+      return null;
+    }
+
+    return {
+      gte: new Date(parsedYear, 0, 1),
+      lt: new Date(parsedYear + 1, 0, 1),
+    };
+  }
+
   private getRollingWindowDateRange(page: number = 1) {
     const safePage = Math.max(page, 1);
     const startOfToday = this.getStartOfToday();
@@ -275,6 +401,39 @@ export class eventManagement {
     }
 
     return this.getRollingWindowDateRange(page);
+  }
+
+  private resolveShowPresentUpcomingFilter(query: Request["query"]) {
+    for (const key of eventManagement.SHOW_PRESENT_UPCOMING_QUERY_KEYS) {
+      const value = query[key];
+      if (value !== undefined && value !== null && `${value}`.trim() !== "") {
+        return this.toBoolean(value);
+      }
+    }
+
+    return null;
+  }
+
+  private resolveLightEventDateRange(args: {
+    month: any;
+    year: any;
+    showPresentUpcoming: boolean | null;
+  }) {
+    const monthRange = this.getMonthDateRange(args.month, args.year);
+    if (monthRange) {
+      return monthRange;
+    }
+
+    const yearRange = this.getYearDateRange(args.year);
+    if (yearRange) {
+      return yearRange;
+    }
+
+    if (args.showPresentUpcoming) {
+      return this.getRollingWindowDateRange();
+    }
+
+    return this.getCurrentYearDateRange();
   }
 
   private normalizeOptionalString(value: unknown) {
@@ -1012,6 +1171,8 @@ export class eventManagement {
             actionUrl: "/home/events",
             priority: "MEDIUM",
             dedupeKey: `event:${eventId}:updated:${Date.now()}:recipient:${recipientUserId}`,
+            sendSms: true,
+            smsBody: "An event you registered for has been updated. Open the app for details.",
           })),
         );
       }
@@ -1084,6 +1245,8 @@ export class eventManagement {
             actionUrl: "/home/events",
             priority: "HIGH",
             dedupeKey: `event:${eventId}:cancelled:recipient:${recipientUserId}`,
+            sendSms: true,
+            smsBody: "An event you registered for has been cancelled. Open the app for details.",
           })),
         );
       }
@@ -1235,8 +1398,13 @@ export class eventManagement {
   listEventsLight = async (req: Request, res: Response) => {
     try {
       const { month, year, event_type, event_status }: any = req.query;
-
-      const startDateRange = this.resolveStartDateRange(month, year);
+      const showPresentUpcoming =
+        this.resolveShowPresentUpcomingFilter(req.query);
+      const startDateRange = this.resolveLightEventDateRange({
+        month,
+        year,
+        showPresentUpcoming,
+      });
 
       let whereClause: any = {
         event_type,
@@ -1972,6 +2140,8 @@ export class eventManagement {
         actionUrl: "/home/events",
         priority: "LOW",
         dedupeKey: `event:${params.event.id}:registration-success:${params.userId}`,
+        sendSms: true,
+        smsBody: "You have successfully registered for this event.",
       });
     }
 
@@ -2376,16 +2546,13 @@ export class eventManagement {
       const {
         eventId,
         date,
-        group = "BOTH",
         adultMale = 0,
         adultFemale = 0,
         childrenMale = 0,
         childrenFemale = 0,
         youthMale = 0,
         youthFemale = 0,
-        visitors = 0,
         newMembers = 0,
-        visitingPastors = 0,
         recordedBy,
         recordedByName,
       } = req.body;
@@ -2445,27 +2612,46 @@ export class eventManagement {
           data: {
             event_mgt_id,
             date: attendanceDate,
-            group,
             adultMale: Number(adultMale) || 0,
             adultFemale: Number(adultFemale) || 0,
             childrenMale: Number(childrenMale) || 0,
             youthMale: Number(youthMale) || 0,
             youthFemale: Number(youthFemale) || 0,
-            visitors: Number(visitors) || 0,
             newMembers: Number(newMembers) || 0,
-            visitingPastors: Number(visitingPastors) || 0,
             childrenFemale: Number(childrenFemale) || 0,
             recordedBy: Number(recordedBy),
             recordedByName: recordedByName.trim(),
           },
+          include: {
+            event: {
+              include: {
+                event: {
+                  select: { event_name: true },
+                },
+              },
+            },
+          },
         });
       });
+      const visitorCountsByKey = await buildAttendanceVisitorCountsMap([
+        {
+          eventId: record.event_mgt_id,
+          date: record.date,
+        },
+      ]);
 
       /* ---------------- Success Response ---------------- */
       return res.status(201).json({
         success: true,
         message: "Attendance recorded successfully",
-        data: record,
+        data: formatAttendanceSummaryRecord(
+          record,
+          getAttendanceVisitorCountsForRecord(
+            visitorCountsByKey,
+            record.event_mgt_id,
+            record.date,
+          ),
+        ),
       });
     } catch (error: any) {
       console.error(error);
@@ -2545,21 +2731,22 @@ export class eventManagement {
         orderBy: { date: "desc" },
       });
 
-      const formattedRecords = records.map((record) => ({
-        id: record.id,
-        date: record.date,
-        group: record.group,
-        adultMale: record.adultMale,
-        adultFemale: record.adultFemale,
-        childrenMale: record.childrenMale,
-        childrenFemale: record.childrenFemale,
-        recordedBy: record.recordedBy,
-        recordedByName: record.recordedByName,
-        created_at: record.created_at,
-        updated_at: record.updated_at,
-        eventId: record.event_mgt_id,
-        event_name: record.event.event.event_name,
-      }));
+      const visitorCountsByKey = await buildAttendanceVisitorCountsMap(
+        records.map((record) => ({
+          eventId: record.event_mgt_id,
+          date: record.date,
+        })),
+      );
+      const formattedRecords = records.map((record) =>
+        formatAttendanceSummaryRecord(
+          record,
+          getAttendanceVisitorCountsForRecord(
+            visitorCountsByKey,
+            record.event_mgt_id,
+            record.date,
+          ),
+        ),
+      );
 
       res.json({ success: true, data: formattedRecords });
     } catch (error: any) {
@@ -2664,6 +2851,22 @@ export class eventManagement {
               id: true,
               name: true,
               member_id: true,
+              department_positions: {
+                select: {
+                  department_id: true,
+                  position_id: true,
+                  department: {
+                    select: {
+                      name: true,
+                    },
+                  },
+                  position: {
+                    select: {
+                      name: true,
+                    },
+                  },
+                },
+              },
             },
           },
         },
@@ -2681,6 +2884,12 @@ export class eventManagement {
           user_id: number;
           user_name: string | null;
           member_id: string | null;
+          department_positions: Array<{
+            department_id: number;
+            department_name: string | null;
+            position_id: number | null;
+            position_name: string | null;
+          }>;
           attendance_date: string;
           first_punch_at: Date;
           last_punch_at: Date;
@@ -2695,6 +2904,14 @@ export class eventManagement {
         }
 
         const attendanceDate = punch.record_time.toISOString().slice(0, 10);
+        const departmentPositions = (
+          punch.matched_user.department_positions || []
+        ).map((entry) => ({
+          department_id: entry.department_id,
+          department_name: entry.department?.name ?? null,
+          position_id: entry.position_id ?? null,
+          position_name: entry.position?.name ?? null,
+        }));
         const key = [
           punch.event_mgt_id,
           punch.matched_user_id,
@@ -2710,6 +2927,7 @@ export class eventManagement {
             user_id: punch.matched_user_id,
             user_name: punch.matched_user.name,
             member_id: punch.matched_user.member_id,
+            department_positions: departmentPositions,
             attendance_date: attendanceDate,
             first_punch_at: punch.record_time,
             last_punch_at: punch.record_time,
@@ -2822,6 +3040,7 @@ export class eventManagement {
             user_id: record.user_id,
             user_name: record.user_name,
             member_id: record.member_id,
+            department_positions: record.department_positions,
             attendance_date: record.attendance_date,
             first_punch_at: record.first_punch_at.toISOString(),
             last_punch_at: record.last_punch_at.toISOString(),
@@ -2869,13 +3088,39 @@ export class eventManagement {
 
       const record = await prisma.event_attendance_summary.findUnique({
         where: { id: Number(id) },
+        include: {
+          event: {
+            include: {
+              event: {
+                select: { event_name: true },
+              },
+            },
+          },
+        },
       });
 
       if (!record) {
         return res.status(404).json({ success: false, message: "Not found" });
       }
 
-      res.json({ success: true, data: record });
+      const visitorCountsByKey = await buildAttendanceVisitorCountsMap([
+        {
+          eventId: record.event_mgt_id,
+          date: record.date,
+        },
+      ]);
+
+      res.json({
+        success: true,
+        data: formatAttendanceSummaryRecord(
+          record,
+          getAttendanceVisitorCountsForRecord(
+            visitorCountsByKey,
+            record.event_mgt_id,
+            record.date,
+          ),
+        ),
+      });
     } catch (error: any) {
       res.status(500).json({ success: false, message: error.message });
     }
@@ -2884,25 +3129,54 @@ export class eventManagement {
   updateAttendance = async (req: Request, res: Response) => {
     try {
       const { id } = req.query;
-      const { group, adultMale, adultFemale, childrenMale, childrenFemale } =
-        req.body;
+      const {
+        adultMale,
+        adultFemale,
+        childrenMale,
+        childrenFemale,
+        youthMale,
+        youthFemale,
+      } = req.body;
 
       const updated = await prisma.event_attendance_summary.update({
         where: { id: Number(id) },
         data: {
-          group,
           adultMale: Number(adultMale) || 0,
           adultFemale: Number(adultFemale) || 0,
           childrenMale: Number(childrenMale) || 0,
           childrenFemale: Number(childrenFemale) || 0,
+          youthMale: Number(youthMale) || 0,
+          youthFemale: Number(youthFemale) || 0,
           updated_at: new Date(),
         },
+        include: {
+          event: {
+            include: {
+              event: {
+                select: { event_name: true },
+              },
+            },
+          },
+        },
       });
+      const visitorCountsByKey = await buildAttendanceVisitorCountsMap([
+        {
+          eventId: updated.event_mgt_id,
+          date: updated.date,
+        },
+      ]);
 
       res.json({
         success: true,
         message: "Attendance updated successfully",
-        data: updated,
+        data: formatAttendanceSummaryRecord(
+          updated,
+          getAttendanceVisitorCountsForRecord(
+            visitorCountsByKey,
+            updated.event_mgt_id,
+            updated.date,
+          ),
+        ),
       });
     } catch (error: any) {
       res.status(500).json({ success: false, message: error.message });

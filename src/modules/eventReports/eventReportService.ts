@@ -12,6 +12,10 @@ import {
   UnauthorizedError,
 } from "../../utils/custom-error-handlers";
 import { notificationService } from "../notifications/notificationService";
+import {
+  buildAttendanceVisitorCountsMap,
+  getAttendanceVisitorCountsForRecord,
+} from "../events/attendanceVisitorCounts";
 
 type EventReportNotificationEventType =
   | "event_report.submitted_for_final_approval"
@@ -44,6 +48,31 @@ type FinanceItem = {
   id: string;
   name: string;
   amount: number;
+};
+
+type DepartmentLinkedUser = {
+  department_id: number | null;
+  department: {
+    department_id: number | null;
+  } | null;
+  department_positions: Array<{
+    department_id: number;
+  }>;
+};
+
+type DepartmentMemberInfo = {
+  user_id: number;
+  name: string;
+};
+
+type DepartmentAttendanceDetail = {
+  id: number | null;
+  user_id: number;
+  name: string;
+  arrival_time: string | null;
+  reported_time: string;
+  relative_to_start: string;
+  status: "early" | "on_time" | "late" | "absent";
 };
 
 type ApprovalBlock = {
@@ -429,6 +458,171 @@ const uniquePositiveIds = (values: number[]): number[] =>
       values.filter((value) => Number.isInteger(value) && value > 0),
     ),
   ).sort((first, second) => first - second);
+
+const getUserDepartmentIds = (
+  user: DepartmentLinkedUser,
+  validDepartmentIdSet: Set<number>,
+): number[] => {
+  const departmentIds = new Set<number>();
+
+  if (
+    typeof user.department?.department_id === "number" &&
+    validDepartmentIdSet.has(user.department.department_id)
+  ) {
+    departmentIds.add(user.department.department_id);
+  }
+
+  if (
+    typeof user.department_id === "number" &&
+    validDepartmentIdSet.has(user.department_id)
+  ) {
+    departmentIds.add(user.department_id);
+  }
+
+  for (const departmentPosition of user.department_positions) {
+    if (validDepartmentIdSet.has(departmentPosition.department_id)) {
+      departmentIds.add(departmentPosition.department_id);
+    }
+  }
+
+  return Array.from(departmentIds).sort((first, second) => first - second);
+};
+
+const buildReportEventStartDateTime = (
+  eventDate: string,
+  eventStartDate: Date | null | undefined,
+): Date | null => {
+  if (!eventStartDate) {
+    return null;
+  }
+
+  const reportEventStart = toUtcDayDate(eventDate);
+  reportEventStart.setUTCHours(
+    eventStartDate.getUTCHours(),
+    eventStartDate.getUTCMinutes(),
+    eventStartDate.getUTCSeconds(),
+    eventStartDate.getUTCMilliseconds(),
+  );
+
+  return reportEventStart;
+};
+
+const formatReportedTime = (value: Date | null | undefined): string | null => {
+  if (!value || Number.isNaN(value.getTime())) {
+    return null;
+  }
+
+  return value.toISOString().slice(11, 19);
+};
+
+const formatRelativeToStart = (
+  arrivalTime: Date,
+  eventStartTime: Date | null,
+): string => {
+  if (!eventStartTime) {
+    return "-";
+  }
+
+  const differenceInMinutes = Math.round(
+    (arrivalTime.getTime() - eventStartTime.getTime()) / 60000,
+  );
+
+  if (differenceInMinutes === 0) {
+    return "0m";
+  }
+
+  const absoluteMinutes = Math.abs(differenceInMinutes);
+  const hours = Math.floor(absoluteMinutes / 60);
+  const minutes = absoluteMinutes % 60;
+  const parts = [
+    ...(hours ? [`${hours}h`] : []),
+    ...(minutes || !hours ? [`${minutes}m`] : []),
+  ];
+
+  return `${differenceInMinutes > 0 ? "+" : "-"}${parts.join(" ")}`;
+};
+
+const getReportedAttendanceStatus = (
+  arrivalTime: Date,
+  eventStartTime: Date | null,
+): "early" | "on_time" | "late" => {
+  if (!eventStartTime) {
+    return "on_time";
+  }
+
+  if (arrivalTime.getTime() < eventStartTime.getTime()) {
+    return "early";
+  }
+
+  if (arrivalTime.getTime() > eventStartTime.getTime()) {
+    return "late";
+  }
+
+  return "on_time";
+};
+
+const getExistingDepartmentIdSetTx = async (
+  tx: ApprovalWorkflowTx,
+  departmentIds: number[],
+): Promise<Set<number>> => {
+  const uniqueDepartmentIds = uniquePositiveIds(departmentIds);
+  if (!uniqueDepartmentIds.length) {
+    return new Set<number>();
+  }
+
+  const rows = await tx.department.findMany({
+    where: {
+      id: {
+        in: uniqueDepartmentIds,
+      },
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  return new Set(rows.map((row) => row.id));
+};
+
+const getDepartmentMembersByDepartmentTx = async (
+  tx: ApprovalWorkflowTx,
+  validDepartmentIdSet: Set<number>,
+) => {
+  const users = await tx.user.findMany({
+    select: {
+      id: true,
+      name: true,
+      department_id: true,
+      department: {
+        select: {
+          department_id: true,
+        },
+      },
+      department_positions: {
+        select: {
+          department_id: true,
+        },
+      },
+    },
+  });
+
+  const membersByDepartment = new Map<number, Map<number, DepartmentMemberInfo>>();
+
+  for (const user of users) {
+    const departmentIds = getUserDepartmentIds(user, validDepartmentIdSet);
+
+    for (const departmentId of departmentIds) {
+      const members = membersByDepartment.get(departmentId) || new Map();
+      members.set(user.id, {
+        user_id: user.id,
+        name: user.name,
+      });
+      membersByDepartment.set(departmentId, members);
+    }
+  }
+
+  return membersByDepartment;
+};
 
 const parseNotificationUserIds = (value: unknown): number[] => {
   if (value === undefined || value === null) {
@@ -1366,11 +1560,22 @@ const ensureDepartmentApprovalRowsTx = async (
     return;
   }
 
+  const validDepartmentIdSet = await getExistingDepartmentIdSetTx(
+    tx,
+    uniqueDepartmentIds,
+  );
+  const validDepartmentIds = uniqueDepartmentIds.filter((departmentId) =>
+    validDepartmentIdSet.has(departmentId),
+  );
+  if (!validDepartmentIds.length) {
+    return;
+  }
+
   const existingRows = await tx.event_report_department_approvals.findMany({
     where: {
       event_report_id: args.eventReportId,
       department_id: {
-        in: uniqueDepartmentIds,
+        in: validDepartmentIds,
       },
     },
     select: {
@@ -1378,12 +1583,12 @@ const ensureDepartmentApprovalRowsTx = async (
     },
   });
 
-  const existingDepartmentIdSet = new Set(
+  const existingApprovalDepartmentIdSet = new Set(
     existingRows.map((row) => row.department_id),
   );
 
-  const missingDepartmentIds = uniqueDepartmentIds.filter(
-    (departmentId) => !existingDepartmentIdSet.has(departmentId),
+  const missingDepartmentIds = validDepartmentIds.filter(
+    (departmentId) => !existingApprovalDepartmentIdSet.has(departmentId),
   );
 
   if (!missingDepartmentIds.length) {
@@ -1731,10 +1936,15 @@ const getDepartmentBreakdownTx = async (
     eventReportId: number;
     eventId: number;
     eventDate: string;
+    eventStartDate: Date | null;
     actorUserId: number;
   },
 ) => {
   const { start, end } = getUtcDayBounds(args.eventDate);
+  const reportEventStartTime = buildReportEventStartDateTime(
+    args.eventDate,
+    args.eventStartDate,
+  );
 
   const attendanceRows = await tx.event_attendance.findMany({
     where: {
@@ -1774,72 +1984,7 @@ const getDepartmentBreakdownTx = async (
     },
   });
 
-  const attendeeByDepartment = new Map<number, Array<{
-    id: number;
-    user_id: number;
-    name: string;
-    arrival_time: string;
-  }>>();
-
-  for (const row of attendanceRows) {
-    const primaryDepartmentId =
-      row.user.department?.department_id ||
-      row.user.department_id ||
-      row.user.department_positions[0]?.department_id ||
-      null;
-
-    if (!primaryDepartmentId) {
-      continue;
-    }
-
-    const bucket = attendeeByDepartment.get(primaryDepartmentId) || [];
-    bucket.push({
-      id: row.id,
-      user_id: row.user_id,
-      name: row.user.name,
-      arrival_time: row.created_at.toISOString(),
-    });
-    attendeeByDepartment.set(primaryDepartmentId, bucket);
-  }
-
-  const departmentIds = Array.from(attendeeByDepartment.keys());
-  await ensureDepartmentApprovalRowsTx(tx, {
-    eventReportId: args.eventReportId,
-    departmentIds,
-  });
-
-  const approvals = await tx.event_report_department_approvals.findMany({
-    where: {
-      event_report_id: args.eventReportId,
-    },
-    include: {
-      approved_by_user: {
-        select: {
-          id: true,
-          name: true,
-        },
-      },
-    },
-  });
-
-  const allDepartmentIds = uniquePositiveIds([
-    ...departmentIds,
-    ...approvals.map((approval) => approval.department_id),
-  ]);
-
-  if (!allDepartmentIds.length) {
-    return {
-      departments: [] as any[],
-      allApproved: true,
-    };
-  }
-
   const departments = await tx.department.findMany({
-    where: {
-      id: {
-        in: allDepartmentIds,
-      },
-    },
     include: {
       department_head_info: {
         select: {
@@ -1853,41 +1998,123 @@ const getDepartmentBreakdownTx = async (
     },
   });
 
-  const approvalByDepartmentId = new Map(
-    approvals.map((approval) => [approval.department_id, approval]),
+  const validDepartmentIdSet = new Set(departments.map((department) => department.id));
+  const membersByDepartment = await getDepartmentMembersByDepartmentTx(
+    tx,
+    validDepartmentIdSet,
   );
 
+  const attendeeByDepartment = new Map<number, Map<number, {
+    id: number;
+    user_id: number;
+    name: string;
+    arrival_time: Date;
+  }>>();
+
+  for (const row of attendanceRows) {
+    const departmentIds = getUserDepartmentIds(row.user, validDepartmentIdSet);
+
+    if (!departmentIds.length) {
+      continue;
+    }
+
+    for (const departmentId of departmentIds) {
+      const bucket = attendeeByDepartment.get(departmentId) || new Map();
+      const existingAttendee = bucket.get(row.user_id);
+
+      if (!existingAttendee || row.created_at < existingAttendee.arrival_time) {
+        bucket.set(row.user_id, {
+          id: row.id,
+          user_id: row.user_id,
+          name: row.user.name,
+          arrival_time: row.created_at,
+        });
+      }
+
+      attendeeByDepartment.set(departmentId, bucket);
+    }
+  }
+
   const departmentBlocks = departments.map((department) => {
-    const approval = approvalByDepartmentId.get(department.id);
-    const status =
-      approval?.status || EventReportSectionApprovalStatus.PENDING;
+    const attendeeMap = attendeeByDepartment.get(department.id) || new Map();
+    const memberMap = membersByDepartment.get(department.id) || new Map();
+    const absentAttendees: DepartmentAttendanceDetail[] = [];
+    const presentAttendees: DepartmentAttendanceDetail[] = [];
+
+    for (const member of memberMap.values()) {
+      const attendee = attendeeMap.get(member.user_id);
+      const reportedTime = formatReportedTime(attendee?.arrival_time);
+
+      if (!attendee || !reportedTime) {
+        absentAttendees.push({
+          id: null,
+          user_id: member.user_id,
+          name: member.name,
+          arrival_time: null,
+          reported_time: "-",
+          relative_to_start: "-",
+          status: "absent",
+        });
+        continue;
+      }
+
+      presentAttendees.push({
+        id: attendee.id,
+        user_id: attendee.user_id,
+        name: attendee.name,
+        arrival_time: attendee.arrival_time.toISOString(),
+        reported_time: reportedTime,
+        relative_to_start: formatRelativeToStart(
+          attendee.arrival_time,
+          reportEventStartTime,
+        ),
+        status: getReportedAttendanceStatus(
+          attendee.arrival_time,
+          reportEventStartTime,
+        ),
+      });
+    }
+
+    presentAttendees.sort(
+      (left, right) =>
+        new Date(left.arrival_time || 0).getTime() -
+        new Date(right.arrival_time || 0).getTime(),
+    );
+    absentAttendees.sort((left, right) => left.name.localeCompare(right.name));
+
+    const totalMembers = memberMap.size;
+    const presentMembers = presentAttendees.length;
+    const absentMembers = Math.max(totalMembers - presentMembers, 0);
+    const attendancePercentage =
+      totalMembers > 0
+        ? Number(((presentMembers / totalMembers) * 100).toFixed(1))
+        : 0;
 
     return {
       department_id: department.id,
       department_name: department.name,
       head_user_id: department.department_head || null,
       head_name: department.department_head_info?.name || null,
-      attendees: attendeeByDepartment.get(department.id) || [],
-      approval: buildApprovalBlock({
-        status,
-        approvedByUserId: approval?.approved_by_user_id || null,
-        approvedByName: approval?.approved_by_user?.name || null,
-        approvedAt: approval?.approved_at || null,
-        canCurrentUserApprove:
-          department.department_head === args.actorUserId &&
-          status !== EventReportSectionApprovalStatus.APPROVED,
-      }),
+      total_members: totalMembers,
+      present_members: presentMembers,
+      absent_members: absentMembers,
+      attendance_percentage: attendancePercentage,
+      attendees: [...presentAttendees, ...absentAttendees],
     };
-  });
-
-  const allApproved = departmentBlocks.every(
-    (department) =>
-      department.approval.status === EventReportSectionApprovalStatus.APPROVED,
+  }).filter(
+    (department) => department.total_members > 0 || department.present_members > 0,
   );
 
   return {
     departments: departmentBlocks,
-    allApproved,
+    total_members: departmentBlocks.reduce(
+      (total, department) => total + department.total_members,
+      0,
+    ),
+    present_members: departmentBlocks.reduce(
+      (total, department) => total + department.present_members,
+      0,
+    ),
   };
 };
 
@@ -1917,6 +2144,21 @@ const getChurchAttendanceBlockTx = async (
 
   const approval = await ensureAttendanceApprovalRowTx(tx, args.eventReportId);
   const approverIds = await getChurchAttendanceApproverUserIdsTx(tx);
+  const attendanceReferenceDate = attendanceSummary?.date || new Date(args.eventDate);
+  const visitorCountsByKey = await buildAttendanceVisitorCountsMap(
+    [
+      {
+        eventId: args.eventId,
+        date: attendanceReferenceDate,
+      },
+    ],
+    tx,
+  );
+  const visitorCounts = getAttendanceVisitorCountsForRecord(
+    visitorCountsByKey,
+    args.eventId,
+    attendanceReferenceDate,
+  );
 
   return {
     church_attendance: {
@@ -1926,8 +2168,21 @@ const getChurchAttendanceBlockTx = async (
       children_female: Number(attendanceSummary?.childrenFemale || 0),
       youth_male: Number(attendanceSummary?.youthMale || 0),
       youth_female: Number(attendanceSummary?.youthFemale || 0),
-      visiting_pastors: Number(attendanceSummary?.visitingPastors || 0),
-      visitors: Number(attendanceSummary?.visitors || 0),
+      visitors: visitorCounts.total.total,
+      visitor_breakdown: {
+        visitors: visitorCounts.visitors,
+        visitor_clergy: visitorCounts.visitorClergy,
+        total: visitorCounts.total,
+      },
+      visitors_male: visitorCounts.visitors.male,
+      visitors_female: visitorCounts.visitors.female,
+      visitors_total: visitorCounts.visitors.total,
+      visitor_clergy_male: visitorCounts.visitorClergy.male,
+      visitor_clergy_female: visitorCounts.visitorClergy.female,
+      visitor_clergy_total: visitorCounts.visitorClergy.total,
+      visitor_total_male: visitorCounts.total.male,
+      visitor_total_female: visitorCounts.total.female,
+      visitor_total: visitorCounts.total.total,
       approval: buildApprovalBlock({
         status: approval.status,
         approvedByUserId: approval.approved_by_user_id || null,
@@ -2058,13 +2313,11 @@ const buildFinalDecisionIdempotencyKey = (
 ) => `event-report:${eventReportId}:event:${eventType}:instance:${approvalInstanceId}`;
 
 const getPreFinalCompletionStatus = (args: {
-  allDepartmentsApproved: boolean;
   churchAttendanceApproved: boolean;
   countingLeaderApproved: boolean;
   financeRepApproved: boolean;
 }) => {
   const allComplete =
-    args.allDepartmentsApproved &&
     args.churchAttendanceApproved &&
     args.countingLeaderApproved &&
     args.financeRepApproved;
@@ -2104,6 +2357,7 @@ const getEventReportDetailTx = async (
         eventReportId: report.id,
         eventId: report.event_id,
         eventDate,
+        eventStartDate: event.start_date,
         actorUserId: args.actorUserId,
       }),
       getChurchAttendanceBlockTx(tx, {
@@ -2119,7 +2373,6 @@ const getEventReportDetailTx = async (
     ]);
 
   const completion = getPreFinalCompletionStatus({
-    allDepartmentsApproved: departmentBlock.allApproved,
     churchAttendanceApproved: churchAttendanceBlock.isApproved,
     countingLeaderApproved: financeBlock.countingLeaderApproved,
     financeRepApproved: financeBlock.financeRepApproved,
@@ -2243,13 +2496,26 @@ const getEventReportDetailTx = async (
     });
 
   return {
-    data: {
-      event_id: report.event_id,
-      event_name: event.event?.event_name || "Unknown Event",
-      event_date: eventDate,
-      departments: departmentBlock.departments,
-      church_attendance: churchAttendanceBlock.church_attendance,
-      finance: financeBlock.finance,
+      data: {
+        event_id: report.event_id,
+        event_name: event.event?.event_name || "Unknown Event",
+        event_date: eventDate,
+        departments: departmentBlock.departments,
+        department_summary: {
+          total_members: departmentBlock.total_members,
+          present_members: departmentBlock.present_members,
+          attendance_percentage:
+            departmentBlock.total_members > 0
+              ? Number(
+                  (
+                    (departmentBlock.present_members / departmentBlock.total_members) *
+                    100
+                  ).toFixed(1),
+                )
+              : 0,
+        },
+        church_attendance: churchAttendanceBlock.church_attendance,
+        finance: financeBlock.finance,
       final_approval: {
         status: finalStatus,
         approver_user_id:
@@ -2756,6 +3022,7 @@ export const submitEventReportForFinalApproval = async (
         eventReportId: report.id,
         eventId,
         eventDate,
+        eventStartDate: event.start_date,
         actorUserId,
       });
       const churchAttendanceBlock = await getChurchAttendanceBlockTx(tx, {
@@ -2770,7 +3037,6 @@ export const submitEventReportForFinalApproval = async (
       });
 
       const completion = getPreFinalCompletionStatus({
-        allDepartmentsApproved: departmentBlock.allApproved,
         churchAttendanceApproved: churchAttendanceBlock.isApproved,
         countingLeaderApproved: financeBlock.countingLeaderApproved,
         financeRepApproved: financeBlock.financeRepApproved,
@@ -3474,7 +3740,8 @@ export const processPendingEventReportNotificationEvents = async (args?: {
             actionUrl,
             priority,
             dedupeKey: `event-report:event:${event.id}:recipient:${recipient.id}`,
-            sendEmail: false,
+            sendSms: true,
+            smsBody: body,
           })),
         );
 

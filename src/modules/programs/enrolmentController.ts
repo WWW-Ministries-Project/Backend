@@ -205,6 +205,80 @@ export class EnrollmentController {
     }
   }
 
+  async getCertificate(req: Request, res: Response) {
+    try {
+      const programId = Number(req.query.programId);
+      const userId = Number((req as any).user?.id);
+
+      if (!Number.isInteger(programId) || programId <= 0) {
+        return res.status(400).json({
+          message: "A valid programId is required",
+        });
+      }
+
+      if (!Number.isInteger(userId) || userId <= 0) {
+        return res.status(401).json({
+          message: "Not authorized. Token not found",
+        });
+      }
+
+      const certificate = await enrollment.getProgramCertificate(
+        programId,
+        userId,
+      );
+
+      return res.status(200).json({
+        message: "Certificate fetched successfully",
+        data: certificate,
+      });
+    } catch (error: any) {
+      if (error instanceof AppError) {
+        return res.status(error.statusCode).json({
+          message: error.message,
+          error: error.message,
+        });
+      }
+
+      return res.status(500).json({
+        message: "Error fetching certificate",
+        error: error.message,
+      });
+    }
+  }
+
+  async verifyCertificate(req: Request, res: Response) {
+    try {
+      const certificateNumber = String(
+        req.params.certificateNumber ?? "",
+      ).trim();
+
+      if (!certificateNumber) {
+        return res.status(400).json({
+          message: "A certificate number is required",
+        });
+      }
+
+      const certificate = await enrollment.verifyCertificate(certificateNumber);
+
+      return res.status(200).json({
+        message: "Certificate verified successfully",
+        data: certificate,
+      });
+    } catch (error: any) {
+      if (error instanceof AppError) {
+        return res.status(error.statusCode).json({
+          message: error.message,
+          error: error.message,
+        });
+      }
+
+      return res.status(500).json({
+        message: "Error verifying certificate",
+        error: error.message,
+      });
+    }
+  }
+
   // async markCourseAsComplete(req: Request, res: Response) {
   //   const { id } = req.query;
 

@@ -2001,6 +2001,8 @@ export const processPendingRequisitionNotificationEvents = async (args?: {
             dedupeKey: `requisition:event:${event.id}:recipient:${recipient.id}`,
             // Email remains owned by this workflow event processor.
             sendEmail: false,
+            sendSms: true,
+            smsBody: inAppBody,
           })),
         );
 

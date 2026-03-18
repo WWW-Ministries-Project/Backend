@@ -615,6 +615,8 @@ const notifyRequisitionCommentParticipants = async (args: {
         shortComment,
         "utf8",
       ).toString("base64").slice(0, 32)}`,
+      sendSms: true,
+      smsBody: `New comment on requisition ${requisitionReference}: ${shortComment}`,
     })),
   );
 };
