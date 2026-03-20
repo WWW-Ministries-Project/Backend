@@ -3,7 +3,7 @@ import { processPendingRequisitionNotificationEvents } from "../modules/requisit
 import { notificationService } from "../modules/notifications/notificationService";
 
 let isRequisitionNotificationJobRunning = false;
-const REQUISITION_CRITICAL_JOB_DEFAULT_CRONS = ["5 5 * * *", "5 11 * * *"];
+const REQUISITION_CRITICAL_JOB_DEFAULT_CRONS = ["*/5 * * * *"];
 const REQUISITION_CRITICAL_JOB_CRONS = (() => {
   const configured = process.env.REQUISITION_NOTIFICATION_CRONS;
   if (!configured) {
@@ -57,8 +57,10 @@ for (const cronExpression of REQUISITION_CRITICAL_JOB_CRONS) {
     continue;
   }
 
-  // Critical notification job runs twice daily (5-6am and 11am-12pm), server timezone.
+  // Retry pending requisition notifications frequently to avoid long delivery gaps.
   cron.schedule(cronExpression, async () => {
     await processRequisitionNotificationEventsJob();
   });
 }
+
+void processRequisitionNotificationEventsJob();

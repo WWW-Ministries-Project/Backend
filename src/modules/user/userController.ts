@@ -152,6 +152,37 @@ const normalizeMemberPayload = (payload: any = {}) => {
   };
 };
 
+const hasValue = (value: unknown) =>
+  value !== undefined && value !== null && String(value).trim() !== "";
+
+const normalizeOptionalText = (value: unknown) => {
+  if (!hasValue(value)) return null;
+  return String(value).trim();
+};
+
+const normalizeGenderValue = (value: unknown) => {
+  const normalizedValue = normalizeOptionalText(value);
+  if (!normalizedValue) return null;
+
+  const normalizedLower = normalizedValue.toLowerCase();
+  if (normalizedLower === "male" || normalizedLower === "m") return "Male";
+  if (normalizedLower === "female" || normalizedLower === "f") return "Female";
+  if (normalizedLower === "other") return "Other";
+
+  return normalizedValue;
+};
+
+const buildMissingFieldsMessage = (
+  baseMessage: string,
+  missingFields: string[],
+) => {
+  if (!missingFields.length) {
+    return baseMessage;
+  }
+
+  return `${baseMessage} Missing required fields: ${missingFields.join(", ")}.`;
+};
+
 const parsePermissionsObject = (
   permissions: any,
 ): Record<string, any> | null => {
@@ -384,7 +415,13 @@ export const updateUser = async (req: Request, res: Response) => {
         city,
         phone: { country_code, number: primary_number } = {},
       } = {},
-      work_info: { work_name, work_industry, work_position, school_name } = {},
+      work_info: {
+        employment_status,
+        work_name,
+        work_industry,
+        work_position,
+        school_name,
+      } = {},
       emergency_contact: {
         name: emergency_contact_name,
         relation: emergency_contact_relation,
@@ -474,8 +511,10 @@ export const updateUser = async (req: Request, res: Response) => {
       await roleEligibilityService.assertEligible("member", Number(user_id));
     }
 
-    const hasValue = (value: any) =>
-      value !== undefined && value !== null && String(value).trim() !== "";
+    const normalizedGender = normalizeGenderValue(gender);
+    const resolvedUserInfoGender =
+      normalizedGender || userExists?.user_info?.gender || null;
+    const shouldCreateUserInfo = !userExists?.user_info;
 
     const hasEmergencyContactPayload =
       hasValue(emergency_contact_name) ||
@@ -489,10 +528,16 @@ export const updateUser = async (req: Request, res: Response) => {
       hasValue(work_position) ||
       hasValue(school_name);
 
-    if (!userExists?.user_info) {
+    if (!resolvedUserInfoGender) {
+      const missingProfileFields = ["personal_info.gender"];
+
       return res.status(400).json({
-        message:
-          "User profile details are missing. Please complete personal information first.",
+        message: buildMissingFieldsMessage(
+          shouldCreateUserInfo
+            ? "User profile details are missing and could not be created from this request."
+            : "User profile details are invalid and could not be updated.",
+          missingProfileFields,
+        ),
         data: null,
       });
     }
@@ -503,10 +548,10 @@ export const updateUser = async (req: Request, res: Response) => {
       last_name,
       other_name,
       date_of_birth: date_of_birth ? new Date(date_of_birth) : undefined,
-      gender,
+      gender: normalizedGender || undefined,
       marital_status,
       nationality,
-      photo: picture.src,
+      photo: picture?.src,
       email: hasEmailField ? incomingEmail : undefined,
       country: resident_country,
       state_region,
@@ -515,81 +560,121 @@ export const updateUser = async (req: Request, res: Response) => {
       primary_number,
       member_since: member_since ? new Date(member_since) : undefined,
     };
+    const userInfoCreateData: any = {
+      title,
+      first_name,
+      last_name,
+      other_name,
+      date_of_birth: date_of_birth ? new Date(date_of_birth) : null,
+      gender: resolvedUserInfoGender,
+      marital_status,
+      nationality,
+      photo: picture?.src || "",
+      email: nextEmail,
+      country: resident_country,
+      state_region,
+      city,
+      country_code,
+      primary_number,
+      member_since: member_since ? new Date(member_since) : null,
+    };
 
     if (hasEmergencyContactPayload) {
-      if (userExists.user_info.emergency_contact) {
+      const missingEmergencyFields = [
+        !hasValue(emergency_contact_name) ? "emergency_contact.name" : null,
+        !hasValue(emergency_contact_relation)
+          ? "emergency_contact.relation"
+          : null,
+        !hasValue(emergency_phone_number)
+          ? "emergency_contact.phone.number"
+          : null,
+      ].filter((field): field is string => Boolean(field));
+
+      if (missingEmergencyFields.length > 0) {
+        return res.status(400).json({
+          message: buildMissingFieldsMessage(
+            "Emergency contact could not be saved.",
+            missingEmergencyFields,
+          ),
+          data: null,
+        });
+      }
+
+      const emergencyContactData = {
+        name: emergency_contact_name,
+        relation: emergency_contact_relation,
+        country_code: emergency_country_code,
+        phone_number: emergency_phone_number,
+      };
+
+      if (userExists.user_info?.emergency_contact) {
         userInfoUpdateData.emergency_contact = {
-          update: {
-            name: emergency_contact_name,
-            relation: emergency_contact_relation,
-            country_code: emergency_country_code,
-            phone_number: emergency_phone_number,
-          },
+          update: emergencyContactData,
         };
       } else {
-        if (
-          !hasValue(emergency_contact_name) ||
-          !hasValue(emergency_contact_relation) ||
-          !hasValue(emergency_phone_number)
-        ) {
-          return res.status(400).json({
-            message:
-              "Emergency contact name, relation, and phone number are required to add an emergency contact.",
-            data: null,
-          });
-        }
-
         userInfoUpdateData.emergency_contact = {
-          create: {
-            name: emergency_contact_name,
-            relation: emergency_contact_relation,
-            country_code: emergency_country_code,
-            phone_number: emergency_phone_number,
-          },
+          create: emergencyContactData,
         };
       }
+
+      userInfoCreateData.emergency_contact = {
+        create: emergencyContactData,
+      };
     }
 
     if (hasWorkInfoPayload) {
-      if (userExists.user_info.work_info) {
+      const missingWorkFields = [
+        !hasValue(work_name) ? "work_info.work_name" : null,
+        !hasValue(work_industry) ? "work_info.work_industry" : null,
+        !hasValue(work_position) ? "work_info.work_position" : null,
+      ].filter((field): field is string => Boolean(field));
+
+      if (missingWorkFields.length > 0) {
+        return res.status(400).json({
+          message: buildMissingFieldsMessage(
+            "Work information could not be saved.",
+            missingWorkFields,
+          ),
+          data: null,
+        });
+      }
+
+      const workInfoData = {
+        employment_status,
+        name_of_institution: work_name,
+        industry: work_industry,
+        position: work_position,
+        school_name,
+      };
+
+      if (userExists.user_info?.work_info) {
         userInfoUpdateData.work_info = {
-          update: {
-            name_of_institution: work_name,
-            industry: work_industry,
-            position: work_position,
-            school_name,
-          },
+          update: workInfoData,
         };
       } else {
-        if (
-          !hasValue(work_name) ||
-          !hasValue(work_industry) ||
-          !hasValue(work_position)
-        ) {
-          return res.status(400).json({
-            message:
-              "Work name, industry, and position are required to add work information.",
-            data: null,
-          });
-        }
-
         userInfoUpdateData.work_info = {
-          create: {
-            name_of_institution: work_name,
-            industry: work_industry,
-            position: work_position,
-            school_name,
-          },
+          create: workInfoData,
         };
       }
+
+      userInfoCreateData.work_info = {
+        create: workInfoData,
+      };
     }
+
+    const nextNameParts = [
+      hasValue(first_name) ? String(first_name).trim() : userExists?.user_info?.first_name,
+      hasValue(other_name) ? String(other_name).trim() : userExists?.user_info?.other_name,
+      hasValue(last_name) ? String(last_name).trim() : userExists?.user_info?.last_name,
+    ].filter((part): part is string => hasValue(part));
+    const nextDisplayName = nextNameParts.length
+      ? nextNameParts.join(" ")
+      : userExists?.name;
 
     const updatedUser = await prisma.user.update({
       where: { id: Number(user_id) },
       data: {
-        name: `${first_name || userExists?.user_info?.first_name} ${
-          other_name || userExists?.user_info?.other_name || ""
-        } ${last_name || userExists?.user_info?.last_name}`.trim(),
+        name: nextDisplayName,
         email: hasEmailField ? incomingEmail : userExists?.email,
         is_user: nextIsUser,
         access_level_id: nextAccessLevelId,
@@ -598,7 +683,10 @@ export const updateUser = async (req: Request, res: Response) => {
         department_id: Number(department_id) || userExists?.department_id,
         membership_type: membership_type || userExists?.membership_type,
         user_info: {
-          update: userInfoUpdateData,
+          upsert: {
+            create: userInfoCreateData,
+            update: userInfoUpdateData,
+          },
         },
       },
       include: {
@@ -656,6 +744,13 @@ export const updateUser = async (req: Request, res: Response) => {
     if (isFamilyRelationValidationError(error?.message)) {
       return res.status(400).json({
         message: error?.message,
+        data: null,
+      });
+    }
+
+    if (error instanceof InputValidationError) {
+      return res.status(400).json({
+        message: error.message,
         data: null,
       });
     }

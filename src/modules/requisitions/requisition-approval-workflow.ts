@@ -1987,7 +1987,8 @@ export const processPendingRequisitionNotificationEvents = async (args?: {
                 ? `Requisition ${requisitionReference} for ${requesterName} was finally approved by ${actorName}.`
                 : `Requisition ${requisitionReference} for ${requesterName} was finally rejected by ${actorName}.`;
 
-        await notificationService.createManyInAppNotifications(
+        const createdNotifications =
+          await notificationService.createManyInAppNotifications(
           recipientUsers.map((recipient) => ({
             type: inAppType,
             title: inAppTitle,
@@ -1999,25 +2000,30 @@ export const processPendingRequisitionNotificationEvents = async (args?: {
             actionUrl: requisitionActionUrl,
             priority: inAppPriority,
             dedupeKey: `requisition:event:${event.id}:recipient:${recipient.id}`,
-            // Email remains owned by this workflow event processor.
             sendEmail: false,
             sendSms: true,
             smsBody: inAppBody,
           })),
         );
 
+        const emailEnabledRecipientUserIds =
+          await notificationService.filterUserIdsByChannelPreference(
+            recipientUsers.map((user) => user.id),
+            inAppType,
+            "email",
+          );
+        const emailEnabledRecipientUserIdSet = new Set(emailEnabledRecipientUserIds);
+
         const recipientEmails = Array.from(
           new Set(
             recipientUsers
+              .filter((user) => emailEnabledRecipientUserIdSet.has(user.id))
               .map((user) => user.email?.trim() || "")
               .filter((email): email is string => Boolean(email)),
           ),
         );
 
-        if (
-          !notificationService.isSseOnlyModeEnabled() &&
-          recipientEmails.length
-        ) {
+        if (recipientEmails.length) {
           const { subject, html } = buildNotificationEmail({
             eventType: event.event_type,
             decision,
@@ -2028,9 +2034,37 @@ export const processPendingRequisitionNotificationEvents = async (args?: {
             actionUrl: toAbsoluteActionUrl(requisitionActionUrl),
           });
 
-          await sendEmail(html, recipientEmails.join(","), subject, {
-            throwOnError: true,
-          });
+          const emailResult = await sendEmail(
+            html,
+            recipientEmails.join(","),
+            subject,
+          );
+
+          if (emailResult?.success) {
+            const createdNotificationIds = createdNotifications
+              .map((notification) => Number(notification.id))
+              .filter(
+                (notificationId) =>
+                  Number.isInteger(notificationId) && notificationId > 0,
+              );
+
+            if (createdNotificationIds.length) {
+              await prisma.in_app_notification.updateMany({
+                where: {
+                  id: {
+                    in: createdNotificationIds,
+                  },
+                },
+                data: {
+                  email_sent_at: new Date(),
+                },
+              });
+            }
+          } else if (emailResult?.error) {
+            console.error(
+              `[requisition-notification-events] email delivery failed for event ${event.id}: ${emailResult.error}`,
+            );
+          }
         }
 
         await prisma.requisition_notification_events.update({
@@ -2395,6 +2429,7 @@ export const processRequisitionApprovalAction = async (args: {
     });
   }
 
+  triggerRequisitionNotificationEventProcessing();
   return result;
 };
 

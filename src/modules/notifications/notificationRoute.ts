@@ -68,6 +68,12 @@ notificationRouter.get(
   notificationController.listNotifications,
 );
 
+notificationRouter.delete(
+  "/",
+  [permissions.protect],
+  notificationController.clearAll,
+);
+
 notificationRouter.get(
   "/preferences",
   [permissions.protect],
