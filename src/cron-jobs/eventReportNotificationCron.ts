@@ -3,7 +3,7 @@ import { processPendingEventReportNotificationEvents } from "../modules/eventRep
 import { notificationService } from "../modules/notifications/notificationService";
 
 let isEventReportNotificationJobRunning = false;
-const EVENT_REPORT_CRITICAL_JOB_DEFAULT_CRONS = ["20 5 * * *", "20 11 * * *"];
+const EVENT_REPORT_CRITICAL_JOB_DEFAULT_CRONS = ["*/5 * * * *"];
 const EVENT_REPORT_CRITICAL_JOB_CRONS = (() => {
   const configured = process.env.EVENT_REPORT_NOTIFICATION_CRONS;
   if (!configured) {
@@ -62,8 +62,10 @@ for (const cronExpression of EVENT_REPORT_CRITICAL_JOB_CRONS) {
     continue;
   }
 
-  // Critical notification job runs twice daily (5-6am and 11am-12pm), server timezone.
+  // Retry pending event report notifications frequently to avoid long delivery gaps.
   cron.schedule(cronExpression, async () => {
     await processEventReportNotificationEventsJob();
   });
 }
+
+void processEventReportNotificationEventsJob();

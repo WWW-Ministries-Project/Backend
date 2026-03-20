@@ -8,10 +8,6 @@ const NOTIFICATION_SMS_RETRY_CRON =
   process.env.NOTIFICATION_SMS_RETRY_CRON || "* * * * *";
 
 export async function processNotificationSmsRetriesJob() {
-  if (notificationService.isSseOnlyModeEnabled()) {
-    return;
-  }
-
   if (!notificationSmsService.isSmsEnabled()) {
     return;
   }
@@ -47,11 +43,7 @@ export async function processNotificationSmsRetriesJob() {
   }
 }
 
-if (notificationService.isSseOnlyModeEnabled()) {
-  console.info(
-    "[INFO] Notification SMS retry cron disabled: notifications are SSE-only.",
-  );
-} else if (!notificationSmsService.isSmsEnabled()) {
+if (!notificationSmsService.isSmsEnabled()) {
   console.info(
     "[INFO] Notification SMS retry cron disabled: SMS delivery is not configured.",
   );

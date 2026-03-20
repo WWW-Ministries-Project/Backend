@@ -32,6 +32,7 @@ import {
   getRequisitionApprovalConfig,
   isRequisitionApprovalTableMissingError,
   processRequisitionApprovalAction,
+  triggerRequisitionNotificationEventProcessing,
   upsertRequisitionApprovalConfig,
   validateApprovalActionPayload,
 } from "./requisition-approval-workflow";
@@ -943,6 +944,8 @@ export const createRequisition = async (
       : undefined,
   };
 
+  let shouldTriggerNotificationProcessing = false;
+
   const createdRequest = await prisma.$transaction(async (tx) => {
     const request = await tx.request.create({
       data: requestCreateData,
@@ -971,6 +974,7 @@ export const createRequisition = async (
           requesterId: request.user_id,
           fallbackDepartmentId: request.department_id,
         });
+        shouldTriggerNotificationProcessing = true;
       } catch (error) {
         if (!isMissingWorkflowTablesError(error)) {
           throw error;
@@ -987,6 +991,10 @@ export const createRequisition = async (
 
     return request;
   });
+
+  if (shouldTriggerNotificationProcessing) {
+    triggerRequisitionNotificationEventProcessing();
+  }
 
   return getRequisition(createdRequest.id, user);
 };
@@ -1196,6 +1204,8 @@ export const updateRequisition = async (
     newAttachments,
   );
 
+  let shouldTriggerNotificationProcessing = false;
+
   await prisma.$transaction(async (tx) => {
     if (existingApproval) {
       await tx.request_approvals.update({
@@ -1259,6 +1269,7 @@ export const updateRequisition = async (
           requesterId: findRequest.user_id,
           fallbackDepartmentId: findRequest.department_id,
         });
+        shouldTriggerNotificationProcessing = true;
       } catch (error) {
         if (!isMissingWorkflowTablesError(error)) {
           throw error;
@@ -1279,6 +1290,10 @@ export const updateRequisition = async (
       changedFields: effectiveChangedFields,
     });
   });
+
+  if (shouldTriggerNotificationProcessing) {
+    triggerRequisitionNotificationEventProcessing();
+  }
 
   if (updateInput.comment) {
     await notifyRequisitionCommentParticipants({
@@ -1560,6 +1575,8 @@ export const submitRequisition = async (requisitionId: unknown, user: any) => {
     throw new UnauthorizedError("Authenticated user not found");
   }
 
+  let shouldTriggerNotificationProcessing = false;
+
   await prisma.$transaction(async (tx) => {
     const requisition = await tx.request.findUnique({
       where: {
@@ -1593,6 +1610,7 @@ export const submitRequisition = async (requisitionId: unknown, user: any) => {
         requesterId: requisition.user_id,
         fallbackDepartmentId: requisition.department_id,
       });
+      shouldTriggerNotificationProcessing = true;
     } catch (error) {
       if (isApprovalChainAlreadyExistsError(error)) {
         await tx.request.update({
@@ -1616,6 +1634,10 @@ export const submitRequisition = async (requisitionId: unknown, user: any) => {
       });
     }
   });
+
+  if (shouldTriggerNotificationProcessing) {
+    triggerRequisitionNotificationEventProcessing();
+  }
 
   return getRequisition(parsedId, user);
 };

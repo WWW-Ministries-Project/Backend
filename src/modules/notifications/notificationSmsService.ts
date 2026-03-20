@@ -35,6 +35,7 @@ type SmsJobPayload = {
 
 type SmsConfig = {
   enabled: boolean;
+  disabledReason: string | null;
   endpoint: string;
   senderId: string;
   authHeader: string;
@@ -85,6 +86,7 @@ const MAX_LOG_ERROR_MESSAGE_LENGTH = 500;
 
 let configCache: SmsConfig | null = null;
 let backgroundProcessingScheduled = false;
+let configWarningLogged = false;
 
 const getOrCreateCounter = (
   name: string,
@@ -444,10 +446,31 @@ const resolveConfig = (): SmsConfig => {
     600_000,
   );
 
-  const enabled = enabledByEnv && Boolean(endpoint && senderId && authHeader);
+  let disabledReason: string | null = null;
+
+  if (!enabledByEnv) {
+    disabledReason = "SMS delivery is disabled by HUBTEL_SMS_ENABLED";
+  } else if (!endpoint) {
+    disabledReason =
+      "SMS delivery is not configured because HUBTEL_SMS_ENDPOINT is missing";
+  } else if (!authHeader) {
+    disabledReason =
+      "SMS delivery is not configured because Hubtel auth credentials are missing";
+  } else if (!senderId) {
+    disabledReason =
+      "SMS delivery is not configured because HUBTEL_SMS_SENDER_ID is missing";
+  }
+
+  const enabled = disabledReason === null;
+
+  if (!enabled && !configWarningLogged) {
+    configWarningLogged = true;
+    console.warn(`[WARN] ${disabledReason}`);
+  }
 
   return {
     enabled,
+    disabledReason,
     endpoint,
     senderId,
     authHeader,
@@ -705,7 +728,9 @@ const queueNotificationSms = async (
     await markNotificationDeadOnDrop({
       notificationId: input.notificationId,
       code: "disabled",
-      message: "SMS delivery is not configured for this environment",
+      message:
+        config.disabledReason ||
+        "SMS delivery is not configured for this environment",
     });
     return {
       queued: false,

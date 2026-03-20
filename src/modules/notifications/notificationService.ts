@@ -9,6 +9,11 @@ import {
   NotFoundError,
 } from "../../utils/custom-error-handlers";
 import { systemNotificationSettingsService } from "../settings/systemNotificationSettingsService";
+import {
+  getNotificationPreferenceOption,
+  listNotificationPreferenceTypes,
+  type NotificationPreferenceChannelAvailability,
+} from "./notificationPreferenceCatalog";
 import { notificationPushService } from "./notificationPushService";
 import { notificationSmsService } from "./notificationSmsService";
 
@@ -81,6 +86,10 @@ type NotificationListResult = {
 
 type NotificationPreference = {
   type: string;
+  title: string;
+  description: string;
+  category: string;
+  availableChannels: NotificationPreferenceChannelAvailability;
   inAppEnabled: boolean;
   emailEnabled: boolean;
   smsEnabled: boolean;
@@ -94,6 +103,8 @@ export type UpdateNotificationPreferenceInput = {
   emailEnabled?: boolean;
   smsEnabled?: boolean;
 };
+
+type NotificationPreferenceChannel = "inApp" | "email" | "sms";
 
 type SseClient = {
   res: Response;
@@ -131,22 +142,6 @@ const NOTIFICATION_DELIVERY_CONCURRENCY = (() => {
   }
   return Math.min(parsed, 10);
 })();
-const NOTIFICATIONS_SSE_ONLY = (() => {
-  const value = process.env.NOTIFICATIONS_SSE_ONLY;
-  if (value === undefined) {
-    return true;
-  }
-
-  const normalized = value.trim().toLowerCase();
-  if (["true", "1", "yes", "on"].includes(normalized)) {
-    return true;
-  }
-  if (["false", "0", "no", "off"].includes(normalized)) {
-    return false;
-  }
-  return true;
-})();
-const isSseOnlyModeEnabled = (): boolean => NOTIFICATIONS_SSE_ONLY;
 
 const sseClientsByUserId = new Map<number, Set<SseClient>>();
 const sseReplayBufferByUserId = new Map<number, SseEventEnvelope[]>();
@@ -569,9 +564,14 @@ const toNotificationPreferencePayload = (
       }
     | null,
 ): NotificationPreference => {
+  const option = getNotificationPreferenceOption(notificationType);
   if (!preference) {
     return {
       type: notificationType,
+      title: option.title,
+      description: option.description,
+      category: option.category,
+      availableChannels: option.availableChannels,
       inAppEnabled: true,
       emailEnabled: true,
       smsEnabled: false,
@@ -581,6 +581,10 @@ const toNotificationPreferencePayload = (
 
   return {
     type: notificationType,
+    title: option.title,
+    description: option.description,
+    category: option.category,
+    availableChannels: option.availableChannels,
     inAppEnabled: preference.in_app_enabled !== false,
     emailEnabled: preference.email_enabled !== false,
     smsEnabled: preference.sms_enabled === true,
@@ -647,9 +651,6 @@ const listNotificationPreferences = async (
     where: {
       user_id: userId,
     },
-    orderBy: {
-      type: "asc",
-    },
     select: {
       type: true,
       in_app_enabled: true,
@@ -658,9 +659,12 @@ const listNotificationPreferences = async (
     },
   });
 
-  return storedPreferences.map((preference) =>
-    toNotificationPreferencePayload(preference.type, preference),
+  const storedByType = new Map(
+    storedPreferences.map((preference) => [preference.type, preference]),
   );
+
+  return listNotificationPreferenceTypes(storedPreferences.map((preference) => preference.type))
+    .map((type) => toNotificationPreferencePayload(type, storedByType.get(type) || null));
 };
 
 const updateNotificationPreference = async (
@@ -713,6 +717,61 @@ const updateNotificationPreference = async (
   });
 
   return toNotificationPreferencePayload(updated.type, updated);
+};
+
+const filterUserIdsByChannelPreference = async (
+  userIds: number[],
+  notificationType: string,
+  channel: NotificationPreferenceChannel,
+): Promise<number[]> => {
+  const normalizedType = normalizeNotificationType(notificationType);
+  const normalizedUserIds = Array.from(
+    new Set(
+      userIds.filter(
+        (userId): userId is number =>
+          Number.isInteger(Number(userId)) && Number(userId) > 0,
+      ),
+    ),
+  );
+
+  if (!normalizedUserIds.length) {
+    return [];
+  }
+
+  const storedPreferences = await prisma.notification_preference.findMany({
+    where: {
+      user_id: {
+        in: normalizedUserIds,
+      },
+      type: normalizedType,
+    },
+    select: {
+      user_id: true,
+      in_app_enabled: channel === "inApp",
+      email_enabled: channel === "email",
+      sms_enabled: channel === "sms",
+    },
+  });
+
+  const storedByUserId = new Map(
+    storedPreferences.map((preference) => [preference.user_id, preference]),
+  );
+
+  return normalizedUserIds.filter((userId) => {
+    const preference = storedByUserId.get(userId);
+    if (!preference) {
+      return channel === "sms" ? false : true;
+    }
+
+    if (channel === "inApp") {
+      return preference.in_app_enabled !== false;
+    }
+    if (channel === "email") {
+      return preference.email_enabled !== false;
+    }
+
+    return preference.sms_enabled === true;
+  });
 };
 
 const buildEmailTemplate = (args: {
@@ -908,7 +967,7 @@ const createInAppNotification = async (
   }
 
   const shouldSendEmail =
-    !NOTIFICATIONS_SSE_ONLY && (input.sendEmail ?? true) && preference.emailEnabled;
+    (input.sendEmail ?? true) && preference.emailEnabled;
   const recipientEmail = recipientUser.email?.trim() || "";
   if (shouldSendEmail && recipientEmail) {
     const actionUrlForEmail = toAbsoluteActionUrl(actionUrl);
@@ -944,10 +1003,7 @@ const createInAppNotification = async (
   }
 
   const shouldSendSms =
-    !NOTIFICATIONS_SSE_ONLY &&
-    input.sendSms === true &&
-    preference.smsEnabled &&
-    notificationSmsService.isSmsEnabled();
+    input.sendSms === true && preference.smsEnabled;
   if (shouldSendSms) {
     const smsBody = String(input.smsBody || trimmedBody).trim();
     if (smsBody) {
@@ -980,33 +1036,31 @@ const createInAppNotification = async (
   void sendUnreadCountToUser(recipientUserId);
   void updateUnreadBacklogMetric();
 
-  if (!NOTIFICATIONS_SSE_ONLY) {
-    enqueueNotificationDelivery(async () => {
-      try {
-        const pushDelivery = await notificationPushService.deliverNotificationPush({
-          id: payload.id,
-          dedupeKey: payload.dedupeKey,
-          recipientUserId: payload.recipientUserId,
-          type: payload.type,
-          title: payload.title,
-          body: payload.body,
-          actionUrl: payload.actionUrl,
-          entityType: payload.entityType,
-          entityId: payload.entityId,
-          priority: payload.priority,
-          createdAt: payload.createdAt,
-        });
+  enqueueNotificationDelivery(async () => {
+    try {
+      const pushDelivery = await notificationPushService.deliverNotificationPush({
+        id: payload.id,
+        dedupeKey: payload.dedupeKey,
+        recipientUserId: payload.recipientUserId,
+        type: payload.type,
+        title: payload.title,
+        body: payload.body,
+        actionUrl: payload.actionUrl,
+        entityType: payload.entityType,
+        entityId: payload.entityId,
+        priority: payload.priority,
+        createdAt: payload.createdAt,
+      });
 
-        if (pushDelivery.failed > 0) {
-          notificationDeliveryFailureCounter.labels("push", trimmedType).inc(
-            pushDelivery.failed,
-          );
-        }
-      } catch (error) {
-        notificationDeliveryFailureCounter.labels("push", trimmedType).inc();
+      if (pushDelivery.failed > 0) {
+        notificationDeliveryFailureCounter.labels("push", trimmedType).inc(
+          pushDelivery.failed,
+        );
       }
-    });
-  }
+    } catch (error) {
+      notificationDeliveryFailureCounter.labels("push", trimmedType).inc();
+    }
+  });
 
   return payload;
 };
@@ -1234,6 +1288,41 @@ const markAllNotificationsAsRead = async (
   return { updated: updateResult.count };
 };
 
+const clearAllNotifications = async (
+  userId: number,
+): Promise<{ deleted: number }> => {
+  const result = await prisma.in_app_notification.deleteMany({
+    where: {
+      recipient_user_id: userId,
+    },
+  });
+
+  const [unreadCount, totalCount] = await prisma.$transaction([
+    prisma.in_app_notification.count({
+      where: {
+        recipient_user_id: userId,
+        is_read: false,
+      },
+    }),
+    prisma.in_app_notification.count({
+      where: {
+        recipient_user_id: userId,
+      },
+    }),
+  ]);
+
+  broadcastToUser(userId, "notifications_cleared", {
+    recipientUserId: String(userId),
+    deleted: result.count,
+    unreadCount,
+    totalCount,
+  });
+  emitUnreadCountToUser(userId, unreadCount);
+  void updateUnreadBacklogMetric();
+
+  return { deleted: result.count };
+};
+
 const startSseStream = async (
   userId: number,
   res: Response,
@@ -1341,6 +1430,7 @@ const notifyAdminsJobFailed = async (args: {
 export const notificationService = {
   createInAppNotification,
   createManyInAppNotifications,
+  filterUserIdsByChannelPreference,
   getNotificationPreference,
   listNotificationPreferences,
   updateNotificationPreference,
@@ -1349,8 +1439,8 @@ export const notificationService = {
   markNotificationAsRead,
   markNotificationAsUnread,
   markAllNotificationsAsRead,
+  clearAllNotifications,
   startSseStream,
   pruneOldNotifications,
   notifyAdminsJobFailed,
-  isSseOnlyModeEnabled,
 };
