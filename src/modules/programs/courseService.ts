@@ -1,6 +1,26 @@
 import { prisma } from "../../Models/context";
+import { InputValidationError } from "../../utils/custom-error-handlers";
+import { roleEligibilityService } from "../settings/roleEligibilityService";
 
 export class CourseService {
+  private toNullablePositiveInt(value: unknown): number | null {
+    if (
+      value === undefined ||
+      value === null ||
+      String(value).trim() === ""
+    ) {
+      return null;
+    }
+
+    const parsedValue = Number(value);
+
+    if (!Number.isInteger(parsedValue) || parsedValue <= 0) {
+      throw new InputValidationError("instructorId must be a positive integer");
+    }
+
+    return parsedValue;
+  }
+
   async getAllUsers() {
     return await prisma.user.findMany({
       select: {
@@ -21,10 +41,16 @@ export class CourseService {
   }
 
   async createCourse(data: any) {
+    const instructorId = this.toNullablePositiveInt(data.instructorId);
+
+    if (instructorId) {
+      await roleEligibilityService.assertEligible("instructor", instructorId);
+    }
+
     return await prisma.course.create({
       data: {
         name: data.name,
-        instructorId: Number(data.instructorId),
+        instructorId,
         capacity: data.capacity,
         schedule: data.schedule,
         classFormat: data.classFormat,
@@ -35,9 +61,20 @@ export class CourseService {
     });
   }
 
-  async getAllCourses(cohortId: number) {
+  async getAllCourses(filters?: {
+    cohortId?: number;
+    page?: number;
+    take?: number;
+  }) {
+    const where = filters?.cohortId ? { cohortId: filters.cohortId } : undefined;
+    const shouldPaginate =
+      typeof filters?.page === "number" && typeof filters?.take === "number";
+    const skip = shouldPaginate ? (filters.page! - 1) * filters.take! : undefined;
+
     return await prisma.course.findMany({
-      where: { cohortId },
+      where,
+      skip,
+      take: shouldPaginate ? filters?.take : undefined,
       include: {
         instructor: {
           select: {
@@ -132,9 +169,21 @@ export class CourseService {
   }
 
   async updateCourse(id: number, data: any) {
+    const nextData = { ...data };
+
+    if (Object.prototype.hasOwnProperty.call(data, "instructorId")) {
+      const instructorId = this.toNullablePositiveInt(data.instructorId);
+
+      if (instructorId) {
+        await roleEligibilityService.assertEligible("instructor", instructorId);
+      }
+
+      nextData.instructorId = instructorId;
+    }
+
     return await prisma.course.update({
       where: { id },
-      data,
+      data: nextData,
     });
   }
 

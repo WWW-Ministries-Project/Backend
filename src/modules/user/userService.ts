@@ -1,10 +1,89 @@
 import { prisma } from "../../Models/context";
 import { toCapitalizeEachWord, hashPassword, sendEmail } from "../../utils";
 import axios from "axios";
-import { program } from "@prisma/client/edge";
 import { applicationLiveTemplate } from "../../utils/mail_templates/applicationLiveTemplate";
+import { InputValidationError } from "../../utils/custom-error-handlers";
+import {
+  FAMILY_RELATION,
+  normalizeFamilyRelation,
+  toFamilyRelationLabel,
+  upsertBidirectionalFamilyRelation,
+} from "./familyRelations";
+import { roleEligibilityService } from "../settings/roleEligibilityService";
+import {
+  buildZtecoServiceRequestConfig,
+  getZtecoServiceUrl,
+} from "../integrationUtils/ztecoServiceClient";
+
+type MemberStatusTransitionTarget = "CONFIRMED" | "MEMBER";
+type MemberStatusValue = "UNCONFIRMED" | "CONFIRMED" | "MEMBER" | null;
+type ResolvedMemberStatus = Exclude<MemberStatusValue, null> | "UNKNOWN";
+type BulkMemberStatusFailureCode =
+  | "INVALID_USER_ID"
+  | "NOT_FOUND"
+  | "INVALID_STATUS_TRANSITION"
+  | "MEMBER_PROGRAM_REQUIRED"
+  | "INTERNAL_ERROR";
+
+type BulkMemberStatusSuccessResult = {
+  user_id: string;
+  success: true;
+  previous_status: Exclude<MemberStatusValue, null>;
+  current_status: MemberStatusTransitionTarget;
+};
+
+type BulkMemberStatusFailureResult = {
+  user_id: string;
+  success: false;
+  code: BulkMemberStatusFailureCode;
+  message: string;
+};
+
+type BulkMemberStatusResult =
+  | BulkMemberStatusSuccessResult
+  | BulkMemberStatusFailureResult;
 
 export class UserService {
+  private hasValue(value: unknown) {
+    return value !== undefined && value !== null && String(value).trim() !== "";
+  }
+
+  private normalizeOptionalText(value: unknown) {
+    if (!this.hasValue(value)) return null;
+    return String(value).trim();
+  }
+
+  private normalizeGenderValue(value: unknown) {
+    const normalizedValue = this.normalizeOptionalText(value);
+    if (!normalizedValue) return null;
+
+    const normalizedLower = normalizedValue.toLowerCase();
+    if (normalizedLower === "male" || normalizedLower === "m") return "Male";
+    if (normalizedLower === "female" || normalizedLower === "f") return "Female";
+    if (normalizedLower === "other") return "Other";
+
+    return normalizedValue;
+  }
+
+  private normalizeOptionalEmail(email?: string | null) {
+    const normalizedEmail = String(email || "")
+      .trim()
+      .toLowerCase();
+
+    return normalizedEmail || null;
+  }
+
+  private isRealEmail(email?: string | null) {
+    const normalizedEmail = this.normalizeOptionalEmail(email);
+    if (!normalizedEmail) return false;
+
+    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return (
+      emailPattern.test(normalizedEmail) &&
+      !normalizedEmail.endsWith("@temp.com")
+    );
+  }
+
   async registerUser(userData: any) {
     const {
       personal_info: {
@@ -59,12 +138,117 @@ export class UserService {
       password,
       is_user,
       department_positions,
+      source_soul_won_id,
+      source_visitor_id,
     } = userData;
 
-    // Generate email if not provided
-    let userEmail =
-      email?.trim().toLowerCase() ||
-      `${first_name.toLowerCase()}${last_name.toLowerCase()}_${Date.now()}@temp.com`;
+    const parsedSourceSoulWonId = Number(source_soul_won_id);
+    const sourceSoulWonId =
+      Number.isInteger(parsedSourceSoulWonId) && parsedSourceSoulWonId > 0
+        ? parsedSourceSoulWonId
+        : null;
+    const parsedSourceVisitorId = Number(source_visitor_id);
+    const sourceVisitorId =
+      Number.isInteger(parsedSourceVisitorId) && parsedSourceVisitorId > 0
+        ? parsedSourceVisitorId
+        : null;
+
+    const isLoginUser =
+      is_user === true || is_user === "true" || is_user === 1 || is_user === "1";
+    const userEmail = this.normalizeOptionalEmail(email);
+    const normalizedStatus = String(status || "")
+      .trim()
+      .toUpperCase();
+    const normalizedGender = this.normalizeGenderValue(gender);
+    const hasEmergencyContactPayload =
+      this.hasValue(emergency_contact_name) ||
+      this.hasValue(emergency_contact_relation) ||
+      this.hasValue(emergency_country_code) ||
+      this.hasValue(emergency_phone_number);
+    const hasWorkInfoPayload =
+      this.hasValue(employment_status) ||
+      this.hasValue(work_name) ||
+      this.hasValue(work_industry) ||
+      this.hasValue(work_position) ||
+      this.hasValue(school_name);
+
+    if (isLoginUser && !this.isRealEmail(userEmail)) {
+      throw new Error("A valid non-temporary email is required for login users.");
+    }
+
+    if (sourceSoulWonId) {
+      const sourceSoulRecord = await prisma.soul_won.findUnique({
+        where: { id: sourceSoulWonId },
+        select: { id: true, memberId: true },
+      });
+
+      if (!sourceSoulRecord) {
+        throw new InputValidationError(
+          "The selected soul-winning record could not be found.",
+        );
+      }
+
+      if (sourceSoulRecord.memberId) {
+        throw new InputValidationError(
+          "This soul-winning record is already linked to a member.",
+        );
+      }
+    }
+
+    if (sourceVisitorId) {
+      const sourceVisitorRecord = await prisma.visitor.findUnique({
+        where: { id: sourceVisitorId },
+        select: { id: true, is_member: true },
+      });
+
+      if (!sourceVisitorRecord) {
+        throw new InputValidationError(
+          "The selected visitor record could not be found.",
+        );
+      }
+
+      if (sourceVisitorRecord.is_member) {
+        throw new InputValidationError(
+          "This visitor record has already been linked to a member.",
+        );
+      }
+    }
+
+    if (!normalizedGender) {
+      throw new InputValidationError(
+        "Gender is required to create a user. Please select Male, Female, or Other.",
+      );
+    }
+
+    if (
+      hasEmergencyContactPayload &&
+      (!this.hasValue(emergency_contact_name) ||
+        !this.hasValue(emergency_contact_relation) ||
+        !this.hasValue(emergency_phone_number))
+    ) {
+      throw new InputValidationError(
+        "Emergency contact name, relation, and phone number are required when adding an emergency contact.",
+      );
+    }
+
+    if (
+      hasWorkInfoPayload &&
+      (!this.hasValue(work_name) ||
+        !this.hasValue(work_industry) ||
+        !this.hasValue(work_position))
+    ) {
+      throw new InputValidationError(
+        "Work name, industry, and position are required when adding work information.",
+      );
+    }
+
+    if (normalizedStatus === "MEMBER") {
+      await roleEligibilityService.assertEligible("member");
+    }
+
+    if (isLoginUser) {
+      await roleEligibilityService.assertEligible("ministry_worker");
+    }
 
     // Hash password for all users
     const hashedPassword = await hashPassword(password || "123456");
@@ -78,6 +262,47 @@ export class UserService {
       isNaN(parseInt(position_id)) || parseInt(position_id) === 0
         ? null
         : parseInt(position_id);
+    const userInfoCreateData: any = {
+      title,
+      first_name,
+      last_name,
+      other_name,
+      date_of_birth: date_of_birth ? new Date(date_of_birth) : null,
+      gender: normalizedGender,
+      marital_status,
+      nationality,
+      photo: picture?.src || "",
+      primary_number,
+      country_code,
+      member_since: member_since ? new Date(member_since) : null,
+      email: userEmail,
+      country: resident_country,
+      state_region,
+      city,
+    };
+
+    if (hasEmergencyContactPayload) {
+      userInfoCreateData.emergency_contact = {
+        create: {
+          name: emergency_contact_name,
+          relation: emergency_contact_relation,
+          country_code: emergency_country_code,
+          phone_number: emergency_phone_number,
+        },
+      };
+    }
+
+    if (hasWorkInfoPayload) {
+      userInfoCreateData.work_info = {
+        create: {
+          employment_status,
+          name_of_institution: work_name,
+          industry: work_industry,
+          position: work_position,
+          school_name,
+        },
+      };
+    }
 
     // Create user in database
     const user = await prisma.user.create({
@@ -87,51 +312,31 @@ export class UserService {
         ),
         email: userEmail,
         password: hashedPassword,
-        is_user,
+        is_user: isLoginUser,
         is_active: false,
         status,
         department_id: departmentId,
         position_id: positionId,
         membership_type,
         user_info: {
-          create: {
-            title,
-            first_name,
-            last_name,
-            other_name,
-            date_of_birth: date_of_birth ? new Date(date_of_birth) : null,
-            gender,
-            marital_status,
-            nationality,
-            photo: picture?.src || "",
-            primary_number,
-            country_code,
-            member_since: member_since ? new Date(member_since) : null,
-            email,
-            country: resident_country,
-            state_region,
-            city,
-            emergency_contact: {
-              create: {
-                name: emergency_contact_name,
-                relation: emergency_contact_relation,
-                country_code: emergency_country_code,
-                phone_number: emergency_phone_number,
-              },
-            },
-            work_info: {
-              create: {
-                employment_status,
-                name_of_institution: work_name,
-                industry: work_industry,
-                position: work_position,
-                school_name,
-              },
-            },
-          },
+          create: userInfoCreateData,
         },
       },
     });
+
+    if (sourceSoulWonId) {
+      await prisma.soul_won.update({
+        where: { id: sourceSoulWonId },
+        data: { memberId: user.id },
+      });
+    }
+
+    if (sourceVisitorId) {
+      await prisma.visitor.update({
+        where: { id: sourceVisitorId },
+        data: { is_member: true },
+      });
+    }
 
     await this.generateUserId(user).catch((err) =>
       console.error("Error generating user ID:", err),
@@ -178,158 +383,97 @@ export class UserService {
   }
 
   async registerFamilyMembers(family: any[], primaryUser: any) {
-    const childKeywords = [
-      "child",
-      "son",
-      "daughter",
-      "ward",
-      "kid",
-      "children",
-    ];
-    const spouseKeywords = ["spouse", "wife", "husband"];
-
+    const retainedFamilyIds = new Set<number>();
+    const savedFamilyMembers: any[] = [];
     let spouseUser: any = null;
 
     for (const member of family) {
-      if (spouseKeywords.includes(member.relation.toLowerCase())) {
-        if (member.user_id) {
-          spouseUser = await prisma.user.findUnique({
-            where: { id: Number(member.user_id) },
-          });
-        } else {
-          spouseUser = await prisma.user.create({
-            data: {
-              name: toCapitalizeEachWord(
-                `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
-              ),
-              email:
-                member.email ||
-                `${member.first_name.toLowerCase()}_${member.last_name.toLowerCase()}_${Date.now()}@temp.com`,
-              is_user: false,
-              is_active: true,
-              membership_type: primaryUser.membership_type || "IN_HOUSE",
-              user_info: {
-                create: {
-                  title: member.title,
-                  first_name: member.first_name,
-                  last_name: member.last_name,
-                  other_name: member.other_name || null,
-                  date_of_birth: new Date(member.date_of_birth),
-                  gender: member.gender,
-                  marital_status: member.marital_status,
-                  nationality: member.nationality,
-                },
-              },
-            },
-          });
-
-          await this.generateUserId(spouseUser);
-        }
-        await prisma.family_relation.upsert({
-          where: {
-            user_id_family_id: {
-              user_id: primaryUser.id,
-              family_id: spouseUser.id,
-            },
-          },
-          update: { relation: member.relation },
-          create: {
-            user_id: primaryUser.id,
-            family_id: spouseUser.id,
-            relation: member.relation,
-          },
-        });
+      const relation = normalizeFamilyRelation(member?.relation);
+      if (relation !== FAMILY_RELATION.SPOUSE) {
+        continue;
       }
-    }
 
-    return Promise.all(
-      family.map(async (member) => {
-        let familyUser: any;
-
-        if (spouseKeywords.includes(member.relation.toLowerCase())) {
-          return spouseUser;
-        }
-
-        if (member.user_id) {
-          familyUser = await prisma.user.findUnique({
-            where: { id: Number(member.user_id) },
-          });
-        } else if (childKeywords.includes(member.relation.toLowerCase())) {
-          // Try to find existing child for either parent
-          familyUser = await prisma.user.findFirst({
-            where: {
-              user_info: {
+      if (member.user_id) {
+        spouseUser = await prisma.user.findUnique({
+          where: { id: Number(member.user_id) },
+        });
+      } else {
+        spouseUser = await prisma.user.create({
+          data: {
+            name: toCapitalizeEachWord(
+              `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
+            ),
+            email: this.normalizeOptionalEmail(member.email),
+            is_user: false,
+            is_active: true,
+            membership_type: primaryUser.membership_type || "IN_HOUSE",
+            user_info: {
+              create: {
+                title: member.title,
                 first_name: member.first_name,
                 last_name: member.last_name,
+                other_name: member.other_name || null,
                 date_of_birth: new Date(member.date_of_birth),
+                gender: member.gender,
+                marital_status: member.marital_status,
+                nationality: member.nationality,
               },
-              OR: [
-                { parent_id: primaryUser.id },
-                { parent_id: spouseUser?.id },
-              ],
             },
-          });
+          },
+        });
 
-          // Create child if not found
-          if (!familyUser) {
-            familyUser = await prisma.user.create({
-              data: {
-                name: toCapitalizeEachWord(
-                  `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
-                ),
-                email:
-                  member.email ||
-                  `${member.first_name.toLowerCase()}_${member.last_name.toLowerCase()}_${Date.now()}@temp.com`,
-                parent_id: primaryUser.id, // biological / primary
-                is_user: false,
-                is_active: true,
-                user_info: {
-                  create: {
-                    title: member.title,
-                    first_name: member.first_name,
-                    last_name: member.last_name,
-                    other_name: member.other_name || null,
-                    date_of_birth: new Date(member.date_of_birth),
-                    gender: member.gender,
-                    marital_status: member.marital_status,
-                    nationality: member.nationality,
-                  },
-                },
-              },
-            });
+        await this.generateUserId(spouseUser);
+      }
 
-            await this.generateUserId(familyUser);
-          }
+      if (!spouseUser) {
+        throw new Error("Spouse user not found.");
+      }
 
-          // 🔗 Link child to spouse as well
-          if (spouseUser) {
-            await prisma.family_relation.upsert({
-              where: {
-                user_id_family_id: {
-                  user_id: spouseUser.id,
-                  family_id: familyUser.id,
-                },
-              },
-              update: { relation: "child" },
-              create: {
-                user_id: spouseUser.id,
-                family_id: familyUser.id,
-                relation: "child",
-              },
-            });
-          }
+      retainedFamilyIds.add(spouseUser.id);
+      await upsertBidirectionalFamilyRelation(
+        primaryUser.id,
+        spouseUser.id,
+        relation,
+      );
+    }
+
+    for (const member of family) {
+      const relation = normalizeFamilyRelation(member?.relation);
+      let familyUser: any;
+
+      if (relation === FAMILY_RELATION.SPOUSE) {
+        if (spouseUser) {
+          savedFamilyMembers.push(spouseUser);
         }
+        continue;
+      }
 
-        // 5️⃣ Other family members
-        else {
+      if (member.user_id) {
+        familyUser = await prisma.user.findUnique({
+          where: { id: Number(member.user_id) },
+        });
+      } else if (relation === FAMILY_RELATION.CHILD) {
+        // Try to find existing child for either parent
+        familyUser = await prisma.user.findFirst({
+          where: {
+            user_info: {
+              first_name: member.first_name,
+              last_name: member.last_name,
+              date_of_birth: new Date(member.date_of_birth),
+            },
+            OR: [{ parent_id: primaryUser.id }, { parent_id: spouseUser?.id }],
+          },
+        });
+
+        // Create child if not found
+        if (!familyUser) {
           familyUser = await prisma.user.create({
             data: {
               name: toCapitalizeEachWord(
                 `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
               ),
-              email:
-                member.email ||
-                `${member.first_name.toLowerCase()}_${member.last_name.toLowerCase()}_${Date.now()}@temp.com`,
+              email: this.normalizeOptionalEmail(member.email),
+              parent_id: primaryUser.id, // biological / primary
               is_user: false,
               is_active: true,
               user_info: {
@@ -349,26 +493,61 @@ export class UserService {
 
           await this.generateUserId(familyUser);
         }
-
-        // 🔗 Link to primary user
-        await prisma.family_relation.upsert({
-          where: {
-            user_id_family_id: {
-              user_id: primaryUser.id,
-              family_id: familyUser.id,
+      } else {
+        // Other family members
+        familyUser = await prisma.user.create({
+          data: {
+            name: toCapitalizeEachWord(
+              `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
+            ),
+            email: this.normalizeOptionalEmail(member.email),
+            is_user: false,
+            is_active: true,
+            user_info: {
+              create: {
+                title: member.title,
+                first_name: member.first_name,
+                last_name: member.last_name,
+                other_name: member.other_name || null,
+                date_of_birth: new Date(member.date_of_birth),
+                gender: member.gender,
+                marital_status: member.marital_status,
+                nationality: member.nationality,
+              },
             },
-          },
-          update: { relation: member.relation },
-          create: {
-            user_id: primaryUser.id,
-            family_id: familyUser.id,
-            relation: member.relation,
           },
         });
 
-        return familyUser;
-      }),
-    );
+        await this.generateUserId(familyUser);
+      }
+
+      if (!familyUser) {
+        throw new Error("Family member not found.");
+      }
+
+      if (retainedFamilyIds.has(familyUser.id)) {
+        throw new Error(`Duplicate relationship for member ID ${familyUser.id}.`);
+      }
+
+      retainedFamilyIds.add(familyUser.id);
+      await upsertBidirectionalFamilyRelation(
+        primaryUser.id,
+        familyUser.id,
+        relation,
+      );
+
+      if (spouseUser && relation === FAMILY_RELATION.CHILD) {
+        await upsertBidirectionalFamilyRelation(
+          spouseUser.id,
+          familyUser.id,
+          FAMILY_RELATION.CHILD,
+        );
+      }
+
+      savedFamilyMembers.push(familyUser);
+    }
+
+    return savedFamilyMembers;
   }
 
   private async savedDepartments(
@@ -406,7 +585,7 @@ export class UserService {
               name: toCapitalizeEachWord(
                 `${child.first_name} ${child.other_name || ""} ${child.last_name}`.trim(),
               ),
-              email: `${child.first_name.toLowerCase()}_${child.last_name.toLowerCase()}_${Date.now()}@temp.com`,
+              email: this.normalizeOptionalEmail(child.email),
               is_user: false,
               is_active: true,
               parent_id: parentObj.id,
@@ -502,157 +681,470 @@ export class UserService {
       process.env.SAVE_TO_ZKDEVICE === "false"
     )
       return false;
-
     if (!process.env.ZTECO_SERVICE) return false;
 
-    const URL = process.env.ZTECO_SERVICE;
-    console.log(`${URL}`);
-
     const userId = member_id.slice(-8);
+    const requestConfig = buildZtecoServiceRequestConfig();
+    const payload = {
+      id,
+      member_id: userId,
+      name,
+      password,
+    };
 
     try {
-      console.log(`attempting to save user to ${URL}/zteco`);
-      await axios
-        .post(`${URL}/zteco`, {
-          id,
-          member_id: userId,
-          name,
-          password,
-        })
-        .then((res) => {
-          console.log(`User ${name} is saved to ZKdevice sucessfully`);
-          console.log(res.data);
-          return res.data[0];
-        });
+      console.log("attempting to save user to zteco internal sync endpoint");
+      const response = await axios.post(
+        getZtecoServiceUrl("/zteco/internal/sync-user"),
+        payload,
+        requestConfig,
+      );
+      console.log(`User ${name} is saved to ZKdevice sucessfully`);
+      console.log(response.data);
+      return response.data?.[0] ?? true;
     } catch (error: any) {
+      if (error?.response?.status === 404) {
+        try {
+          const fallbackResponse = await axios.post(
+            getZtecoServiceUrl("/zteco"),
+            {
+              id,
+              member_id: userId,
+              name,
+              password,
+            },
+            requestConfig,
+          );
+          console.log(`User ${name} is saved to ZKdevice sucessfully`);
+          console.log(fallbackResponse.data);
+          return fallbackResponse.data?.[0] ?? true;
+        } catch (fallbackError: any) {
+          console.error(
+            "❌ Failed to call ZKTeco fallback service:",
+            fallbackError.message,
+          );
+          return false;
+        }
+      }
+
       console.error("❌ Failed to call ZKTeco service:", error.message);
       return false;
     }
   }
 
-  async convertMemeberToConfirmedMember(id: number, status: string) {
-    const allRequiredMemberPrograms = await prisma.program.findMany({
-      where: {
-        member_required: true,
+  async convertMemeberToConfirmedMember(id: number, requestedStatus?: string) {
+    const member = await prisma.user.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        name: true,
+        status: true,
       },
     });
 
-    if (allRequiredMemberPrograms.length === 0) {
-      return this.updateMemberToConfirmedMember(id, status);
-    }
-
-    const programIds = allRequiredMemberPrograms.map(
-      (program: program) => program.id,
-    );
-    const completionResults = await this.checkMultipleProgramCompletion(
-      id,
-      programIds,
-    );
-
-    const notEnrolledPrograms = completionResults
-      .filter((res) => !res.enrolled)
-      .map((res) => res.programId);
-
-    const incompletePrograms = completionResults
-      .filter((res) => res.enrolled && !res.completed)
-      .map((res) => res.programId);
-
-    const getProgramTitles = (ids: number[]) =>
-      allRequiredMemberPrograms
-        .filter((p: program) => ids.includes(p.id))
-        .map((p: any) => p.title);
-
-    if (notEnrolledPrograms.length > 0 || incompletePrograms.length > 0) {
-      const notEnrolledTitles = getProgramTitles(notEnrolledPrograms);
-      const incompleteTitles = getProgramTitles(incompletePrograms);
-
-      let errorMsg = "Cannot confirm membership. ";
-
-      if (notEnrolledTitles.length > 0) {
-        errorMsg += `Not enrolled in: ${notEnrolledTitles.join(", ")}. `;
-      }
-      if (incompleteTitles.length > 0) {
-        errorMsg += `Incomplete programs: ${incompleteTitles.join(", ")}.`;
-      }
-
+    if (!member) {
       return {
         message: "",
-        error: errorMsg.trim(),
+        error: "User not found.",
       };
     }
 
-    return this.updateMemberToConfirmedMember(id, status);
+    const targetStatus = this.resolveTargetMemberStatus(
+      member.status ?? null,
+      requestedStatus,
+    );
+
+    if (!targetStatus) {
+      return {
+        message: "",
+        error:
+          "Invalid target status. Use CONFIRMED for unconfirmed members or MEMBER for functional members.",
+      };
+    }
+
+    if (member.status === "MEMBER") {
+      return {
+        message: `${member.name} is already a functional member.`,
+        error: "",
+      };
+    }
+
+    if (member.status === "UNCONFIRMED" || member.status === null) {
+      if (targetStatus !== "CONFIRMED") {
+        return {
+          message: "",
+          error:
+            "Invalid transition. An unconfirmed member must be confirmed before becoming a functional member.",
+        };
+      }
+
+      return this.updateMemberStatus(
+        member.id,
+        "CONFIRMED",
+        `Membership confirmed for ${member.name}`,
+      );
+    }
+
+    if (member.status === "CONFIRMED") {
+      if (targetStatus === "CONFIRMED") {
+        return {
+          message: `${member.name} is already a confirmed member.`,
+          error: "",
+        };
+      }
+
+      return this.promoteConfirmedMemberToFunctionalMember(member.id, member.name);
+    }
+
+    return {
+      message: "",
+      error:
+        "Current member status is invalid for this action. Expected UNCONFIRMED, CONFIRMED, or MEMBER.",
+    };
   }
 
-  private async updateMemberToConfirmedMember(id: number, status: string) {
-    const updatedMember = await prisma.user.update({
+  async bulkUpdateMemberStatus(
+    requestedStatus: string,
+    userIds: unknown[],
+  ): Promise<{
+    status: MemberStatusTransitionTarget;
+    requested_count: number;
+    success_count: number;
+    failure_count: number;
+    results: BulkMemberStatusResult[];
+  }> {
+    const targetStatus = this.normalizeRequestedMemberStatus(requestedStatus);
+
+    if (!targetStatus) {
+      throw new InputValidationError("status must be CONFIRMED or MEMBER.");
+    }
+
+    if (!Array.isArray(userIds) || userIds.length === 0) {
+      throw new InputValidationError("user_ids must be a non-empty array.");
+    }
+
+    const normalizedUserIds = this.normalizeBulkRequestedUserIds(userIds);
+    const parsedUserIds = normalizedUserIds
+      .map((userId) => this.parseRequestedUserId(userId))
+      .filter((userId): userId is number => userId !== null);
+    const uniqueParsedUserIds = Array.from(new Set(parsedUserIds));
+    const existingMembers = await prisma.user.findMany({
+      where: {
+        id: {
+          in: uniqueParsedUserIds,
+        },
+      },
+      select: {
+        id: true,
+        status: true,
+      },
+    });
+    const existingMembersById = new Map(
+      existingMembers.map((member) => [member.id, member]),
+    );
+
+    const results = await Promise.all(
+      normalizedUserIds.map((userId) =>
+        this.buildBulkMemberStatusResult(
+          userId,
+          targetStatus,
+          existingMembersById,
+        ),
+      ),
+    );
+    const successCount = results.filter((result) => result.success).length;
+
+    return {
+      status: targetStatus,
+      requested_count: normalizedUserIds.length,
+      success_count: successCount,
+      failure_count: results.length - successCount,
+      results,
+    };
+  }
+
+  private normalizeRequestedMemberStatus(
+    requestedStatus?: string,
+  ): MemberStatusTransitionTarget | null {
+    if (!requestedStatus) return null;
+
+    const normalized = requestedStatus.toUpperCase().trim();
+
+    if (normalized === "CONFIRMED") return "CONFIRMED";
+
+    if (
+      normalized === "MEMBER" ||
+      normalized === "FUNCTIONAL_MEMBER" ||
+      normalized === "FUNCTIONAL-MEMBER" ||
+      normalized === "FUNCTIONALMEMBER" ||
+      normalized === "FUNCTIONAL"
+    ) {
+      return "MEMBER";
+    }
+
+    return null;
+  }
+
+  private resolveTargetMemberStatus(
+    currentStatus: string | null,
+    requestedStatus?: string,
+  ): MemberStatusTransitionTarget | null {
+    const normalizedRequestedStatus =
+      this.normalizeRequestedMemberStatus(requestedStatus);
+
+    if (normalizedRequestedStatus) {
+      return normalizedRequestedStatus;
+    }
+
+    if (currentStatus === "UNCONFIRMED" || currentStatus === null) {
+      return "CONFIRMED";
+    }
+    if (currentStatus === "CONFIRMED") return "MEMBER";
+    if (currentStatus === "MEMBER") return "MEMBER";
+
+    return null;
+  }
+
+  private async promoteConfirmedMemberToFunctionalMember(
+    id: number,
+    memberName: string,
+  ) {
+    await roleEligibilityService.assertEligible("member", id);
+
+    return this.updateMemberStatus(
+      id,
+      "MEMBER",
+      `${memberName} is now a functional member.`,
+    );
+  }
+
+  private normalizeBulkRequestedUserIds(userIds: unknown[]) {
+    const seenUserIds = new Set<string>();
+    const normalizedUserIds: string[] = [];
+
+    for (const userId of userIds) {
+      const rawUserId = String(userId ?? "").trim();
+      const parsedUserId = this.parseRequestedUserId(rawUserId);
+      const normalizedUserId =
+        parsedUserId === null ? rawUserId : String(parsedUserId);
+      const dedupeKey =
+        parsedUserId === null
+          ? `invalid:${normalizedUserId}`
+          : `valid:${normalizedUserId}`;
+
+      if (seenUserIds.has(dedupeKey)) {
+        continue;
+      }
+
+      seenUserIds.add(dedupeKey);
+      normalizedUserIds.push(normalizedUserId);
+    }
+
+    return normalizedUserIds;
+  }
+
+  private parseRequestedUserId(userId: string) {
+    const parsedUserId = Number(userId);
+
+    if (!Number.isInteger(parsedUserId) || parsedUserId <= 0) {
+      return null;
+    }
+
+    return parsedUserId;
+  }
+
+  private resolveStoredMemberStatus(status: string | null): ResolvedMemberStatus {
+    if (status === null) return "UNCONFIRMED";
+
+    const normalizedStatus = String(status).trim().toUpperCase();
+
+    if (
+      normalizedStatus === "UNCONFIRMED" ||
+      normalizedStatus === "CONFIRMED" ||
+      normalizedStatus === "MEMBER"
+    ) {
+      return normalizedStatus;
+    }
+
+    return "UNKNOWN";
+  }
+
+  private buildBulkFailureResult(
+    userId: string,
+    code: BulkMemberStatusFailureCode,
+    message: string,
+  ): BulkMemberStatusFailureResult {
+    return {
+      user_id: userId,
+      success: false,
+      code,
+      message,
+    };
+  }
+
+  private async buildBulkMemberStatusResult(
+    userId: string,
+    targetStatus: MemberStatusTransitionTarget,
+    existingMembersById: Map<number, { id: number; status: string | null }>,
+  ): Promise<BulkMemberStatusResult> {
+    const parsedUserId = this.parseRequestedUserId(userId);
+
+    if (parsedUserId === null) {
+      return this.buildBulkFailureResult(
+        userId,
+        "INVALID_USER_ID",
+        "User ID must be a positive integer.",
+      );
+    }
+
+    const member = existingMembersById.get(parsedUserId);
+
+    if (!member) {
+      return this.buildBulkFailureResult(
+        userId,
+        "NOT_FOUND",
+        "User not found.",
+      );
+    }
+
+    try {
+      return await this.applyBulkMemberStatusTransition(
+        userId,
+        member,
+        targetStatus,
+      );
+    } catch (error) {
+      console.error("Failed to bulk update member status", {
+        userId,
+        targetStatus,
+        error,
+      });
+
+      return this.buildBulkFailureResult(
+        userId,
+        "INTERNAL_ERROR",
+        "Failed to update member status.",
+      );
+    }
+  }
+
+  private async applyBulkMemberStatusTransition(
+    userId: string,
+    member: { id: number; status: string | null },
+    targetStatus: MemberStatusTransitionTarget,
+  ): Promise<BulkMemberStatusResult> {
+    const previousStatus = this.resolveStoredMemberStatus(member.status);
+
+    if (previousStatus === "UNKNOWN") {
+      return this.buildBulkFailureResult(
+        userId,
+        "INVALID_STATUS_TRANSITION",
+        "Current member status is invalid for this action.",
+      );
+    }
+
+    if (targetStatus === "CONFIRMED") {
+      if (previousStatus !== "UNCONFIRMED") {
+        return this.buildBulkFailureResult(
+          userId,
+          "INVALID_STATUS_TRANSITION",
+          "Only unconfirmed members can be updated to CONFIRMED.",
+        );
+      }
+
+      const updatedMember = await this.persistMemberStatus(member.id, "CONFIRMED");
+
+      if (updatedMember.status !== "CONFIRMED") {
+        return this.buildBulkFailureResult(
+          userId,
+          "INTERNAL_ERROR",
+          "Failed to update member status.",
+        );
+      }
+
+      return {
+        user_id: userId,
+        success: true,
+        previous_status: previousStatus,
+        current_status: "CONFIRMED",
+      };
+    }
+
+    if (previousStatus !== "CONFIRMED") {
+      return this.buildBulkFailureResult(
+        userId,
+        "INVALID_STATUS_TRANSITION",
+        "Only confirmed members can be updated to MEMBER.",
+      );
+    }
+
+    const missingPrograms = await roleEligibilityService.getMissingProgramsForUser(
+      "member",
+      member.id,
+    );
+
+    if (missingPrograms.length > 0) {
+      return this.buildBulkFailureResult(
+        userId,
+        "MEMBER_PROGRAM_REQUIRED",
+        "Required member program is incomplete.",
+      );
+    }
+
+    const updatedMember = await this.persistMemberStatus(member.id, "MEMBER");
+
+    if (updatedMember.status !== "MEMBER") {
+      return this.buildBulkFailureResult(
+        userId,
+        "INTERNAL_ERROR",
+        "Failed to update member status.",
+      );
+    }
+
+    return {
+      user_id: userId,
+      success: true,
+      previous_status: previousStatus,
+      current_status: "MEMBER",
+    };
+  }
+
+  private async updateMemberStatus(
+    id: number,
+    status: MemberStatusTransitionTarget,
+    successMessage: string,
+  ) {
+    const updatedMember = await this.persistMemberStatus(id, status);
+
+    if (updatedMember.status === status) {
+      return {
+        message: successMessage,
+        error: "",
+      };
+    }
+
+    return {
+      message: "",
+      error: `Failed to update membership status for ${updatedMember.name}.`,
+    };
+  }
+
+  private async persistMemberStatus(
+    id: number,
+    status: MemberStatusTransitionTarget,
+  ) {
+    return prisma.user.update({
       where: {
         id,
       },
       data: {
-        status: "CONFIRMED",
+        status,
+      },
+      select: {
+        name: true,
+        status: true,
       },
     });
-
-    if (updatedMember.status === "CONFIRMED") {
-      return {
-        message: `Membership confirmed for ${updatedMember.name}`,
-        error: "",
-      };
-    } else {
-      return {
-        message: "",
-        error: `Membership confirmed for ${updatedMember.name}`,
-      };
-    }
-  }
-
-  private async checkMultipleProgramCompletion(
-    userId: number,
-    programIds: number[],
-  ) {
-    const results = await Promise.all(
-      programIds.map(async (programId) => {
-        // 1. Check enrollment
-        const enrollment = await prisma.enrollment.findFirst({
-          where: {
-            user_id: userId,
-            course: {
-              cohort: {
-                programId,
-              },
-            },
-          },
-          select: { id: true },
-        });
-
-        if (!enrollment) {
-          return { programId, enrolled: false, completed: false };
-        }
-
-        // 2. Get topic IDs
-        const topics = await prisma.topic.findMany({
-          where: { programId },
-          select: { id: true },
-        });
-        const topicIds = topics.map((t: any) => t.id);
-
-        // 3. Check progress
-        const passedCount = await prisma.progress.count({
-          where: {
-            enrollmentId: enrollment.id,
-            topicId: { in: topicIds },
-            status: "PASS",
-          },
-        });
-
-        const completed = passedCount === topicIds.length;
-
-        return { programId, enrolled: true, completed };
-      }),
-    );
-
-    return results;
   }
 
   async linkSpouses(userId1: number, userId2: number) {
@@ -687,27 +1179,15 @@ export class UserService {
       }),
     ]);
 
+    await upsertBidirectionalFamilyRelation(
+      userId1,
+      userId2,
+      FAMILY_RELATION.SPOUSE,
+    );
+
     return { message: "Spouses linked successfully.", error: "" };
   }
   async getUserFamily(userId: number) {
-    const siblingsKeywords = [
-      "sibling",
-      "brother",
-      "sister",
-      "sibs",
-      "sis",
-      "bro",
-      "siblings",
-    ];
-    const childKeywords = [
-      "child",
-      "son",
-      "daughter",
-      "ward",
-      "kid",
-      "children",
-    ];
-
     // Helper to remove password
     const sanitizeUser = (u: any) => {
       if (!u) return null;
@@ -731,29 +1211,36 @@ export class UserService {
 
     // 3️⃣ Organize relations by type
     const spouses = relations
-      .filter((r) => r.relation.toLowerCase() === "spouse")
+      .filter((r) => r.relation === FAMILY_RELATION.SPOUSE)
       .map((r) => sanitizeUser(r.family));
 
     const children = relations
-      .filter((r) => childKeywords.includes(r.relation.toLowerCase()))
+      .filter((r) => r.relation === FAMILY_RELATION.CHILD)
       .map((r) => sanitizeUser(r.family));
 
     const siblings = relations
-      .filter((r) => siblingsKeywords.includes(r.relation.toLowerCase()))
+      .filter((r) => r.relation === FAMILY_RELATION.SIBLING)
       .map((r) => sanitizeUser(r.family));
 
     const parents = relations
-      .filter((r) => r.relation.toLowerCase() === "parent")
+      .filter((r) => r.relation === FAMILY_RELATION.PARENT)
       .map((r) => sanitizeUser(r.family));
+
+    const groupedRelationTypes = new Set<string>([
+      FAMILY_RELATION.SPOUSE,
+      FAMILY_RELATION.CHILD,
+      FAMILY_RELATION.SIBLING,
+      FAMILY_RELATION.PARENT,
+    ]);
 
     const others = relations
       .filter(
-        (r) =>
-          !["spouse", "child", "sibling", "parent"]
-            .concat(siblingsKeywords, childKeywords)
-            .includes(r.relation.toLowerCase()),
+        (r) => !groupedRelationTypes.has(r.relation),
       )
-      .map((r) => ({ ...sanitizeUser(r.family), relation: r.relation }));
+      .map((r) => ({
+        ...sanitizeUser(r.family),
+        relation: toFamilyRelationLabel(r.relation),
+      }));
 
     // 4️⃣ Include children who have this user as biological parent
     const biologicalChildren = await prisma.user.findMany({
@@ -833,6 +1320,7 @@ export class UserService {
       recipients = await prisma.user.findMany({
         where: {
           email: { in: emails },
+          is_user: true,
         },
         select: {
           email: true,
@@ -843,6 +1331,7 @@ export class UserService {
       recipients = await prisma.user.findMany({
         where: {
           email: { not: null },
+          is_user: true,
         },
         select: {
           email: true,
@@ -856,7 +1345,13 @@ export class UserService {
     const loginLink = process.env.PLATFORM_LOGIN;
     const guestLink = process.env.GUEST_ORDER_LINK;
 
-    const emailPromises = recipients.map(async (user: any) => {
+    const realRecipients = recipients.filter(
+      (user) =>
+        Boolean(user.email) &&
+        !String(user.email).toLowerCase().endsWith("@temp.com"),
+    );
+
+    const emailPromises = realRecipients.map(async (user: any) => {
       try {
         sendEmail(
           applicationLiveTemplate(

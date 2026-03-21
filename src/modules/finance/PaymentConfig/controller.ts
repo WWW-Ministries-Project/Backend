@@ -1,85 +1,74 @@
-// import { Request, Response } from "express";
-// import {  paymentConfigurationService }  from "./service";
+import { Request, Response } from "express";
+import {
+  parseIdFromQuery,
+  parsePagination,
+  sendFinanceError,
+  validateBasePayload,
+} from "../common";
+import { PaymentConfigurationService } from "./service";
 
+const paymentConfigService = new PaymentConfigurationService();
 
-// const paymentConfigService = new paymentConfigurationService();
+export class PaymentConfigController {
+  async create(req: Request, res: Response): Promise<Response> {
+    try {
+      const payload = validateBasePayload(req.body);
+      const config = await paymentConfigService.create(payload);
 
-// export class PaymentConfigController {
-//   async create(req: Request, res: Response) {
-//     try {
-//       const config = await paymentConfigService.create(req.body);
+      return res.status(201).json({
+        message: "Saved successfully",
+        data: config,
+      });
+    } catch (error) {
+      return sendFinanceError(res, error);
+    }
+  }
 
-//       return res.status(201).json({
-//         message: "Payment configuration created successfully",
-//         data: config,
-//       });
-//     } catch (error: any) {
-//       return res.status(400).json({
-//         message: "Failed to create payment configuration",
-//         error: error.message,
-//       });
-//     }
-//   }
+  async findAll(req: Request, res: Response): Promise<Response> {
+    try {
+      const pagination = parsePagination(req);
+      const result = await paymentConfigService.findAll(pagination);
 
-//   async findAll(req: Request, res: Response) {
-//       const configs = await paymentConfigService.findAll();
+      return res.status(200).json({
+        message: "Success",
+        data: result.data,
+        current_page: pagination.page,
+        take: pagination.take,
+        total: result.total,
+        page_size: pagination.take,
+        totalPages: Math.ceil(result.total / pagination.take),
+      });
+    } catch (error) {
+      return sendFinanceError(res, error);
+    }
+  }
 
-//     return res.status(200).json({
-//       data: configs,
-//     });
-//   }
+  async update(req: Request, res: Response): Promise<Response> {
+    try {
+      const id = parseIdFromQuery(req);
+      const payload = validateBasePayload(req.body);
+      const updatedConfig = await paymentConfigService.update(id, payload);
 
-//   async findById(req: Request, res: Response) {
-//     const { id } = req.query;
+      return res.status(200).json({
+        message: "Saved successfully",
+        data: updatedConfig,
+      });
+    } catch (error) {
+      return sendFinanceError(res, error);
+    }
+  }
 
-//     if (!id || typeof id !== "string") {
-//       return res.status(400).json({ message: "Invalid payment configuration ID" });
-//     }
+  async delete(req: Request, res: Response): Promise<Response> {
+    try {
+      const id = parseIdFromQuery(req);
+      const deleted = await paymentConfigService.delete(id);
 
-//     const config = await paymentConfigService.findById(id);
-
-//     if (!config) {
-//       return res.status(404).json({
-//         message: "Payment configuration not found",
-//       });
-//     }
-
-//     return res.status(200).json({
-//       data: config,
-//     });
-//   }
-
-//   async update(req: Request, res: Response) {
-//     const { id } = req.query;
-
-//     if (!id || typeof id !== "string") {
-//       return res.status(400).json({ message: "Invalid payment configuration ID" });
-//     }
-
-//     try {
-//       const updatedConfig = await paymentConfigService.update(id, req.body);
-
-//       return res.status(200).json({
-//         message: "Payment configuration updated successfully",
-//         data: updatedConfig,
-//       });
-//     } catch (error: any) {
-//       return res.status(400).json({
-//         message: "Failed to update payment configuration",
-//         error: error.message,
-//       });
-//     }
-//   }
-
-//   async delete(req: Request, res: Response) {
-//     const { id } = req.query;
-
-//     if (!id || typeof id !== "string") {
-//       return res.status(400).json({ message: "Invalid payment configuration ID" });
-//     }
-
-//     await paymentConfigService.delete(id);
-
-//     return res.status(204).send();
-//   }
-// }
+      return res.status(200).json({
+        message: "Deleted successfully",
+        data: deleted,
+      });
+    } catch (error) {
+      return sendFinanceError(res, error);
+    }
+  }
+}

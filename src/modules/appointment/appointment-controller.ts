@@ -1,5 +1,6 @@
-import { Request, Response } from 'express';
-import { AppointmentService } from './appointment-service';
+import { Request, Response } from "express";
+import { AppointmentService } from "./appointment-service";
+import { notificationService } from "../notifications/notificationService";
 
 export class AppointmentController {
   /**
@@ -8,13 +9,135 @@ export class AppointmentController {
    */
   async setAvailability(req: Request, res: Response) {
     try {
-      const appointment_availability = await AppointmentService.saveStaffAvailability(req.body);
-      res.status(200).json({ 
-        message: "Availability schedule updated", 
-        data: appointment_availability 
+      const appointment_availability =
+        await AppointmentService.saveStaffAvailability(req.body);
+      res.status(200).json({
+        message: "Availability schedule updated",
+        data: appointment_availability,
       });
     } catch (error: any) {
-      res.status(500).json({ error: error.message || "Could not save availability" });
+      const statusCode =
+        error?.message?.includes("must") || error?.message?.includes("required")
+          ? 400
+          : 500;
+      res
+        .status(statusCode)
+        .json({ error: error.message || "Could not save availability" });
+    }
+  }
+
+  /**
+   * @route   GET /api/appointments/availability?userId=1
+   * @desc    Fetch all created availability records (optionally by staff userId)
+   */
+  async getAvailability(req: Request, res: Response) {
+    try {
+      const { userId } = req.query;
+      const appointmentScope = (req as any).appointmentScope;
+
+      if (userId !== undefined) {
+        const parsed = Number(userId);
+        if (!Number.isInteger(parsed) || parsed <= 0) {
+          return res.status(400).json({ error: "userId must be a valid number" });
+        }
+      }
+
+      const data = await AppointmentService.getAllAvailability(
+        userId !== undefined ? Number(userId) : undefined,
+        appointmentScope,
+      );
+
+      res.status(200).json({
+        message: "Availability fetched successfully",
+        data,
+      });
+    } catch (error: any) {
+      res
+        .status(500)
+        .json({ error: error.message || "Error fetching availability" });
+    }
+  }
+
+  /**
+   * @route   PUT /api/appointments/availability/:id
+   * @desc    Update a created availability slot
+   */
+  async updateAvailability(req: Request, res: Response) {
+    try {
+      const parsedId = Number(req.params.id);
+      if (!Number.isInteger(parsedId) || parsedId <= 0) {
+        return res
+          .status(400)
+          .json({ error: "Availability ID must be a valid number" });
+      }
+
+      const data = await AppointmentService.updateAvailability(
+        parsedId,
+        req.body,
+      );
+
+      res.status(200).json({
+        message: "Availability updated successfully",
+        data,
+      });
+    } catch (error: any) {
+      const statusCode =
+        error?.message === "Availability not found"
+          ? 404
+          : error?.message?.includes("must")
+            ? 400
+            : 500;
+
+      res
+        .status(statusCode)
+        .json({ error: error.message || "Could not update availability" });
+    }
+  }
+
+  /**
+   * @route   DELETE /api/appointments/availability/:id
+   * @desc    Delete a created availability slot
+   */
+  async deleteAvailability(req: Request, res: Response) {
+    try {
+      const parsedId = Number(req.params.id);
+      if (!Number.isInteger(parsedId) || parsedId <= 0) {
+        return res
+          .status(400)
+          .json({ error: "Availability ID must be a valid number" });
+      }
+
+      const data = await AppointmentService.deleteAvailability(parsedId);
+      res.status(200).json({
+        message: "Availability deleted successfully",
+        data,
+      });
+    } catch (error: any) {
+      const statusCode = error?.message === "Availability not found" ? 404 : 500;
+      res
+        .status(statusCode)
+        .json({ error: error.message || "Could not delete availability" });
+    }
+  }
+
+  /**
+   * @route   GET /appointment/availability/status
+   * @desc    Fetch availability in payload structure with slot/session status tags
+   */
+  async getAvailabilityStatus(req: Request, res: Response) {
+    try {
+      const appointmentScope = (req as any).appointmentScope;
+      const data =
+        await AppointmentService.getAvailabilityWithSessionStatus(appointmentScope);
+
+      res.status(200).json({
+        message: "Availability status fetched successfully",
+        data,
+      });
+    } catch (error: any) {
+      res.status(500).json({
+        error: error.message || "Error fetching availability status",
+      });
     }
   }
 
@@ -24,14 +147,185 @@ export class AppointmentController {
    */
   async bookNow(req: Request, res: Response) {
     try {
-      const newBooking = await AppointmentService.createAppointment(req.body);
+      const requesterId = Number((req as any).user?.id);
+      if (!Number.isInteger(requesterId) || requesterId <= 0) {
+        return res.status(401).json({ error: "Unauthorized user" });
+      }
+
+      const newBooking = await AppointmentService.createAppointment(
+        req.body,
+        requesterId,
+      );
+
+      const staffRecipientId = Number(newBooking.staffId);
+      if (Number.isInteger(staffRecipientId) && staffRecipientId > 0) {
+        await notificationService.createInAppNotification({
+          type: "appointment.booked",
+          title: "New appointment booking",
+          body: `${newBooking.fullName || "A member"} booked an appointment for ${newBooking.date} (${newBooking.session.start} - ${newBooking.session.end}).`,
+          recipientUserId: staffRecipientId,
+          actorUserId: requesterId,
+          entityType: "APPOINTMENT",
+          entityId: String(newBooking.id),
+          actionUrl: "/home/appointments",
+          priority: "MEDIUM",
+          dedupeKey: `appointment:${newBooking.id}:booked:recipient:${staffRecipientId}`,
+          sendSms: true,
+          smsBody: `${newBooking.fullName || "A member"} booked an appointment for ${newBooking.date} (${newBooking.session.start} - ${newBooking.session.end}).`,
+        });
+      }
+
       res.status(201).json({
         message: "Appointment booked successfully",
-        data: newBooking
+        data: newBooking,
       });
     } catch (error: any) {
       // If the overbooking logic throws an error, it will be caught here
       res.status(400).json({ error: error.message || "Booking failed" });
+    }
+  }
+
+  /**
+   * @route   GET /appointment/bookings
+   * @desc    Fetch all booking appointments (supports staffId, requesterId, email, status, date filters)
+   */
+  async getBookings(req: Request, res: Response) {
+    try {
+      const appointmentScope = (req as any).appointmentScope;
+      const staffIdRaw =
+        req.query.staffId ??
+        req.query.userId ??
+        req.query.attendeeId ??
+        req.query.attendee_id;
+      const requesterIdRaw = req.query.requesterId ?? req.query.requestedBy;
+      const email =
+        typeof req.query.email === "string" ? req.query.email : undefined;
+      const status =
+        typeof req.query.status === "string" ? req.query.status : undefined;
+      const date =
+        typeof req.query.date === "string" ? req.query.date : undefined;
+
+      let staffId: number | undefined;
+      if (staffIdRaw !== undefined) {
+        staffId = Number(staffIdRaw);
+        if (!Number.isInteger(staffId) || staffId <= 0) {
+          return res
+            .status(400)
+            .json({ error: "staffId must be a valid number" });
+        }
+      }
+
+      let requesterId: number | undefined;
+      if (requesterIdRaw !== undefined) {
+        requesterId = Number(requesterIdRaw);
+        if (!Number.isInteger(requesterId) || requesterId <= 0) {
+          return res
+            .status(400)
+            .json({ error: "requesterId must be a valid number" });
+        }
+      }
+
+      const data = await AppointmentService.getAllBookings({
+        staffId,
+        requesterId,
+        email,
+        status,
+        date,
+      }, appointmentScope);
+
+      res.status(200).json({
+        message: "Bookings fetched successfully",
+        data,
+      });
+    } catch (error: any) {
+      const statusCode =
+        error?.message?.includes("status must") ||
+        error?.message?.includes("date")
+          ? 400
+          : 500;
+      res.status(statusCode).json({
+        error: error.message || "Error fetching bookings",
+      });
+    }
+  }
+
+  /**
+   * @route   GET /appointment/bookings/:id
+   * @desc    Fetch one booking appointment by id
+   */
+  async getBookingById(req: Request, res: Response) {
+    try {
+      const id = Number(req.params.id);
+      if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ error: "Booking ID must be a valid number" });
+      }
+
+      const data = await AppointmentService.getBookingById(id);
+      res.status(200).json({
+        message: "Booking fetched successfully",
+        data,
+      });
+    } catch (error: any) {
+      const statusCode = error?.message === "Appointment not found" ? 404 : 500;
+      res
+        .status(statusCode)
+        .json({ error: error.message || "Error fetching booking" });
+    }
+  }
+
+  /**
+   * @route   PUT /appointment/bookings/:id
+   * @desc    Update a booking appointment
+   */
+  async updateBooking(req: Request, res: Response) {
+    try {
+      const id = Number(req.params.id);
+      if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ error: "Booking ID must be a valid number" });
+      }
+
+      const data = await AppointmentService.updateBooking(id, req.body);
+      res.status(200).json({
+        message: "Booking updated successfully",
+        data,
+      });
+    } catch (error: any) {
+      const statusCode =
+        error?.message === "Appointment not found"
+          ? 404
+          : error?.message?.includes("must") ||
+              error?.message?.includes("required") ||
+              error?.message?.includes("already booked") ||
+              error?.message?.includes("max number")
+            ? 400
+            : 500;
+      res
+        .status(statusCode)
+        .json({ error: error.message || "Error updating booking" });
+    }
+  }
+
+  /**
+   * @route   DELETE /appointment/bookings/:id
+   * @desc    Delete a booking appointment
+   */
+  async deleteBooking(req: Request, res: Response) {
+    try {
+      const id = Number(req.params.id);
+      if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ error: "Booking ID must be a valid number" });
+      }
+
+      const data = await AppointmentService.deleteBooking(id);
+      res.status(200).json({
+        message: "Booking deleted successfully",
+        data,
+      });
+    } catch (error: any) {
+      const statusCode = error?.message === "Appointment not found" ? 404 : 500;
+      res
+        .status(statusCode)
+        .json({ error: error.message || "Error deleting booking" });
     }
   }
 
@@ -41,11 +335,15 @@ export class AppointmentController {
    */
   async getStaffBookings(req: Request, res: Response) {
     try {
+      const appointmentScope = (req as any).appointmentScope;
       const { userId } = req.query;
       if (!userId) {
         return res.status(400).json({ error: "userId is required in query" });
       }
-      const data = await AppointmentService.getByStaff(Number(userId));
+      const data = await AppointmentService.getByStaff(
+        Number(userId),
+        appointmentScope,
+      );
       res.json(data);
     } catch (error) {
       res.status(500).json({ error: "Error fetching bookings" });
@@ -58,11 +356,15 @@ export class AppointmentController {
    */
   async getClientBookings(req: Request, res: Response) {
     try {
+      const appointmentScope = (req as any).appointmentScope;
       const { email } = req.query;
       if (!email) {
         return res.status(400).json({ error: "email is required in query" });
       }
-      const data = await AppointmentService.getByClientEmail(String(email));
+      const data = await AppointmentService.getByClientEmail(
+        String(email),
+        appointmentScope,
+      );
       res.json(data);
     } catch (error) {
       res.status(500).json({ error: "Error fetching user appointments" });
@@ -78,17 +380,74 @@ export class AppointmentController {
     try {
       const { id } = req.query;
       const { isConfirmed } = req.body;
-      
+
       if (!id) {
-        return res.status(400).json({ error: "Appointment ID is required in query" });
+        return res
+          .status(400)
+          .json({ error: "Appointment ID is required in query" });
+      }
+      const parsedId = Number(id);
+      if (!Number.isInteger(parsedId) || parsedId <= 0) {
+        return res
+          .status(400)
+          .json({ error: "Appointment ID must be a valid number" });
+      }
+      if (typeof isConfirmed !== "boolean") {
+        return res
+          .status(400)
+          .json({ error: "isConfirmed must be a boolean value" });
       }
 
-      const newStatus = isConfirmed ? 'CONFIRMED' : 'PENDING';
-      const updated = await AppointmentService.updateStatus(Number(id), newStatus);
-      
+      const newStatus = isConfirmed ? "CONFIRMED" : "PENDING";
+      const updated = await AppointmentService.updateStatus(parsedId, newStatus);
+      const actorUserId = Number((req as any)?.user?.id);
+      const statusWord = newStatus.toLowerCase();
+
+      const recipientUserIds = Array.from(
+        new Set(
+          [updated.requesterId, updated.staffId]
+            .map((entry) => Number(entry))
+            .filter(
+              (entry): entry is number =>
+                Number.isInteger(entry) &&
+                entry > 0 &&
+                entry !== actorUserId,
+            ),
+        ),
+      );
+
+      if (recipientUserIds.length) {
+        await notificationService.createManyInAppNotifications(
+          recipientUserIds.map((recipientUserId) => ({
+            type: "appointment.status_changed",
+            title: "Appointment status updated",
+            body: `Appointment on ${updated.date} (${updated.session.start} - ${updated.session.end}) is now ${statusWord}.`,
+            recipientUserId,
+            actorUserId:
+              Number.isInteger(actorUserId) && actorUserId > 0
+                ? actorUserId
+                : null,
+            entityType: "APPOINTMENT",
+            entityId: String(updated.id),
+            actionUrl:
+              recipientUserId === Number(updated.requesterId)
+                ? "/member/appointments"
+                : "/home/appointments",
+            priority: "MEDIUM",
+            dedupeKey: `appointment:${updated.id}:status:${newStatus}:recipient:${recipientUserId}`,
+            emailSubject: `Appointment ${newStatus === "CONFIRMED" ? "Confirmed" : "Updated"}`,
+            sendSms: true,
+            smsBody: `Appointment on ${updated.date} (${updated.session.start} - ${updated.session.end}) is now ${statusWord}.`,
+          })),
+        );
+      }
+
       res.json({
         message: `Appointment ${newStatus.toLowerCase()} successfully`,
-        data: updated
+        data: updated,
+        notification: {
+          sent: true,
+        },
       });
     } catch (error: any) {
       res.status(500).json({ error: error.message || "Status update failed" });

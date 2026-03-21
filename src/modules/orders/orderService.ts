@@ -2,6 +2,7 @@ import { prisma } from "../../Models/context";
 import axios from "axios";
 import crypto from "crypto";
 import { toSentenceCase } from "../../utils";
+import { notificationService } from "../notifications/notificationService";
 
 export class OrderService {
   async findOrderByName(first_name?: string, last_name?: string) {
@@ -27,7 +28,6 @@ export class OrderService {
   async create(data: {
     user_id?: number | null | string;
     total_amount: number | string;
-    reference: string | null;
     payment_type: "paystack" | "hubtel" | null;
     return_url: string | null;
     cancellation_url: string | null;
@@ -53,6 +53,10 @@ export class OrderService {
       size: string;
     }[];
   }) {
+    if (data.payment_type === "hubtel") {
+      this.validateHubtelRedirectUrls(data.return_url, data.cancellation_url);
+    }
+
     // Step 1: Create order + items + billing info
     const clientReference = this.generateReference();
     const order = await prisma.orders.create({
@@ -101,31 +105,67 @@ export class OrderService {
     }
   }
 
+  async retryHubtelPayment(
+    orderToken: string | null | undefined,
+    return_url: string | null,
+    cancellation_url: string | null,
+  ) {
+    if (!orderToken?.trim()) {
+      throw new Error("order_token is required");
+    }
+
+    const order = await this.findOrderByRetryToken(orderToken);
+    if (!order) {
+      throw new Error("Order not found");
+    }
+
+    if (order.payment_status === "success") {
+      throw new Error("Paid order cannot be reinitiated");
+    }
+
+    return this.reinitiatePayment(order.id, return_url, cancellation_url);
+  }
+
   async reinitiatePayment(
     id: number,
-    return_url: string,
-    cancellation_url: string,
+    return_url: string | null,
+    cancellation_url: string | null,
   ) {
+    this.validateHubtelRedirectUrls(return_url, cancellation_url);
     const clientReference = this.generateReference();
 
     const order = await prisma.orders.findUnique({
       where: { id },
+      include: {
+        billing_details: true,
+        items: true,
+      },
     });
 
     if (!order) {
+      throw new Error("Order not found");
     }
 
-    const updated_order = prisma.orders.update({
+    if (order.payment_status === "success") {
+      throw new Error("Paid order cannot be reinitiated");
+    }
+
+    const updated_order = await prisma.orders.update({
       where: {
         id,
       },
       data: {
         reference: clientReference,
+        payment_status: "pending",
+      },
+      include: {
+        billing_details: true,
+        items: true,
       },
     });
 
     const hubtelResponse = await this.initializeHubtelTransaction(
-      order,
+      updated_order,
       return_url,
       cancellation_url,
     );
@@ -186,6 +226,15 @@ export class OrderService {
   }
 
   async findOneByMarketplaceId(marketplaceId: number) {
+    try {
+      await this.reconcilePendingHubtelPaymentsByMarket(marketplaceId, 20);
+    } catch (error: any) {
+      console.error(
+        "Market-level Hubtel reconciliation failed:",
+        error.message || error,
+      );
+    }
+
     const orders = await prisma.orders.findMany({
       orderBy: {
         id: "desc",
@@ -199,22 +248,33 @@ export class OrderService {
       },
       include: {
         items: {
+          where: { market_id: marketplaceId },
           include: { product: true, market: true },
         },
         billing_details: true,
       },
     });
 
-    return await this.flattenOrders(orders);
+    const flattenedOrders = await this.flattenOrders(orders);
+    return this.deduplicateByOrderId(flattenedOrders);
   }
 
-  async updateOrderStatusByHubtel(clientReference: string, status: string) {
+  async updateOrderStatusByHubtel(
+    clientReference: string,
+    status: "success" | "failed" | "pending",
+  ) {
     const order = await prisma.orders.findFirst({
       where: { reference: clientReference },
       select: { id: true, order_number: true, payment_status: true },
     });
 
     if (!order) throw new Error("Order not found");
+    if (order.payment_status === status) {
+      return {
+        message: `Payment status already ${order.payment_status}`,
+        order,
+      };
+    }
     if (order.payment_status === "success") {
       return {
         message: `Payment status updated to ${order?.payment_status}`,
@@ -224,7 +284,7 @@ export class OrderService {
 
     const updatedOrder = await this.updateOrderPayment(
       order.id,
-      status as "success" | "failed",
+      status,
       order.order_number || undefined,
     );
 
@@ -279,11 +339,88 @@ export class OrderService {
     status: "success" | "failed" | "pending",
     orderNumber?: string,
   ) {
-    return prisma.orders.update({
+    const updatedOrder = await prisma.orders.update({
       where: { id: orderId },
       data: { payment_status: status, order_number: orderNumber },
       include: { items: true, billing_details: true },
     });
+
+    const recipientUserId = Number(updatedOrder.user_id);
+    if (
+      Number.isInteger(recipientUserId) &&
+      recipientUserId > 0 &&
+      (status === "success" || status === "failed")
+    ) {
+      await notificationService.createInAppNotification({
+        type: status === "success" ? "order.payment_success" : "order.payment_failed",
+        title: status === "success" ? "Payment successful" : "Payment failed",
+        body:
+          status === "success"
+            ? `Payment for order ${updatedOrder.order_number || `#${updatedOrder.id}`} was successful.`
+            : `Payment for order ${updatedOrder.order_number || `#${updatedOrder.id}`} failed.`,
+        recipientUserId,
+        actorUserId: null,
+        entityType: "ORDER",
+        entityId: String(updatedOrder.id),
+        actionUrl: "/member/market/orders",
+        priority: status === "success" ? "MEDIUM" : "HIGH",
+        dedupeKey: `order:${updatedOrder.id}:payment:${status}`,
+        sendSms: true,
+        smsBody:
+          status === "success"
+            ? `Payment successful for order ${updatedOrder.order_number || `#${updatedOrder.id}`}.`
+            : `Payment failed for order ${updatedOrder.order_number || `#${updatedOrder.id}`}. Open the app for details.`,
+      });
+    }
+
+    return updatedOrder;
+  }
+
+  async updateDeliveryStatus(
+    orderId: number,
+    status: "pending" | "shipped" | "delivered" | "cancelled",
+    actorUserId?: number | null,
+  ) {
+    const normalizedStatus = status.trim().toLowerCase();
+    if (!["pending", "shipped", "delivered", "cancelled"].includes(normalizedStatus)) {
+      throw new Error("delivery status must be pending, shipped, delivered, or cancelled");
+    }
+
+    const updatedOrder = await prisma.orders.update({
+      where: {
+        id: orderId,
+      },
+      data: {
+        delivery_status: normalizedStatus as any,
+      },
+      include: {
+        items: true,
+        billing_details: true,
+      },
+    });
+
+    const recipientUserId = Number(updatedOrder.user_id);
+    if (Number.isInteger(recipientUserId) && recipientUserId > 0) {
+      await notificationService.createInAppNotification({
+        type: "delivery.status_changed",
+        title: "Delivery status updated",
+        body: `Delivery status for order ${updatedOrder.order_number || `#${updatedOrder.id}`} is now ${normalizedStatus}.`,
+        recipientUserId,
+        actorUserId:
+          Number.isInteger(Number(actorUserId)) && Number(actorUserId) > 0
+            ? Number(actorUserId)
+            : null,
+        entityType: "ORDER",
+        entityId: String(updatedOrder.id),
+        actionUrl: "/member/market/orders",
+        priority: "MEDIUM",
+        dedupeKey: `order:${updatedOrder.id}:delivery:${normalizedStatus}`,
+        sendSms: true,
+        smsBody: `Delivery status for order ${updatedOrder.order_number || `#${updatedOrder.id}`} is now ${normalizedStatus}.`,
+      });
+    }
+
+    return updatedOrder;
   }
 
   async initializeHubtelTransaction(
@@ -346,8 +483,7 @@ export class OrderService {
       const status = response.data?.data?.status;
       if (!status) throw new Error("Invalid response from Hubtel");
 
-      const normalizedStatus =
-        status.toLowerCase() === "paid" ? "success" : "pending";
+      const normalizedStatus = this.normalizeHubtelStatus(status);
 
       return this.updateOrderStatusByHubtel(clientReference, normalizedStatus);
     } catch (error: any) {
@@ -370,6 +506,46 @@ export class OrderService {
     } else {
       return await this.checkHubtelTransactionStatus(String(order?.reference));
     }
+  }
+
+  async reconcilePendingHubtelPayments(limit = 100) {
+    const pendingOrders = await prisma.orders.findMany({
+      where: { payment_status: "pending" },
+      orderBy: { id: "desc" },
+      take: limit,
+      select: { id: true, reference: true, payment_status: true },
+    });
+
+    const results = await Promise.allSettled(
+      pendingOrders.map((order) =>
+        this.checkHubtelTransactionStatus(order.reference),
+      ),
+    );
+
+    let successUpdates = 0;
+    let failedUpdates = 0;
+    let stillPending = 0;
+    let errors = 0;
+
+    for (const result of results) {
+      if (result.status === "rejected") {
+        errors += 1;
+        continue;
+      }
+
+      const currentStatus = result.value?.order?.payment_status;
+      if (currentStatus === "success") successUpdates += 1;
+      else if (currentStatus === "failed") failedUpdates += 1;
+      else stillPending += 1;
+    }
+
+    return {
+      scanned: pendingOrders.length,
+      success_updates: successUpdates,
+      failed_updates: failedUpdates,
+      still_pending: stillPending,
+      errors,
+    };
   }
 
   private buildItems(items: any[]) {
@@ -414,6 +590,85 @@ export class OrderService {
     return client_reference.toString();
   }
 
+  private validateHubtelRedirectUrls(
+    return_url: string | null,
+    cancellation_url: string | null,
+  ) {
+    if (!return_url || !cancellation_url) {
+      throw new Error(
+        "return_url and cancellation_url are required for Hubtel payments",
+      );
+    }
+  }
+
+  private async findOrderByRetryToken(token: string) {
+    const cleanedToken = token.trim();
+
+    if (/^\d+$/.test(cleanedToken)) {
+      const orderById = await prisma.orders.findUnique({
+        where: { id: Number(cleanedToken) },
+        include: { items: true, billing_details: true },
+      });
+      if (orderById) return orderById;
+    }
+
+    return prisma.orders.findFirst({
+      where: {
+        OR: [{ reference: cleanedToken }, { order_number: cleanedToken }],
+      },
+      include: { items: true, billing_details: true },
+    });
+  }
+
+  private normalizeHubtelStatus(
+    status: string,
+  ): "success" | "failed" | "pending" {
+    const normalizedStatus = status.trim().toLowerCase();
+
+    if (
+      ["paid", "success", "successful", "completed", "complete"].includes(
+        normalizedStatus,
+      )
+    ) {
+      return "success";
+    }
+
+    if (
+      ["failed", "failure", "cancelled", "canceled", "expired", "declined"].includes(
+        normalizedStatus,
+      )
+    ) {
+      return "failed";
+    }
+
+    return "pending";
+  }
+
+  private async reconcilePendingHubtelPaymentsByMarket(
+    marketplaceId: number,
+    limit: number,
+  ) {
+    const pendingOrders = await prisma.orders.findMany({
+      where: {
+        payment_status: "pending",
+        items: {
+          some: {
+            market_id: marketplaceId,
+          },
+        },
+      },
+      orderBy: { id: "desc" },
+      take: limit,
+      select: { reference: true },
+    });
+
+    await Promise.allSettled(
+      pendingOrders.map((order) =>
+        this.checkHubtelTransactionStatus(order.reference),
+      ),
+    );
+  }
+
   private async flattenOrders(orders: any[]) {
     return orders.flatMap((order) => {
       const billingDetails = order.billing_details;
@@ -441,50 +696,74 @@ export class OrderService {
 
           //   return endDate > now;
           // })
-          .map((item: any) => ({
-            id: item.id,
-            order_id: item.order_id,
-            name: item.name,
-            market_id: item.market_id,
-            market_name: item.market?.name,
-            market_status:
-              new Date(item.market?.end_date) > new Date() ? "Ended" : "Active",
-            product_id: item.product_id,
-            price_amount: item.price_amount,
-            price_currency: item.price_currency,
-            quantity: item.quantity,
-            product_type: item.product_type,
-            product_category: item.product_category,
-            image_url: item.image_url,
-            color: item.color,
-            size: item.size,
+          .map((item: any) => {
+            const marketEndDate = item.market?.end_date
+              ? new Date(item.market.end_date)
+              : null;
+            const hasValidEndDate =
+              marketEndDate !== null && !Number.isNaN(marketEndDate.getTime());
+            const marketStatus =
+              !hasValidEndDate || marketEndDate > new Date()
+                ? "Active"
+                : "Ended";
 
-            // Order fields
-            order_number: order.order_number,
-            payment_status: order.payment_status,
-            reference: order.reference,
+            return {
+              id: item.id,
+              order_id: item.order_id,
+              name: item.name,
+              market_id: item.market_id,
+              market_name: item.market?.name,
+              market_status: marketStatus,
+              product_id: item.product_id,
+              price_amount: item.price_amount,
+              price_currency: item.price_currency,
+              quantity: item.quantity,
+              product_type: item.product_type,
+              product_category: item.product_category,
+              image_url: item.image_url,
+              color: item.color,
+              size: item.size,
 
-            // Flattened product fields
-            product_name: item.product?.name,
-            product_description: item.product?.description,
-            product_colours: item.product?.colours,
-            product_status: item.product?.status,
-            product_price_amount: item.product?.price_amount,
-            product_price_currency: item.product?.price_currency,
-            product_market_id: item.product?.market_id,
+              // Order fields
+              order_number: order.order_number,
+              payment_status: order.payment_status,
+              reference: order.reference,
+              created_at: order.created_at,
 
-            // Flattened billing details
-            first_name: billingDetails?.first_name,
-            last_name: billingDetails?.last_name,
-            email: billingDetails?.email,
-            phone_number: billingDetails?.phone_number,
-            country: billingDetails?.country,
-            country_code: billingDetails?.country_code,
+              // Flattened product fields
+              product_name: item.product?.name,
+              product_description: item.product?.description,
+              product_colours: item.product?.colours,
+              product_status: item.product?.status,
+              product_price_amount: item.product?.price_amount,
+              product_price_currency: item.product?.price_currency,
+              product_market_id: item.product?.market_id,
 
-            // Computed field
-            total_amount: item.price_amount * item.quantity,
-          }))
+              // Flattened billing details
+              first_name: billingDetails?.first_name,
+              last_name: billingDetails?.last_name,
+              email: billingDetails?.email,
+              phone_number: billingDetails?.phone_number,
+              country: billingDetails?.country,
+              country_code: billingDetails?.country_code,
+
+              // Computed field
+              total_amount: item.price_amount * item.quantity,
+            };
+          })
       );
     });
+  }
+
+  private deduplicateByOrderId(orders: any[]) {
+    const uniqueOrdersById = new Map<number, any>();
+
+    for (const order of orders) {
+      if (!uniqueOrdersById.has(order.order_id)) {
+        uniqueOrdersById.set(order.order_id, order);
+      }
+    }
+
+    return Array.from(uniqueOrdersById.values());
   }
 }

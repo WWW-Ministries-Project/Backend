@@ -1,0 +1,2 @@
+ALTER TABLE `requisition_approval_configs`
+  ADD COLUMN `similar_item_lookback_days` INTEGER NOT NULL DEFAULT 30;

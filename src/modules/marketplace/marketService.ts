@@ -45,7 +45,7 @@ export class MarketService {
         where.name = { contains: filters.name, mode: "insensitive" };
       }
       if (filters?.event_id) {
-        where.event_act_id = filters.event_id; // unified field name
+        where.event_mgt_id = filters.event_id;
       }
       if (filters?.start_date) {
         where.start_date = { gte: filters.start_date };
@@ -214,7 +214,7 @@ export class MarketService {
         where.name = { contains: filters.name, mode: "insensitive" };
       }
       if (filters?.event_id) {
-        where.event_act_id = filters.event_id;
+        where.event_mgt_id = filters.event_id;
       }
       return prisma.markets.count({ where });
     } catch (error: any) {

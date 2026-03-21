@@ -9,64 +9,121 @@ datasource db {
 }
 
 model user {
-  id                    Int                    @id @default(autoincrement())
-  name                  String
-  email                 String?                @unique
-  is_active             Boolean?               @default(true)
-  partner               Boolean?               @default(false)
-  is_user               Boolean?               @default(false)
-  password              String?
-  member_id             String?
-  position_id           Int?
-  department_id         Int?
-  created_at            DateTime               @default(now())
-  updated_at            DateTime?
-  access_level_id       Int?
-  membership_type       membership_type?
-  asset_history         asset_history[]
-  department_head       department[]
-  event_attendance      event_attendance[]
-  request               request[]
-  access                access_level?          @relation(fields: [access_level_id], references: [id])
-  position              position?              @relation(fields: [position_id], references: [id])
-  department            user_departments?
-  user_info             user_info?
-  hod_user              request_approvals[]    @relation("hod_user")
-  ps_user               request_approvals[]    @relation("ps_user")
-  user_request_comments request_comments[]
-  enrollments           enrollment[]
-  parent_id             Int?
-  parent                user?                  @relation("UserParent", fields: [parent_id], references: [id])
-  children              user[]                 @relation("UserParent")
-  status                status_type?
-  is_sync               Boolean?               @default(false)
-  sync_id               Int?
-  mode                  classFormat?
-  followUps             follow_up[]
-  prayerRequests        prayer_request[]
-  notes                 note[]
-  life_center_member    life_center_member[]
-  soul_won              soul_won[]             @relation("user_soul_winner")
-  department_positions  department_positions[]
-
-  spouse_id             Int?                    @unique
-  spouse                user?                   @relation("SpouseRelation", fields: [spouse_id], references: [id])
-  spouse_of             user?                   @relation("SpouseRelation")
-  course                course[]
-  orders                orders[]
-  certificate           certificate[]
-  event_registers       event_registers[]
-  assignment_submission assignment_submission[]
-
-  family_links             family_relation[]          @relation("UserFamily")
-  family_of_links          family_relation[]          @relation("FamilyUser")
+  id                       Int                        @id @default(autoincrement())
+  name                     String
+  email                    String?                    @unique
+  is_active                Boolean?                   @default(true)
+  partner                  Boolean?                   @default(false)
+  is_user                  Boolean?                   @default(false)
+  password                 String?
+  member_id                String?
+  position_id              Int?
+  department_id            Int?
+  created_at               DateTime                   @default(now())
+  updated_at               DateTime?
+  access_level_id          Int?
+  membership_type          membership_type?
+  parent_id                Int?
+  status                   status_type?
+  is_sync                  Boolean?                   @default(false)
+  sync_id                  Int?
+  mode                     classFormat?
+  spouse_id                Int?                       @unique
+  appointments             appointment[]
+  asset_history            asset_history[]
+  assignment_submission    assignment_submission[]
+  timeSlots                availability[]
+  certificate              certificate[]
+  course                   course[]
+  department_head          department[]
+  department_positions     department_positions[]
+  enrollments              enrollment[]
+  event_attendance         event_attendance[]
   event_attendance_summary event_attendance_summary[]
-
-  timeSlots    availability[]
-  appointments appointment[]
+  event_registers          event_registers[]
+  family_of_links          family_relation[]          @relation("FamilyUser")
+  family_links             family_relation[]          @relation("UserFamily")
+  followUps                follow_up[]
+  life_center_member       life_center_member[]
+  notes                    note[]
+  orders                   orders[]
+  prayerRequests           prayer_request[]
+  received_notifications   in_app_notification[]       @relation("notification_recipient")
+  acted_notifications      in_app_notification[]       @relation("notification_actor")
+  notification_preferences notification_preference[]
+  push_subscriptions       notification_push_subscription[]
+  push_delivery_jobs       notification_push_delivery_job[] @relation("notification_push_delivery_user")
+  sms_delivery_jobs        notification_sms_delivery_job[]  @relation("notification_sms_delivery_user")
+  system_failure_notification_settings system_notification_settings[] @relation("system_failure_notification_recipient")
+  system_failure_notification_settings_updates system_notification_settings[] @relation("system_failure_notification_updated_by")
+  attendance_timing_settings_updates attendance_timing_settings[] @relation("attendance_timing_settings_updated_by")
+  matched_biometric_punches event_biometric_punch[] @relation("event_biometric_punch_matched_user")
+  imported_biometric_punches event_biometric_punch[] @relation("event_biometric_punch_imported_by_user")
+  created_biometric_import_jobs event_biometric_import_job[] @relation("event_biometric_import_job_created_by_user")
+  event_reports_created    event_reports[]                 @relation("event_report_created_by")
+  event_reports_updated    event_reports[]                 @relation("event_report_updated_by")
+  event_reports_final_acted event_reports[]                @relation("event_report_final_acted_by")
+  event_report_department_approvals event_report_department_approvals[] @relation("event_report_department_approved_by")
+  event_report_attendance_approvals event_report_attendance_approval[] @relation("event_report_attendance_approved_by")
+  event_report_finance_updates event_report_finance[]      @relation("event_report_finance_updated_by")
+  event_report_finance_approvals event_report_finance_approvals[] @relation("event_report_finance_approved_by")
+  event_report_finance_role_owner event_report_finance_approvals[] @relation("event_report_finance_role_owner")
+  event_report_final_approvals event_report_final_approval_instances[] @relation("event_report_final_acted_by")
+  event_report_final_assigned event_report_final_approval_instances[] @relation("event_report_final_assigned_to")
+  event_report_viewership   event_report_viewers[]
+  event_report_notification_events_actor event_report_notification_events[] @relation("event_report_notification_actor")
+  request                  request[]
+  hod_user                 request_approvals[]        @relation("hod_user")
+  ps_user                  request_approvals[]        @relation("ps_user")
+  user_request_comments    request_comments[]
+  soul_won                 soul_won[]                 @relation("user_soul_winner")
+  soul_won_membership      soul_won?                  @relation("soul_won_member")
+  access                   access_level?              @relation(fields: [access_level_id], references: [id])
+  parent                   user?                      @relation("UserParent", fields: [parent_id], references: [id])
+  children                 user[]                     @relation("UserParent")
+  position                 position?                  @relation(fields: [position_id], references: [id])
+  spouse                   user?                      @relation("SpouseRelation", fields: [spouse_id], references: [id])
+  spouse_of                user?                      @relation("SpouseRelation")
+  department               user_departments?
+  user_info                user_info?
 
   @@index([access_level_id], map: "user_access_level_id_fkey")
   @@index([position_id], map: "user_position_id_fkey")
+  @@index([parent_id], map: "user_parent_id_fkey")
+  @@index([department_id], map: "user_department_id_idx")
+  @@index([membership_type], map: "user_membership_type_idx")
+  @@index([is_user], map: "user_is_user_idx")
+  @@index([is_active], map: "user_is_active_idx")
+  @@index([name], map: "user_name_idx")
+}
+
+model system_notification_settings {
+  id                              Int      @id
+  system_failure_recipient_user_id Int?
+  updated_by_user_id              Int?
+  created_at                      DateTime @default(now())
+  updated_at                      DateTime @updatedAt
+  system_failure_recipient        user?    @relation("system_failure_notification_recipient", fields: [system_failure_recipient_user_id], references: [id], map: "sys_notif_settings_recipient_fk")
+  updated_by                      user?    @relation("system_failure_notification_updated_by", fields: [updated_by_user_id], references: [id], map: "sys_notif_settings_updated_by_fk")
+
+  @@index([system_failure_recipient_user_id], map: "system_notification_settings_recipient_idx")
+  @@index([updated_by_user_id], map: "system_notification_settings_updated_by_idx")
+}
+
+model attendance_timing_settings {
+  id                Int                    @id
+  early_value       Int                    @default(15)
+  early_unit        attendance_timing_unit @default(MINUTES)
+  on_time_value     Int                    @default(15)
+  on_time_unit      attendance_timing_unit @default(MINUTES)
+  late_value        Int                    @default(15)
+  late_unit         attendance_timing_unit @default(MINUTES)
+  updated_by_user_id Int?
+  created_at        DateTime               @default(now())
+  updated_at        DateTime               @updatedAt
+  updated_by        user?                  @relation("attendance_timing_settings_updated_by", fields: [updated_by_user_id], references: [id], map: "attendance_timing_settings_updated_by_fk")
+
+  @@index([updated_by_user_id], map: "attendance_timing_settings_updated_by_idx")
 }
 
 model user_info {
@@ -107,12 +164,12 @@ model family_relation {
   id        Int    @id @default(autoincrement())
   user_id   Int
   family_id Int
-  relation  String
-
-  user   user @relation("UserFamily", fields: [user_id], references: [id])
-  family user @relation("FamilyUser", fields: [family_id], references: [id])
+  relation  family_relation_type
+  family    user   @relation("FamilyUser", fields: [family_id], references: [id])
+  user      user   @relation("UserFamily", fields: [user_id], references: [id])
 
   @@unique([user_id, family_id])
+  @@index([family_id], map: "family_relation_family_id_fkey")
 }
 
 model user_work_info {
@@ -120,23 +177,17 @@ model user_work_info {
   name_of_institution String
   industry            String
   position            String
-  user_info           user_info[]
   employment_status   String?
   school_name         String?
-}
-
-enum status_type {
-  UNCONFIRMED
-  CONFIRMED
-  MEMBER
+  user_info           user_info[]
 }
 
 model user_emergency_contact {
   id           Int         @id @default(autoincrement())
   name         String
   relation     String
-  country_code String?
   phone_number String
+  country_code String?
   user_info    user_info[]
 }
 
@@ -149,14 +200,15 @@ model department {
   created_at           DateTime               @default(now())
   updated_by           Int?
   updated_at           DateTime?
-  assets               assets[]
-  department_head_info user?                  @relation(fields: [department_head], references: [id])
-  position             position[]
-  request              request[]
-  user_departments     user_departments[]
   is_sync              Boolean?               @default(false)
   sync_id              Int?
+  assets               assets[]
+  department_head_info user?                  @relation(fields: [department_head], references: [id])
   department_positions department_positions[]
+  position             position[]
+  request              request[]
+  event_report_department_approvals event_report_department_approvals[]
+  user_departments     user_departments[]
 
   @@index([department_head], map: "department_department_head_fkey")
 }
@@ -180,11 +232,11 @@ model position {
   created_at           DateTime               @default(now())
   updated_by           Int?
   updated_at           DateTime?
-  department           department?            @relation(fields: [department_id], references: [id])
-  user                 user[]
   is_sync              Boolean?               @default(false)
   sync_id              Int?
   department_positions department_positions[]
+  department           department?            @relation(fields: [department_id], references: [id])
+  user                 user[]
 
   @@index([department_id], map: "position_department_id_fkey")
 }
@@ -193,7 +245,7 @@ model access_level {
   id             Int       @id @default(autoincrement())
   name           String    @unique
   description    String?
-  permissions    Json?
+  permissions    String?   @db.LongText
   created_by     Int?
   updated_by     Int?
   deleted_at     DateTime?
@@ -209,7 +261,6 @@ model assets {
   date_assigned       DateTime?
   date_purchased      DateTime?
   price               Float?
-  asset_id            String?
   description         String?
   updated_at          DateTime?
   supplier            String?
@@ -219,6 +270,7 @@ model assets {
   updated_by          Int?
   created_at          DateTime      @default(now())
   department_assigned Int?
+  asset_id            String?
   assigned_to         department?   @relation(fields: [department_assigned], references: [id])
 
   @@index([department_assigned], map: "assets_department_assigned_fkey")
@@ -242,8 +294,7 @@ model event_act {
   event_status      event_status?
   event_type        event_type?
   event_description String?       @default("event_description")
-
-  event_mgt event_mgt[]
+  event_mgt         event_mgt[]
 }
 
 model event_mgt {
@@ -254,54 +305,62 @@ model event_mgt {
   description          String?
   poster               String?
   qr_code              String?
-  event_name_id        Int
-  event                event_act                  @relation(fields: [event_name_id], references: [id])
+  public_registration_token String               @default(uuid()) @unique
   created_by           Int
   created_at           DateTime                   @default(now())
   updated_by           Int?
   updated_at           DateTime?
   end_date             DateTime?
   start_date           DateTime?
-  event_type           event_type?
+  recurrence_end_date  DateTime?
   event_status         event_status?
-  attendance_summaries event_attendance_summary[]
+  event_type           event_type?
+  requires_registration Boolean                  @default(false)
+  registration_end_date DateTime?
+  registration_capacity Int?
+  registration_audience event_registration_audience @default(MEMBERS_AND_NON_MEMBERS)
+  event_name_id        Int
   event_attendance     event_attendance[]
+  attendance_summaries event_attendance_summary[]
+  biometric_punches    event_biometric_punch[]
+  biometric_import_jobs event_biometric_import_job[]
+  event                event_act                  @relation(fields: [event_name_id], references: [id])
+  event_registers      event_registers[]
+  markets              markets[]
   request              request[]
+  event_reports        event_reports[]
   visit                visit[]
 
-  markets         markets[]
-  event_registers event_registers[]
+  @@index([event_name_id], map: "event_mgt_event_name_id_fkey")
+  @@index([start_date], map: "event_mgt_start_date_idx")
+  @@index([event_type, event_status, start_date], map: "event_mgt_type_status_start_date_idx")
 }
 
 model event_attendance_summary {
-  id Int @id @default(autoincrement())
-
-  event_mgt_id   Int
-  event          event_mgt        @relation(fields: [event_mgt_id], references: [id])
-  date           DateTime
-  group          attendance_group @default(BOTH)
-  adultMale      Int              @default(0)
-  adultFemale    Int              @default(0)
-  childrenMale   Int              @default(0)
-  childrenFemale Int              @default(0)
-
-  recordedBy     Int
-  recordedByUser user @relation(fields: [recordedBy], references: [id])
-
-  recordedByName String
-
-  created_at DateTime  @default(now())
-  updated_at DateTime?
+  id              Int              @id @default(autoincrement())
+  event_mgt_id    Int
+  date            DateTime
+  group           attendance_group @default(BOTH)
+  adultMale       Int              @default(0)
+  adultFemale     Int              @default(0)
+  childrenMale    Int              @default(0)
+  childrenFemale  Int              @default(0)
+  recordedBy      Int
+  recordedByName  String
+  created_at      DateTime         @default(now())
+  updated_at      DateTime?
+  newMembers      Int              @default(0)
+  visitingPastors Int              @default(0)
+  visitors        Int              @default(0)
+  youthFemale     Int              @default(0)
+  youthMale       Int              @default(0)
+  event           event_mgt        @relation(fields: [event_mgt_id], references: [id])
+  recordedByUser  user             @relation(fields: [recordedBy], references: [id])
 
   @@unique([event_mgt_id, date])
   @@index([event_mgt_id])
   @@index([date])
-}
-
-enum attendance_group {
-  ADULTS
-  CHILDREN
-  BOTH
+  @@index([recordedBy], map: "event_attendance_summary_recordedBy_fkey")
 }
 
 model event_attendance {
@@ -316,46 +375,270 @@ model event_attendance {
   @@index([user_id], map: "event_attendance_user_id_fkey")
 }
 
-model event_registers {
-  id         Int       @id @default(autoincrement())
-  event_id   Int
-  user_id    Int
-  created_at DateTime  @default(now())
-  event      event_mgt @relation(fields: [event_id], references: [id])
-  user       user      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+model event_biometric_punch {
+  id                Int       @id @default(autoincrement())
+  event_mgt_id      Int
+  device_id         Int?
+  device_ip         String
+  device_port       String?
+  device_user_id    String
+  device_user_name  String?
+  matched_user_id   Int?
+  matched_member_id String?
+  matched_user_name String?
+  record_time       DateTime
+  state             Int       @default(-1)
+  raw_payload       Json
+  imported_by       Int
+  imported_by_name  String
+  imported_at       DateTime  @default(now())
+  event             event_mgt @relation(fields: [event_mgt_id], references: [id])
+  matched_user      user?     @relation("event_biometric_punch_matched_user", fields: [matched_user_id], references: [id])
+  imported_by_user  user      @relation("event_biometric_punch_imported_by_user", fields: [imported_by], references: [id])
 
+  @@unique([event_mgt_id, device_ip, device_user_id, record_time, state], map: "event_biometric_punch_event_device_user_time_state_key")
+  @@index([event_mgt_id, record_time], map: "event_biometric_punch_event_time_idx")
+  @@index([matched_user_id, record_time], map: "event_biometric_punch_matched_user_time_idx")
+  @@index([imported_by, imported_at], map: "event_biometric_punch_imported_by_time_idx")
+}
+
+model event_biometric_import_job {
+  id                  Int                           @id @default(autoincrement())
+  event_mgt_id        Int
+  occurrence_date     DateTime
+  dry_run             Boolean                       @default(false)
+  status              biometric_import_job_status   @default(QUEUED)
+  progress_percentage Int                           @default(0)
+  current_step        String?
+  progress_payload    Json?
+  request_payload     Json
+  result_payload      Json?
+  error_message       String?                       @db.Text
+  created_by          Int
+  created_by_name     String
+  created_at          DateTime                      @default(now())
+  started_at          DateTime?
+  completed_at        DateTime?
+  failed_at           DateTime?
+  updated_at          DateTime                      @updatedAt
+  event               event_mgt                     @relation(fields: [event_mgt_id], references: [id])
+  created_by_user     user                          @relation("event_biometric_import_job_created_by_user", fields: [created_by], references: [id])
+
+  @@index([event_mgt_id, occurrence_date], map: "event_biometric_import_job_event_date_idx")
+  @@index([status, created_at], map: "event_biometric_import_job_status_created_idx")
+  @@index([created_by, created_at], map: "event_biometric_import_job_created_by_time_idx")
+}
+
+model event_registers {
+  id                Int       @id @default(autoincrement())
+  event_id          Int
+  user_id           Int?
+  attendee_name     String?
+  attendee_email    String?
+  attendee_phone    String?
+  attendee_location String?
+  is_member         Boolean   @default(false)
+  member_id         String?
+  created_at        DateTime  @default(now())
+  event             event_mgt @relation(fields: [event_id], references: [id])
+  user              user?     @relation(fields: [user_id], references: [id], onDelete: SetNull)
+
+  @@unique([event_id, user_id], map: "event_registers_event_id_user_id_key")
+  @@unique([event_id, attendee_email], map: "event_registers_event_id_attendee_email_key")
   @@index([event_id], map: "event_attendance_event_id_fkey")
   @@index([user_id], map: "event_attendance_user_id_fkey")
+  @@index([member_id], map: "event_registers_member_id_idx")
 }
 
 model request {
-  id                      Int                   @id @default(autoincrement())
+  id                      Int                              @id @default(autoincrement())
   request_id              String
   user_id                 Int
-  event_id                Int
+  event_id                Int?
   department_id           Int
   request_approval_status RequestApprovalStatus
   requisition_date        DateTime
   currency                String
-  attachmentsList         request_attachment[]
-  department              department            @relation(fields: [department_id], references: [id])
-  event                   event_mgt             @relation(fields: [event_id], references: [id])
-  user                    user                  @relation(fields: [user_id], references: [id])
-  request_approvals       request_approvals?
-  products                requested_item[]      @relation("ProductRequest")
   user_sign               String?
+  updated_by_user_id      Int?
+  updated_at              DateTime?
+  attachmentsList         request_attachment[]
+  department              department                       @relation(fields: [department_id], references: [id])
+  event                   event_mgt?                       @relation(fields: [event_id], references: [id])
+  user                    user                             @relation(fields: [user_id], references: [id])
+  request_approvals       request_approvals?
   request_comments        request_comments[]
+  products                requested_item[]                 @relation("ProductRequest")
+  approval_instances      requisition_approval_instances[]
+  notification_events     requisition_notification_events[]
 
   @@index([user_id], map: "request_user_id_fkey")
   @@index([department_id], map: "request_department_id_fkey")
   @@index([event_id], map: "request_event_id_fkey")
+  @@index([updated_by_user_id], map: "request_updated_by_user_id_idx")
+  @@index([request_approval_status], map: "request_approval_status_idx")
+}
+
+model event_reports {
+  id                   Int                                  @id @default(autoincrement())
+  event_id             Int
+  event_date           DateTime
+  status               EventReportStatus                    @default(DRAFT)
+  final_approver_user_id Int?
+  final_acted_by_user_id Int?
+  final_acted_at       DateTime?
+  created_by           Int
+  updated_by           Int?
+  created_at           DateTime                             @default(now())
+  updated_at           DateTime                             @default(now()) @updatedAt
+  event                event_mgt                            @relation(fields: [event_id], references: [id], onDelete: Cascade)
+  creator              user                                 @relation("event_report_created_by", fields: [created_by], references: [id])
+  updater              user?                                @relation("event_report_updated_by", fields: [updated_by], references: [id])
+  final_actor          user?                                @relation("event_report_final_acted_by", fields: [final_acted_by_user_id], references: [id])
+  department_approvals event_report_department_approvals[]
+  attendance_approval  event_report_attendance_approval?
+  finance              event_report_finance?
+  finance_approvals    event_report_finance_approvals[]
+  viewers              event_report_viewers[]
+  final_approval_instances event_report_final_approval_instances[]
+  notification_events  event_report_notification_events[]
+
+  @@unique([event_id, event_date])
+  @@index([event_id])
+  @@index([status])
+  @@index([final_approver_user_id])
+  @@index([created_by])
+  @@index([updated_by])
+  @@index([final_acted_by_user_id])
+}
+
+model event_report_department_approvals {
+  id                 Int                              @id @default(autoincrement())
+  event_report_id    Int
+  department_id      Int
+  status             EventReportSectionApprovalStatus @default(PENDING)
+  approved_by_user_id Int?
+  approved_at        DateTime?
+  event_report       event_reports                    @relation(fields: [event_report_id], references: [id], onDelete: Cascade)
+  department         department                       @relation(fields: [department_id], references: [id])
+  approved_by_user   user?                            @relation("event_report_department_approved_by", fields: [approved_by_user_id], references: [id])
+
+  @@unique([event_report_id, department_id], map: "er_dept_appr_erid_did_uk")
+  @@index([department_id])
+  @@index([approved_by_user_id])
+}
+
+model event_report_attendance_approval {
+  id                 Int                              @id @default(autoincrement())
+  event_report_id    Int                              @unique
+  status             EventReportSectionApprovalStatus @default(PENDING)
+  approved_by_user_id Int?
+  approved_at        DateTime?
+  event_report       event_reports                    @relation(fields: [event_report_id], references: [id], onDelete: Cascade)
+  approved_by_user   user?                            @relation("event_report_attendance_approved_by", fields: [approved_by_user_id], references: [id])
+
+  @@index([approved_by_user_id])
+}
+
+model event_report_finance {
+  id                 Int       @id @default(autoincrement())
+  event_report_id    Int       @unique
+  income_json        String    @db.LongText
+  expense_json       String    @db.LongText
+  total_income       Float     @default(0)
+  total_expense      Float     @default(0)
+  surplus            Float     @default(0)
+  updated_by_user_id Int?
+  updated_at         DateTime  @default(now()) @updatedAt
+  event_report       event_reports @relation(fields: [event_report_id], references: [id], onDelete: Cascade)
+  updated_by_user    user?     @relation("event_report_finance_updated_by", fields: [updated_by_user_id], references: [id])
+
+  @@index([updated_by_user_id])
+}
+
+model event_report_finance_approvals {
+  id                 Int                              @id @default(autoincrement())
+  event_report_id    Int
+  role               EventReportFinanceRole
+  role_owner_user_id Int?
+  status             EventReportSectionApprovalStatus @default(PENDING)
+  approved_by_user_id Int?
+  approved_at        DateTime?
+  event_report       event_reports                    @relation(fields: [event_report_id], references: [id], onDelete: Cascade)
+  role_owner_user    user?                            @relation("event_report_finance_role_owner", fields: [role_owner_user_id], references: [id])
+  approved_by_user   user?                            @relation("event_report_finance_approved_by", fields: [approved_by_user_id], references: [id])
+
+  @@unique([event_report_id, role])
+  @@index([role_owner_user_id])
+  @@index([approved_by_user_id])
+}
+
+model event_report_viewers {
+  id              Int          @id @default(autoincrement())
+  event_report_id Int
+  user_id         Int
+  event_report    event_reports @relation(fields: [event_report_id], references: [id], onDelete: Cascade)
+  user            user         @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@unique([event_report_id, user_id])
+  @@index([user_id])
+}
+
+model event_report_final_approval_instances {
+  id                 Int                               @id @default(autoincrement())
+  event_report_id    Int
+  config_id          Int
+  step_order         Int
+  step_type          RequisitionApproverType
+  approver_user_id   Int
+  position_id        Int?
+  configured_user_id Int?
+  status             RequisitionApprovalInstanceStatus @default(WAITING)
+  acted_by_user_id   Int?
+  acted_at           DateTime?
+  comment            String?
+  created_at         DateTime                          @default(now())
+  updated_at         DateTime                          @default(now()) @updatedAt
+  event_report       event_reports                     @relation(fields: [event_report_id], references: [id], onDelete: Cascade)
+  config             requisition_approval_configs      @relation(fields: [config_id], references: [id], onDelete: Cascade)
+  approver_user      user                              @relation("event_report_final_assigned_to", fields: [approver_user_id], references: [id])
+  acted_by_user      user?                             @relation("event_report_final_acted_by", fields: [acted_by_user_id], references: [id])
+
+  @@unique([event_report_id, step_order], map: "er_final_appr_erid_step_uk")
+  @@index([approver_user_id])
+  @@index([status])
+  @@index([config_id])
+  @@index([acted_by_user_id])
+}
+
+model event_report_notification_events {
+  id                 Int                              @id @default(autoincrement())
+  idempotency_key    String                           @unique
+  event_type         String
+  event_report_id    Int
+  actor_user_id      Int?
+  decision           String?
+  recipient_user_ids String                           @db.LongText
+  status             RequisitionNotificationEventStatus @default(PENDING)
+  attempts           Int                              @default(0)
+  last_error         String?                          @db.LongText
+  sent_at            DateTime?
+  created_at         DateTime                         @default(now())
+  updated_at         DateTime                         @default(now()) @updatedAt
+  event_report       event_reports                    @relation(fields: [event_report_id], references: [id], onDelete: Cascade)
+  actor_user         user?                            @relation("event_report_notification_actor", fields: [actor_user_id], references: [id], onDelete: SetNull)
+
+  @@index([status, created_at])
+  @@index([event_report_id])
+  @@index([event_type])
+  @@index([actor_user_id])
 }
 
 model requisition_summary {
   requisition_id  Int      @unique
   user_id         Int
   generated_id    String
-  product_names   Json
+  product_names   String   @db.LongText
   date_created    DateTime
   approval_status String
   total_amount    Float?
@@ -365,12 +648,11 @@ model requisition_summary {
 }
 
 model request_comments {
-  id         Int      @id @default(autoincrement())
-  request_id Int?
-  user_id    Int?
-  comment    String?
-  created_at DateTime @default(now())
-
+  id                   Int      @id @default(autoincrement())
+  request_id           Int?
+  user_id              Int?
+  comment              String?
+  created_at           DateTime @default(now())
   requesition          request? @relation(fields: [request_id], references: [id])
   request_comment_user user?    @relation(fields: [user_id], references: [id])
 
@@ -394,6 +676,7 @@ model requested_item {
   name       String
   unitPrice  Float
   quantity   Int
+  image_url  String?
   request    request @relation("ProductRequest", fields: [request_id], references: [id])
 
   @@index([request_id], map: "requested_product_item_request_id_fkey")
@@ -411,37 +694,297 @@ model request_approvals {
   ps_approved       Boolean   @default(false)
   ps_approval_date  DateTime?
   ps_sign           String?
-  request           request?  @relation(fields: [request_id], references: [id])
   hod_user          user?     @relation("hod_user", fields: [hod_user_id], references: [id])
   ps_user           user?     @relation("ps_user", fields: [ps_user_id], references: [id])
+  request           request?  @relation(fields: [request_id], references: [id])
+
+  @@index([hod_user_id], map: "request_approvals_hod_user_id_fkey")
+  @@index([ps_user_id], map: "request_approvals_ps_user_id_fkey")
+}
+
+model requisition_approval_configs {
+  id         Int                                      @id @default(autoincrement())
+  module     RequisitionApprovalModule                @unique
+  is_active  Boolean                                  @default(true)
+  similar_item_lookback_days Int                      @default(30)
+  finance_approver_type RequisitionApproverType?
+  finance_position_id Int?
+  finance_user_id Int?
+  created_by Int?
+  updated_by Int?
+  created_at DateTime                                 @default(now())
+  updated_at DateTime                                 @default(now()) @updatedAt
+  requesters requisition_approval_config_requesters[]
+  steps      requisition_approval_config_steps[]
+  notifications requisition_approval_config_notifications[]
+  instances  requisition_approval_instances[]
+  event_report_instances event_report_final_approval_instances[]
+
+  @@index([finance_position_id])
+  @@index([finance_user_id])
+}
+
+model requisition_approval_config_notifications {
+  id        Int                          @id @default(autoincrement())
+  config_id Int
+  user_id   Int
+  config    requisition_approval_configs @relation(fields: [config_id], references: [id], onDelete: Cascade)
+
+  @@unique([config_id, user_id])
+  @@index([user_id])
+  @@index([config_id])
+}
+
+model requisition_approval_config_requesters {
+  id        Int                          @id @default(autoincrement())
+  config_id Int
+  user_id   Int
+  config    requisition_approval_configs @relation(fields: [config_id], references: [id], onDelete: Cascade)
+
+  @@unique([config_id, user_id])
+  @@index([user_id])
+  @@index([config_id])
+}
+
+model requisition_approval_config_steps {
+  id          Int                          @id @default(autoincrement())
+  config_id   Int
+  step_order  Int
+  step_type   RequisitionApproverType
+  position_id Int?
+  user_id     Int?
+  config      requisition_approval_configs @relation(fields: [config_id], references: [id], onDelete: Cascade)
+
+  @@unique([config_id, step_order])
+  @@index([position_id])
+  @@index([user_id])
+  @@index([config_id])
+}
+
+model requisition_approval_instances {
+  id                 Int                               @id @default(autoincrement())
+  request_id         Int
+  config_id          Int
+  step_order         Int
+  step_type          RequisitionApproverType
+  approver_user_id   Int
+  position_id        Int?
+  configured_user_id Int?
+  status             RequisitionApprovalInstanceStatus @default(WAITING)
+  acted_by_user_id   Int?
+  acted_at           DateTime?
+  comment            String?
+  created_at         DateTime                          @default(now())
+  updated_at         DateTime                          @default(now()) @updatedAt
+  config             requisition_approval_configs      @relation(fields: [config_id], references: [id], onDelete: Cascade)
+  request            request                           @relation(fields: [request_id], references: [id], onDelete: Cascade)
+
+  @@unique([request_id, step_order])
+  @@index([approver_user_id])
+  @@index([status])
+  @@index([config_id])
+}
+
+model requisition_notification_events {
+  id                 Int                              @id @default(autoincrement())
+  idempotency_key    String                           @unique
+  event_type         String
+  requisition_id     Int
+  actor_user_id      Int?
+  decision           String?
+  recipient_user_ids String                           @db.LongText
+  status             RequisitionNotificationEventStatus @default(PENDING)
+  attempts           Int                              @default(0)
+  last_error         String?                          @db.LongText
+  sent_at            DateTime?
+  created_at         DateTime                         @default(now())
+  updated_at         DateTime                         @default(now()) @updatedAt
+  requisition        request                          @relation(fields: [requisition_id], references: [id], onDelete: Cascade)
+
+  @@index([status, created_at])
+  @@index([requisition_id])
+  @@index([event_type])
+}
+
+model requisition_edit_logs {
+  id             Int      @id @default(autoincrement())
+  requisition_id Int
+  editor_user_id Int
+  edited_at      DateTime @default(now())
+  changed_fields String?  @db.LongText
+
+  @@index([requisition_id], map: "requisition_edit_logs_requisition_id_idx")
+  @@index([editor_user_id], map: "requisition_edit_logs_editor_user_id_idx")
+  @@index([edited_at], map: "requisition_edit_logs_edited_at_idx")
+}
+
+model in_app_notification {
+  id                Int                   @id @default(autoincrement())
+  dedupe_key        String?               @unique
+  type              String
+  title             String
+  body              String                @db.LongText
+  recipient_user_id Int
+  actor_user_id     Int?
+  entity_type       String?
+  entity_id         String?
+  action_url        String?
+  priority          notification_priority @default(MEDIUM)
+  is_read           Boolean               @default(false)
+  read_at           DateTime?
+  email_sent_at     DateTime?
+  sms_delivery_status notification_sms_delivery_status?
+  sms_queued_at     DateTime?
+  sms_last_attempt_at DateTime?
+  sms_sent_at       DateTime?
+  sms_last_error_code String?             @db.VarChar(64)
+  sms_last_error_message String?          @db.VarChar(1024)
+  created_at        DateTime              @default(now())
+  updated_at        DateTime              @default(now()) @updatedAt
+  actor             user?                 @relation("notification_actor", fields: [actor_user_id], references: [id], onDelete: SetNull)
+  recipient         user                  @relation("notification_recipient", fields: [recipient_user_id], references: [id], onDelete: Cascade)
+  push_delivery_jobs notification_push_delivery_job[]
+  sms_delivery_jobs notification_sms_delivery_job[]
+
+  @@index([recipient_user_id, is_read, created_at], map: "in_app_notification_recipient_read_created_idx")
+  @@index([recipient_user_id, created_at], map: "in_app_notification_recipient_created_idx")
+  @@index([type], map: "in_app_notification_type_idx")
+  @@index([created_at], map: "in_app_notification_created_at_idx")
+  @@index([is_read], map: "in_app_notification_is_read_idx")
+}
+
+model notification_preference {
+  id             Int      @id @default(autoincrement())
+  user_id        Int
+  type           String
+  in_app_enabled Boolean  @default(true)
+  email_enabled  Boolean  @default(true)
+  sms_enabled    Boolean  @default(false)
+  created_at     DateTime @default(now())
+  updated_at     DateTime @default(now()) @updatedAt
+  user           user     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@unique([user_id, type], map: "notification_preference_user_id_type_key")
+  @@index([user_id], map: "notification_preference_user_id_idx")
+}
+
+model notification_push_subscription {
+  id                 String                          @id @default(uuid())
+  user_id            Int
+  endpoint           String                          @unique @db.VarChar(512)
+  p256dh             String                          @db.VarChar(512)
+  auth               String                          @db.VarChar(512)
+  expiration_time    DateTime?
+  is_active          Boolean                         @default(true)
+  user_agent         String?                         @db.VarChar(512)
+  platform           String?                         @db.VarChar(191)
+  language           String?                         @db.VarChar(32)
+  timezone           String?                         @db.VarChar(191)
+  last_seen_at       DateTime                        @default(now())
+  last_error_code    String?                         @db.VarChar(64)
+  last_error_message String?                         @db.VarChar(1024)
+  last_error_at      DateTime?
+  created_at         DateTime                        @default(now())
+  updated_at         DateTime                        @default(now()) @updatedAt
+  user               user                            @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  delivery_jobs      notification_push_delivery_job[]
+
+  @@index([user_id, is_active], map: "notification_push_subscriptions_user_active_idx")
+  @@map("notification_push_subscriptions")
+}
+
+model notification_push_delivery_job {
+  id                 String                            @id @default(uuid())
+  notification_id    Int
+  user_id            Int
+  subscription_id    String
+  payload            Json
+  status             notification_push_delivery_status @default(PENDING)
+  attempts           Int                               @default(0)
+  next_attempt_at    DateTime                          @default(now())
+  last_error_code    String?                           @db.VarChar(64)
+  last_error_message String?                           @db.VarChar(1024)
+  last_error_at      DateTime?
+  sent_at            DateTime?
+  created_at         DateTime                          @default(now())
+  updated_at         DateTime                          @default(now()) @updatedAt
+  notification       in_app_notification               @relation(fields: [notification_id], references: [id], onDelete: Cascade)
+  user               user                              @relation("notification_push_delivery_user", fields: [user_id], references: [id], onDelete: Cascade)
+  subscription       notification_push_subscription    @relation(fields: [subscription_id], references: [id], onDelete: Cascade)
+
+  @@unique([notification_id, subscription_id], map: "notification_push_delivery_jobs_notification_subscription_key")
+  @@index([status, next_attempt_at], map: "notification_push_delivery_jobs_status_next_attempt_idx")
+  @@index([subscription_id], map: "notification_push_delivery_jobs_subscription_idx")
+  @@index([notification_id], map: "notification_push_delivery_jobs_notification_idx")
+  @@index([user_id], map: "notification_push_delivery_jobs_user_idx")
+  @@map("notification_push_delivery_jobs")
+}
+
+model notification_sms_delivery_job {
+  id                 String                           @id @default(uuid())
+  notification_id    Int?                             @unique
+  user_id            Int
+  notification_type  String                           @db.VarChar(191)
+  dedupe_key         String?                          @db.VarChar(191)
+  idempotency_key    String?                          @unique @db.VarChar(191)
+  phone_number       String                           @db.VarChar(32)
+  message            String                           @db.VarChar(2000)
+  status             notification_sms_delivery_status @default(PENDING)
+  attempts           Int                              @default(0)
+  next_attempt_at    DateTime                         @default(now())
+  last_error_code    String?                          @db.VarChar(64)
+  last_error_message String?                          @db.VarChar(1024)
+  last_error_at      DateTime?
+  sent_at            DateTime?
+  created_at         DateTime                         @default(now())
+  updated_at         DateTime                         @default(now()) @updatedAt
+  notification       in_app_notification?             @relation(fields: [notification_id], references: [id], onDelete: Cascade)
+  user               user                             @relation("notification_sms_delivery_user", fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([status, next_attempt_at], map: "notification_sms_delivery_jobs_status_next_attempt_idx")
+  @@index([user_id], map: "notification_sms_delivery_jobs_user_idx")
+  @@index([notification_type], map: "notification_sms_delivery_jobs_type_idx")
+  @@map("notification_sms_delivery_jobs")
 }
 
 model program {
-  id                Int      @id @default(autoincrement())
-  title             String
-  description       String
-  member_required   Boolean  @default(false)
-  leader_required   Boolean  @default(false)
-  ministry_required Boolean  @default(false)
-  topics            topic[]
-  cohorts           cohort[]
-  completed         Boolean  @default(false)
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-
-  prerequisitePrograms program_prerequisites[] @relation("ProgramToPrerequisite")
-  requiredForPrograms  program_prerequisites[] @relation("ProgramToRequired")
+  id                   Int                     @id @default(autoincrement())
+  title                String
+  description          String
+  completed            Boolean                 @default(false)
+  createdAt            DateTime                @default(now())
+  updatedAt            DateTime                @updatedAt
+  leader_required      Boolean                 @default(false)
+  member_required      Boolean                 @default(false)
+  ministry_required    Boolean                 @default(false)
   certificate          certificate[]
+  cohorts              cohort[]
+  requiredForPrograms  program_prerequisites[] @relation("ProgramToRequired")
+  prerequisitePrograms program_prerequisites[] @relation("ProgramToPrerequisite")
+  topics               topic[]
+  eligibility_rules    role_eligibility_rules[]
+}
+
+model role_eligibility_rules {
+  id         Int      @id @default(autoincrement())
+  role_key   String   @db.VarChar(64)
+  program_id Int
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  program     program  @relation(fields: [program_id], references: [id], onDelete: Cascade)
+
+  @@unique([role_key, program_id])
+  @@index([program_id], map: "role_eligibility_rules_program_id_idx")
 }
 
 model program_prerequisites {
   programId      Int
   prerequisiteId Int
-
-  program      program @relation("ProgramToPrerequisite", fields: [programId], references: [id], onDelete: Cascade)
-  prerequisite program @relation("ProgramToRequired", fields: [prerequisiteId], references: [id], onDelete: Cascade)
+  prerequisite   program @relation("ProgramToRequired", fields: [prerequisiteId], references: [id], onDelete: Cascade)
+  program        program @relation("ProgramToPrerequisite", fields: [programId], references: [id], onDelete: Cascade)
 
   @@id([programId, prerequisiteId])
+  @@index([prerequisiteId], map: "program_prerequisites_prerequisiteId_fkey")
 }
 
 model topic {
@@ -450,27 +993,27 @@ model topic {
   programId    Int
   description  String?
   order_number Int?
-  program      program       @relation(fields: [programId], references: [id], onDelete: Cascade)
-  progress     progress[]
   LearningUnit LearningUnit?
+  progress     progress[]
+  program      program       @relation(fields: [programId], references: [id], onDelete: Cascade)
+
+  @@index([programId], map: "topic_programId_fkey")
 }
 
 model LearningUnit {
-  id          Int    @id @default(autoincrement())
-  topicId     Int    @unique
-  type        String
-  data        Json
-  version     Int    @default(1)
-  maxAttempts Int?   @default(3)
-
-  topic topic @relation(fields: [topicId], references: [id], onDelete: Cascade)
-
-  cohortAssignments cohort_assignment[]
+  id                Int                     @id @default(autoincrement())
+  topicId           Int                     @unique
+  type              String
+  data              String                  @db.LongText
+  version           Int                     @default(1)
+  maxAttempts       Int?                    @default(3)
+  topic             topic                   @relation(fields: [topicId], references: [id], onDelete: Cascade)
   submissions       assignment_submission[]
+  cohortAssignments cohort_assignment[]
 }
 
 model cohort {
-  id                  Int      @id @default(autoincrement())
+  id                  Int                 @id @default(autoincrement())
   name                String
   startDate           DateTime
   status              String
@@ -478,18 +1021,18 @@ model cohort {
   duration            String
   applicationDeadline DateTime
   programId           Int
-  program             program  @relation(fields: [programId], references: [id], onDelete: Cascade)
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  program             program             @relation(fields: [programId], references: [id], onDelete: Cascade)
+  assignments         cohort_assignment[]
   courses             course[]
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
 
-  assignments cohort_assignment[]
+  @@index([programId], map: "cohort_programId_fkey")
 }
 
 model course {
   id           Int          @id @default(autoincrement())
   name         String
-  instructorId Int?
   capacity     Int
   enrolled     Int          @default(0)
   schedule     String
@@ -497,33 +1040,31 @@ model course {
   classFormat  classFormat?
   location     String?
   meetingLink  String?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  instructorId Int?
   cohort       cohort       @relation(fields: [cohortId], references: [id], onDelete: Cascade)
   instructor   user?        @relation(fields: [instructorId], references: [id], onDelete: Cascade)
   enrollments  enrollment[]
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
+
+  @@index([cohortId], map: "course_cohortId_fkey")
+  @@index([instructorId], map: "course_instructorId_fkey")
 }
 
 model enrollment {
-  id          Int        @id @default(autoincrement())
-  user_id     Int?
+  id          Int                     @id @default(autoincrement())
+  enrolledAt  DateTime                @default(now())
   course_id   Int
-  user        user?      @relation(fields: [user_id], references: [id], onDelete: Cascade)
-  course      course     @relation(fields: [course_id], references: [id], onDelete: Cascade)
-  enrolledAt  DateTime   @default(now())
-  progress    progress[]
-  completed   Boolean?   @default(false)
+  user_id     Int?
+  completed   Boolean?                @default(false)
   completedAt DateTime?
-
   submissions assignment_submission[]
+  course      course                  @relation(fields: [course_id], references: [id], onDelete: Cascade)
+  user        user?                   @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  progress    progress[]
 
   @@unique([user_id, course_id])
-}
-
-enum classFormat {
-  In_Person
-  Online
-  Hybrid
+  @@index([course_id], map: "enrollment_course_id_fkey")
 }
 
 model progress {
@@ -535,50 +1076,622 @@ model progress {
   completedAt  DateTime?
   notes        String?
   completed    Boolean?        @default(false)
-
-  enrollment enrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
-  topic      topic      @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  enrollment   enrollment      @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  topic        topic           @relation(fields: [topicId], references: [id], onDelete: Cascade)
 
   @@unique([enrollmentId, topicId])
+  @@index([topicId], map: "progress_topicId_fkey")
 }
 
 model cohort_assignment {
-  id             Int       @id @default(autoincrement())
+  id             Int          @id @default(autoincrement())
   cohortId       Int
   learningUnitId Int
-  isActive       Boolean   @default(false)
+  isActive       Boolean      @default(false)
   activatedAt    DateTime?
   dueDate        DateTime?
   closedAt       DateTime?
-
-  cohort       cohort       @relation(fields: [cohortId], references: [id], onDelete: Cascade)
-  learningUnit LearningUnit @relation(fields: [learningUnitId], references: [id], onDelete: Cascade)
+  cohort         cohort       @relation(fields: [cohortId], references: [id], onDelete: Cascade)
+  learningUnit   LearningUnit @relation(fields: [learningUnitId], references: [id], onDelete: Cascade)
 
   @@unique([cohortId, learningUnitId])
+  @@index([learningUnitId], map: "cohort_assignment_learningUnitId_fkey")
 }
 
 model assignment_submission {
-  id             Int @id @default(autoincrement())
+  id             Int               @id @default(autoincrement())
   enrollmentId   Int
   learningUnitId Int
-
-  content Json?
-  fileUrl String?
-  attempt Int     @default(1)
-
-  status      submission_status @default(SUBMITTED)
-  submittedAt DateTime          @default(now())
-
-  score      Int?
-  feedback   String?
-  gradedById Int?
-  gradedAt   DateTime?
-
-  enrollment   enrollment   @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
-  learningUnit LearningUnit @relation(fields: [learningUnitId], references: [id], onDelete: Cascade)
-  gradedBy     user?        @relation(fields: [gradedById], references: [id])
+  content        String?           @db.LongText
+  fileUrl        String?
+  attempt        Int               @default(1)
+  status         submission_status @default(SUBMITTED)
+  submittedAt    DateTime          @default(now())
+  score          Int?
+  feedback       String?
+  gradedById     Int?
+  gradedAt       DateTime?
+  enrollment     enrollment        @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  gradedBy       user?             @relation(fields: [gradedById], references: [id])
+  learningUnit   LearningUnit      @relation(fields: [learningUnitId], references: [id], onDelete: Cascade)
 
   @@index([enrollmentId, learningUnitId])
+  @@index([gradedById], map: "assignment_submission_gradedById_fkey")
+  @@index([learningUnitId], map: "assignment_submission_learningUnitId_fkey")
+}
+
+model visitor {
+  id                 Int              @id @default(autoincrement())
+  firstName          String
+  lastName           String
+  gender             String?
+  email              String?          @unique
+  phone              String?
+  country            String?
+  address            String?
+  city               String?
+  state              String?
+  zipCode            String?
+  visitDate          DateTime
+  is_member          Boolean          @default(false)
+  howHeard           String?
+  consentToContact   Boolean          @default(false)
+  membershipWish     Boolean          @default(false)
+  isClergy           Boolean          @default(false)
+  churchName         String?
+  churchLocation     String?
+  churchRole         String?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  country_code       String?
+  otherName          String?
+  title              String?
+  responsibleMembers String?          @db.LongText
+  followUps          follow_up[]
+  notes              note[]
+  prayerRequests     prayer_request[]
+  visits             visit[]
+}
+
+model visit {
+  id        Int        @id @default(autoincrement())
+  visitorId Int?
+  date      DateTime
+  eventId   Int?
+  notes     String?
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  event     event_mgt? @relation(fields: [eventId], references: [id])
+  visitor   visitor?   @relation(fields: [visitorId], references: [id], onDelete: Cascade)
+
+  @@index([eventId], map: "visit_eventId_fkey")
+  @@index([visitorId], map: "visit_visitorId_fkey")
+}
+
+model follow_up {
+  id         Int      @id @default(autoincrement())
+  visitorId  Int
+  userId     Int?
+  date       DateTime
+  type       String
+  status     String   @default("pending")
+  notes      String?
+  assignedTo Int?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  user       user?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  visitor    visitor  @relation(fields: [visitorId], references: [id], onDelete: Cascade)
+
+  @@index([userId], map: "follow_up_userId_fkey")
+  @@index([visitorId], map: "follow_up_visitorId_fkey")
+  @@index([assignedTo], map: "follow_up_assignedTo_idx")
+  @@index([assignedTo, date, status], map: "follow_up_assigned_date_status_idx")
+}
+
+model prayer_request {
+  id        Int      @id @default(autoincrement())
+  visitorId Int?
+  userId    Int?
+  date      DateTime
+  request   String
+  status    String   @default("active")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      user?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  visitor   visitor? @relation(fields: [visitorId], references: [id], onDelete: Cascade)
+
+  @@index([userId], map: "prayer_request_userId_fkey")
+  @@index([visitorId], map: "prayer_request_visitorId_fkey")
+}
+
+model note {
+  id        Int      @id @default(autoincrement())
+  visitorId Int?
+  userId    Int?
+  date      DateTime
+  author    String
+  content   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      user?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  visitor   visitor? @relation(fields: [visitorId], references: [id], onDelete: Cascade)
+
+  @@index([userId], map: "note_userId_fkey")
+  @@index([visitorId], map: "note_visitorId_fkey")
+}
+
+model life_center_role {
+  id                 Int                  @id @default(autoincrement())
+  name               String
+  life_center_member life_center_member[]
+}
+
+model life_center {
+  id                 Int                  @id @default(autoincrement())
+  name               String
+  description        String
+  meetingLocation    String
+  meetingDays        String
+  life_center_member life_center_member[]
+  soul_won           soul_won[]           @relation("life_center_soul_won")
+}
+
+model life_center_member {
+  id           Int              @id @default(autoincrement())
+  userId       Int
+  lifeCenterId Int
+  roleId       Int
+  lifeCenter   life_center      @relation(fields: [lifeCenterId], references: [id])
+  role         life_center_role @relation(fields: [roleId], references: [id])
+  user         user             @relation(fields: [userId], references: [id])
+
+  @@unique([userId, lifeCenterId])
+  @@index([lifeCenterId], map: "life_center_member_lifeCenterId_fkey")
+  @@index([roleId], map: "life_center_member_roleId_fkey")
+}
+
+model soul_won {
+  id             Int         @id @unique @default(autoincrement())
+  title          String?
+  first_name     String
+  last_name      String
+  other_name     String?
+  contact_number String
+  contact_email  String?
+  country_code   String?
+  country        String
+  city           String
+  date_won       DateTime
+  wonById        Int
+  lifeCenterId   Int
+  memberId       Int?        @unique
+  lifeCenter     life_center @relation("life_center_soul_won", fields: [lifeCenterId], references: [id], map: "soulwon_lifecenter_fkey")
+  wonBy          user        @relation("user_soul_winner", fields: [wonById], references: [id], map: "soulwon_wonby_fkey")
+  member         user?       @relation("soul_won_member", fields: [memberId], references: [id], map: "soulwon_member_fkey")
+
+  @@index([lifeCenterId], map: "soulwon_lifecenter_fkey")
+  @@index([wonById], map: "soulwon_wonby_fkey")
+}
+
+model devices {
+  id          Int    @id @default(autoincrement())
+  device_name String
+  ip_address  String
+  port        String
+  location    String
+}
+
+model department_positions {
+  id            Int        @id @default(autoincrement())
+  user_id       Int
+  department_id Int
+  position_id   Int?
+  department    department @relation(fields: [department_id], references: [id])
+  position      position?  @relation(fields: [position_id], references: [id])
+  user          user       @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@unique([user_id, department_id])
+  @@index([user_id])
+  @@index([department_id])
+  @@index([position_id])
+}
+
+model product_type {
+  id       Int        @id @default(autoincrement())
+  name     String
+  deleted  Boolean    @default(false)
+  products products[]
+}
+
+model product_category {
+  id       Int        @id @default(autoincrement())
+  name     String
+  deleted  Boolean    @default(false)
+  products products[]
+}
+
+model markets {
+  id            Int           @id @default(autoincrement())
+  name          String        @unique
+  description   String?
+  deleted       Boolean       @default(false)
+  start_date    DateTime?
+  end_date      DateTime?
+  created_at    DateTime      @default(now())
+  updated_at    DateTime      @updatedAt
+  created_by_id Int?
+  updated_at_id Int?
+  event_mgt_id  Int?
+  event         event_mgt?    @relation(fields: [event_mgt_id], references: [id])
+  order_items   order_items[]
+  products      products[]
+
+  @@index([event_mgt_id], map: "markets_event_mgt_id_fkey")
+}
+
+model products {
+  id                  Int               @id @default(autoincrement())
+  name                String
+  description         String?
+  deleted             Boolean           @default(false)
+  colours             String?
+  created_at          DateTime          @default(now())
+  updated_at          DateTime          @updatedAt
+  created_by_id       Int?
+  updated_at_id       Int?
+  image_url           String?
+  market_id           Int?
+  price_amount        Float?
+  price_currency      String?
+  product_category_id Int?
+  product_type_id     Int?
+  status              String?           @default("draft")
+  stock_managed       String            @default("no")
+  order_items         order_items[]
+  product_colours     product_colour[]
+  market              markets?          @relation(fields: [market_id], references: [id])
+  product_category    product_category? @relation(fields: [product_category_id], references: [id])
+  product_type        product_type?     @relation(fields: [product_type_id], references: [id])
+
+  @@index([market_id], map: "products_market_id_fkey")
+  @@index([product_category_id], map: "products_product_category_id_fkey")
+  @@index([product_type_id], map: "products_product_type_id_fkey")
+}
+
+model sizes {
+  id                   Int             @id @default(autoincrement())
+  name                 String          @unique
+  sort_order           Int?
+  created_at           DateTime        @default(now())
+  updated_at           DateTime        @updatedAt
+  created_by_id        Int?
+  updated_at_id        Int?
+  product_colour_stock product_stock[]
+}
+
+model product_colour {
+  id         Int             @id @default(autoincrement())
+  colour     String?
+  image_url  String?
+  product_id Int
+  product    products        @relation(fields: [product_id], references: [id])
+  sizes      product_stock[]
+
+  @@index([product_id], map: "product_colour_product_id_fkey")
+}
+
+model product_stock {
+  product_colour_id Int
+  size_id           Int
+  stock             Int            @default(0)
+  product_colour    product_colour @relation(fields: [product_colour_id], references: [id])
+  size              sizes          @relation(fields: [size_id], references: [id])
+
+  @@id([size_id, product_colour_id])
+  @@index([product_colour_id], map: "product_stock_product_colour_id_fkey")
+}
+
+model orders {
+  id              Int              @id @default(autoincrement())
+  order_number    String?
+  total_amount    Float
+  user_id         Int?
+  payment_status  payment_status   @default(pending)
+  delivery_status delivery_status  @default(pending)
+  created_at      DateTime         @default(now())
+  updated_at      DateTime         @updatedAt
+  reference       String
+  billing_details billing_details?
+  items           order_items[]
+  user            user?            @relation(fields: [user_id], references: [id])
+
+  @@index([user_id], map: "orders_user_id_fkey")
+  @@index([reference], map: "orders_reference_idx")
+  @@index([payment_status], map: "orders_payment_status_idx")
+}
+
+model order_items {
+  id               Int       @id @default(autoincrement())
+  order_id         Int
+  name             String
+  market_id        Int?
+  product_id       Int?
+  price_amount     Float
+  price_currency   String
+  quantity         Int
+  product_type     String
+  product_category String
+  image_url        String
+  color            String
+  size             String
+  market           markets?  @relation(fields: [market_id], references: [id])
+  order            orders    @relation(fields: [order_id], references: [id], onDelete: Cascade)
+  product          products? @relation(fields: [product_id], references: [id])
+
+  @@index([market_id], map: "order_items_market_id_fkey")
+  @@index([order_id], map: "order_items_order_id_fkey")
+  @@index([product_id], map: "order_items_product_id_fkey")
+}
+
+model billing_details {
+  id           Int    @id @default(autoincrement())
+  order_id     Int    @unique
+  first_name   String
+  last_name    String
+  email        String
+  phone_number String
+  country      String
+  country_code String
+  orders       orders @relation(fields: [order_id], references: [id], onDelete: Cascade)
+}
+
+model certificate {
+  id                Int      @id @default(autoincrement())
+  userId            Int
+  programId         Int
+  issuedAt          DateTime @default(now())
+  certificateNumber String   @unique
+  program           program  @relation(fields: [programId], references: [id])
+  user              user     @relation(fields: [userId], references: [id])
+
+  @@unique([userId, programId])
+  @@index([programId], map: "certificate_programId_fkey")
+}
+
+model AnnualTheme {
+  id             Int      @id @default(autoincrement())
+  year           Int      @unique
+  title          String
+  verseReference String
+  verse          String
+  message        String
+  imageUrl       String?
+  isActive       Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+model receiptConfig {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model paymentConfig {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model bankAccountConfig {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  percentage  Float?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model titheBreakdownConfig {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  percentage  Float?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model financials {
+  id         String   @id @default(cuid())
+  payload    String   @db.LongText
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  periodDate String?  @unique
+}
+
+model availability {
+  id                     Int            @id @default(autoincrement())
+  day                    String
+  maxBookingsPerSlot     Int
+  startTime              String
+  endTime                String
+  sessionDurationMinutes Int            @default(30)
+  userId                 Int
+  user                   user           @relation(fields: [userId], references: [id])
+  sessions               session_slot[]
+
+  @@index([userId])
+}
+
+model session_slot {
+  id             Int          @id @default(autoincrement())
+  start          String
+  end            String
+  availabilityId Int
+  availability   availability @relation(fields: [availabilityId], references: [id], onDelete: Cascade)
+
+  @@index([availabilityId], map: "session_slot_availabilityId_fkey")
+}
+
+model appointment {
+  id          Int                @id @default(autoincrement())
+  fullName    String
+  email       String
+  phone       String
+  purpose     String
+  note        String?
+  date        DateTime
+  startTime   String
+  endTime     String
+  status      appointment_status @default(PENDING)
+  createdAt   DateTime           @default(now())
+  userId      Int
+  requesterId Int?
+  user        user               @relation(fields: [userId], references: [id])
+
+  @@index([email])
+  @@index([userId])
+  @@index([requesterId])
+  @@index([userId, date, status], map: "appointment_user_date_status_idx")
+  @@index([userId, date, startTime, endTime], map: "appointment_user_date_time_idx")
+}
+
+model ai_conversation {
+  id            String          @id @default(uuid())
+  created_by    Int
+  title         String?
+  status        String          @default("active")
+  created_at    DateTime        @default(now())
+  updated_at    DateTime        @updatedAt
+  messages      ai_message[]
+  usage_entries ai_usage_ledger[]
+
+  @@index([created_by])
+  @@index([created_at])
+}
+
+model ai_message {
+  id            String          @id @default(uuid())
+  conversation_id String
+  role          String
+  content       String          @db.LongText
+  provider      String?
+  model         String?
+  created_at    DateTime        @default(now())
+  conversation  ai_conversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
+  usage_entries ai_usage_ledger[]
+
+  @@index([conversation_id, created_at])
+  @@index([created_at])
+}
+
+model ai_usage_ledger {
+  id                String          @id @default(uuid())
+  conversation_id   String
+  message_id        String
+  prompt_tokens     Int
+  completion_tokens Int
+  total_tokens      Int
+  message_count     Int             @default(1)
+  cost_estimate     Float?
+  provider          String
+  model             String
+  created_at        DateTime        @default(now())
+  conversation      ai_conversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
+  message           ai_message      @relation(fields: [message_id], references: [id], onDelete: Cascade)
+
+  @@index([created_at])
+  @@index([conversation_id])
+  @@index([provider, model])
+}
+
+model ai_usage_quota {
+  id               String   @id @default(uuid())
+  period_start     DateTime
+  period_end       DateTime
+  message_limit    Int
+  token_limit      Int
+  message_used     Int      @default(0)
+  token_used       Int      @default(0)
+  updated_at       DateTime @updatedAt
+
+  @@unique([period_start, period_end])
+  @@index([period_start, period_end])
+}
+
+model ai_pricing_catalog {
+  id                String   @id @default(cuid())
+  provider          String
+  model             String
+  input_token_cost  Float
+  output_token_cost Float
+  effective_from    DateTime
+  updated_at        DateTime @updatedAt
+
+  @@index([provider, model, effective_from])
+}
+
+model ai_audit_log {
+  id         String   @id @default(uuid())
+  actor_id   Int
+  action     String
+  resource   String
+  metadata   String?  @db.LongText
+  created_at DateTime @default(now())
+
+  @@index([actor_id])
+  @@index([created_at])
+}
+
+model ai_idempotency_key {
+  id               String   @id @default(uuid())
+  actor_id         Int
+  endpoint         String
+  key              String
+  request_hash     String
+  response_payload String?  @db.LongText
+  status_code      Int
+  created_at       DateTime @default(now())
+
+  @@unique([actor_id, endpoint, key])
+  @@index([created_at])
+}
+
+model ai_provider_credential {
+  id               String   @id @default(uuid())
+  provider         String
+  encrypted_key    String   @db.LongText
+  encrypted_secret String?  @db.LongText
+  is_active        Boolean  @default(true)
+  created_by       Int
+  rotated_at       DateTime?
+  created_at       DateTime @default(now())
+  updated_at       DateTime @updatedAt
+
+  @@index([provider, is_active])
+  @@index([created_at])
+}
+
+enum status_type {
+  UNCONFIRMED
+  CONFIRMED
+  MEMBER
+}
+
+enum attendance_group {
+  ADULTS
+  CHILDREN
+  BOTH
+}
+
+enum classFormat {
+  In_Person
+  Online
+  Hybrid
 }
 
 enum submission_status {
@@ -594,6 +1707,18 @@ enum progress_status {
   PENDING
 }
 
+enum biometric_import_job_status {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+enum attendance_timing_unit {
+  MINUTES
+  HOURS
+}
+
 enum RequestApprovalStatus {
   Draft
   Awaiting_HOD_Approval
@@ -602,12 +1727,68 @@ enum RequestApprovalStatus {
   REJECTED
 }
 
+enum RequisitionApprovalModule {
+  REQUISITION
+  EVENT_REPORT
+}
+
+enum EventReportStatus {
+  DRAFT
+  PENDING_FINAL
+  APPROVED
+  REJECTED
+}
+
+enum EventReportSectionApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum EventReportFinanceRole {
+  COUNTING_LEADER
+  FINANCE_REP
+}
+
+enum RequisitionApproverType {
+  HEAD_OF_DEPARTMENT
+  POSITION
+  SPECIFIC_PERSON
+}
+
+enum RequisitionApprovalInstanceStatus {
+  WAITING
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum RequisitionNotificationEventStatus {
+  PENDING
+  PROCESSING
+  SENT
+  FAILED
+  SKIPPED_NO_RECIPIENTS
+}
+
 enum asset_status {
   ASSIGNED
   UNASSIGNED
   NOT_FIXABLE
   OUT_OF_REPAIRS
   LOST_OR_STOLEN
+}
+
+enum family_relation_type {
+  SPOUSE
+  PARENT
+  CHILD
+  SIBLING
+  GUARDIAN
+  DEPENDENT
+  GRANDPARENT
+  GRANDCHILD
+  IN_LAW
 }
 
 enum marital_status {
@@ -635,245 +1816,9 @@ enum event_status {
   TENTATIVE
 }
 
-model visitor {
-  id               Int              @id @default(autoincrement())
-  title            String?
-  firstName        String
-  lastName         String
-  otherName        String?
-  email            String?          @unique
-  phone            String?
-  country          String?
-  country_code     String?
-  address          String?
-  city             String?
-  state            String?
-  zipCode          String?
-  visitDate        DateTime
-  is_member        Boolean          @default(false)
-  howHeard         String?
-  consentToContact Boolean          @default(false)
-  membershipWish   Boolean          @default(false)
-  visits           visit[]
-  followUps        follow_up[]
-  prayerRequests   prayer_request[]
-  notes            note[]
-  createdAt        DateTime         @default(now())
-  updatedAt        DateTime         @updatedAt
-}
-
-model visit {
-  id        Int        @id @default(autoincrement())
-  visitor   visitor?   @relation(fields: [visitorId], references: [id], onDelete: Cascade)
-  visitorId Int?
-  date      DateTime
-  event     event_mgt? @relation(fields: [eventId], references: [id])
-  eventId   Int?
-  notes     String?
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
-}
-
-model follow_up {
-  id         Int      @id @default(autoincrement())
-  visitor    visitor  @relation(fields: [visitorId], references: [id], onDelete: Cascade)
-  visitorId  Int
-  user       user?    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  userId     Int?
-  date       DateTime
-  type       String
-  status     String   @default("pending")
-  notes      String?
-  assignedTo Int?
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-}
-
-model prayer_request {
-  id        Int      @id @default(autoincrement())
-  visitor   visitor? @relation(fields: [visitorId], references: [id], onDelete: Cascade)
-  visitorId Int?
-  user      user?    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  userId    Int?
-  date      DateTime
-  request   String
-  status    String   @default("active")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-}
-
-model note {
-  id        Int      @id @default(autoincrement())
-  visitor   visitor? @relation(fields: [visitorId], references: [id], onDelete: Cascade)
-  visitorId Int?
-  user      user?    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  userId    Int?
-  date      DateTime
-  author    String
-  content   String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-}
-
-model life_center_role {
-  id                 Int                  @id @default(autoincrement())
-  name               String
-  life_center_member life_center_member[]
-}
-
-model life_center {
-  id                 Int                  @id @default(autoincrement())
-  name               String
-  description        String
-  meetingLocation    String
-  meetingDays        String
-  life_center_member life_center_member[]
-
-  soul_won soul_won[] @relation("life_center_soul_won")
-}
-
-model life_center_member {
-  id           Int              @id @default(autoincrement())
-  user         user             @relation(fields: [userId], references: [id])
-  userId       Int
-  lifeCenter   life_center      @relation(fields: [lifeCenterId], references: [id])
-  lifeCenterId Int
-  role         life_center_role @relation(fields: [roleId], references: [id])
-  roleId       Int
-
-  @@unique([userId, lifeCenterId])
-}
-
-model soul_won {
-  id             Int      @id @default(autoincrement())
-  title          String?
-  first_name     String
-  last_name      String
-  other_name     String?
-  contact_number String
-  contact_email  String?
-  country_code   String?
-  country        String
-  city           String
-  date_won       DateTime
-
-  wonBy   user @relation("user_soul_winner", fields: [wonById], references: [id], map: "soulwon_wonby_fkey")
-  wonById Int
-
-  lifeCenter   life_center @relation("life_center_soul_won", fields: [lifeCenterId], references: [id], map: "soulwon_lifecenter_fkey")
-  lifeCenterId Int
-
-  @@unique(id)
-}
-
-model devices {
-  id          Int    @id @default(autoincrement())
-  device_name String
-  ip_address  String
-  port        String
-  location    String
-}
-
-model department_positions {
-  id            Int  @id @default(autoincrement())
-  user_id       Int
-  department_id Int
-  position_id   Int?
-
-  user       user       @relation(fields: [user_id], references: [id], onDelete: Cascade)
-  department department @relation(fields: [department_id], references: [id])
-  position   position?  @relation(fields: [position_id], references: [id])
-
-  @@unique([user_id, department_id]) // Prevent duplicate entries
-  @@index([user_id])
-  @@index([department_id])
-  @@index([position_id])
-}
-
-model product_type {
-  id       Int        @id @default(autoincrement())
-  name     String
-  deleted  Boolean    @default(false)
-  products products[]
-}
-
-model product_category {
-  id       Int        @id @default(autoincrement())
-  name     String
-  deleted  Boolean    @default(false)
-  products products[]
-}
-
-model markets {
-  id            Int           @id @default(autoincrement())
-  name          String        @unique
-  description   String?
-  deleted       Boolean       @default(false)
-  event         event_mgt?    @relation(fields: [event_mgt_id], references: [id])
-  event_mgt_id  Int?
-  products      products[]
-  start_date    DateTime?
-  end_date      DateTime?
-  created_at    DateTime      @default(now())
-  updated_at    DateTime      @updatedAt
-  created_by_id Int?
-  updated_at_id Int?
-  order_items   order_items[]
-}
-
-model products {
-  id                  Int               @id @default(autoincrement())
-  name                String
-  description         String?
-  colours             String?
-  image_url           String?
-  deleted             Boolean           @default(false)
-  stock_managed       String            @default("no")
-  status              String?           @default("draft")
-  product_type        product_type?     @relation(fields: [product_type_id], references: [id])
-  product_category    product_category? @relation(fields: [product_category_id], references: [id])
-  product_type_id     Int?
-  product_category_id Int?
-  price_currency      String?
-  price_amount        Float?
-  created_at          DateTime          @default(now())
-  updated_at          DateTime          @updatedAt
-  created_by_id       Int?
-  updated_at_id       Int?
-  market              markets?          @relation(fields: [market_id], references: [id])
-  market_id           Int?
-  product_colours     product_colour[]
-  order_items         order_items[]
-}
-
-model sizes {
-  id                   Int             @id @default(autoincrement())
-  name                 String          @unique
-  sort_order           Int?
-  created_at           DateTime        @default(now())
-  updated_at           DateTime        @updatedAt
-  created_by_id        Int?
-  updated_at_id        Int?
-  product_colour_stock product_stock[]
-}
-
-model product_colour {
-  id         Int             @id @default(autoincrement())
-  colour     String?
-  image_url  String?
-  product_id Int
-  product    products        @relation(fields: [product_id], references: [id])
-  sizes      product_stock[]
-}
-
-model product_stock {
-  product_colour_id Int
-  product_colour    product_colour @relation(fields: [product_colour_id], references: [id])
-  size_id           Int
-  stock             Int            @default(0)
-  size              sizes          @relation(fields: [size_id], references: [id])
-
-  @@id([size_id, product_colour_id])
+enum event_registration_audience {
+  MEMBERS_ONLY
+  MEMBERS_AND_NON_MEMBERS
 }
 
 enum payment_status {
@@ -889,125 +1834,29 @@ enum delivery_status {
   cancelled
 }
 
-model orders {
-  id              Int              @id @default(autoincrement())
-  order_number    String?
-  total_amount    Float
-  user            user?            @relation(fields: [user_id], references: [id])
-  user_id         Int?
-  payment_status  payment_status   @default(pending)
-  delivery_status delivery_status  @default(pending)
-  created_at      DateTime         @default(now())
-  updated_at      DateTime         @updatedAt
-  reference       String
-  items           order_items[]
-  billing_details billing_details?
-}
-
-model order_items {
-  id               Int       @id @default(autoincrement())
-  order            orders    @relation(fields: [order_id], references: [id], onDelete: Cascade)
-  order_id         Int
-  name             String
-  market           markets?  @relation(fields: [market_id], references: [id])
-  market_id        Int?
-  product          products? @relation(fields: [product_id], references: [id])
-  product_id       Int?
-  price_amount     Float
-  price_currency   String
-  quantity         Int
-  product_type     String
-  product_category String
-  image_url        String
-  color            String
-  size             String
-}
-
-model billing_details {
-  id           Int    @id @default(autoincrement())
-  orders       orders @relation(fields: [order_id], references: [id], onDelete: Cascade)
-  order_id     Int    @unique
-  first_name   String
-  last_name    String
-  email        String
-  phone_number String
-  country      String
-  country_code String
-}
-
-model certificate {
-  id                Int      @id @default(autoincrement())
-  userId            Int
-  programId         Int
-  issuedAt          DateTime @default(now())
-  certificateNumber String   @unique
-  user              user     @relation(fields: [userId], references: [id])
-  program           program  @relation(fields: [programId], references: [id])
-
-  @@unique([userId, programId])
-}
-
-model AnnualTheme {
-  id             Int     @id @default(autoincrement())
-  year           Int
-  title          String
-  verseReference String
-  verse          String
-  message        String
-  imageUrl       String?
-  isActive       Boolean @default(false)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@unique([year])
-}
-
-model availability {
-  id                     Int            @id @default(autoincrement())
-  day                    String
-  maxBookingsPerSlot     Int
-  startTime              String
-  endTime                String
-  sessionDurationMinutes Int            @default(30)
-  userId                 Int
-  user                   user           @relation(fields: [userId], references: [id])
-  sessions               session_slot[]
-
-  @@index([userId])
-}
-
-model session_slot {
-  id             Int          @id @default(autoincrement())
-  start          String
-  end            String
-  availabilityId Int
-  availability   availability @relation(fields: [availabilityId], references: [id], onDelete: Cascade)
-}
-
-model appointment {
-  id        Int                @id @default(autoincrement())
-  fullName  String
-  email     String
-  phone     String
-  purpose   String
-  note      String?
-  date      DateTime
-  startTime String
-  endTime   String
-  status    appointment_status @default(PENDING)
-  createdAt DateTime           @default(now())
-
-  userId Int
-  user   user @relation(fields: [userId], references: [id])
-
-  @@index([email])
-  @@index([userId])
-}
-
 enum appointment_status {
   PENDING
   CONFIRMED
   CANCELLED
 }
 
+enum notification_priority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum notification_push_delivery_status {
+  PENDING
+  PROCESSING
+  SENT
+  DEAD
+}
+
+enum notification_sms_delivery_status {
+  PENDING
+  PROCESSING
+  SENT
+  DEAD
+}

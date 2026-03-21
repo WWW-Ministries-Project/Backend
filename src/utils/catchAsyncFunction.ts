@@ -3,7 +3,8 @@ import e, { Request, Response, NextFunction } from "express";
 import { AppError, InputValidationError } from "./custom-error-handlers";
 import { StatusCodes } from "http-status-codes";
 
-const development = process.env.NODE_ENV === "development" || "test";
+const development =
+  process.env.NODE_ENV === "development" || process.env.NODE_ENV === "test";
 
 /**
  * Wraps an asynchronous controller function with error handling and logging logic.

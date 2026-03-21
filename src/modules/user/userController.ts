@@ -16,6 +16,20 @@ import { LifeCenterService } from "../lifeCenterMangement/lifeCenterService";
 import { forgetPasswordTemplate } from "../../utils/mail_templates/forgotPasswordTemplate";
 import { userActivatedTemplate } from "../../utils/mail_templates/userActivatedTemplate";
 import { activateUserTemplate } from "../../utils/mail_templates/activateUserTemplate";
+import {
+  FAMILY_RELATION,
+  getReciprocalFamilyRelation,
+  normalizeFamilyRelation,
+  pruneMissingBidirectionalFamilyRelations,
+  toFamilyRelationLabel,
+  upsertBidirectionalFamilyRelation,
+} from "./familyRelations";
+import {
+  buildRoleEligibilityFailureResponse,
+  isRoleEligibilityValidationError,
+  roleEligibilityService,
+} from "../settings/roleEligibilityService";
+import { InputValidationError } from "../../utils/custom-error-handlers";
 
 dotenv.config();
 
@@ -24,10 +38,210 @@ const userService = new UserService();
 const courseService = new CourseService();
 const lifeCenterService = new LifeCenterService();
 
+const normalizeOptionalEmail = (email?: string | null) => {
+  const normalizedEmail = String(email || "")
+    .trim()
+    .toLowerCase();
+
+  return normalizedEmail || null;
+};
+
+const isRealEmail = (email?: string | null) => {
+  const normalizedEmail = normalizeOptionalEmail(email);
+  if (!normalizedEmail) return false;
+
+  const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  return (
+    emailPattern.test(normalizedEmail) && !normalizedEmail.endsWith("@temp.com")
+  );
+};
+
+const hasOwn = (obj: unknown, key: string) =>
+  !!obj &&
+  typeof obj === "object" &&
+  Object.prototype.hasOwnProperty.call(obj, key);
+
+const normalizeMemberPayload = (payload: any = {}) => {
+  const personalInfo = { ...(payload?.personal_info || {}) };
+  const contactInfo = { ...(payload?.contact_info || {}) };
+  const contactPhone = { ...(contactInfo?.phone || {}) };
+  const churchInfo = { ...(payload?.church_info || {}) };
+  const workInfo = { ...(payload?.work_info || {}) };
+
+  const topLevelToPersonalInfo: Record<string, string> = {
+    title: "title",
+    first_name: "first_name",
+    last_name: "last_name",
+    other_name: "other_name",
+    date_of_birth: "date_of_birth",
+    gender: "gender",
+    marital_status: "marital_status",
+    nationality: "nationality",
+    has_children: "has_children",
+  };
+
+  for (const [sourceKey, targetKey] of Object.entries(topLevelToPersonalInfo)) {
+    if (!hasOwn(personalInfo, targetKey) && hasOwn(payload, sourceKey)) {
+      personalInfo[targetKey] = payload[sourceKey];
+    }
+  }
+
+  const topLevelToContactInfo: Record<string, string> = {
+    email: "email",
+    resident_country: "resident_country",
+    state_region: "state_region",
+    city: "city",
+  };
+
+  for (const [sourceKey, targetKey] of Object.entries(topLevelToContactInfo)) {
+    if (!hasOwn(contactInfo, targetKey) && hasOwn(payload, sourceKey)) {
+      contactInfo[targetKey] = payload[sourceKey];
+    }
+  }
+
+  if (
+    !hasOwn(contactPhone, "country_code") &&
+    hasOwn(payload, "country_code")
+  ) {
+    contactPhone.country_code = payload.country_code;
+  }
+
+  if (!hasOwn(contactPhone, "number")) {
+    if (hasOwn(payload, "primary_number")) {
+      contactPhone.number = payload.primary_number;
+    } else if (hasOwn(payload, "phone_number")) {
+      contactPhone.number = payload.phone_number;
+    }
+  }
+
+  contactInfo.phone = contactPhone;
+
+  const topLevelToChurchInfo: Record<string, string> = {
+    membership_type: "membership_type",
+    position_id: "position_id",
+    department_id: "department_id",
+    member_since: "member_since",
+  };
+
+  for (const [sourceKey, targetKey] of Object.entries(topLevelToChurchInfo)) {
+    if (!hasOwn(churchInfo, targetKey) && hasOwn(payload, sourceKey)) {
+      churchInfo[targetKey] = payload[sourceKey];
+    }
+  }
+
+  const topLevelToWorkInfo: Record<string, string> = {
+    employment_status: "employment_status",
+    work_name: "work_name",
+    work_industry: "work_industry",
+    work_position: "work_position",
+    school_name: "school_name",
+  };
+
+  for (const [sourceKey, targetKey] of Object.entries(topLevelToWorkInfo)) {
+    if (!hasOwn(workInfo, targetKey) && hasOwn(payload, sourceKey)) {
+      workInfo[targetKey] = payload[sourceKey];
+    }
+  }
+
+  return {
+    ...payload,
+    personal_info: personalInfo,
+    contact_info: contactInfo,
+    church_info: churchInfo,
+    work_info: workInfo,
+  };
+};
+
+const hasValue = (value: unknown) =>
+  value !== undefined && value !== null && String(value).trim() !== "";
+
+const normalizeOptionalText = (value: unknown) => {
+  if (!hasValue(value)) return null;
+  return String(value).trim();
+};
+
+const normalizeGenderValue = (value: unknown) => {
+  const normalizedValue = normalizeOptionalText(value);
+  if (!normalizedValue) return null;
+
+  const normalizedLower = normalizedValue.toLowerCase();
+  if (normalizedLower === "male" || normalizedLower === "m") return "Male";
+  if (normalizedLower === "female" || normalizedLower === "f") return "Female";
+  if (normalizedLower === "other") return "Other";
+
+  return normalizedValue;
+};
+
+const buildMissingFieldsMessage = (
+  baseMessage: string,
+  missingFields: string[],
+) => {
+  if (!missingFields.length) {
+    return baseMessage;
+  }
+
+  return `${baseMessage} Missing required fields: ${missingFields.join(", ")}.`;
+};
+
+const parsePermissionsObject = (
+  permissions: any,
+): Record<string, any> | null => {
+  if (!permissions) return null;
+
+  if (typeof permissions === "string") {
+    const trimmedPermissions = permissions.trim();
+    if (!trimmedPermissions) return null;
+
+    try {
+      const parsedPermissions = JSON.parse(trimmedPermissions);
+      if (
+        parsedPermissions &&
+        typeof parsedPermissions === "object" &&
+        !Array.isArray(parsedPermissions)
+      ) {
+        return parsedPermissions as Record<string, any>;
+      }
+    } catch (error) {
+      return null;
+    }
+
+    return null;
+  }
+
+  if (typeof permissions === "object" && !Array.isArray(permissions)) {
+    return permissions as Record<string, any>;
+  }
+
+  return null;
+};
+
+const canRunSensitiveUserOps = () => {
+  const isProduction = process.env.NODE_ENV === "production";
+  const allowSensitiveOps = process.env.ALLOW_ADMIN_UTIL_ENDPOINTS === "true";
+  return !isProduction || allowSensitiveOps;
+};
+
+const isFamilyRelationValidationError = (errorMessage?: string) => {
+  if (!errorMessage) return false;
+
+  const relationValidationIndicators = [
+    "Unsupported family relation",
+    "A member cannot create a relationship with themselves.",
+    "Duplicate relationship for member ID",
+    "Duplicate spouse relationships are not allowed.",
+    "Family member not found.",
+    "Spouse user not found.",
+  ];
+
+  return relationValidationIndicators.some((indicator) =>
+    errorMessage.includes(indicator),
+  );
+};
+
 export const landingPage = async (req: Request, res: Response) => {
   res.send(
-    // `<h1>Welcome to World Wide Word Ministries Backend Server🔥🎉💒</h1>`
-    `<h1>Welcome to World Wide Word Ministries Backend Server🔥🎉🙏💒...</h1>`,
+    // `<h1>Welcome to Worldwide Word Ministries Backend Server🔥🎉💒</h1>`
+    `<h1>Welcome to Worldwide Word Ministries Backend Server🔥🎉🙏💒...</h1>`,
   );
 };
 
@@ -100,6 +314,7 @@ const selectQuery = {
 
 export const registerUser = async (req: Request, res: Response) => {
   try {
+    const normalizedPayload = normalizeMemberPayload(req.body);
     const {
       personal_info: { first_name } = {},
 
@@ -107,25 +322,64 @@ export const registerUser = async (req: Request, res: Response) => {
 
       password,
       is_user,
-    } = req.body;
+    } = normalizedPayload;
 
-    const existance = await prisma.user.findUnique({
-      where: { email },
-    });
+    const normalizedEmail = normalizeOptionalEmail(email);
+    const isLoginUser =
+      is_user === true ||
+      is_user === "true" ||
+      is_user === 1 ||
+      is_user === "1";
 
-    if (existance) {
-      return res
-        .status(404)
-        .json({ message: "User exist with this email " + email, data: null });
+    if (isLoginUser && !isRealEmail(normalizedEmail)) {
+      return res.status(400).json({
+        message:
+          "A valid non-temporary email is required when creating a login user.",
+        data: null,
+      });
     }
 
-    const response = await userService.registerUser(req.body);
+    const existance = normalizedEmail
+      ? await prisma.user.findUnique({
+          where: { email: normalizedEmail },
+        })
+      : null;
+
+    if (existance) {
+      return res.status(404).json({
+        message: "User exist with this email " + normalizedEmail,
+        data: null,
+      });
+    }
+
+    const response = await userService.registerUser(normalizedPayload);
 
     return res
       .status(201)
       .json({ message: "User Created Successfully", data: response });
   } catch (error: any) {
     console.error(error);
+
+    if (isRoleEligibilityValidationError(error)) {
+      return res
+        .status(error.statusCode)
+        .json(buildRoleEligibilityFailureResponse(error));
+    }
+
+    if (error instanceof InputValidationError) {
+      return res.status(400).json({
+        message: error.message,
+        data: null,
+      });
+    }
+
+    if (isFamilyRelationValidationError(error?.message)) {
+      return res.status(400).json({
+        message: error?.message,
+        data: null,
+      });
+    }
+
     return res
       .status(500)
       .json({ message: "Internal Server Error", data: error?.message });
@@ -134,7 +388,13 @@ export const registerUser = async (req: Request, res: Response) => {
 
 export const updateUser = async (req: Request, res: Response) => {
   try {
+    const normalizedPayload = normalizeMemberPayload(req.body);
     const { user_id } = req.query;
+    const contactInfoPayload = normalizedPayload?.contact_info || {};
+    const hasEmailField = Object.prototype.hasOwnProperty.call(
+      contactInfoPayload,
+      "email",
+    );
     const {
       personal_info: {
         title,
@@ -155,7 +415,13 @@ export const updateUser = async (req: Request, res: Response) => {
         city,
         phone: { country_code, number: primary_number } = {},
       } = {},
-      work_info: { work_name, work_industry, work_position, school_name } = {},
+      work_info: {
+        employment_status,
+        work_name,
+        work_industry,
+        work_position,
+        school_name,
+      } = {},
       emergency_contact: {
         name: emergency_contact_name,
         relation: emergency_contact_relation,
@@ -175,7 +441,11 @@ export const updateUser = async (req: Request, res: Response) => {
       status,
       is_user,
       department_positions,
-    } = req.body;
+    } = normalizedPayload;
+    const hasFamilyField = Object.prototype.hasOwnProperty.call(
+      normalizedPayload,
+      "family",
+    );
 
     const userExists = await prisma.user.findUnique({
       where: { id: Number(user_id) },
@@ -193,52 +463,229 @@ export const updateUser = async (req: Request, res: Response) => {
       return res.status(400).json({ message: "User not found", data: null });
     }
 
+    const existingEmail = normalizeOptionalEmail(userExists?.email);
+    const incomingEmail = normalizeOptionalEmail(email);
+    const nextIsUser =
+      typeof is_user === "boolean"
+        ? is_user
+        : is_user === "true" || is_user === "1"
+          ? true
+          : is_user === "false" || is_user === "0"
+            ? false
+            : userExists?.is_user;
+    const nextEmail = hasEmailField ? incomingEmail : existingEmail;
+    const nextAccessLevelId = nextIsUser ? userExists?.access_level_id : null;
+    const nextStatus = String(status || userExists?.status || "")
+      .trim()
+      .toUpperCase();
+
+    if (nextIsUser && !isRealEmail(nextEmail)) {
+      return res.status(400).json({
+        message:
+          "A valid non-temporary email is required for users with login access.",
+        data: null,
+      });
+    }
+
+    if (hasEmailField && incomingEmail && incomingEmail !== existingEmail) {
+      const emailExists = await prisma.user.findUnique({
+        where: { email: incomingEmail },
+      });
+
+      if (emailExists) {
+        return res.status(409).json({
+          message: "User exist with this email " + incomingEmail,
+          data: null,
+        });
+      }
+    }
+
+    if (nextIsUser && !userExists?.is_user) {
+      await roleEligibilityService.assertEligible(
+        "ministry_worker",
+        Number(user_id),
+      );
+    }
+
+    if (nextStatus === "MEMBER" && userExists?.status !== "MEMBER") {
+      await roleEligibilityService.assertEligible("member", Number(user_id));
+    }
+
+    const normalizedGender = normalizeGenderValue(gender);
+    const resolvedUserInfoGender =
+      normalizedGender || userExists?.user_info?.gender || null;
+    const shouldCreateUserInfo = !userExists?.user_info;
+
+    const hasEmergencyContactPayload =
+      hasValue(emergency_contact_name) ||
+      hasValue(emergency_contact_relation) ||
+      hasValue(emergency_country_code) ||
+      hasValue(emergency_phone_number);
+
+    const hasWorkInfoPayload =
+      hasValue(work_name) ||
+      hasValue(work_industry) ||
+      hasValue(work_position) ||
+      hasValue(school_name);
+
+    if (!resolvedUserInfoGender) {
+      const missingProfileFields = ["personal_info.gender"];
+
+      return res.status(400).json({
+        message: buildMissingFieldsMessage(
+          shouldCreateUserInfo
+            ? "User profile details are missing and could not be created from this request."
+            : "User profile details are invalid and could not be updated.",
+          missingProfileFields,
+        ),
+        data: null,
+      });
+    }
+
+    const userInfoUpdateData: any = {
+      title,
+      first_name,
+      last_name,
+      other_name,
+      date_of_birth: date_of_birth ? new Date(date_of_birth) : undefined,
+      gender: normalizedGender || undefined,
+      marital_status,
+      nationality,
+      photo: picture?.src,
+      email: hasEmailField ? incomingEmail : undefined,
+      country: resident_country,
+      state_region,
+      city,
+      country_code,
+      primary_number,
+      member_since: member_since ? new Date(member_since) : undefined,
+    };
+    const userInfoCreateData: any = {
+      title,
+      first_name,
+      last_name,
+      other_name,
+      date_of_birth: date_of_birth ? new Date(date_of_birth) : null,
+      gender: resolvedUserInfoGender,
+      marital_status,
+      nationality,
+      photo: picture?.src || "",
+      email: nextEmail,
+      country: resident_country,
+      state_region,
+      city,
+      country_code,
+      primary_number,
+      member_since: member_since ? new Date(member_since) : null,
+    };
+
+    if (hasEmergencyContactPayload) {
+      const missingEmergencyFields = [
+        !hasValue(emergency_contact_name) ? "emergency_contact.name" : null,
+        !hasValue(emergency_contact_relation)
+          ? "emergency_contact.relation"
+          : null,
+        !hasValue(emergency_phone_number)
+          ? "emergency_contact.phone.number"
+          : null,
+      ].filter((field): field is string => Boolean(field));
+
+      if (missingEmergencyFields.length > 0) {
+        return res.status(400).json({
+          message: buildMissingFieldsMessage(
+            "Emergency contact could not be saved.",
+            missingEmergencyFields,
+          ),
+          data: null,
+        });
+      }
+
+      const emergencyContactData = {
+        name: emergency_contact_name,
+        relation: emergency_contact_relation,
+        country_code: emergency_country_code,
+        phone_number: emergency_phone_number,
+      };
+
+      if (userExists.user_info?.emergency_contact) {
+        userInfoUpdateData.emergency_contact = {
+          update: emergencyContactData,
+        };
+      } else {
+        userInfoUpdateData.emergency_contact = {
+          create: emergencyContactData,
+        };
+      }
+
+      userInfoCreateData.emergency_contact = {
+        create: emergencyContactData,
+      };
+    }
+
+    if (hasWorkInfoPayload) {
+      const missingWorkFields = [
+        !hasValue(work_name) ? "work_info.work_name" : null,
+        !hasValue(work_industry) ? "work_info.work_industry" : null,
+        !hasValue(work_position) ? "work_info.work_position" : null,
+      ].filter((field): field is string => Boolean(field));
+
+      if (missingWorkFields.length > 0) {
+        return res.status(400).json({
+          message: buildMissingFieldsMessage(
+            "Work information could not be saved.",
+            missingWorkFields,
+          ),
+          data: null,
+        });
+      }
+
+      const workInfoData = {
+        employment_status,
+        name_of_institution: work_name,
+        industry: work_industry,
+        position: work_position,
+        school_name,
+      };
+
+      if (userExists.user_info?.work_info) {
+        userInfoUpdateData.work_info = {
+          update: workInfoData,
+        };
+      } else {
+        userInfoUpdateData.work_info = {
+          create: workInfoData,
+        };
+      }
+
+      userInfoCreateData.work_info = {
+        create: workInfoData,
+      };
+    }
+
+    const nextNameParts = [
+      hasValue(first_name) ? String(first_name).trim() : userExists?.user_info?.first_name,
+      hasValue(other_name) ? String(other_name).trim() : userExists?.user_info?.other_name,
+      hasValue(last_name) ? String(last_name).trim() : userExists?.user_info?.last_name,
+    ].filter((part): part is string => hasValue(part));
+    const nextDisplayName = nextNameParts.length
+      ? nextNameParts.join(" ")
+      : userExists?.name;
+
     const updatedUser = await prisma.user.update({
       where: { id: Number(user_id) },
       data: {
-        name: `${first_name || userExists?.user_info?.first_name} ${
-          other_name || userExists?.user_info?.other_name || ""
-        } ${last_name || userExists?.user_info?.last_name}`.trim(),
-        email: email || userExists?.email,
-        is_user: typeof is_user === "boolean" ? is_user : userExists?.is_user,
+        name: nextDisplayName,
+        email: hasEmailField ? incomingEmail : userExists?.email,
+        is_user: nextIsUser,
+        access_level_id: nextAccessLevelId,
         status: status || userExists?.status,
         position_id: Number(position_id) || userExists?.position_id,
         department_id: Number(department_id) || userExists?.department_id,
         membership_type: membership_type || userExists?.membership_type,
         user_info: {
-          update: {
-            title,
-            first_name,
-            last_name,
-            other_name,
-            date_of_birth: date_of_birth ? new Date(date_of_birth) : undefined,
-            gender,
-            marital_status,
-            nationality,
-            photo: picture.src,
-            email,
-            country: resident_country,
-            state_region,
-            city,
-            country_code,
-            primary_number,
-            member_since: member_since ? new Date(member_since) : undefined,
-            emergency_contact: {
-              update: {
-                name: emergency_contact_name,
-                relation: emergency_contact_relation,
-                country_code: emergency_country_code,
-                phone_number: emergency_phone_number,
-              },
-            },
-            work_info: {
-              update: {
-                name_of_institution: work_name,
-                industry: work_industry,
-                position: work_position,
-                school_name,
-              },
-            },
+          upsert: {
+            create: userInfoCreateData,
+            update: userInfoUpdateData,
           },
         },
       },
@@ -265,8 +712,13 @@ export const updateUser = async (req: Request, res: Response) => {
       );
     }
 
-    // Optional: handle children (currently stubbed)
-    if (family.length > 0) {
+    if (hasFamilyField) {
+      if (!Array.isArray(family)) {
+        return res.status(400).json({
+          message: "family must be an array when provided.",
+          data: null,
+        });
+      }
       await updateFamilyMembers(family, updatedUser);
     }
     const { password, ...rest } = updatedUser;
@@ -282,6 +734,27 @@ export const updateUser = async (req: Request, res: Response) => {
       .json({ message: "User updated successfully", data: data });
   } catch (error: any) {
     console.error(error);
+
+    if (isRoleEligibilityValidationError(error)) {
+      return res
+        .status(error.statusCode)
+        .json(buildRoleEligibilityFailureResponse(error));
+    }
+
+    if (isFamilyRelationValidationError(error?.message)) {
+      return res.status(400).json({
+        message: error?.message,
+        data: null,
+      });
+    }
+
+    if (error instanceof InputValidationError) {
+      return res.status(400).json({
+        message: error.message,
+        data: null,
+      });
+    }
+
     return res
       .status(500)
       .json({ message: "Internal Server Error", data: error?.message });
@@ -289,26 +762,34 @@ export const updateUser = async (req: Request, res: Response) => {
 };
 
 async function updateFamilyMembers(family: any[], primaryUser: any) {
-  const childKeywords = ["child", "son", "daughter", "ward", "kid", "children"];
-  const spouseKeywords = ["spouse", "wife", "husband"];
-
+  const retainedFamilyIds = new Set<number>();
+  const updatedMembers: any[] = [];
   let spouseUser: any = null;
 
-  /* =====================================================
-     1️⃣ HANDLE SPOUSE FIRST (UPDATE OR CREATE)
-  ====================================================== */
   for (const member of family) {
-    if (!spouseKeywords.includes(member.relation.toLowerCase())) continue;
+    const relation = normalizeFamilyRelation(member?.relation);
+    if (relation !== FAMILY_RELATION.SPOUSE) {
+      continue;
+    }
+
+    if (spouseUser) {
+      throw new Error("Duplicate spouse relationships are not allowed.");
+    }
 
     if (member.user_id) {
-      // UPDATE EXISTING SPOUSE
+      const hasEmailField = Object.prototype.hasOwnProperty.call(
+        member,
+        "email",
+      );
       spouseUser = await prisma.user.update({
         where: { id: Number(member.user_id) },
         data: {
           name: toCapitalizeEachWord(
             `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
           ),
-          email: member.email,
+          ...(hasEmailField
+            ? { email: normalizeOptionalEmail(member.email) }
+            : {}),
           user_info: {
             upsert: {
               create: {
@@ -336,15 +817,12 @@ async function updateFamilyMembers(family: any[], primaryUser: any) {
         },
       });
     } else {
-      // CREATE SPOUSE
       spouseUser = await prisma.user.create({
         data: {
           name: toCapitalizeEachWord(
             `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
           ),
-          email:
-            member.email ||
-            `${member.first_name.toLowerCase()}_${member.last_name.toLowerCase()}_${Date.now()}@temp.com`,
+          email: normalizeOptionalEmail(member.email),
           is_user: false,
           is_active: true,
           user_info: {
@@ -365,151 +843,85 @@ async function updateFamilyMembers(family: any[], primaryUser: any) {
       await userService.generateUserId(spouseUser);
     }
 
-    await prisma.family_relation.upsert({
-      where: {
-        user_id_family_id: {
-          user_id: primaryUser.id,
-          family_id: spouseUser.id,
-        },
-      },
-      update: { relation: member.relation },
-      create: {
-        user_id: primaryUser.id,
-        family_id: spouseUser.id,
-        relation: member.relation,
-      },
-    });
-
-    await prisma.family_relation.upsert({
-      where: {
-        user_id_family_id: {
-          user_id: spouseUser.id,
-          family_id: primaryUser.id,
-        },
-      },
-      update: { relation: member.relation },
-      create: {
-        user_id: spouseUser.id,
-        family_id: primaryUser.id,
-        relation: member.relation,
-      },
-    });
+    retainedFamilyIds.add(spouseUser.id);
+    await upsertBidirectionalFamilyRelation(
+      primaryUser.id,
+      spouseUser.id,
+      relation,
+    );
   }
 
-  return Promise.all(
-    family.map(async (member) => {
-      let familyUser: any;
+  for (const member of family) {
+    const relation = normalizeFamilyRelation(member?.relation);
+    let familyUser: any;
 
-      // Skip spouse (already handled)
-      if (spouseKeywords.includes(member.relation.toLowerCase())) {
-        return spouseUser;
+    if (relation === FAMILY_RELATION.SPOUSE) {
+      if (spouseUser) {
+        updatedMembers.push(spouseUser);
       }
+      continue;
+    }
 
-      if (member.user_id) {
-        familyUser = await prisma.user.update({
-          where: { id: Number(member.user_id) },
-          data: {
-            name: toCapitalizeEachWord(
-              `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
-            ),
-            email: member.email,
-            user_info: {
-              upsert: {
-                create: {
-                  title: member.title,
-                  first_name: member.first_name,
-                  last_name: member.last_name,
-                  other_name: member.other_name || null,
-                  date_of_birth: new Date(member.date_of_birth),
-                  gender: member.gender,
-                  marital_status: member.marital_status,
-                  nationality: member.nationality,
-                },
-                update: {
-                  title: member.title,
-                  first_name: member.first_name,
-                  last_name: member.last_name,
-                  other_name: member.other_name || null,
-                  date_of_birth: new Date(member.date_of_birth),
-                  gender: member.gender,
-                  marital_status: member.marital_status,
-                  nationality: member.nationality,
-                },
+    if (member.user_id) {
+      const hasEmailField = Object.prototype.hasOwnProperty.call(
+        member,
+        "email",
+      );
+      familyUser = await prisma.user.update({
+        where: { id: Number(member.user_id) },
+        data: {
+          name: toCapitalizeEachWord(
+            `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
+          ),
+          ...(hasEmailField
+            ? { email: normalizeOptionalEmail(member.email) }
+            : {}),
+          user_info: {
+            upsert: {
+              create: {
+                title: member.title,
+                first_name: member.first_name,
+                last_name: member.last_name,
+                other_name: member.other_name || null,
+                date_of_birth: new Date(member.date_of_birth),
+                gender: member.gender,
+                marital_status: member.marital_status,
+                nationality: member.nationality,
+              },
+              update: {
+                title: member.title,
+                first_name: member.first_name,
+                last_name: member.last_name,
+                other_name: member.other_name || null,
+                date_of_birth: new Date(member.date_of_birth),
+                gender: member.gender,
+                marital_status: member.marital_status,
+                nationality: member.nationality,
               },
             },
           },
-        });
-      } else if (childKeywords.includes(member.relation.toLowerCase())) {
-        familyUser = await prisma.user.findFirst({
-          where: {
-            user_info: {
-              first_name: member.first_name,
-              last_name: member.last_name,
-              date_of_birth: new Date(member.date_of_birth),
-            },
-            OR: [{ parent_id: primaryUser.id }, { parent_id: spouseUser?.id }],
+        },
+      });
+    } else if (relation === FAMILY_RELATION.CHILD) {
+      familyUser = await prisma.user.findFirst({
+        where: {
+          user_info: {
+            first_name: member.first_name,
+            last_name: member.last_name,
+            date_of_birth: new Date(member.date_of_birth),
           },
-        });
+          OR: [{ parent_id: primaryUser.id }, { parent_id: spouseUser?.id }],
+        },
+      });
 
-        if (!familyUser) {
-          familyUser = await prisma.user.create({
-            data: {
-              name: toCapitalizeEachWord(
-                `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
-              ),
-              email:
-                member.email ||
-                `${member.first_name.toLowerCase()}_${member.last_name.toLowerCase()}_${Date.now()}@temp.com`,
-              parent_id: primaryUser.id,
-              is_user: false,
-              is_active: true,
-              user_info: {
-                create: {
-                  title: member.title,
-                  first_name: member.first_name,
-                  last_name: member.last_name,
-                  other_name: member.other_name || null,
-                  date_of_birth: new Date(member.date_of_birth),
-                  gender: member.gender,
-                  marital_status: member.marital_status,
-                  nationality: member.nationality,
-                },
-              },
-            },
-          });
-
-          await userService.generateUserId(familyUser);
-        }
-
-        // 🔗 CHILD ↔ SPOUSE
-        if (spouseUser) {
-          await prisma.family_relation.upsert({
-            where: {
-              user_id_family_id: {
-                user_id: spouseUser.id,
-                family_id: familyUser.id,
-              },
-            },
-            update: { relation: "child" },
-            create: {
-              user_id: spouseUser.id,
-              family_id: familyUser.id,
-              relation: "child",
-            },
-          });
-        }
-      } else {
-        /* =====================
-         OTHER FAMILY MEMBERS
-      ====================== */
+      if (!familyUser) {
         familyUser = await prisma.user.create({
           data: {
             name: toCapitalizeEachWord(
               `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
             ),
-            email:
-              member.email ||
-              `${member.first_name.toLowerCase()}_${member.last_name.toLowerCase()}_${Date.now()}@temp.com`,
+            email: normalizeOptionalEmail(member.email),
+            parent_id: primaryUser.id,
             is_user: false,
             is_active: true,
             user_info: {
@@ -530,27 +942,62 @@ async function updateFamilyMembers(family: any[], primaryUser: any) {
         await userService.generateUserId(familyUser);
       }
 
-      /* =====================
-         LINK TO PRIMARY USER
-      ====================== */
-      await prisma.family_relation.upsert({
-        where: {
-          user_id_family_id: {
-            user_id: primaryUser.id,
-            family_id: familyUser.id,
+      if (spouseUser) {
+        await upsertBidirectionalFamilyRelation(
+          spouseUser.id,
+          familyUser.id,
+          FAMILY_RELATION.CHILD,
+        );
+      }
+    } else {
+      familyUser = await prisma.user.create({
+        data: {
+          name: toCapitalizeEachWord(
+            `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
+          ),
+          email: normalizeOptionalEmail(member.email),
+          is_user: false,
+          is_active: true,
+          user_info: {
+            create: {
+              title: member.title,
+              first_name: member.first_name,
+              last_name: member.last_name,
+              other_name: member.other_name || null,
+              date_of_birth: new Date(member.date_of_birth),
+              gender: member.gender,
+              marital_status: member.marital_status,
+              nationality: member.nationality,
+            },
           },
-        },
-        update: { relation: member.relation },
-        create: {
-          user_id: primaryUser.id,
-          family_id: familyUser.id,
-          relation: member.relation,
         },
       });
 
-      return familyUser;
-    }),
+      await userService.generateUserId(familyUser);
+    }
+
+    if (!familyUser) {
+      throw new Error("Family member not found.");
+    }
+
+    if (retainedFamilyIds.has(familyUser.id)) {
+      throw new Error(`Duplicate relationship for member ID ${familyUser.id}.`);
+    }
+
+    retainedFamilyIds.add(familyUser.id);
+    await upsertBidirectionalFamilyRelation(
+      primaryUser.id,
+      familyUser.id,
+      relation,
+    );
+    updatedMembers.push(familyUser);
+  }
+
+  await pruneMissingBidirectionalFamilyRelations(
+    primaryUser.id,
+    retainedFamilyIds,
   );
+  return updatedMembers;
 }
 
 // Helper to update department_positions
@@ -686,24 +1133,45 @@ export const deleteUser = async (req: Request, res: Response) => {
 export const login = async (req: Request, res: Response) => {
   const { email, password } = req.body;
   try {
+    const normalizedEmail = normalizeOptionalEmail(email);
+    if (!isRealEmail(normalizedEmail)) {
+      return res.status(400).json({
+        message: "A valid non-temporary email is required for login.",
+        data: null,
+      });
+    }
+    const loginEmail = normalizedEmail as string;
+
     const existance: any = await prisma.user.findUnique({
       where: {
-        email,
-        // AND: {
-        //     is_user: true, taking this one out because everyone can log in
-        // },
+        email: loginEmail,
       },
       select: {
         id: true,
+        member_id: true,
         email: true,
         name: true,
         password: true,
         is_active: true,
         is_user: true,
+        access_level_id: true,
         membership_type: true,
         department_positions: {
-          include: {
-            department: true,
+          select: {
+            department_id: true,
+            position_id: true,
+            department: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+            position: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
           },
         },
         user_info: {
@@ -723,8 +1191,8 @@ export const login = async (req: Request, res: Response) => {
 
     if (!existance) {
       return res
-        .status(404)
-        .json({ message: "No user with Email", data: null });
+        .status(401)
+        .json({ message: "Invalid Credentials", data: null });
     }
 
     if (existance && existance.is_active === false) {
@@ -734,28 +1202,61 @@ export const login = async (req: Request, res: Response) => {
       });
     }
 
-    const department: string[] = existance.department_positions.map(
-      (dept: any) => dept.department.name,
+    if (!existance.password) {
+      return res
+        .status(401)
+        .json({ message: "Invalid Credentials", data: null });
+    }
+
+    const department_positions = (existance.department_positions || []).map(
+      (deptPos: any) => ({
+        department_id:
+          deptPos?.department?.id ?? deptPos?.department_id ?? null,
+        department_name: deptPos?.department?.name ?? null,
+        position_id: deptPos?.position?.id ?? deptPos?.position_id ?? null,
+        position_name: deptPos?.position?.name ?? null,
+      }),
     );
-    const ministry_worker: boolean =
-      Boolean(existance.access) && existance.is_user;
+
+    const department: string[] = Array.from(
+      new Set(
+        department_positions
+          .map((deptPos: any) => deptPos.department_name)
+          .filter((name: string | null): name is string => Boolean(name)),
+      ),
+    );
+
+    const ministry_worker = Boolean(existance.is_user);
+    const user_category =
+      ministry_worker && Boolean(existance.access_level_id)
+        ? "admin"
+        : "member";
+    const tokenPermissions =
+      user_category === "admin"
+        ? parsePermissionsObject(existance.access?.permissions) || {}
+        : null;
+
     const life_center_leader: boolean = await checkIfLifeCenterLeader(
       existance.id,
     );
     const instructor: boolean = await courseService.checkIfInstructor(
       existance.id,
     );
-    if (await comparePassword(password, existance?.password)) {
+
+    if (await comparePassword(String(password || ""), existance.password)) {
       const token = JWT.sign(
         {
           id: existance.id,
+          member_id: existance.member_id || null,
           name: existance.name,
           email: existance.email,
           ministry_worker: ministry_worker,
-          permissions: existance.access?.permissions,
+          user_category,
+          permissions: tokenPermissions,
           profile_img: existance.user_info?.photo,
           membership_type: existance.membership_type || null,
           department,
+          department_positions,
           life_center_leader,
           instructor,
           phone: existance.user_info?.primary_number || null,
@@ -784,14 +1285,49 @@ export const login = async (req: Request, res: Response) => {
 };
 
 export const changePassword = async (req: Request, res: Response) => {
-  const { token, newpassword } = req.body;
+  const authenticatedUserId = Number((req as any).user?.id);
+  const { current_password, newpassword } = req.body;
   try {
-    const user: any = JWT.verify(token, JWT_SECRET);
-    const id = user.id;
+    if (!Number.isInteger(authenticatedUserId) || authenticatedUserId <= 0) {
+      return res.status(401).json({ message: "Unauthorized", data: null });
+    }
+
+    if (!current_password || !newpassword) {
+      return res.status(400).json({
+        message: "current_password and newpassword are required",
+        data: null,
+      });
+    }
+
+    const existingUser = await prisma.user.findUnique({
+      where: {
+        id: authenticatedUserId,
+      },
+      select: {
+        id: true,
+        password: true,
+      },
+    });
+
+    if (!existingUser?.password) {
+      return res
+        .status(401)
+        .json({ message: "Invalid current password", data: null });
+    }
+
+    const isCurrentPasswordValid = await comparePassword(
+      String(current_password),
+      existingUser.password,
+    );
+    if (!isCurrentPasswordValid) {
+      return res
+        .status(401)
+        .json({ message: "Invalid current password", data: null });
+    }
 
     await prisma.user.update({
       where: {
-        id,
+        id: authenticatedUserId,
       },
       data: {
         password: await hashPassword(newpassword),
@@ -810,16 +1346,26 @@ export const changePassword = async (req: Request, res: Response) => {
 export const forgetPassword = async (req: Request, res: Response) => {
   const { email } = req.body;
   try {
-    //check for the existence of an account using
+    const normalizedEmail = normalizeOptionalEmail(email);
+    const genericResponse = {
+      message: "If an account exists, a reset link has been sent.",
+      data: null,
+    };
+
+    if (!isRealEmail(normalizedEmail)) {
+      return res.status(200).json(genericResponse);
+    }
+
     const existingUser = await prisma.user.findUnique({
       where: {
-        email,
+        email: normalizedEmail as string,
       },
     });
 
-    if (!existingUser) {
-      return res.status(400).json({ error: "User Not Exists" });
+    if (!existingUser?.password) {
+      return res.status(200).json(genericResponse);
     }
+
     const secret = JWT_SECRET + existingUser.password;
     const token = JWT.sign(
       {
@@ -838,10 +1384,12 @@ export const forgetPassword = async (req: Request, res: Response) => {
       link,
       expiration: "15mins",
     };
-    sendEmail(forgetPasswordTemplate(mailDetails), email, "Reset Password");
-    return res
-      .status(200)
-      .json({ message: `Link Send to your Mail`, data: null });
+    await sendEmail(
+      forgetPasswordTemplate(mailDetails),
+      normalizedEmail as string,
+      "Reset Password",
+    );
+    return res.status(200).json(genericResponse);
   } catch (error) {
     return res
       .status(500)
@@ -852,36 +1400,52 @@ export const forgetPassword = async (req: Request, res: Response) => {
 export const resetPassword = async (req: Request, res: Response) => {
   const { id, token } = req.query;
   const { newpassword } = req.body;
-  //check for the existence of an account using
   try {
+    const parsedUserId = Number(id);
+    if (
+      !Number.isInteger(parsedUserId) ||
+      parsedUserId <= 0 ||
+      typeof token !== "string" ||
+      !newpassword
+    ) {
+      return res
+        .status(400)
+        .json({ message: "Invalid reset payload", data: null });
+    }
+
     const existingUser = await prisma.user.findUnique({
       where: {
-        id: Number(id),
+        id: parsedUserId,
+      },
+      select: {
+        id: true,
+        password: true,
       },
     });
-    if (!existingUser) {
-      return res.status(404).json({ message: "User Not Exists", data: null });
-    }
-    const secret = JWT_SECRET + existingUser.password;
-    const verify = JWT.verify(token as string, secret);
-
-    if (verify) {
-      await prisma.user.update({
-        where: {
-          id: Number(id),
-        },
-        data: {
-          password: await hashPassword(newpassword),
-        },
-      });
+    if (!existingUser?.password) {
       return res
-        .status(200)
-        .json({ message: "Password Successfully changed", data: null });
+        .status(400)
+        .json({ message: "Invalid or expired reset link", data: null });
     }
+
+    const secret = JWT_SECRET + existingUser.password;
+    JWT.verify(token, secret);
+
+    await prisma.user.update({
+      where: {
+        id: parsedUserId,
+      },
+      data: {
+        password: await hashPassword(newpassword),
+      },
+    });
+    return res
+      .status(200)
+      .json({ message: "Password Successfully changed", data: null });
   } catch (error) {
     return res
-      .status(500)
-      .json({ message: "Link Expired" + error, data: null });
+      .status(400)
+      .json({ message: "Invalid or expired reset link", data: null });
   }
 };
 
@@ -923,6 +1487,13 @@ export const activateAccount = async (req: Request, res: Response) => {
 };
 
 export const seedUser = async (req: Request, res: Response) => {
+  if (!canRunSensitiveUserOps()) {
+    return res.status(403).json({
+      message: "This endpoint is disabled in production.",
+      data: null,
+    });
+  }
+
   try {
     const response = await prisma.user.create({
       data: {
@@ -946,110 +1517,426 @@ export const seedUser = async (req: Request, res: Response) => {
       .json({ message: "Something went wrong", data: error });
   }
 };
+const toUniquePositiveIds = (values: Array<number | null | undefined>) =>
+  Array.from(
+    new Set(
+      values.filter(
+        (value): value is number =>
+          typeof value === "number" && Number.isInteger(value) && value > 0,
+      ),
+    ),
+  );
+
+const buildLookupById = <T extends { id: number }>(rows: T[]) =>
+  new Map<number, T>(rows.map((row) => [row.id, row]));
+
+const groupRowsByUserId = <T extends { user_id: number }>(rows: T[]) => {
+  const grouped = new Map<number, T[]>();
+
+  for (const row of rows) {
+    const existingRows = grouped.get(row.user_id);
+    if (existingRows) {
+      existingRows.push(row);
+      continue;
+    }
+
+    grouped.set(row.user_id, [row]);
+  }
+
+  return grouped;
+};
+
+const fetchUserDirectoryRelations = async (
+  userIds: number[],
+  primaryDepartmentIds: number[],
+  primaryPositionIds: number[],
+) => {
+  if (!userIds.length) {
+    return {
+      userInfoByUserId: new Map<number, any>(),
+      positionById: new Map<number, any>(),
+      departmentById: new Map<number, any>(),
+      departmentPositionsByUserId: new Map<number, any[]>(),
+    };
+  }
+
+  const [userInfos, departmentPositions] = await Promise.all([
+    prisma.user_info.findMany({
+      where: {
+        user_id: {
+          in: userIds,
+        },
+      },
+      select: {
+        user_id: true,
+        country_code: true,
+        primary_number: true,
+        title: true,
+        photo: true,
+        country: true,
+        member_since: true,
+        date_of_birth: true,
+        marital_status: true,
+        work_info_id: true,
+      },
+    }),
+    prisma.department_positions.findMany({
+      where: {
+        user_id: {
+          in: userIds,
+        },
+      },
+      select: {
+        user_id: true,
+        department_id: true,
+        position_id: true,
+      },
+      orderBy: {
+        id: "asc",
+      },
+    }),
+  ]);
+
+  const workInfoIds = toUniquePositiveIds(
+    userInfos.map((info) => info.work_info_id),
+  );
+  const departmentIds = toUniquePositiveIds([
+    ...primaryDepartmentIds,
+    ...departmentPositions.map((entry) => entry.department_id),
+  ]);
+  const positionIds = toUniquePositiveIds([
+    ...primaryPositionIds,
+    ...departmentPositions.map((entry) => entry.position_id),
+  ]);
+
+  const [workInfos, departments, positions] = await Promise.all([
+    workInfoIds.length
+      ? prisma.user_work_info.findMany({
+          where: {
+            id: {
+              in: workInfoIds,
+            },
+          },
+          select: {
+            id: true,
+            employment_status: true,
+          },
+        })
+      : Promise.resolve([] as any[]),
+    departmentIds.length
+      ? prisma.department.findMany({
+          where: {
+            id: {
+              in: departmentIds,
+            },
+          },
+          select: {
+            id: true,
+            name: true,
+          },
+        })
+      : Promise.resolve([] as any[]),
+    positionIds.length
+      ? prisma.position.findMany({
+          where: {
+            id: {
+              in: positionIds,
+            },
+          },
+          select: {
+            id: true,
+            name: true,
+          },
+        })
+      : Promise.resolve([] as any[]),
+  ]);
+
+  const workInfoById = buildLookupById(workInfos);
+  const departmentById = buildLookupById(departments);
+  const positionById = buildLookupById(positions);
+
+  const userInfoByUserId = new Map(
+    userInfos.map((info) => [
+      info.user_id,
+      {
+        country_code: info.country_code,
+        primary_number: info.primary_number,
+        title: info.title,
+        photo: info.photo,
+        country: info.country,
+        member_since: info.member_since,
+        date_of_birth: info.date_of_birth,
+        marital_status: info.marital_status,
+        work_info: info.work_info_id
+          ? workInfoById.get(info.work_info_id) || null
+          : null,
+      },
+    ]),
+  );
+
+  const normalizedDepartmentPositions = departmentPositions.map((entry) => ({
+    user_id: entry.user_id,
+    department_id: entry.department_id,
+    department_name: departmentById.get(entry.department_id)?.name ?? null,
+    position_id: entry.position_id ?? null,
+    position_name: entry.position_id
+      ? (positionById.get(entry.position_id)?.name ?? null)
+      : null,
+  }));
+
+  return {
+    userInfoByUserId,
+    positionById,
+    departmentById,
+    departmentPositionsByUserId: groupRowsByUserId(
+      normalizedDepartmentPositions,
+    ),
+  };
+};
+
+const flattenListedUsers = (data: any[]) => {
+  return data.map(({ user_info, ...rest }) => {
+    const info = user_info || {};
+    const workInfo = info.work_info || null;
+    const { work_info, ...flatInfo } = info;
+
+    return {
+      ...rest,
+      ...flatInfo,
+      marital_status: flatInfo?.marital_status ?? null,
+      employment_status: workInfo?.employment_status ?? null,
+      date_joined: flatInfo?.member_since ?? rest?.created_at ?? null,
+    };
+  });
+};
+
 export const ListUsers = async (req: Request, res: Response) => {
   const {
     is_user,
     department_id,
     page = "1",
-    take = "12",
+    take,
+    limit,
     is_active,
     name,
+    search,
     ministry_worker,
     membership_type,
+    status,
   } = req.query;
   const isUser =
     is_user === "true" || ministry_worker === "true" ? true : false;
+  const resolvedTake =
+    typeof take === "string" && take.trim()
+      ? take
+      : typeof limit === "string" && limit.trim()
+        ? limit
+        : "12";
+  const searchTerm =
+    typeof search === "string" && search.trim()
+      ? search.trim()
+      : typeof name === "string" && name.trim()
+        ? name.trim()
+        : "";
+  const normalizedStatus =
+    typeof status === "string" && status.trim()
+      ? status.trim().toUpperCase()
+      : "";
 
-  const pageNum = parseInt(page as string, 10);
-  const pageSize = parseInt(take as string, 10);
+  const parsedPageNum = parseInt(page as string, 10);
+  const pageNum =
+    Number.isInteger(parsedPageNum) && parsedPageNum > 0 ? parsedPageNum : 1;
+  const parsedPageSize = parseInt(resolvedTake as string, 10);
+  const pageSize =
+    Number.isInteger(parsedPageSize) && parsedPageSize > 0
+      ? parsedPageSize
+      : 12;
   const skip = (pageNum - 1) * pageSize;
+  const memberScope = (req as any).memberScope;
+  const excludedMemberIds: number[] = Array.isArray(memberScope?.exclusions)
+    ? memberScope.exclusions
+    : [];
 
   try {
-    const departments = await prisma.department.findMany({
-      select: {
-        id: true,
-        name: true,
-      },
-    });
+    const whereConditions: any[] = [];
 
-    const departmentMap = new Map(departments.map((d) => [d.id, d.name]));
-
-    const whereFilter: any = {};
-
-    if (is_active !== undefined) whereFilter.is_active = is_active;
-    if (is_user !== undefined) whereFilter.is_user = isUser;
-    if (department_id) whereFilter.department_id = Number(department_id);
-    if (membership_type) whereFilter.membership_type = membership_type;
-    if (typeof name === "string" && name.trim()) {
-      whereFilter.name = { contains: name.trim() };
+    if (is_active !== undefined) {
+      whereConditions.push({
+        is_active:
+          is_active === "true"
+            ? true
+            : is_active === "false"
+              ? false
+              : is_active,
+      });
     }
-
-    const total = await prisma.user.count({ where: whereFilter });
-
-    const users = await prisma.user.findMany({
-      skip,
-      take: pageSize,
-      orderBy: {
-        name: "asc",
-      },
-      where: whereFilter,
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        member_id: true,
-        created_at: true,
-        is_active: true,
-        is_user: true,
-        department_id: true,
-        membership_type: true,
-        status: true,
-        user_info: {
-          select: {
-            country_code: true,
-            primary_number: true,
-            title: true,
-            photo: true,
-          },
-        },
-        department: {
-          select: {
-            department_info: {
-              select: {
-                id: true,
-                name: true,
+    if (is_user !== undefined || ministry_worker !== undefined) {
+      whereConditions.push({ is_user: isUser });
+    }
+    if (typeof department_id === "string" && department_id.trim()) {
+      if (department_id === "unassigned") {
+        whereConditions.push({
+          AND: [
+            { department_id: null },
+            {
+              department_positions: {
+                none: {},
+              },
+            },
+          ],
+        });
+      } else {
+        const parsedDepartmentId = Number(department_id);
+        if (!Number.isNaN(parsedDepartmentId) && parsedDepartmentId > 0) {
+          whereConditions.push({
+            OR: [
+              { department_id: parsedDepartmentId },
+              {
+                department_positions: {
+                  some: { department_id: parsedDepartmentId },
+                },
+              },
+            ],
+          });
+        }
+      }
+    }
+    if (normalizedStatus) {
+      if (normalizedStatus === "UNCONFIRMED") {
+        whereConditions.push({
+          OR: [{ status: "UNCONFIRMED" }, { status: null }],
+        });
+      } else if (
+        normalizedStatus === "CONFIRMED" ||
+        normalizedStatus === "MEMBER"
+      ) {
+        whereConditions.push({ status: normalizedStatus });
+      }
+    }
+    if (membership_type) {
+      whereConditions.push({ membership_type });
+    }
+    if (searchTerm) {
+      whereConditions.push({
+        OR: [
+          { name: { contains: searchTerm } },
+          { email: { contains: searchTerm } },
+          { member_id: { contains: searchTerm } },
+          {
+            user_info: {
+              is: {
+                primary_number: { contains: searchTerm },
               },
             },
           },
+        ],
+      });
+    }
+    if (excludedMemberIds.length > 0) {
+      whereConditions.push({
+        id: { notIn: excludedMemberIds },
+      });
+    }
+    const whereFilter =
+      whereConditions.length > 0 ? { AND: whereConditions } : undefined;
+
+    const [total, users] = await Promise.all([
+      prisma.user.count({ where: whereFilter }),
+      prisma.user.findMany({
+        skip,
+        take: pageSize,
+        orderBy: {
+          name: "asc",
         },
-        position: {
-          select: {
-            id: true,
-            name: true,
-          },
+        where: whereFilter,
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          member_id: true,
+          created_at: true,
+          is_active: true,
+          is_user: true,
+          department_id: true,
+          membership_type: true,
+          status: true,
+          position_id: true,
         },
-      },
+      }),
+    ]);
+
+    const userIds = users.map((user) => user.id);
+    const primaryPositionIds = toUniquePositiveIds(
+      users.map((user) => user.position_id),
+    );
+    const primaryDepartmentIds = toUniquePositiveIds(
+      users.map((user) => user.department_id),
+    );
+    const {
+      userInfoByUserId,
+      positionById,
+      departmentById,
+      departmentPositionsByUserId,
+    } = await fetchUserDirectoryRelations(
+      userIds,
+      primaryDepartmentIds,
+      primaryPositionIds,
+    );
+
+    const usersWithDeptName = users.map((user: any) => {
+      const userInfo = userInfoByUserId.get(user.id) || null;
+      const departmentPositions =
+        departmentPositionsByUserId.get(user.id) || [];
+      const departmentIdsFromPositions = Array.from(
+        new Set(
+          departmentPositions
+            .map((entry: any) => entry.department_id)
+            .filter((value: number | null): value is number => Boolean(value)),
+        ),
+      );
+      const departmentNamesFromPositions = Array.from(
+        new Set(
+          departmentPositions
+            .map((entry: any) => entry.department_name)
+            .filter((value: string | null): value is string => Boolean(value)),
+        ),
+      );
+
+      const primaryDepartmentId =
+        user.department_id || departmentIdsFromPositions[0] || null;
+      const primaryDepartmentName =
+        (primaryDepartmentId
+          ? departmentById.get(primaryDepartmentId)?.name
+          : null) ||
+        departmentNamesFromPositions[0] ||
+        null;
+
+      return {
+        ...user,
+        position: user.position_id
+          ? positionById.get(user.position_id) || null
+          : null,
+        user_info: userInfo,
+        department_id: primaryDepartmentId,
+        department_name: primaryDepartmentName,
+        department_names: departmentNamesFromPositions,
+        department_positions: departmentPositions.map((entry: any) => ({
+          department_id: entry.department_id,
+          department_name: entry.department_name,
+          position_id: entry.position_id,
+          position_name: entry.position_name,
+        })),
+      };
     });
-
-    const usersWithDeptName = users.map((user: any) => ({
-      ...user,
-      department_name: departmentMap.get(user.department_id) || null,
-    }));
-
-    const destructure = (data: any[]) => {
-      return data.map(({ user_info, ...rest }) => ({
-        ...rest,
-        ...user_info,
-      }));
-    };
 
     res.status(200).json({
       message: "Operation Successful",
       current_page: pageNum,
+      take: pageSize,
       page_size: pageSize,
       total,
       totalPages: Math.ceil(total / pageSize),
-      data: destructure(usersWithDeptName),
+      data: flattenListedUsers(usersWithDeptName),
     });
   } catch (error) {
     return res.status(500).json({ message: "Something Went Wrong", error });
@@ -1057,20 +1944,151 @@ export const ListUsers = async (req: Request, res: Response) => {
 };
 export const ListUsersLight = async (req: Request, res: Response) => {
   try {
+    const memberScope = (req as any).memberScope;
+    const excludedMemberIds: number[] = Array.isArray(memberScope?.exclusions)
+      ? memberScope.exclusions
+      : [];
     const users = await prisma.user.findMany({
       orderBy: {
         name: "asc",
       },
+      where:
+        excludedMemberIds.length > 0
+          ? {
+              id: {
+                notIn: excludedMemberIds,
+              },
+            }
+          : undefined,
       select: {
         id: true,
         name: true,
         email: true,
+        is_user: true,
+        position_id: true,
       },
     });
 
+    const userIds = users.map((user) => user.id);
+    const [userDepartments, departmentPositions] = await Promise.all([
+      userIds.length
+        ? prisma.user_departments.findMany({
+            where: {
+              user_id: {
+                in: userIds,
+              },
+            },
+            select: {
+              user_id: true,
+              department_id: true,
+            },
+          })
+        : Promise.resolve([] as any[]),
+      userIds.length
+        ? prisma.department_positions.findMany({
+            where: {
+              user_id: {
+                in: userIds,
+              },
+            },
+            select: {
+              user_id: true,
+              department_id: true,
+              position_id: true,
+            },
+            orderBy: {
+              id: "asc",
+            },
+          })
+        : Promise.resolve([] as any[]),
+    ]);
+
+    const departmentIds = toUniquePositiveIds([
+      ...userDepartments.map((entry) => entry.department_id),
+      ...departmentPositions.map((entry) => entry.department_id),
+    ]);
+    const positionIds = toUniquePositiveIds([
+      ...users.map((user) => user.position_id),
+      ...departmentPositions.map((entry) => entry.position_id),
+    ]);
+
+    const [departments, positions] = await Promise.all([
+      departmentIds.length
+        ? prisma.department.findMany({
+            where: {
+              id: {
+                in: departmentIds,
+              },
+            },
+            select: {
+              id: true,
+              name: true,
+            },
+          })
+        : Promise.resolve([] as any[]),
+      positionIds.length
+        ? prisma.position.findMany({
+            where: {
+              id: {
+                in: positionIds,
+              },
+            },
+            select: {
+              id: true,
+              name: true,
+            },
+          })
+        : Promise.resolve([] as any[]),
+    ]);
+
+    const departmentById = buildLookupById(departments);
+    const positionById = buildLookupById(positions);
+    const userDepartmentByUserId = new Map(
+      userDepartments.map((entry) => [
+        entry.user_id,
+        entry.department_id
+          ? departmentById.get(entry.department_id) || null
+          : null,
+      ]),
+    );
+    const departmentPositionsByUserId = groupRowsByUserId(
+      departmentPositions.map((entry) => ({
+        user_id: entry.user_id,
+        department: entry.department_id
+          ? departmentById.get(entry.department_id) || null
+          : null,
+        position: entry.position_id
+          ? positionById.get(entry.position_id) || null
+          : null,
+      })),
+    );
+
     res.status(200).json({
       message: "Operation Successful",
-      data: users,
+      data: users.map((user) => {
+        const fallbackRows = departmentPositionsByUserId.get(user.id) || [];
+        const fallbackDepartment = fallbackRows.find(
+          (item) => item.department,
+        )?.department;
+        const fallbackPosition = fallbackRows.find(
+          (item) => item.position,
+        )?.position;
+
+        return {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          ministry_worker: Boolean(user.is_user),
+          department:
+            userDepartmentByUserId.get(user.id) || fallbackDepartment || null,
+          position:
+            (user.position_id
+              ? positionById.get(user.position_id) || null
+              : null) ||
+            fallbackPosition ||
+            null,
+        };
+      }),
     });
   } catch (error) {
     return res.status(500).json({ message: "Something Went Wrong", error });
@@ -1087,7 +2105,10 @@ export const filterUsersInfo = async (req: Request, res: Response) => {
   } = req.query;
 
   try {
-    // Convert pagination params to numbers
+    const memberScope = (req as any).memberScope;
+    const excludedMemberIds: number[] = Array.isArray(memberScope?.exclusions)
+      ? memberScope.exclusions
+      : [];
     const pageNum = parseInt(page as string, 10) || 1;
     const limitNum = parseInt(take as string, 10) || 10;
     const skip = (pageNum - 1) * limitNum;
@@ -1108,22 +2129,26 @@ export const filterUsersInfo = async (req: Request, res: Response) => {
     if (ministry_worker !== undefined) {
       filters.is_user = ministry_worker === "true";
     }
+    if (excludedMemberIds.length > 0) {
+      filters.id = {
+        notIn: excludedMemberIds,
+      };
+    }
 
-    // Fetch total count for pagination info
-    const total = await prisma.user.count({ where: filters });
-
-    // Fetch paginated users
-    const users = await prisma.user.findMany({
-      where: filters,
-      include: {
-        user_info: true,
-      },
-      orderBy: {
-        created_at: "asc",
-      },
-      skip,
-      take: limitNum,
-    });
+    const [total, users] = await Promise.all([
+      prisma.user.count({ where: filters }),
+      prisma.user.findMany({
+        where: filters,
+        include: {
+          user_info: true,
+        },
+        orderBy: {
+          created_at: "asc",
+        },
+        skip,
+        take: limitNum,
+      }),
+    ]);
 
     const totalPages = Math.ceil(total / limitNum);
 
@@ -1147,22 +2172,20 @@ export const filterUsersInfo = async (req: Request, res: Response) => {
 
 export const getUser = async (req: Request, res: Response) => {
   const { user_id } = req.query;
-
-  const siblingsKeywords = [
-    "sibling",
-    "brother",
-    "sister",
-    "sibs",
-    "sis",
-    "bro",
-    "siblings",
-  ];
-
-  const childKeywords = ["child", "son", "daughter", "ward", "kid", "children"];
+  const fallbackUserId = Number((req as any).user?.id);
+  const resolvedUserId =
+    Number.isInteger(Number(user_id)) && Number(user_id) > 0
+      ? Number(user_id)
+      : Number.isInteger(fallbackUserId) && fallbackUserId > 0
+        ? fallbackUserId
+        : null;
+  if (!resolvedUserId) {
+    return res.status(400).json({ message: "Invalid or missing user_id" });
+  }
 
   try {
     const response: any = await prisma.user.findUnique({
-      where: { id: Number(user_id) },
+      where: { id: resolvedUserId },
 
       include: {
         user_info: {
@@ -1180,6 +2203,40 @@ export const getUser = async (req: Request, res: Response) => {
         department: true,
         position: true,
         access: true,
+        enrollments: {
+          select: {
+            id: true,
+            enrolledAt: true,
+            completed: true,
+            completedAt: true,
+            course: {
+              select: {
+                cohort: {
+                  select: {
+                    id: true,
+                    name: true,
+                    status: true,
+                    program: {
+                      select: {
+                        id: true,
+                        title: true,
+                      },
+                    },
+                  },
+                },
+                instructor: {
+                  select: {
+                    id: true,
+                    name: true,
+                  },
+                },
+              },
+            },
+          },
+          orderBy: {
+            enrolledAt: "desc",
+          },
+        },
       },
     });
 
@@ -1214,21 +2271,16 @@ export const getUser = async (req: Request, res: Response) => {
     forwardRelations.forEach((r) => {
       normalizedRelations.push({
         user: r.family,
-        relation: r.relation.toLowerCase(),
+        relation: r.relation,
         direction: "forward",
       });
     });
 
     // Reverse (them → me)
     reverseRelations.forEach((r) => {
-      let inferredRelation = r.relation.toLowerCase();
-
-      if (childKeywords.includes(inferredRelation)) inferredRelation = "parent";
-      else if (inferredRelation === "parent") inferredRelation = "child";
-
       normalizedRelations.push({
         user: r.user,
-        relation: inferredRelation,
+        relation: getReciprocalFamilyRelation(r.relation),
         direction: "reverse",
       });
     });
@@ -1249,23 +2301,30 @@ export const getUser = async (req: Request, res: Response) => {
     /* =========================
        5️⃣ GROUP FAMILY
     ========================== */
-    const spouses = relations.filter((r) => r.relation === "spouse");
-
-    const parents = relations.filter((r) => r.relation === "parent");
-
-    const children = relations.filter((r) =>
-      childKeywords.includes(r.relation),
+    const spouses = relations.filter(
+      (r) => r.relation === FAMILY_RELATION.SPOUSE,
     );
 
-    const siblings = relations.filter((r) =>
-      siblingsKeywords.includes(r.relation),
+    const parents = relations.filter(
+      (r) => r.relation === FAMILY_RELATION.PARENT,
+    );
+
+    const children = relations.filter(
+      (r) => r.relation === FAMILY_RELATION.CHILD,
+    );
+
+    const siblings = relations.filter(
+      (r) => r.relation === FAMILY_RELATION.SIBLING,
     );
 
     const others = relations.filter(
       (r) =>
-        !["spouse", "parent"]
-          .concat(childKeywords, siblingsKeywords)
-          .includes(r.relation),
+        ![
+          FAMILY_RELATION.SPOUSE,
+          FAMILY_RELATION.PARENT,
+          FAMILY_RELATION.CHILD,
+          FAMILY_RELATION.SIBLING,
+        ].includes(r.relation),
     );
 
     /* =========================
@@ -1301,30 +2360,34 @@ export const getUser = async (req: Request, res: Response) => {
     /* =========================
        7️⃣ BUILD RESPONSE
     ========================== */
-    const { user_info, department_positions, ...rest } = response;
+    const { user_info, department_positions, enrollments, ...rest } = response;
 
     const user: any = {
+      ...(user_info || {}),
       ...rest,
-      ...user_info,
+      email: user_info?.email ?? rest.email ?? null,
     };
 
     user.family = [
-      ...spouses.map((s) => ({ ...s.user.user_info, relation: "spouse" })),
+      ...spouses.map((s) => ({
+        ...s.user.user_info,
+        relation: toFamilyRelationLabel(s.relation),
+      })),
       ...Array.from(childrenMap.values()).map((c) => ({
         ...c.user_info,
-        relation: "child",
+        relation: toFamilyRelationLabel(FAMILY_RELATION.CHILD),
       })),
       ...parents.map((p) => ({
         ...p.user.user_info,
-        relation: "parent",
+        relation: toFamilyRelationLabel(p.relation),
       })),
       ...Array.from(siblingsMap.values()).map((s) => ({
         ...s.user_info,
-        relation: "sibling",
+        relation: toFamilyRelationLabel(FAMILY_RELATION.SIBLING),
       })),
       ...others.map((o) => ({
         ...o.user.user_info,
-        relation: o.relation,
+        relation: toFamilyRelationLabel(o.relation),
       })),
     ];
 
@@ -1339,6 +2402,46 @@ export const getUser = async (req: Request, res: Response) => {
         position_name: dp.position?.name ?? null,
       }));
     }
+
+    const enrolledPrograms = (enrollments || []).map((enrollment: any) => {
+      const completed = Boolean(enrollment.completed);
+
+      return {
+        enrollment_id: enrollment.id,
+        enrolled_at: enrollment.enrolledAt,
+        program: {
+          id: enrollment.course?.cohort?.program?.id ?? null,
+          name: enrollment.course?.cohort?.program?.title ?? null,
+        },
+        cohort: {
+          id: enrollment.course?.cohort?.id ?? null,
+          name: enrollment.course?.cohort?.name ?? null,
+          status: enrollment.course?.cohort?.status ?? null,
+        },
+        facilitator: {
+          id: enrollment.course?.instructor?.id ?? null,
+          name: enrollment.course?.instructor?.name ?? null,
+        },
+        status: {
+          completed,
+          label: completed ? "COMPLETED" : "IN_PROGRESS",
+          completed_at: enrollment.completedAt ?? null,
+        },
+      };
+    });
+
+    const completedPrograms = enrolledPrograms.filter(
+      (program: any) => program.status.completed,
+    ).length;
+
+    user.enrolled_programs = {
+      summary: {
+        total: enrolledPrograms.length,
+        completed: completedPrograms,
+        in_progress: enrolledPrograms.length - completedPrograms,
+      },
+      items: enrolledPrograms,
+    };
 
     return res.status(200).json({
       message: "Operation Successful",
@@ -1457,6 +2560,9 @@ export const statsUsers = async (req: Request, res: Response) => {
 
 export const getUserByEmailPhone = async (req: Request, res: Response) => {
   const { email, cohortId } = req.query;
+  const memberScope = (req as any).memberScope;
+  const authenticatedUserId = Number((req as any).user?.id);
+  const isOwnScope = memberScope?.mode === "own";
 
   try {
     let user = null;
@@ -1464,10 +2570,22 @@ export const getUserByEmailPhone = async (req: Request, res: Response) => {
 
     // If email is passed, find user
     if (email) {
+      const userLookupWhere: any =
+        isOwnScope &&
+        Number.isInteger(authenticatedUserId) &&
+        authenticatedUserId > 0
+          ? {
+              user_id: authenticatedUserId,
+            }
+          : {
+              OR: [
+                { email: email as string },
+                { primary_number: email as string },
+              ],
+            };
+
       user = await prisma.user_info.findFirst({
-        where: {
-          OR: [{ email: email as string }, { primary_number: email as string }],
-        },
+        where: userLookupWhere,
         select: {
           user_id: true,
           first_name: true,
@@ -1489,7 +2607,9 @@ export const getUserByEmailPhone = async (req: Request, res: Response) => {
 
     // If cohortId is passed, get courses
     if (cohortId) {
-      courses = await courseService.getAllCourses(Number(cohortId));
+      courses = await courseService.getAllCourses({
+        cohortId: Number(cohortId),
+      });
     }
 
     // If no params were passed
@@ -1528,17 +2648,25 @@ export const convertMemeberToConfirmedMember = async (
   res: Response,
 ) => {
   const { user_id, status } = req.query;
-  let user_status: string | undefined = status as string;
-  if (!status) {
-    user_status = "CONFIRMED";
+
+  if (!user_id || Number.isNaN(Number(user_id))) {
+    return res.status(400).json({
+      message: "Operation failed",
+      data: {
+        message: "",
+        error: "Invalid or missing user_id.",
+      },
+    });
   }
+
+  const user_status = typeof status === "string" ? status : undefined;
 
   try {
     const result = await userService.convertMemeberToConfirmedMember(
       Number(user_id),
       user_status,
     );
-    if (result.error == "") {
+    if (result.error !== "") {
       return res.status(400).json({
         message: "Operation failed",
         data: result,
@@ -1549,6 +2677,59 @@ export const convertMemeberToConfirmedMember = async (
       data: result,
     });
   } catch (error) {
+    if (isRoleEligibilityValidationError(error)) {
+      return res
+        .status(error.statusCode)
+        .json(buildRoleEligibilityFailureResponse(error));
+    }
+
+    return res.status(500).json({
+      message: "Operation failed",
+      data: error,
+    });
+  }
+};
+
+export const bulkUpdateMemberStatus = async (req: Request, res: Response) => {
+  const { status, user_ids } = req.body ?? {};
+
+  if (typeof status !== "string" || status.trim() === "") {
+    return res.status(400).json({
+      message: "Operation failed",
+      data: {
+        message: "",
+        error: "Invalid or missing status.",
+      },
+    });
+  }
+
+  if (!Array.isArray(user_ids) || user_ids.length === 0) {
+    return res.status(400).json({
+      message: "Operation failed",
+      data: {
+        message: "",
+        error: "user_ids must be a non-empty array.",
+      },
+    });
+  }
+
+  try {
+    const result = await userService.bulkUpdateMemberStatus(status, user_ids);
+
+    return res.status(200).json({
+      data: result,
+    });
+  } catch (error: any) {
+    if (error instanceof InputValidationError) {
+      return res.status(400).json({
+        message: "Operation failed",
+        data: {
+          message: "",
+          error: error.message,
+        },
+      });
+    }
+
     return res.status(500).json({
       message: "Operation failed",
       data: error,
@@ -1581,8 +2762,22 @@ export const linkSpouses = async (req: Request, res: Response) => {
 export const getUserFamily = async (req: Request, res: Response) => {
   try {
     const { user_id } = req.query;
+    const fallbackUserId = Number((req as any).user?.id);
+    const resolvedUserId =
+      Number.isInteger(Number(user_id)) && Number(user_id) > 0
+        ? Number(user_id)
+        : Number.isInteger(fallbackUserId) && fallbackUserId > 0
+          ? fallbackUserId
+          : null;
 
-    const family = await userService.getUserFamily(Number(user_id));
+    if (!resolvedUserId) {
+      return res.status(400).json({
+        message: "Operation failed",
+        data: "Invalid or missing user_id",
+      });
+    }
+
+    const family = await userService.getUserFamily(resolvedUserId);
 
     if (!family) {
       return res.status(404).json({
@@ -1631,25 +2826,17 @@ export const linkChildren = async (req: Request, res: Response) => {
 
 export const currentuser = async (req: Request, res: Response) => {
   try {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      return res
-        .status(401)
-        .json({ message: "Authorization header missing or invalid." });
+    const authenticatedUserId = Number((req as any).user?.id);
+    if (!Number.isInteger(authenticatedUserId) || authenticatedUserId <= 0) {
+      return res.status(401).json({ message: "Unauthorized" });
     }
 
-    const token = authHeader.split(" ")[1];
-    const decoded: any = JWT.verify(token, JWT_SECRET);
-
     const user = await prisma.user.findUnique({
-      where: { id: decoded.id },
-      include: {
-        user_info: true,
-        department_positions: {
-          include: {
-            department: true,
-          },
-        },
+      where: { id: authenticatedUserId },
+      select: {
+        name: true,
+        email: true,
+        membership_type: true,
       },
     });
 
@@ -1657,15 +2844,50 @@ export const currentuser = async (req: Request, res: Response) => {
       return res.status(404).json({ message: "User not found." });
     }
 
-    const department: string[] = user.department_positions.map(
-      (dept) => dept.department.name,
+    const [userInfo, departmentPositions] = await Promise.all([
+      prisma.user_info.findUnique({
+        where: { user_id: authenticatedUserId },
+        select: {
+          primary_number: true,
+          member_since: true,
+        },
+      }),
+      prisma.department_positions.findMany({
+        where: { user_id: authenticatedUserId },
+        select: {
+          department_id: true,
+        },
+        orderBy: {
+          id: "asc",
+        },
+      }),
+    ]);
+    const departmentIds = toUniquePositiveIds(
+      departmentPositions.map((dept) => dept.department_id),
     );
+    const departments = departmentIds.length
+      ? await prisma.department.findMany({
+          where: {
+            id: {
+              in: departmentIds,
+            },
+          },
+          select: {
+            id: true,
+            name: true,
+          },
+        })
+      : [];
+    const departmentById = buildLookupById(departments);
+    const department = departmentPositions
+      .map((dept) => departmentById.get(dept.department_id)?.name ?? null)
+      .filter((value): value is string => Boolean(value));
 
     const data = {
       name: user.name,
       email: user.email,
-      phone: user.user_info?.primary_number || null,
-      member_since: user.user_info?.member_since || null,
+      phone: userInfo?.primary_number || null,
+      member_since: userInfo?.member_since || null,
       department,
       membership_type: user.membership_type || null,
     };
@@ -1680,6 +2902,13 @@ export const updateUserPasswordToDefault = async (
   req: Request,
   res: Response,
 ) => {
+  if (!canRunSensitiveUserOps()) {
+    return res.status(403).json({
+      message: "This endpoint is disabled in production.",
+      data: null,
+    });
+  }
+
   try {
     const data = await userService.updateUserPasswordToDefault();
 

@@ -1,5 +1,6 @@
 import { tr } from "date-fns/locale";
 import { prisma } from "../../Models/context";
+import { roleEligibilityService } from "../settings/roleEligibilityService";
 
 export class LifeCenterService {
   /**
@@ -90,8 +91,18 @@ export class LifeCenterService {
             other_name: true,
             contact_number: true,
             country_code: true,
+            memberId: true,
             wonBy: {
               select: { id: true, name: true },
+            },
+            member: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                member_id: true,
+                status: true,
+              },
             },
           },
         },
@@ -135,6 +146,10 @@ export class LifeCenterService {
         wonById: soul.wonBy.id,
         wonByName: soul.wonBy.name,
         lifeCenterId: id,
+        isMember: Boolean(soul.memberId),
+        memberId: soul.member?.id ?? null,
+        memberName: soul.member?.name ?? "",
+        memberMemberId: soul.member?.member_id ?? "",
       })),
     };
   }
@@ -172,6 +187,11 @@ export class LifeCenterService {
     lifeCenterId: number;
     roleId: number;
   }) {
+    await roleEligibilityService.assertEligible(
+      "life_center_leader",
+      data.userId,
+    );
+
     const member = await prisma.life_center_member.create({
       data: {
         userId: data.userId,
@@ -204,6 +224,11 @@ export class LifeCenterService {
     lifeCenterId: number;
     roleId: number;
   }) {
+    await roleEligibilityService.assertEligible(
+      "life_center_leader",
+      data.userId,
+    );
+
     const member = await prisma.life_center_member.update({
       where: {
         userId_lifeCenterId: {
@@ -275,6 +300,15 @@ export class LifeCenterService {
       include: {
         wonBy: true,
         lifeCenter: true,
+        member: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            member_id: true,
+            status: true,
+          },
+        },
       },
     });
   }
@@ -285,6 +319,15 @@ export class LifeCenterService {
       include: {
         wonBy: true,
         lifeCenter: true,
+        member: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            member_id: true,
+            status: true,
+          },
+        },
       },
     });
 

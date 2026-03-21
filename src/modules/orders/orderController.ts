@@ -118,13 +118,18 @@ export class OrderController {
   async hubtelWebhook(req: Request, res: Response) {
     try {
       const { Data } = req.body;
-      console.log(`Call Back ${Data}`);
-      console.log(JSON.stringify(Data, null, 2));
-      const status = Data.Status === "Success" ? "success" : "failed";
+      const clientReference = String(Data?.ClientReference || "").trim();
 
-      const result = await orderService.updateOrderStatusByHubtel(
-        Data.ClientReference,
-        status,
+      if (!clientReference) {
+        return res
+          .status(400)
+          .json({ message: "Invalid webhook payload", result: null });
+      }
+
+      // Do not trust callback payload status directly.
+      // Confirm the latest transaction status against Hubtel before updating.
+      const result = await orderService.checkHubtelTransactionStatus(
+        clientReference,
       );
 
       res.status(200).json({ message: "Callback processed", result });
@@ -185,13 +190,85 @@ export class OrderController {
         cancellation_url,
       );
       return res.status(201).json({
-        message: "Order created successfully",
+        message: "Payment reinitiated successfully",
         data: order,
       });
     } catch (error: any) {
       return res.status(400).json({
         success: false,
         message: error.message || "Failed to create order",
+      });
+    }
+  }
+
+  async retryPayment(req: Request, res: Response) {
+    try {
+      const { id, return_url, cancellation_url } = req.body;
+      const order = await orderService.retryHubtelPayment(
+        id,
+        return_url,
+        cancellation_url,
+      );
+      return res.status(201).json({
+        message: "Payment retried successfully",
+        data: order,
+      });
+    } catch (error: any) {
+      return res.status(400).json({
+        success: false,
+        message: error.message || "Failed to retry payment",
+      });
+    }
+  }
+
+  async reconcilePendingHubtelPayments(req: Request, res: Response) {
+    try {
+      const limit = Number(req.query.limit ?? 100);
+      const safeLimit = Number.isNaN(limit) ? 100 : Math.min(Math.max(limit, 1), 500);
+      const result = await orderService.reconcilePendingHubtelPayments(safeLimit);
+
+      return res.status(200).json({
+        success: true,
+        message: "Pending Hubtel payments reconciled",
+        data: result,
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        success: false,
+        message: error.message || "Failed to reconcile pending Hubtel payments",
+      });
+    }
+  }
+
+  async updateDeliveryStatus(req: Request, res: Response) {
+    try {
+      const { id, status } = req.body as { id?: number | string; status?: string };
+      const orderId = Number(id);
+      if (!Number.isInteger(orderId) || orderId <= 0) {
+        return res.status(400).json({ message: "A valid order id is required" });
+      }
+      if (typeof status !== "string" || !status.trim()) {
+        return res.status(400).json({ message: "Delivery status is required" });
+      }
+
+      const actorUserId = Number((req as any)?.user?.id);
+      const updatedOrder = await orderService.updateDeliveryStatus(
+        orderId,
+        status.trim().toLowerCase() as
+          | "pending"
+          | "shipped"
+          | "delivered"
+          | "cancelled",
+        Number.isInteger(actorUserId) && actorUserId > 0 ? actorUserId : null,
+      );
+
+      return res.status(200).json({
+        message: "Delivery status updated successfully",
+        data: updatedOrder,
+      });
+    } catch (error: any) {
+      return res.status(400).json({
+        message: error.message || "Failed to update delivery status",
       });
     }
   }

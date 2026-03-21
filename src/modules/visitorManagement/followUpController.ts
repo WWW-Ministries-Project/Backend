@@ -7,6 +7,7 @@ export class FollowUPController {
   async createFollowUp(req: Request, res: Response) {
     try {
       const { date, type, assignedTo, notes, visitorId } = req.body;
+      const actorUserId = Number((req as any)?.user?.id);
 
       const dateObject = new Date(date);
 
@@ -16,6 +17,10 @@ export class FollowUPController {
         assignedTo: Number(assignedTo),
         notes,
         visitorId: Number(visitorId),
+        userId:
+          Number.isInteger(actorUserId) && actorUserId > 0
+            ? actorUserId
+            : null,
       };
 
       const follow = await follow_up.createFollowUp(followUpData);
@@ -29,7 +34,8 @@ export class FollowUPController {
 
   async getAllFollowUps(req: Request, res: Response) {
     try {
-      const follows = await follow_up.getAllFollowUps();
+      const visitorScope = (req as any).visitorScope;
+      const follows = await follow_up.getAllFollowUps(visitorScope);
       return res.status(200).json({ data: follows });
     } catch (error: any) {
       return res
@@ -57,9 +63,11 @@ export class FollowUPController {
   async updateFollowUp(req: Request, res: Response) {
     try {
       const { id } = req.query;
+      const actorUserId = Number((req as any)?.user?.id);
       const updatedfollowup = await follow_up.updateFollowUp(
         Number(id),
         req.body,
+        Number.isInteger(actorUserId) && actorUserId > 0 ? actorUserId : null,
       );
       return res
         .status(200)

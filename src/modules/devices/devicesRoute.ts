@@ -10,10 +10,30 @@ const deviceRouter = Router();
 const deviceController = new DeviceController();
 
 //life center roles
-deviceRouter.post("/create-devices", deviceController.createDevices);
-deviceRouter.get("/get-devices", deviceController.getAllDevices);
-deviceRouter.get("/get-device", deviceController.getDevicesById);
-deviceRouter.put("/update-device", deviceController.updateLifeCenter);
-deviceRouter.delete("/delete-device", deviceController.deleteDevices);
+deviceRouter.post(
+  "/create-devices",
+  [protect, permissions.can_manage_settings],
+  deviceController.createDevices,
+);
+deviceRouter.get(
+  "/get-devices",
+  [protect, permissions.can_view_settings],
+  deviceController.getAllDevices,
+);
+deviceRouter.get(
+  "/get-device",
+  [protect, permissions.can_view_settings],
+  deviceController.getDevicesById,
+);
+deviceRouter.put(
+  "/update-device",
+  [protect, permissions.can_manage_settings],
+  deviceController.updateLifeCenter,
+);
+deviceRouter.delete(
+  "/delete-device",
+  [protect, permissions.can_delete_settings],
+  deviceController.deleteDevices,
+);
 
 export default deviceRouter;

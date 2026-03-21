@@ -22,7 +22,9 @@ export class PrayerRequestController {
 
   async getAllPrayerRequests(req: Request, res: Response) {
     try {
-      const prayerRequest = await prayerRequestService.getAllPrayerRequests();
+      const visitorScope = (req as any).visitorScope;
+      const prayerRequest =
+        await prayerRequestService.getAllPrayerRequests(visitorScope);
       return res.status(200).json({ data: prayerRequest });
     } catch (error: any) {
       return res.status(500).json({

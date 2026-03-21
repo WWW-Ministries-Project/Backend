@@ -130,7 +130,22 @@ export const updateAsset = async (req: any, res: Response) => {
 export const listAssets = async (req: Request, res: Response) => {
   try {
     const { page = 1, take = 10 }: any = req.query;
-    const total = await prisma.assets.count();
+    const assetScope = (req as any).assetScope;
+
+    const whereFilter: any = {};
+    if (
+      assetScope?.mode === "department" &&
+      Array.isArray(assetScope?.departmentIds) &&
+      assetScope.departmentIds.length > 0
+    ) {
+      whereFilter.department_assigned = {
+        in: assetScope.departmentIds,
+      };
+    }
+
+    const total = await prisma.assets.count({
+      where: Object.keys(whereFilter).length ? whereFilter : undefined,
+    });
 
     const pageNum = parseInt(page, 10) || 1;
     const pageSize = parseInt(take, 10) || 10;
@@ -140,6 +155,7 @@ export const listAssets = async (req: Request, res: Response) => {
       orderBy: {
         name: "asc",
       },
+      where: Object.keys(whereFilter).length ? whereFilter : undefined,
       skip,
       take: pageSize,
     });
@@ -161,14 +177,32 @@ export const listAssets = async (req: Request, res: Response) => {
 export const getAsset = async (req: Request, res: Response) => {
   try {
     const { id } = req.query;
+    const assetScope = (req as any).assetScope;
+    const whereFilter: any = {
+      id: Number(id),
+    };
+
+    if (
+      assetScope?.mode === "department" &&
+      Array.isArray(assetScope?.departmentIds) &&
+      assetScope.departmentIds.length > 0
+    ) {
+      whereFilter.department_assigned = {
+        in: assetScope.departmentIds,
+      };
+    }
+
     const assetsList = await prisma.assets.findFirst({
-      where: {
-        id: Number(id),
-      },
+      where: whereFilter,
       include: {
         assigned_to: true,
       },
     });
+
+    if (!assetsList) {
+      return res.status(404).json({ message: "Asset not found" });
+    }
+
     res.status(200).json({ message: "Operation Succesful", data: assetsList });
   } catch (error: any) {
     return res

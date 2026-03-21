@@ -1,8 +1,11 @@
 import Router from "express";
 import { ProductController } from "./productController";
+import { Permissions } from "../../middleWare/authorization";
 
 const productRouter = Router();
 const productController = new ProductController();
+const permissions = new Permissions();
+const protect = permissions.protect;
 //sizes
 /**
  * @swagger
@@ -354,11 +357,23 @@ const productController = new ProductController();
  *                   code: "DATABASE_ERROR"
  *                   timestamp: "2023-12-01T10:30:00Z"
  */
-productRouter.post("/create-size", productController.createSize);
-productRouter.put("/update-size", productController.updateSize);
-productRouter.get("/list-sizes", productController.listSizes);
+productRouter.post(
+  "/create-size",
+  [protect, permissions.can_manage_marketplace],
+  productController.createSize,
+);
+productRouter.put(
+  "/update-size",
+  [protect, permissions.can_manage_marketplace],
+  productController.updateSize,
+);
+productRouter.get("/list-sizes", [protect], productController.listSizes);
 //products
-productRouter.post("/create-product", productController.createProduct);
+productRouter.post(
+  "/create-product",
+  [protect, permissions.can_manage_marketplace],
+  productController.createProduct,
+);
 /**
  * @swagger
  * components:
@@ -530,7 +545,11 @@ productRouter.post("/create-product", productController.createProduct);
  *                   code: "DATABASE_ERROR"
  *                   timestamp: "2023-12-01T15:45:00Z"
  */
-productRouter.put("/update-product", productController.updateProduct);
+productRouter.put(
+  "/update-product",
+  [protect, permissions.can_manage_marketplace],
+  productController.updateProduct,
+);
 /**
  * @swagger
  * components:
@@ -759,6 +778,7 @@ productRouter.put("/update-product", productController.updateProduct);
  */
 productRouter.put(
   "/update-product-colour-stock",
+  [protect, permissions.can_manage_marketplace],
   productController.updateProductColourStock,
 );
 /**
@@ -976,45 +996,69 @@ productRouter.put(
  *                   code: "DATABASE_ERROR"
  *                   timestamp: "2023-12-01T17:00:00Z"
  */
-productRouter.delete("/delete-product", productController.deleteProduct);
-productRouter.put("/restore-product", productController.restoreProduct);
-productRouter.get("/list-products", productController.listProducts);
+productRouter.delete(
+  "/delete-product",
+  [protect, permissions.can_delete_marketplace],
+  productController.deleteProduct,
+);
+productRouter.put(
+  "/restore-product",
+  [protect, permissions.can_manage_marketplace],
+  productController.restoreProduct,
+);
+productRouter.get("/list-products", [protect], productController.listProducts);
 productRouter.get(
   "/list-products-by-market",
+  [protect],
   productController.listProductsByMarketId,
 );
-productRouter.get("/get-product-by-id", productController.getProductById);
+productRouter.get("/get-product-by-id", [protect], productController.getProductById);
 //product type
-productRouter.post("/create-product-type", productController.createProductType);
-productRouter.put("/update-product-type", productController.updateProductType);
+productRouter.post(
+  "/create-product-type",
+  [protect, permissions.can_manage_marketplace],
+  productController.createProductType,
+);
+productRouter.put(
+  "/update-product-type",
+  [protect, permissions.can_manage_marketplace],
+  productController.updateProductType,
+);
 productRouter.delete(
   "/delete-product-type",
+  [protect, permissions.can_delete_marketplace],
   productController.deleteProductType,
 );
 productRouter.put(
   "/restore-product-type",
+  [protect, permissions.can_manage_marketplace],
   productController.restoreProductType,
 );
-productRouter.get("/list-product-type", productController.listProductTypes);
+productRouter.get("/list-product-type", [protect], productController.listProductTypes);
 //product category
 productRouter.post(
   "/create-product-category",
+  [protect, permissions.can_manage_marketplace],
   productController.createProductCategory,
 );
 productRouter.put(
   "/update-product-category",
+  [protect, permissions.can_manage_marketplace],
   productController.updateProductCategory,
 );
 productRouter.delete(
   "/delete-product-category",
+  [protect, permissions.can_delete_marketplace],
   productController.deleteProductCategory,
 );
 productRouter.put(
   "/restore-product-category",
+  [protect, permissions.can_manage_marketplace],
   productController.restoreProductCategory,
 );
 productRouter.get(
   "/list-product-category",
+  [protect],
   productController.listProductCategories,
 );
 

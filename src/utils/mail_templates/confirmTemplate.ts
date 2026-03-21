@@ -1,79 +1,41 @@
-export const confirmTemplate = (mailDetails: any) => {
-  return `
-    <!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Account Activation</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            background-color: #f4f4f4;
-            margin: 0;
-            padding: 0;
-        }
-        .container {
-            width: 100%;
-            max-width: 600px;
-            margin: 0 auto;
-            background-color: #ffffff;
-            border-radius: 8px;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.15);
-            overflow: hidden;
-        }
-        .header {
-            background-color: #6539C4;
-            color: #ffffff;
-            text-align: center;
-            padding: 20px;
-        }
-        .header img {
-            max-width: 150px;
-            margin-bottom: 10px;
-        }
-        .content {
-            padding: 30px;
-            color: #333333;
-        }
-        .button {
-            display: inline-block;
-            padding: 15px 30px;
-            color: #ffffff;
-            background-color: #6539C4;
-            text-decoration: none;
-            border-radius: 5px;
-            margin-top: 20px;
-        }
-        .footer {
-            text-align: center;
-            color: #888888;
-            padding: 20px;
-            font-size: 12px;
-            background-color: #f4f4f4;
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <img src="https://res.cloudinary.com/dt8vgj0u3/image/upload/v1747597889/main-logo_nuhmgv.svg" alt="Company Logo">
-            <h1>Welcome to World Wide Word Ministries</h1>
-        </div>
-        <div class="content">
-              <h1>Email Confirmation</h1>
-        <p>Hello ${mailDetails.name}!</p>
-        <p>You've been invited to the WWWM System! Please click the find below your default credential.</p>
-        <p><strong>email:</strong> ${mailDetails.email}</p>
-        <p><strong>Password:</strong> ${mailDetails.password}</p>
-        <a href="${mailDetails.frontend_url}" class="button">Login Here</a>
-        <p>Have a great Day!</p>
-        </div>
-        <div class="footer">
-            © 2025 Your Company Name. All rights reserved.
-        </div>
-    </div>
-</body>
-</html>
-    `;
+import {
+  buildUnifiedEmailTemplate,
+  escapeEmailHtml,
+} from "./unifiedEmailTemplate";
+
+type ConfirmTemplateDetails = {
+  name: string;
+  email: string;
+  password: string;
+  frontend_url: string;
+};
+
+export const confirmTemplate = (mailDetails: ConfirmTemplateDetails) => {
+  const loginUrl =
+    String(mailDetails.frontend_url || "").trim() ||
+    String(process.env.Frontend_URL || "").trim();
+
+  const credentialDetailsHtml = `<p style="margin: 0 0 16px 0; font-size: 15px; line-height: 1.7; color: #4b5563;">
+                        You've been invited to the WWWM system. Use the default credentials below to sign in.
+                      </p>
+                      <p style="margin: 0 0 8px 0; font-size: 14px; line-height: 1.6; color: #4b5563;">
+                        <strong style="color: #080d2d;">Email:</strong> ${escapeEmailHtml(mailDetails.email)}
+                      </p>
+                      <p style="margin: 0 0 24px 0; font-size: 14px; line-height: 1.6; color: #4b5563;">
+                        <strong style="color: #080d2d;">Password:</strong> ${escapeEmailHtml(mailDetails.password)}
+                      </p>`;
+
+  return buildUnifiedEmailTemplate({
+    preheader: "Your account invitation and login credentials are ready.",
+    headerTitle: "Email Confirmation",
+    headerText: "Welcome to Worldwide Word Ministries.",
+    greeting: `Hello ${mailDetails.name}!`,
+    messageHtml: credentialDetailsHtml,
+    actionLabel: "Login Here",
+    actionUrl: loginUrl,
+    secondaryText:
+      "For account security, change your password after your first login.",
+    supportUrl: loginUrl,
+    supportLabel: "Get support",
+  });
 };

@@ -2,9 +2,14 @@ import Router from "express";
 import * as dotenv from "dotenv";
 import {} from "../../utils/";
 import {
+  saveRequisitionApprovalConfigHandler,
+  getRequisitionApprovalConfigHandler,
   createRequisitionHandler,
   listRequisitionHandler,
   getRequisitionHandler,
+  requisitionApprovalActionHandler,
+  preApprovalSimilarItemsHandler,
+  submitRequisitionHandler,
   updateRequisitionHandler,
   deleteRequisitionHandler,
   userRequisitionsHandler,
@@ -20,9 +25,14 @@ dotenv.config();
 export const requisitionRouter = Router();
 
 const requisitionControllers = {
+  saveRequisitionApprovalConfigHandler,
+  getRequisitionApprovalConfigHandler,
   createRequisitionHandler,
   listRequisitionHandler,
   getRequisitionHandler,
+  requisitionApprovalActionHandler,
+  preApprovalSimilarItemsHandler,
+  submitRequisitionHandler,
   updateRequisitionHandler,
   deleteRequisitionHandler,
   userRequisitionsHandler,
@@ -36,19 +46,48 @@ const wrappedControllers = wrapControllersWithLogger(
 );
 
 requisitionRouter.post(
+  "/upsert-approval-config",
+  [permissions.protect, permissions.can_manage_requisitions],
+  wrappedControllers.saveRequisitionApprovalConfigHandler,
+);
+requisitionRouter.get(
+  "/get-approval-config",
+  [permissions.protect, permissions.can_view_requisitions],
+  wrappedControllers.getRequisitionApprovalConfigHandler,
+);
+requisitionRouter.post(
   "/create-requisition",
+  [permissions.protect],
   wrappedControllers.createRequisitionHandler,
+);
+requisitionRouter.post(
+  "/submit-requisition",
+  [permissions.protect],
+  wrappedControllers.submitRequisitionHandler,
+);
+requisitionRouter.post(
+  "/approval-action",
+  [permissions.protect, permissions.can_manage_requisitions],
+  wrappedControllers.requisitionApprovalActionHandler,
+);
+requisitionRouter.get(
+  "/pre-approval-similar-items",
+  [permissions.protect, permissions.can_manage_requisitions],
+  wrappedControllers.preApprovalSimilarItemsHandler,
 );
 requisitionRouter.get(
   "/list-requisition",
+  [permissions.protect],
   wrappedControllers.listRequisitionHandler,
 );
 requisitionRouter.get(
   "/my-requisitions",
+  [permissions.protect],
   wrappedControllers.userRequisitionsHandler,
 );
 requisitionRouter.get(
   "/get-requisition",
+  [permissions.protect],
   wrappedControllers.getRequisitionHandler,
 );
 requisitionRouter.put(
@@ -58,10 +97,11 @@ requisitionRouter.put(
 );
 requisitionRouter.delete(
   "/delete-requisition",
+  [permissions.protect],
   wrappedControllers.deleteRequisitionHandler,
 );
 requisitionRouter.get(
   "/staff-requisition",
-  [permissions.can_manage_requisitions],
+  [permissions.protect, permissions.can_manage_requisitions],
   wrappedControllers.staffRequestHandler,
 );

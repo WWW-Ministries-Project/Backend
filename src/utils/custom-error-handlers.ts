@@ -43,7 +43,7 @@ export class InternalServerError extends AppError {
 }
 export class UnauthorizedError extends AppError {
   constructor(
-    message = "You so not have permission to access to access this resource",
+    message = "You do not have permission to access this resource",
   ) {
     super(message, StatusCodes.FORBIDDEN);
   }

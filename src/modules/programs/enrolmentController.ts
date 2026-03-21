@@ -1,5 +1,7 @@
 import { Request, Response } from "express";
+import { Prisma } from "@prisma/client";
 import { EnrollmentService } from "./enrolmentService";
+import { AppError } from "../../utils/custom-error-handlers";
 
 const enrollment = new EnrollmentService();
 
@@ -36,13 +38,26 @@ export class EnrollmentController {
       // Validate required fields
       if (!user_id || !course_id) {
         return res.status(400).json({
-          message: "Missing required fields user_id,course_id",
+          message: "Please provide both user and course",
+        });
+      }
+
+      const parsedUserId = Number(user_id);
+      const parsedCourseId = Number(course_id);
+      if (
+        !Number.isInteger(parsedUserId) ||
+        parsedUserId <= 0 ||
+        !Number.isInteger(parsedCourseId) ||
+        parsedCourseId <= 0
+      ) {
+        return res.status(400).json({
+          message: "Please provide a valid user and course",
         });
       }
 
       const newEnrollment = await enrollment.enrollUser({
-        course_id: parseInt(course_id as string),
-        user_id: parseInt(user_id as string),
+        course_id: parsedCourseId,
+        user_id: parsedUserId,
       });
 
       return res.status(201).json({
@@ -50,9 +65,27 @@ export class EnrollmentController {
         data: newEnrollment,
       });
     } catch (error: any) {
+      if (error instanceof AppError) {
+        return res.status(error.statusCode).json({
+          message: error.message,
+          error: error.message,
+        });
+      }
+
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002"
+      ) {
+        const message = "The user has already enrolled in this program";
+        return res.status(409).json({
+          message,
+          error: message,
+        });
+      }
+
       return res.status(500).json({
-        message: "Error enrolling user",
-        error: error.message,
+        message: "We could not enroll this user right now. Please try again.",
+        error: "We could not enroll this user right now. Please try again.",
       });
     }
   }
@@ -74,8 +107,19 @@ export class EnrollmentController {
 
   async getEnrollmentByUser(req: Request, res: Response) {
     try {
+      const userIdInput =
+        req.params.id ?? req.query.userId ?? req.query.user_id ?? req.query.id;
+      const userId = Number(userIdInput);
+
+      if (!userIdInput || Number.isNaN(userId) || userId <= 0) {
+        return res.status(400).json({
+          message:
+            "Missing or invalid user id. Provide /user-enrollment/:id or ?userId=<id>",
+        });
+      }
+
       const allEnrollmentByCourse = await enrollment.getUserEnrollments(
-        Number(req.params.id),
+        userId,
       );
       return res
         .status(200)
@@ -157,6 +201,80 @@ export class EnrollmentController {
       res.status(500).json({
         message: "Failed to update progress scores.",
         error,
+      });
+    }
+  }
+
+  async getCertificate(req: Request, res: Response) {
+    try {
+      const programId = Number(req.query.programId);
+      const userId = Number((req as any).user?.id);
+
+      if (!Number.isInteger(programId) || programId <= 0) {
+        return res.status(400).json({
+          message: "A valid programId is required",
+        });
+      }
+
+      if (!Number.isInteger(userId) || userId <= 0) {
+        return res.status(401).json({
+          message: "Not authorized. Token not found",
+        });
+      }
+
+      const certificate = await enrollment.getProgramCertificate(
+        programId,
+        userId,
+      );
+
+      return res.status(200).json({
+        message: "Certificate fetched successfully",
+        data: certificate,
+      });
+    } catch (error: any) {
+      if (error instanceof AppError) {
+        return res.status(error.statusCode).json({
+          message: error.message,
+          error: error.message,
+        });
+      }
+
+      return res.status(500).json({
+        message: "Error fetching certificate",
+        error: error.message,
+      });
+    }
+  }
+
+  async verifyCertificate(req: Request, res: Response) {
+    try {
+      const certificateNumber = String(
+        req.params.certificateNumber ?? "",
+      ).trim();
+
+      if (!certificateNumber) {
+        return res.status(400).json({
+          message: "A certificate number is required",
+        });
+      }
+
+      const certificate = await enrollment.verifyCertificate(certificateNumber);
+
+      return res.status(200).json({
+        message: "Certificate verified successfully",
+        data: certificate,
+      });
+    } catch (error: any) {
+      if (error instanceof AppError) {
+        return res.status(error.statusCode).json({
+          message: error.message,
+          error: error.message,
+        });
+      }
+
+      return res.status(500).json({
+        message: "Error verifying certificate",
+        error: error.message,
       });
     }
   }

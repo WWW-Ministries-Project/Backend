@@ -1,12 +1,391 @@
 import { prisma } from "../../Models/context";
+import {
+  InputValidationError,
+  NotFoundError,
+} from "../../utils/custom-error-handlers";
 import { UserService } from "../user/userService";
 import { VisitService } from "./visitService";
 import { toSentenceCase } from "../../utils";
 
 const userService = new UserService();
 const visitService = new VisitService();
+const RESPONSIBLE_MEMBERS_VALIDATION_MESSAGE =
+  "Responsible member is optional. If you provide it, send one or more valid member IDs as an array, for example [12] or [12, 34]. Leave it empty if you do not want to assign anyone yet.";
+const DUPLICATE_VISIT_VALIDATION_MESSAGE =
+  "This visit has already been recorded for the selected visitor and event on that date. Change the date or event, or use the existing visit to continue.";
+const INVALID_CONVERSION_EMAIL_MESSAGE =
+  "A valid non-temporary email is required to convert a visitor to a login user. Please update the email address and try again.";
+const CONVERSION_NAME_VALIDATION_MESSAGE =
+  "First name and last name are required to convert a visitor to a member. Please update the visitor details and try again.";
+const MEMBERSHIP_TYPE_VALIDATION_MESSAGE =
+  "Membership type must be either ONLINE or IN_HOUSE.";
+const CLERGY_VALIDATION_MESSAGE =
+  "If the visitor is clergy, provide the church and church location. Role in the church is optional.";
+
+const normalizeOptionalEmail = (email?: string | null) => {
+  const normalizedEmail = String(email || "")
+    .trim()
+    .toLowerCase();
+
+  return normalizedEmail || null;
+};
+
+const isRealEmail = (email?: string | null) => {
+  const normalizedEmail = normalizeOptionalEmail(email);
+  if (!normalizedEmail) return false;
+
+  const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  return (
+    emailPattern.test(normalizedEmail) && !normalizedEmail.endsWith("@temp.com")
+  );
+};
+
+const hasOwnProperty = (obj: unknown, key: string) =>
+  !!obj &&
+  typeof obj === "object" &&
+  Object.prototype.hasOwnProperty.call(obj, key);
+
+const hasTextValue = (value: unknown) =>
+  value !== undefined && value !== null && String(value).trim().length > 0;
+
+const normalizeOptionalText = (value: unknown) => {
+  if (!hasTextValue(value)) return null;
+  return String(value).trim();
+};
+
+const getFirstDefinedValue = (...values: unknown[]) =>
+  values.find((value) => value !== undefined);
+
+const parseBooleanInput = (value: unknown) => {
+  if (typeof value === "boolean") return value;
+
+  if (typeof value === "number") {
+    if (value === 1) return true;
+    if (value === 0) return false;
+    return undefined;
+  }
+
+  if (typeof value === "string") {
+    const normalizedValue = value.trim().toLowerCase();
+    if (!normalizedValue) return undefined;
+
+    if (["true", "1", "yes", "y", "on"].includes(normalizedValue)) {
+      return true;
+    }
+
+    if (["false", "0", "no", "n", "off"].includes(normalizedValue)) {
+      return false;
+    }
+  }
+
+  return undefined;
+};
+
+type ResolvedVisitorClergyFields = {
+  shouldApply: boolean;
+  hasExplicitInput: boolean;
+  isClergy: boolean;
+  churchName: string | null;
+  churchLocation: string | null;
+  churchRole: string | null;
+};
+
+const resolveVisitorClergyFields = (
+  body: any,
+  options: { defaultToFalse?: boolean } = {},
+): ResolvedVisitorClergyFields => {
+  const clergyInfo =
+    body?.clergy_info && typeof body.clergy_info === "object"
+      ? body.clergy_info
+      : body?.clergyInfo && typeof body.clergyInfo === "object"
+        ? body.clergyInfo
+        : {};
+
+  const isClergyInput = getFirstDefinedValue(
+    body?.isClergy,
+    body?.is_clergy,
+    clergyInfo?.isClergy,
+    clergyInfo?.is_clergy,
+  );
+  const churchNameInput = getFirstDefinedValue(
+    body?.churchName,
+    body?.church_name,
+    body?.church,
+    clergyInfo?.churchName,
+    clergyInfo?.church_name,
+    clergyInfo?.church,
+  );
+  const churchLocationInput = getFirstDefinedValue(
+    body?.churchLocation,
+    body?.church_location,
+    body?.locationOfChurch,
+    body?.location_of_church,
+    clergyInfo?.churchLocation,
+    clergyInfo?.church_location,
+    clergyInfo?.location,
+    clergyInfo?.locationOfChurch,
+    clergyInfo?.location_of_church,
+  );
+  const churchRoleInput = getFirstDefinedValue(
+    body?.churchRole,
+    body?.church_role,
+    body?.roleInChurch,
+    body?.role_in_church,
+    clergyInfo?.churchRole,
+    clergyInfo?.church_role,
+    clergyInfo?.role,
+    clergyInfo?.roleInChurch,
+    clergyInfo?.role_in_church,
+  );
+
+  const hasExplicitInput = [
+    isClergyInput,
+    churchNameInput,
+    churchLocationInput,
+    churchRoleInput,
+  ].some((value) => value !== undefined);
+
+  if (!hasExplicitInput && !options.defaultToFalse) {
+    return {
+      shouldApply: false,
+      hasExplicitInput: false,
+      isClergy: false,
+      churchName: null,
+      churchLocation: null,
+      churchRole: null,
+    };
+  }
+
+  const hasClergyDetails = [
+    churchNameInput,
+    churchLocationInput,
+    churchRoleInput,
+  ].some((value) => value !== undefined);
+  const isClergy =
+    parseBooleanInput(isClergyInput) ??
+    (hasClergyDetails ? true : Boolean(options.defaultToFalse));
+
+  if (isClergy) {
+    const churchName = normalizeOptionalText(churchNameInput);
+    const churchLocation = normalizeOptionalText(churchLocationInput);
+
+    if (!churchName || !churchLocation) {
+      throw new InputValidationError(CLERGY_VALIDATION_MESSAGE);
+    }
+
+    return {
+      shouldApply: true,
+      hasExplicitInput,
+      isClergy: true,
+      churchName,
+      churchLocation,
+      churchRole: normalizeOptionalText(churchRoleInput),
+    };
+  }
+
+  return {
+    shouldApply: true,
+    hasExplicitInput,
+    isClergy: false,
+    churchName: null,
+    churchLocation: null,
+    churchRole: null,
+  };
+};
+
+const normalizeConversionGender = (value: unknown) => {
+  const normalizedValue = normalizeOptionalText(value);
+  if (!normalizedValue) return "Other";
+
+  const normalizedLower = normalizedValue.toLowerCase();
+  if (normalizedLower === "male" || normalizedLower === "m") return "Male";
+  if (normalizedLower === "female" || normalizedLower === "f") return "Female";
+  if (
+    normalizedLower === "other" ||
+    normalizedLower === "unknown" ||
+    normalizedLower === "prefer not to say"
+  ) {
+    return "Other";
+  }
+
+  return toSentenceCase(normalizedValue);
+};
+
+const normalizeMembershipType = (value: unknown) => {
+  const normalizedValue = normalizeOptionalText(value);
+  if (!normalizedValue) return "IN_HOUSE";
+
+  const normalizedMembershipType = normalizedValue
+    .toUpperCase()
+    .replace(/\s+/g, "_");
+
+  if (
+    normalizedMembershipType === "ONLINE" ||
+    normalizedMembershipType === "IN_HOUSE"
+  ) {
+    return normalizedMembershipType;
+  }
+
+  throw new InputValidationError(MEMBERSHIP_TYPE_VALIDATION_MESSAGE);
+};
+
+const normalizeResponsibleMembersInput = (
+  responsibleMembers: unknown,
+): unknown[] => {
+  if (Array.isArray(responsibleMembers)) {
+    return responsibleMembers;
+  }
+
+  if (typeof responsibleMembers === "string") {
+    const trimmedMembers = responsibleMembers.trim();
+    if (!trimmedMembers) return [];
+
+    try {
+      const parsedMembers = JSON.parse(trimmedMembers);
+      if (Array.isArray(parsedMembers)) {
+        return parsedMembers;
+      }
+    } catch (error) {
+      return trimmedMembers
+        .split(",")
+        .map((member) => member.trim())
+        .filter(Boolean);
+    }
+  }
+
+  return [];
+};
+
+const isEmptyResponsibleMembersValue = (responsibleMembers: unknown) => {
+  if (responsibleMembers === null || responsibleMembers === undefined) {
+    return true;
+  }
+
+  if (Array.isArray(responsibleMembers)) {
+    return responsibleMembers.length === 0;
+  }
+
+  if (typeof responsibleMembers === "string") {
+    const trimmedMembers = responsibleMembers.trim();
+    if (!trimmedMembers) return true;
+
+    try {
+      const parsedMembers = JSON.parse(trimmedMembers);
+      return Array.isArray(parsedMembers) && parsedMembers.length === 0;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  return false;
+};
+
+const serializeResponsibleMemberIds = (memberIds: number[]) =>
+  JSON.stringify(
+    Array.from(
+      new Set(
+        memberIds.filter(
+          (memberId) => Number.isInteger(memberId) && memberId > 0,
+        ),
+      ),
+    ),
+  );
+
+const parseResponsibleMemberIds = (
+  responsibleMembers: unknown,
+  options: { strict?: boolean } = {},
+) => {
+  const { strict = true } = options;
+
+  if (responsibleMembers === null || responsibleMembers === undefined) {
+    return [];
+  }
+
+  const normalizedMembers =
+    normalizeResponsibleMembersInput(responsibleMembers);
+  if (!normalizedMembers.length) {
+    if (strict && !isEmptyResponsibleMembersValue(responsibleMembers)) {
+      throw new InputValidationError(RESPONSIBLE_MEMBERS_VALIDATION_MESSAGE);
+    }
+    return [];
+  }
+
+  const parsedMemberIds = normalizedMembers.map((memberId) => Number(memberId));
+  const hasInvalidMemberIds = parsedMemberIds.some(
+    (memberId) => !Number.isInteger(memberId) || memberId <= 0,
+  );
+
+  if (strict && hasInvalidMemberIds) {
+    throw new InputValidationError(RESPONSIBLE_MEMBERS_VALIDATION_MESSAGE);
+  }
+
+  return Array.from(
+    new Set(
+      parsedMemberIds.filter(
+        (memberId) => Number.isInteger(memberId) && memberId > 0,
+      ),
+    ),
+  );
+};
+
+type ResponsibleMemberDetails = {
+  userId: number;
+  name: string;
+};
+
+const getResponsibleMemberNames = (
+  memberIds: number[],
+  userMap: Record<number, string>,
+) =>
+  memberIds
+    .map((memberId) => ({
+      userId: memberId,
+      name: userMap[memberId],
+    }))
+    .filter(
+      (member): member is ResponsibleMemberDetails =>
+        typeof member.name === "string" && member.name.length > 0,
+    );
+
+const buildMissingResponsibleMembersMessage = (missingMemberIds: number[]) => {
+  const pronoun = missingMemberIds.length === 1 ? "it" : "them";
+  const memberLabel =
+    missingMemberIds.length === 1 ? "this member" : "these members";
+
+  return `Responsible member is optional. If you provide it, select only existing members. We could not find ${memberLabel}: ${missingMemberIds.join(", ")}. Remove ${pronoun} or choose valid members to continue.`;
+};
 
 export class VisitorService {
+  private async validateResponsibleMemberIds(responsibleMembers: unknown) {
+    const memberIds = parseResponsibleMemberIds(responsibleMembers);
+
+    if (!memberIds.length) {
+      return [];
+    }
+
+    const existingMembers = await prisma.user.findMany({
+      where: {
+        id: { in: memberIds },
+      },
+      select: { id: true },
+    });
+
+    const existingMemberIdSet = new Set(
+      existingMembers.map((member) => member.id),
+    );
+    const missingMemberIds = memberIds.filter(
+      (id) => !existingMemberIdSet.has(id),
+    );
+
+    if (missingMemberIds.length) {
+      throw new InputValidationError(
+        buildMissingResponsibleMembersMessage(missingMemberIds),
+      );
+    }
+
+    return memberIds;
+  }
+
   async deleteVisitor(id: number) {
     return await prisma.visitor.delete({
       where: { id },
@@ -21,12 +400,18 @@ export class VisitorService {
       membershipWish,
       event,
     } = body;
+    const hasResponsibleMembers = hasOwnProperty(body, "responsibleMembers");
+    const responsibleMembers = hasResponsibleMembers
+      ? await this.validateResponsibleMemberIds(body.responsibleMembers)
+      : undefined;
+    const clergyFields = resolveVisitorClergyFields(body);
 
     const visitorData = {
       title: personal_info.title,
       firstName: toSentenceCase(personal_info.first_name),
       lastName: toSentenceCase(personal_info.last_name),
       otherName: toSentenceCase(personal_info.other_name),
+      gender: normalizeOptionalText(personal_info.gender),
       email: contact_info.email.toLowerCase(),
       phone: contact_info.phone?.number ?? null,
       country: contact_info.resident_country,
@@ -40,6 +425,21 @@ export class VisitorService {
       consentToContact:
         consentToContact === "true" || consentToContact === true,
       membershipWish: membershipWish === "true" || membershipWish === true,
+      ...(clergyFields.shouldApply
+        ? {
+            isClergy: clergyFields.isClergy,
+            churchName: clergyFields.churchName,
+            churchLocation: clergyFields.churchLocation,
+            churchRole: clergyFields.churchRole,
+          }
+        : {}),
+      ...(hasResponsibleMembers
+        ? {
+            responsibleMembers: serializeResponsibleMemberIds(
+              responsibleMembers || [],
+            ),
+          }
+        : {}),
       // is_member is not included here; optionally set it if needed
     };
 
@@ -48,7 +448,13 @@ export class VisitorService {
       data: visitorData,
     });
 
-    return updatedVisitor;
+    return {
+      ...updatedVisitor,
+      responsibleMembers: parseResponsibleMemberIds(
+        updatedVisitor.responsibleMembers,
+        { strict: false },
+      ),
+    };
   }
   async getVisitorById(id: number) {
     const visitor = await prisma.visitor.findUnique({
@@ -77,15 +483,25 @@ export class VisitorService {
 
     if (!visitor) return null;
 
+    const responsibleMemberIds = parseResponsibleMemberIds(
+      visitor.responsibleMembers,
+      {
+        strict: false,
+      },
+    );
+
     // Get unique assignedTo user IDs
     const assignedToIds = Array.from(
       new Set(visitor.followUps.map((f) => f.assignedTo).filter(Boolean)),
     ) as number[];
+    const userIds = Array.from(
+      new Set([...assignedToIds, ...responsibleMemberIds]),
+    ) as number[];
 
     // Fetch corresponding user names
-    const users = assignedToIds.length
+    const users = userIds.length
       ? await prisma.user.findMany({
-          where: { id: { in: assignedToIds } },
+          where: { id: { in: userIds } },
           select: { id: true, name: true },
         })
       : [];
@@ -96,6 +512,11 @@ export class VisitorService {
 
     return {
       ...visitor,
+      responsibleMembers: responsibleMemberIds,
+      responsibleMembersNames: getResponsibleMemberNames(
+        responsibleMemberIds,
+        userMap,
+      ),
       visits: visitor.visits.map(({ event, ...v }) => ({
         ...v,
         eventId: event?.event.id,
@@ -108,36 +529,56 @@ export class VisitorService {
       })),
     };
   }
-  async getAllVisitors(query: {
-    search?: string;
-    createdMonth?: string;
-    visitMonth?: string;
-    eventId?: string;
-    page?: string;
-    limit?: string;
-  }) {
+  async getAllVisitors(
+    query: {
+      search?: string;
+      createdMonth?: string;
+      visitMonth?: string;
+      eventId?: string;
+      referral?: string;
+      page?: string;
+      limit?: string;
+      take?: string;
+    },
+    scope?: {
+      mode?: "all" | "responsible";
+      memberId?: number;
+    },
+  ) {
     const {
       search,
       createdMonth,
       visitMonth,
       eventId,
+      referral,
       page = "1",
       limit = "10",
+      take,
     } = query;
+    const normalizedSearch = typeof search === "string" ? search.trim() : "";
 
-    const pageNumber = Math.max(Number(page), 1);
-    const pageSize = Math.max(Number(limit), 1);
+    const parsedPageNumber = Number(page);
+    const pageNumber =
+      Number.isInteger(parsedPageNumber) && parsedPageNumber > 0
+        ? parsedPageNumber
+        : 1;
+    const resolvedTake = take ?? limit;
+    const parsedPageSize = Number(resolvedTake);
+    const pageSize =
+      Number.isInteger(parsedPageSize) && parsedPageSize > 0
+        ? parsedPageSize
+        : 10;
     const skip = (pageNumber - 1) * pageSize;
 
     const where: any = {};
 
-    if (search) {
+    if (normalizedSearch) {
       where.OR = [
-        { firstName: { contains: toSentenceCase(search) } },
-        { lastName: { contains: toSentenceCase(search) } },
-        { otherName: { contains: toSentenceCase(search) } },
-        { email: { contains: toSentenceCase(search) } },
-        { phone: { contains: toSentenceCase(search) } },
+        { firstName: { contains: normalizedSearch } },
+        { lastName: { contains: normalizedSearch } },
+        { otherName: { contains: normalizedSearch } },
+        { email: { contains: normalizedSearch } },
+        { phone: { contains: normalizedSearch } },
       ];
     }
 
@@ -167,11 +608,19 @@ export class VisitorService {
       };
     }
 
-    /* 🔢 TOTAL COUNT */
-    const total = await prisma.visitor.count({ where });
+    if (referral) {
+      where.howHeard = referral;
+    }
 
-    /* 📦 DATA QUERY */
-    const visitors = await prisma.visitor.findMany({
+    const shouldScopeByResponsibleMember =
+      scope?.mode === "responsible" &&
+      Number.isInteger(Number(scope?.memberId)) &&
+      Number(scope?.memberId) > 0;
+    const scopedResponsibleMemberId = shouldScopeByResponsibleMember
+      ? Number(scope?.memberId)
+      : null;
+
+    const rawVisitors = await prisma.visitor.findMany({
       where,
       include: {
         visits: {
@@ -189,24 +638,60 @@ export class VisitorService {
           },
         },
         followUps: {
-          orderBy: { createdAt: "asc" },
+          orderBy: [{ date: "desc" }, { createdAt: "desc" }],
         },
       },
       orderBy: { createdAt: "desc" },
-      skip,
-      take: pageSize,
     });
 
-    const data = visitors.map(({ visits, followUps, ...visitor }) => ({
-      ...visitor,
-      eventId: visits[0]?.event?.event.id || null,
-      eventName: visits[0]?.event?.event.event_name || null,
-      visitCount: visits.length,
-      followUp:
-        followUps.length > 0
-          ? followUps[followUps.length - 1].status
-          : "No Follow Ups Yet",
-    }));
+    const visitors = shouldScopeByResponsibleMember
+      ? rawVisitors.filter((visitor) =>
+          parseResponsibleMemberIds(visitor.responsibleMembers, {
+            strict: false,
+          }).includes(scopedResponsibleMemberId as number),
+        )
+      : rawVisitors;
+
+    const total = visitors.length;
+    const paginatedVisitors = visitors.slice(skip, skip + pageSize);
+    const allResponsibleMemberIds = Array.from(
+      new Set(
+        paginatedVisitors.flatMap((visitor) =>
+          parseResponsibleMemberIds(visitor.responsibleMembers, {
+            strict: false,
+          }),
+        ),
+      ),
+    );
+    const responsibleMembers = allResponsibleMemberIds.length
+      ? await prisma.user.findMany({
+          where: { id: { in: allResponsibleMemberIds } },
+          select: { id: true, name: true },
+        })
+      : [];
+    const responsibleMemberMap = Object.fromEntries(
+      responsibleMembers.map((member) => [member.id, member.name]),
+    );
+
+    const data = paginatedVisitors.map(({ visits, followUps, ...visitor }) => {
+      const responsibleMemberIds = parseResponsibleMemberIds(
+        visitor.responsibleMembers,
+        { strict: false },
+      );
+
+      return {
+        ...visitor,
+        responsibleMembers: responsibleMemberIds,
+        responsibleMembersNames: getResponsibleMemberNames(
+          responsibleMemberIds,
+          responsibleMemberMap,
+        ),
+        eventId: visits[0]?.event?.event.id || null,
+        eventName: visits[0]?.event?.event.event_name || null,
+        visitCount: visits.length,
+        followUp: followUps[0]?.date || null,
+      };
+    });
 
     return {
       data,
@@ -214,6 +699,7 @@ export class VisitorService {
         total,
         page: pageNumber,
         limit: pageSize,
+        take: pageSize,
         totalPages: Math.ceil(total / pageSize),
       },
     };
@@ -227,6 +713,13 @@ export class VisitorService {
       consentToContact,
       membershipWish,
     } = body;
+    const hasResponsibleMembers = hasOwnProperty(body, "responsibleMembers");
+    const responsibleMembers = hasResponsibleMembers
+      ? await this.validateResponsibleMemberIds(body.responsibleMembers)
+      : [];
+    const clergyFields = resolveVisitorClergyFields(body, {
+      defaultToFalse: true,
+    });
 
     const visitDate = new Date(visit.date);
     const email = contact_info.email;
@@ -251,10 +744,38 @@ export class VisitorService {
       });
 
       if (existingVisit) {
-        throw new Error(
-          "Visit has already been recorded for this Visitor and Event.",
-        );
+        throw new InputValidationError(DUPLICATE_VISIT_VALIDATION_MESSAGE);
       }
+
+      const updatedExistingVisitor =
+        hasResponsibleMembers ||
+        (clergyFields.hasExplicitInput && clergyFields.isClergy) ||
+        hasTextValue(personal_info?.gender)
+          ? await prisma.visitor.update({
+              where: { id: existingVisitor.id },
+              data: {
+                ...(hasTextValue(personal_info?.gender)
+                  ? {
+                      gender: normalizeOptionalText(personal_info.gender),
+                    }
+                  : {}),
+                ...(hasResponsibleMembers
+                  ? {
+                      responsibleMembers:
+                        serializeResponsibleMemberIds(responsibleMembers),
+                    }
+                  : {}),
+                ...(clergyFields.hasExplicitInput && clergyFields.isClergy
+                  ? {
+                      isClergy: true,
+                      churchName: clergyFields.churchName,
+                      churchLocation: clergyFields.churchLocation,
+                      churchRole: clergyFields.churchRole,
+                    }
+                  : {}),
+              },
+            })
+          : existingVisitor;
 
       const newVisit = await visitService.createVisit({
         visitorId: existingVisitor.id,
@@ -262,7 +783,16 @@ export class VisitorService {
         eventId: event_id,
       });
 
-      return { visitor: existingVisitor, createdVisit: newVisit };
+      return {
+        visitor: {
+          ...updatedExistingVisitor,
+          responsibleMembers: parseResponsibleMemberIds(
+            updatedExistingVisitor.responsibleMembers,
+            { strict: false },
+          ),
+        },
+        createdVisit: newVisit,
+      };
     }
 
     // Prepare new visitor data
@@ -271,6 +801,7 @@ export class VisitorService {
       firstName: toSentenceCase(personal_info.first_name),
       lastName: toSentenceCase(personal_info.last_name),
       otherName: toSentenceCase(personal_info.other_name),
+      gender: normalizeOptionalText(personal_info.gender),
       email: contact_info.email.toLowerCase(),
       phone: contact_info.phone?.number ?? null,
       country: contact_info.resident_country,
@@ -284,6 +815,11 @@ export class VisitorService {
       consentToContact:
         consentToContact === "true" || consentToContact === true,
       membershipWish: membershipWish === "true" || membershipWish === true,
+      isClergy: clergyFields.isClergy,
+      churchName: clergyFields.churchName,
+      churchLocation: clergyFields.churchLocation,
+      churchRole: clergyFields.churchRole,
+      responsibleMembers: serializeResponsibleMemberIds(responsibleMembers),
       is_member: false,
     };
 
@@ -297,7 +833,16 @@ export class VisitorService {
       eventId: event_id,
     });
 
-    return { visitor: createdVisitor, createdVisit: newVisit };
+    return {
+      visitor: {
+        ...createdVisitor,
+        responsibleMembers: parseResponsibleMemberIds(
+          createdVisitor.responsibleMembers,
+          { strict: false },
+        ),
+      },
+      createdVisit: newVisit,
+    };
   }
 
   private getMonthRange(month: string) {
@@ -307,46 +852,127 @@ export class VisitorService {
     return { start, end };
   }
 
-  async changeVisitorStatusToMember(id: number) {
+  async changeVisitorStatusToMember(id: number, payload: any = {}) {
     const visitor = await this.getVisitorById(id);
-    if (!visitor) throw new Error("Visitor not found");
+    if (!visitor) throw new NotFoundError("Visitor not found");
 
-    const { firstName, lastName, email, phone, country } = visitor;
+    const personalInfoPayload = payload?.personal_info || {};
+    const contactInfoPayload = payload?.contact_info || {};
+    const churchInfoPayload = payload?.church_info || {};
+    const contactPhonePayload = contactInfoPayload?.phone || {};
+    const resolvedFirstName = normalizeOptionalText(
+      personalInfoPayload.first_name ??
+        payload?.first_name ??
+        visitor.firstName,
+    );
+    const resolvedLastName = normalizeOptionalText(
+      personalInfoPayload.last_name ?? payload?.last_name ?? visitor.lastName,
+    );
+    const resolvedOtherName =
+      normalizeOptionalText(
+        personalInfoPayload.other_name ??
+          payload?.other_name ??
+          visitor.otherName,
+      ) || "";
+    const resolvedTitle = normalizeOptionalText(
+      personalInfoPayload.title ?? payload?.title ?? visitor.title,
+    );
+    const resolvedEmail = normalizeOptionalEmail(
+      contactInfoPayload.email ?? payload?.email ?? visitor.email,
+    );
+    const resolvedCountry = normalizeOptionalText(
+      contactInfoPayload.resident_country ??
+        payload?.resident_country ??
+        payload?.country ??
+        visitor.country,
+    );
+    const resolvedCountryCode = normalizeOptionalText(
+      contactPhonePayload.country_code ??
+        payload?.country_code ??
+        visitor.country_code,
+    );
+    const resolvedPrimaryNumber = normalizeOptionalText(
+      contactPhonePayload.number ?? payload?.primary_number ?? visitor.phone,
+    );
+    const resolvedStateRegion = normalizeOptionalText(
+      contactInfoPayload.state_region ?? payload?.state_region ?? visitor.state,
+    );
+    const resolvedCity = normalizeOptionalText(
+      contactInfoPayload.city ?? payload?.city ?? visitor.city,
+    );
+    const resolvedGender = normalizeConversionGender(
+      personalInfoPayload.gender ?? payload?.gender,
+    );
+    const resolvedMembershipType = normalizeMembershipType(
+      churchInfoPayload.membership_type ?? payload?.membership_type,
+    );
+    const resolvedMemberSince =
+      churchInfoPayload.member_since ?? payload?.member_since ?? new Date();
+    const resolvedDateOfBirth =
+      personalInfoPayload.date_of_birth ?? payload?.date_of_birth ?? null;
+    const resolvedMaritalStatus =
+      personalInfoPayload.marital_status ?? payload?.marital_status ?? null;
+    const resolvedNationality =
+      normalizeOptionalText(
+        personalInfoPayload.nationality ??
+          payload?.nationality ??
+          resolvedCountry,
+      ) || resolvedCountry;
 
-    // Split phone into country_code and number (if possible)
-    const country_code = phone?.slice(0, 4) || ""; // adjust slicing if needed
-    const primary_number = phone?.slice(4) || phone || "";
+    if (!resolvedFirstName || !resolvedLastName) {
+      throw new InputValidationError(CONVERSION_NAME_VALIDATION_MESSAGE);
+    }
+
+    if (!isRealEmail(resolvedEmail)) {
+      throw new InputValidationError(INVALID_CONVERSION_EMAIL_MESSAGE);
+    }
+
+    const loginEmail = resolvedEmail as string;
+
+    const existingUser = await prisma.user.findUnique({
+      where: { email: loginEmail },
+      select: { id: true },
+    });
+
+    if (existingUser) {
+      throw new Error(
+        `A user with the email ${loginEmail} already exists. Use a different email address or sign in with the existing account.`,
+      );
+    }
 
     const userData = {
       personal_info: {
-        first_name: firstName,
-        last_name: lastName,
-        other_name: "",
-        gender: null,
-        date_of_birth: null,
-        marital_status: null,
-        nationality: country,
+        title: resolvedTitle,
+        first_name: resolvedFirstName,
+        last_name: resolvedLastName,
+        other_name: resolvedOtherName,
+        gender: resolvedGender,
+        date_of_birth: resolvedDateOfBirth,
+        marital_status: resolvedMaritalStatus,
+        nationality: resolvedNationality,
         has_children: false,
       },
       contact_info: {
-        email: email || undefined,
-        resident_country: country,
+        email: loginEmail,
+        resident_country: resolvedCountry,
+        state_region: resolvedStateRegion,
+        city: resolvedCity,
         phone: {
-          country_code,
-          number: primary_number,
+          country_code: resolvedCountryCode,
+          number: resolvedPrimaryNumber,
         },
       },
       work_info: {},
       emergency_contact: {},
       church_info: {
-        membership_type: "IN_HOUSE",
+        membership_type: resolvedMembershipType,
         department_id: null,
         position_id: null,
-        member_since: new Date(),
+        member_since: resolvedMemberSince,
       },
       picture: {},
       children: [],
-      status: "active",
+      status: "CONFIRMED",
       password: "123456", // default or auto-generated
       is_user: true,
     };

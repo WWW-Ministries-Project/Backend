@@ -29,7 +29,8 @@ export class VisitController {
 
   async getAllVisits(req: Request, res: Response) {
     try {
-      const programs = await visitService.getAllVisits();
+      const visitorScope = (req as any).visitorScope;
+      const programs = await visitService.getAllVisits(visitorScope);
       return res.status(200).json({ data: programs });
     } catch (error: any) {
       return res

@@ -1,100 +1,127 @@
-// import { prisma } from "../../../Models/context";
+import { prisma } from "../../../Models/context";
+import { BaseConfigPayload, FinanceHttpError, PaginationQuery } from "../common";
 
-// interface CreatePaymentConfigValues {
-//   name: string;
-//   description: string;
-// }
+type PaymentConfigEntity = {
+  id: string;
+  name: string;
+  description: string | null;
+};
 
+export class PaymentConfigurationService {
+  private mapResponse(config: {
+    id: string;
+    name: string;
+    description: string | null;
+  }): PaymentConfigEntity {
+    return {
+      id: config.id,
+      name: config.name,
+      description: config.description,
+    };
+  }
 
-// export class paymentConfigurationService {
-//   /**
-//    * Create a new finance config
-//    */
+  async create(data: BaseConfigPayload): Promise<PaymentConfigEntity> {
+    const existing = await prisma.paymentConfig.findFirst({
+      where: { name: data.name },
+      select: { id: true },
+    });
 
-//   async create(data: CreatePaymentConfigValues) {
-//     const config = await prisma.paymentConfig.create({
-//       data: {
-//         name: data.name,
-//         description: data.description,
-//       },
-//     });
+    if (existing) {
+      throw new FinanceHttpError(409, "Payment config name already exists");
+    }
 
-//     return this.mapResponse(config);
-//   }
+    const created = await prisma.paymentConfig.create({
+      data: {
+        name: data.name,
+        ...(data.description !== undefined && { description: data.description }),
+      },
+      select: {
+        id: true,
+        name: true,
+        description: true,
+      },
+    });
 
-//   /**
-//    * Fetch all finance configs
-//    */
-//   async findAll() {
-//     const configs = await prisma.paymentConfig.findMany({
-//       orderBy: { createdAt: 'desc' },
-//     });
+    return this.mapResponse(created);
+  }
 
-//     return configs.map(this.mapResponse);
-//   }
+  async findAll(pagination: PaginationQuery): Promise<{
+    data: PaymentConfigEntity[];
+    total: number;
+  }> {
+    const [total, configs] = await Promise.all([
+      prisma.paymentConfig.count(),
+      prisma.paymentConfig.findMany({
+        orderBy: { createdAt: "desc" },
+        skip: pagination.skip,
+        take: pagination.take,
+        select: {
+          id: true,
+          name: true,
+          description: true,
+        },
+      }),
+    ]);
 
-//   /**
-//    * Fetch a single finance config by ID
-//    */
-//   async findById(id: string) {
-//     const config = await prisma.paymentConfig.findUnique({
-//       where: { id },
-//     });
+    return {
+      total,
+      data: configs.map((config) => this.mapResponse(config)),
+    };
+  }
 
-//     if (!config) {
-//       throw new Error('Finance configuration not found');
-//     }
+  async update(id: string, data: BaseConfigPayload): Promise<PaymentConfigEntity> {
+    const existing = await prisma.paymentConfig.findUnique({
+      where: { id },
+      select: { id: true },
+    });
 
-//     return this.mapResponse(config);
-//   }
+    if (!existing) {
+      throw new FinanceHttpError(404, "Payment config not found");
+    }
 
-//   /**
-//    * Update a finance config
-//    */
-//   async update(id: string, data: Partial<CreatePaymentConfigValues>) {
-//     // Ensure record exists
-//     await this.findById(id);
+    const duplicate = await prisma.paymentConfig.findFirst({
+      where: {
+        name: data.name,
+        id: { not: id },
+      },
+      select: { id: true },
+    });
 
-//     const updated = await prisma.paymentConfig.update({
-//       where: { id },
-//       data: {
-//         ...(data.name !== undefined && { name: data.name }),
-//         ...(data.description !== undefined && {
-//           description: data.description,
-//         }),
-//       },
-//     });
+    if (duplicate) {
+      throw new FinanceHttpError(409, "Payment config name already exists");
+    }
 
-//     return this.mapResponse(updated);
-//   }
+    const updated = await prisma.paymentConfig.update({
+      where: { id },
+      data: {
+        name: data.name,
+        ...(data.description !== undefined && { description: data.description }),
+      },
+      select: {
+        id: true,
+        name: true,
+        description: true,
+      },
+    });
 
-//   /**
-//    * Delete a finance config
-//    */
-//   async delete(id: string) {
-//     // Ensure record exists
-//     await this.findById(id);
+    return this.mapResponse(updated);
+  }
 
-//     await prisma.paymentConfig.delete({
-//       where: { id },
-//     });
+  async delete(id: string): Promise<{ id: string; deleted: true }> {
+    const existing = await prisma.paymentConfig.findUnique({
+      where: { id },
+      select: { id: true },
+    });
 
-//     return {
-//       message: 'Finance configuration deleted successfully',
-//       id,
-//     };
-//   }
+    if (!existing) {
+      throw new FinanceHttpError(404, "Payment config not found");
+    }
 
-//   /**
-//    * Normalize DB response
-//    */
-//   private mapResponse(config: any) {
-//     return {
-//       id: config.id,
-//       name: config.name,
-//       description: config.description,
-//       createdAt: config.createdAt,
-//       updatedAt: config.updatedAt,
-//     };
-//   }
-// }
+    await prisma.paymentConfig.delete({ where: { id } });
+
+    return {
+      id,
+      deleted: true,
+    };
+  }
+}

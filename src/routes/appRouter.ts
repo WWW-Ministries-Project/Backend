@@ -1,4 +1,4 @@
-import Router from "express";
+import Router, { type Request, type Response } from "express";
 import * as dotenv from "dotenv";
 import {
   departmentRouter,
@@ -8,6 +8,7 @@ import {
   uploadRouter,
   assetRouter,
   eventRouter,
+  eventReportRouter,
   requisitionRouter,
   userRouter,
 } from "../modules";
@@ -20,13 +21,22 @@ import productRouter from "../modules/products/productRouter";
 import orderRouter from "../modules/orders/orderRoutes";
 import themeRouter from "../modules/theme/route";
 import appointmentRouter from "../modules/appointment/appointment-route";
-import { fi } from "date-fns/locale";
-// import receiptConfigRouter from "../modules/finance/ReceiptConfig/route";
-// import bankAccountConfigRouter from "../modules/finance/BankAccountConfig/route";
-// import paymentConfigRouter from "../modules/finance/PaymentConfig/route";
+import receiptConfigRouter from "../modules/finance/ReceiptConfig/route";
+import bankAccountConfigRouter from "../modules/finance/BankAccountConfig/route";
+import paymentConfigRouter from "../modules/finance/PaymentConfig/route";
+import titheBreakdownConfigRouter from "../modules/finance/TitheBreakdownConfig/route";
+import financialsRouter from "../modules/finance/Financials/route";
+import aiRouter from "../modules/ai/aiRoute";
+import notificationRouter from "../modules/notifications/notificationRoute";
+import settingsRouter from "../modules/settings/route";
+import { FollowUPController } from "../modules/visitorManagement/followUpController";
+import { Permissions } from "../middleWare/authorization";
 dotenv.config();
 
 export const appRouter = Router();
+const permissions = new Permissions();
+const protect = permissions.protect;
+const followUpController = new FollowUPController();
 
 appRouter.get("/", landingPage);
 appRouter.use("/user", userRouter);
@@ -36,6 +46,7 @@ appRouter.use("/access", accessRouter);
 appRouter.use("/upload", uploadRouter);
 appRouter.use("/assets", assetRouter);
 appRouter.use("/event", eventRouter);
+appRouter.use("/event-reports", eventReportRouter);
 appRouter.use("/requisitions", requisitionRouter);
 appRouter.use("/program", programRouter);
 appRouter.use("/visitor", visitorRouter);
@@ -46,7 +57,32 @@ appRouter.use("/product", productRouter);
 appRouter.use("/orders", orderRouter);
 appRouter.use("/theme", themeRouter);
 appRouter.use("/appointment", appointmentRouter);
-// appRouter.use("/receiptconfig", receiptConfigRouter);
-// appRouter.use("/paymentconfig", paymentConfigRouter);
-// appRouter.use("/bankaccountconfig", bankAccountConfigRouter);
+appRouter.use("/receiptconfig", receiptConfigRouter);
+appRouter.use("/paymentconfig", paymentConfigRouter);
+appRouter.use("/bankaccountconfig", bankAccountConfigRouter);
+appRouter.use("/tithebreakdownconfig", titheBreakdownConfigRouter);
+appRouter.use("/financials", financialsRouter);
+appRouter.use("/ai", aiRouter);
+appRouter.use("/notifications", notificationRouter);
+appRouter.use("/settings", settingsRouter);
+appRouter.use("/api/ai", aiRouter);
+appRouter.use("/api/v1/ai", aiRouter);
 
+// Backward-compatible aliases used by some clients.
+appRouter.get(
+  "/followup",
+  [protect, permissions.can_view_visitor_followups_scoped],
+  (req: Request, res: Response) => {
+    if (req.query?.id !== undefined) {
+      return followUpController.getFollowUpById(req, res);
+    }
+
+    return followUpController.getAllFollowUps(req, res);
+  },
+);
+
+appRouter.get(
+  "/followups",
+  [protect, permissions.can_view_visitor_followups_scoped],
+  followUpController.getAllFollowUps,
+);

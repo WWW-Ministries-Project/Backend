@@ -1,16 +1,543 @@
 import { Request, Response, NextFunction } from "express";
 
 import JWT from "jsonwebtoken";
+import { prisma } from "../Models/context";
+import { canUserManageRequisitionByApproverRole } from "../modules/requisitions/requisition-approval-workflow";
 
-// Define permission levels and common messages
 const VIEW_PERMISSIONS = ["Can_View", "Can_Manage", "Super_Admin"];
 const MANAGE_PERMISSIONS = ["Can_Manage", "Super_Admin"];
 const ADMIN_PERMISSIONS = ["Super_Admin"];
+const PERMISSION_KEY_ALIASES: Record<string, string[]> = {
+  Members: ["Members"],
+  Visitors: ["Visitors", "Members"],
+  Appointments: ["Appointments", "Members"],
+  Departments: ["Departments"],
+  Positions: ["Positions"],
+  Access_rights: ["Access_rights", "Access rights"],
+  Events: ["Events"],
+  Church_Attendance: ["Church_Attendance", "Church Attendance", "Events"],
+  Theme: ["Theme", "Program"],
+  Asset: ["Asset"],
+  Requisition: ["Requisition", "Requisitions"],
+  Program: ["Program"],
+  School_of_ministry: ["School_of_ministry", "School of ministry", "Program"],
+  Financials: ["Financials", "Access_rights", "Access rights"],
+  Settings: ["Settings", "Access_rights", "Access rights"],
+  AI: ["AI", "Settings", "Access_rights", "Access rights"],
+  Marketplace: ["Marketplace", "Program"],
+  "Life Center": ["Life Center"],
+};
+
+const parsePermissionsObject = (permissions: any): Record<string, any> => {
+  if (!permissions) return {};
+
+  if (typeof permissions === "string") {
+    const trimmedPermissions = permissions.trim();
+    if (!trimmedPermissions) return {};
+
+    try {
+      const parsedPermissions = JSON.parse(trimmedPermissions);
+      if (
+        parsedPermissions &&
+        typeof parsedPermissions === "object" &&
+        !Array.isArray(parsedPermissions)
+      ) {
+        return parsedPermissions as Record<string, any>;
+      }
+    } catch (error) {
+      return {};
+    }
+
+    return {};
+  }
+
+  if (typeof permissions === "object" && !Array.isArray(permissions)) {
+    return permissions as Record<string, any>;
+  }
+
+  return {};
+};
+
+const resolvePermissionValue = (permissions: any, permissionType: string) => {
+  const parsedPermissions = parsePermissionsObject(permissions);
+  if (Object.keys(parsedPermissions).length === 0) {
+    return null;
+  }
+
+  const aliasKeys = PERMISSION_KEY_ALIASES[permissionType] || [permissionType];
+  for (const key of aliasKeys) {
+    const value = parsedPermissions?.[key];
+    if (typeof value === "string") {
+      return value;
+    }
+  }
+
+  return null;
+};
+
+const toPositiveInt = (value: any) => {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return null;
+  }
+  return parsed;
+};
+
+const toUniquePositiveIds = (
+  values: Array<number | null | undefined>,
+): number[] =>
+  Array.from(
+    new Set(
+      values
+        .map((value) => toPositiveInt(value))
+        .filter((value): value is number => Boolean(value)),
+    ),
+  );
+
+const parsePositiveIntArray = (value: any): number[] => {
+  if (!Array.isArray(value)) return [];
+  const ids = value
+    .map((item) => toPositiveInt(item))
+    .filter((item): item is number => Boolean(item));
+
+  return Array.from(new Set(ids));
+};
+
+const parseResponsibleMembers = (responsibleMembers: any): number[] => {
+  if (!Array.isArray(responsibleMembers)) {
+    return [];
+  }
+
+  const ids = responsibleMembers
+    .map((memberId) => toPositiveInt(memberId))
+    .filter((memberId): memberId is number => Boolean(memberId));
+
+  return Array.from(new Set(ids));
+};
+
+const getNestedExclusionSource = (permissions: any) => {
+  const parsedPermissions = parsePermissionsObject(permissions);
+  if (Object.keys(parsedPermissions).length === 0) return null;
+
+  const candidates = [
+    parsedPermissions?.Exclusions,
+    parsedPermissions?.exclusions,
+    parsedPermissions?.exclusion_list,
+    parsedPermissions?.exclusionList,
+  ];
+
+  for (const candidate of candidates) {
+    if (candidate && typeof candidate === "object" && !Array.isArray(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
+};
+
+const resolveDomainExclusions = (permissions: any, permissionType: string) => {
+  const parsedPermissions = parsePermissionsObject(permissions);
+  if (Object.keys(parsedPermissions).length === 0) {
+    return [];
+  }
+
+  const aliasKeys = PERMISSION_KEY_ALIASES[permissionType] || [permissionType];
+  const nestedSource = getNestedExclusionSource(parsedPermissions);
+
+  const allCandidateKeys = Array.from(
+    new Set(
+      aliasKeys.flatMap((key) => [
+        key,
+        key.replace(/\s+/g, "_"),
+        `${key}_exclusions`,
+        `${key.replace(/\s+/g, "_")}_exclusions`,
+      ]),
+    ),
+  );
+
+  for (const key of allCandidateKeys) {
+    const directIds = parsePositiveIntArray(parsedPermissions?.[key]);
+    if (directIds.length > 0) {
+      return directIds;
+    }
+  }
+
+  if (!nestedSource) return [];
+
+  for (const key of allCandidateKeys) {
+    const nestedIds = parsePositiveIntArray((nestedSource as any)?.[key]);
+    if (nestedIds.length > 0) {
+      return nestedIds;
+    }
+  }
+
+  return [];
+};
+
+const hasActionPermission = (
+  permissions: any,
+  permissionType: string,
+  action: "view" | "manage" | "admin",
+) => {
+  const permission = resolvePermissionValue(permissions, permissionType);
+  if (!permission) return false;
+
+  if (action === "view") return VIEW_PERMISSIONS.includes(permission);
+  if (action === "manage") return MANAGE_PERMISSIONS.includes(permission);
+
+  return ADMIN_PERMISSIONS.includes(permission);
+};
+
+type AccessContextSnapshot = {
+  currentUser: any;
+  permissions: Record<string, any>;
+  isPrivilegedUser: boolean;
+  departmentIds: number[];
+  lifeCenterIds: number[];
+};
+
+type AccessContextCacheEntry = {
+  snapshot: AccessContextSnapshot;
+  expiresAt: number;
+};
+
+const DEFAULT_AUTH_CONTEXT_CACHE_TTL_MS = 30_000;
+const DEFAULT_AUTH_CONTEXT_CACHE_MAX_ENTRIES = 2_000;
+
+const parsePositiveEnvInt = (value: unknown, fallback: number) => {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return parsed;
+};
+
+const authContextCacheEnabled = !["false", "0", "no"].includes(
+  String(process.env.AUTH_CONTEXT_CACHE_ENABLED ?? "true")
+    .trim()
+    .toLowerCase(),
+);
+
+const authContextCacheTtlMs = parsePositiveEnvInt(
+  process.env.AUTH_CONTEXT_CACHE_TTL_MS,
+  DEFAULT_AUTH_CONTEXT_CACHE_TTL_MS,
+);
+
+const authContextCacheMaxEntries = parsePositiveEnvInt(
+  process.env.AUTH_CONTEXT_CACHE_MAX_ENTRIES,
+  DEFAULT_AUTH_CONTEXT_CACHE_MAX_ENTRIES,
+);
+
+const authContextCache = new Map<number, AccessContextCacheEntry>();
+const inflightAuthContextFetches = new Map<number, Promise<AccessContextSnapshot | null>>();
+
+const cloneAccessContextSnapshot = (
+  snapshot: AccessContextSnapshot,
+): AccessContextSnapshot => ({
+  currentUser: {
+    ...snapshot.currentUser,
+    department_positions: Array.isArray(snapshot.currentUser?.department_positions)
+      ? snapshot.currentUser.department_positions.map((item: any) => ({ ...item }))
+      : [],
+    life_center_member: Array.isArray(snapshot.currentUser?.life_center_member)
+      ? snapshot.currentUser.life_center_member.map((item: any) => ({ ...item }))
+      : [],
+    access: snapshot.currentUser?.access
+      ? { ...snapshot.currentUser.access }
+      : snapshot.currentUser?.access,
+  },
+  permissions: { ...snapshot.permissions },
+  isPrivilegedUser: snapshot.isPrivilegedUser,
+  departmentIds: [...snapshot.departmentIds],
+  lifeCenterIds: [...snapshot.lifeCenterIds],
+});
+
+const pruneAuthContextCache = (now = Date.now()) => {
+  for (const [userId, entry] of authContextCache.entries()) {
+    if (entry.expiresAt <= now) {
+      authContextCache.delete(userId);
+    }
+  }
+
+  if (authContextCache.size <= authContextCacheMaxEntries) {
+    return;
+  }
+
+  const entriesByExpiry = [...authContextCache.entries()].sort(
+    (a, b) => a[1].expiresAt - b[1].expiresAt,
+  );
+  const excessEntries = authContextCache.size - authContextCacheMaxEntries;
+  for (let index = 0; index < excessEntries; index += 1) {
+    const candidate = entriesByExpiry[index];
+    if (!candidate) break;
+    authContextCache.delete(candidate[0]);
+  }
+};
+
+const getCachedAuthContextSnapshot = (
+  userId: number,
+): AccessContextSnapshot | null => {
+  if (!authContextCacheEnabled) {
+    return null;
+  }
+
+  const now = Date.now();
+  const cachedEntry = authContextCache.get(userId);
+  if (!cachedEntry) {
+    return null;
+  }
+
+  if (cachedEntry.expiresAt <= now) {
+    authContextCache.delete(userId);
+    return null;
+  }
+
+  return cloneAccessContextSnapshot(cachedEntry.snapshot);
+};
+
+const setCachedAuthContextSnapshot = (
+  userId: number,
+  snapshot: AccessContextSnapshot,
+) => {
+  if (!authContextCacheEnabled) {
+    return;
+  }
+
+  pruneAuthContextCache();
+  authContextCache.set(userId, {
+    snapshot,
+    expiresAt: Date.now() + authContextCacheTtlMs,
+  });
+};
+
+const fetchAuthContextSnapshotFromDb = async (
+  userId: number,
+): Promise<AccessContextSnapshot | null> => {
+  const rows = await prisma.$queryRaw<
+    Array<{
+      id: number;
+      is_user: boolean | number | null;
+      access_level_id: number | null;
+      department_id: number | null;
+      permissions: string | null;
+      scoped_department_id: number | null;
+      life_center_id: number | null;
+    }>
+  >`
+    SELECT
+      u.id,
+      u.is_user,
+      u.access_level_id,
+      u.department_id,
+      al.permissions,
+      dp.department_id AS scoped_department_id,
+      lcm.lifeCenterId AS life_center_id
+    FROM \`user\` u
+    LEFT JOIN \`access_level\` al
+      ON al.id = u.access_level_id
+    LEFT JOIN \`department_positions\` dp
+      ON dp.user_id = u.id
+    LEFT JOIN \`life_center_member\` lcm
+      ON lcm.userId = u.id
+    WHERE u.id = ${userId}
+  `;
+
+  if (!rows.length) {
+    authContextCache.delete(userId);
+    return null;
+  }
+
+  const firstRow = rows[0];
+  const departmentIdsFromRows = toUniquePositiveIds(
+    rows.map((row) => row.scoped_department_id),
+  );
+  const lifeCenterIdsFromRows = toUniquePositiveIds(
+    rows.map((row) => row.life_center_id),
+  );
+
+  const snapshotUser = {
+    id: firstRow.id,
+    is_user: Boolean(firstRow.is_user),
+    access_level_id: firstRow.access_level_id,
+    department_id: firstRow.department_id,
+    department_positions: departmentIdsFromRows.map((departmentId) => ({
+      department_id: departmentId,
+    })),
+    life_center_member: lifeCenterIdsFromRows.map((lifeCenterId) => ({
+      lifeCenterId,
+    })),
+    access: firstRow.access_level_id
+      ? {
+          permissions: firstRow.permissions,
+        }
+      : null,
+  };
+
+  const permissions = parsePermissionsObject(snapshotUser?.access?.permissions);
+  const departmentIds = Array.from(
+    new Set(
+      [
+        snapshotUser?.department_id,
+        ...(snapshotUser?.department_positions || []).map(
+          (item: any) => item.department_id,
+        ),
+      ]
+        .map((id) => toPositiveInt(id))
+        .filter((id): id is number => Boolean(id)),
+    ),
+  );
+  const lifeCenterIds = Array.from(
+    new Set(
+      (snapshotUser?.life_center_member || [])
+        .map((item: any) => toPositiveInt(item?.lifeCenterId))
+        .filter((id: number | null): id is number => Boolean(id)),
+    ),
+  );
+  const isPrivilegedUser = Boolean(
+    snapshotUser?.is_user &&
+      snapshotUser?.access_level_id &&
+      snapshotUser?.access,
+  );
+
+  return {
+    currentUser: snapshotUser,
+    permissions,
+    isPrivilegedUser,
+    departmentIds,
+    lifeCenterIds,
+  };
+};
+
+const getOrFetchAuthContextSnapshot = async (
+  userId: number,
+): Promise<AccessContextSnapshot | null> => {
+  const cached = getCachedAuthContextSnapshot(userId);
+  if (cached) {
+    return cached;
+  }
+
+  if (!authContextCacheEnabled) {
+    return fetchAuthContextSnapshotFromDb(userId);
+  }
+
+  const inflight = inflightAuthContextFetches.get(userId);
+  if (inflight) {
+    const snapshot = await inflight;
+    return snapshot ? cloneAccessContextSnapshot(snapshot) : null;
+  }
+
+  const fetchPromise = (async () => {
+    const snapshot = await fetchAuthContextSnapshotFromDb(userId);
+    if (snapshot) {
+      setCachedAuthContextSnapshot(userId, snapshot);
+    } else {
+      authContextCache.delete(userId);
+    }
+    return snapshot;
+  })().finally(() => {
+    inflightAuthContextFetches.delete(userId);
+  });
+
+  inflightAuthContextFetches.set(userId, fetchPromise);
+  const snapshot = await fetchPromise;
+  return snapshot ? cloneAccessContextSnapshot(snapshot) : null;
+};
 
 export class Permissions {
-  // Keep the protect method as is
+  private extractToken(req: Request | any) {
+    return req.headers["authorization"]?.split(" ")[1];
+  }
+
+  private unauthorized(res: Response, message: string) {
+    return res.status(401).json({ message, data: null });
+  }
+
+  private async getAccessContext(
+    req: Request | any,
+    res: Response,
+    errorMessage: string,
+  ) {
+    const token = this.extractToken(req);
+    if (!token) {
+      this.unauthorized(res, "Not authorized. Token not found");
+      return null;
+    }
+
+    let decoded: any;
+    try {
+      decoded = JWT.verify(token, process.env.JWT_SECRET as string) as any;
+    } catch (error) {
+      this.unauthorized(res, "Session Expired");
+      return null;
+    }
+
+    const userId = toPositiveInt(decoded?.id);
+    if (!userId) {
+      this.unauthorized(res, errorMessage);
+      return null;
+    }
+
+    let snapshot: AccessContextSnapshot | null = null;
+    try {
+      snapshot = await getOrFetchAuthContextSnapshot(userId);
+    } catch (error) {
+      this.unauthorized(res, errorMessage);
+      return null;
+    }
+
+    if (!snapshot) {
+      this.unauthorized(res, errorMessage);
+      return null;
+    }
+
+    const {
+      currentUser,
+      permissions: livePermissions,
+      isPrivilegedUser,
+      departmentIds,
+      lifeCenterIds,
+    } = snapshot;
+
+    req.user = {
+      ...decoded,
+      id: userId,
+      permissions: livePermissions,
+      ministry_worker: Boolean(currentUser?.is_user),
+      user_category: isPrivilegedUser ? "admin" : "member",
+    };
+
+    return {
+      userId,
+      decoded,
+      currentUser,
+      permissions: livePermissions,
+      isPrivilegedUser,
+      departmentIds,
+      lifeCenterIds,
+    };
+  }
+
+  private isExcluded(
+    permissions: any,
+    permissionType: string,
+    targetUserId: number,
+  ) {
+    const exclusions = resolveDomainExclusions(permissions, permissionType);
+    return exclusions.includes(targetUserId);
+  }
+
+  private getTargetUserId(req: Request | any) {
+    return (
+      toPositiveInt(req.query?.user_id) ||
+      toPositiveInt(req.query?.id) ||
+      toPositiveInt(req.params?.id) ||
+      toPositiveInt(req.body?.user_id) ||
+      toPositiveInt(req.body?.id)
+    );
+  }
+
   protect = (req: any, res: Response, next: NextFunction) => {
-    const token = req.headers["authorization"]?.split(" ")[1];
+    const token = this.extractToken(req);
     if (!token)
       return res
         .status(401)
@@ -36,42 +563,743 @@ export class Permissions {
     action: "view" | "manage" | "admin",
     errorMessage: string,
   ) => {
-    return (req: Request, res: Response, next: NextFunction) => {
-      const token: any = req.headers["authorization"]?.split(" ")[1];
-
-      try {
-        const decoded = JWT.verify(
-          token,
-          process.env.JWT_SECRET as string,
-        ) as any;
-        const permission = decoded.permissions?.[permissionType];
-        let allowedPermissions;
-
-        // Select appropriate permission level based on action
-        if (action === "view") {
-          allowedPermissions = VIEW_PERMISSIONS; // Can_View, Can_Manage, Super_Admin
-        } else if (action === "manage") {
-          allowedPermissions = MANAGE_PERMISSIONS; // Can_Manage, Super_Admin
-        } else {
-          allowedPermissions = ADMIN_PERMISSIONS; // Super_Admin only
-        }
-
-        if (allowedPermissions.includes(permission)) {
-          // For requisitions middleware, we need to set the user
-          if (permissionType === "Requisition") {
-            (req as any).user = decoded;
-          }
-          next();
-        } else {
-          return res.status(401).json({ message: errorMessage, data: null });
-        }
-      } catch (error) {
-        return res.status(401).json({
-          message: "Session Expired",
-          data: null,
-        });
+    return async (req: Request, res: Response, next: NextFunction) => {
+      const context = await this.getAccessContext(req, res, errorMessage);
+      if (!context) {
+        return;
       }
+
+      if (
+        context.isPrivilegedUser &&
+        hasActionPermission(context.permissions, permissionType, action)
+      ) {
+        return next();
+      }
+
+      if (permissionType === "Requisition" && action === "manage") {
+        const canManageAsApprover = await canUserManageRequisitionByApproverRole(
+          context.userId,
+        );
+
+        if (canManageAsApprover) {
+          return next();
+        }
+      }
+
+      return res.status(401).json({ message: errorMessage, data: null });
     };
+  };
+
+  can_view_member_details = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    const errorMessage = "Not authorized to view members";
+    const context = await this.getAccessContext(req, res, errorMessage);
+    if (!context) return;
+
+    const targetUserId = this.getTargetUserId(req);
+    const routeKey = String(
+      (req as any).originalUrl || req.path || (req as any).route?.path || "",
+    ).toLowerCase();
+    const canViewOwnMemberDetails = [
+      "/get-user",
+      "/get-user-family",
+      "/get-user-email",
+    ].some((routeFragment) => routeKey.includes(routeFragment));
+    const canViewAll =
+      context.isPrivilegedUser &&
+      hasActionPermission(context.permissions, "Members", "view");
+
+    if (canViewAll) {
+      if (
+        targetUserId &&
+        targetUserId !== context.userId &&
+        this.isExcluded(context.permissions, "Members", targetUserId)
+      ) {
+        return this.unauthorized(res, errorMessage);
+      }
+
+      (req as any).memberScope = {
+        mode: "all",
+        exclusions: resolveDomainExclusions(context.permissions, "Members"),
+      };
+      return next();
+    }
+
+    if (!canViewOwnMemberDetails) {
+      return this.unauthorized(res, errorMessage);
+    }
+
+    const resolvedTargetUserId = targetUserId || context.userId;
+    if (resolvedTargetUserId !== context.userId) {
+      return this.unauthorized(res, errorMessage);
+    }
+
+    (req as any).memberScope = {
+      mode: "own",
+      userId: context.userId,
+    };
+    return next();
+  };
+
+  can_manage_member_details = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    const errorMessage = "Not authorized to create or update users";
+    const context = await this.getAccessContext(req, res, errorMessage);
+    if (!context) return;
+
+    if (
+      !context.isPrivilegedUser ||
+      !hasActionPermission(context.permissions, "Members", "manage")
+    ) {
+      return this.unauthorized(res, errorMessage);
+    }
+
+    const targetUserId = this.getTargetUserId(req);
+    if (
+      targetUserId &&
+      targetUserId !== context.userId &&
+      this.isExcluded(context.permissions, "Members", targetUserId)
+    ) {
+      return this.unauthorized(res, errorMessage);
+    }
+
+    return next();
+  };
+
+  can_delete_member_details = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    const errorMessage = "Not authorized to delete users";
+    const context = await this.getAccessContext(req, res, errorMessage);
+    if (!context) return;
+
+    if (
+      !context.isPrivilegedUser ||
+      !hasActionPermission(context.permissions, "Members", "admin")
+    ) {
+      return this.unauthorized(res, errorMessage);
+    }
+
+    const targetUserId = this.getTargetUserId(req);
+    if (
+      targetUserId &&
+      targetUserId !== context.userId &&
+      this.isExcluded(context.permissions, "Members", targetUserId)
+    ) {
+      return this.unauthorized(res, errorMessage);
+    }
+
+    return next();
+  };
+
+  private getExplicitVisitorId(req: Request | any) {
+    return (
+      toPositiveInt(req.body?.visitorId) ||
+      toPositiveInt(req.body?.visitor_id) ||
+      toPositiveInt(req.query?.visitorId) ||
+      toPositiveInt(req.query?.visitor_id) ||
+      toPositiveInt(req.params?.visitorId) ||
+      toPositiveInt(req.params?.visitor_id)
+    );
+  }
+
+  private getResourceId(req: Request | any) {
+    return (
+      toPositiveInt(req.query?.id) ||
+      toPositiveInt(req.params?.id) ||
+      toPositiveInt(req.body?.id)
+    );
+  }
+
+  private async resolveVisitorIdFromResourceId(
+    resource: "visitor" | "visit" | "follow_up" | "prayer_request",
+    resourceId: number,
+  ) {
+    if (resource === "visitor") {
+      return resourceId;
+    }
+
+    if (resource === "visit") {
+      const visit = await prisma.visit.findUnique({
+        where: { id: resourceId },
+        select: { visitorId: true },
+      });
+      return toPositiveInt(visit?.visitorId);
+    }
+
+    if (resource === "follow_up") {
+      const followUp = await prisma.follow_up.findUnique({
+        where: { id: resourceId },
+        select: { visitorId: true },
+      });
+      return toPositiveInt(followUp?.visitorId);
+    }
+
+    const prayerRequest = await prisma.prayer_request.findUnique({
+      where: { id: resourceId },
+      select: { visitorId: true },
+    });
+    return toPositiveInt(prayerRequest?.visitorId);
+  }
+
+  private async resolveVisitorTargetId(
+    req: Request,
+    options: {
+      resource: "visitor" | "visit" | "follow_up" | "prayer_request";
+      queryIdIsVisitorId?: boolean;
+    },
+  ) {
+    const explicitVisitorId = this.getExplicitVisitorId(req);
+    if (explicitVisitorId) {
+      return explicitVisitorId;
+    }
+
+    if (options.queryIdIsVisitorId) {
+      const queryVisitorId =
+        toPositiveInt(req.query?.id) || toPositiveInt(req.params?.id);
+      if (queryVisitorId) {
+        return queryVisitorId;
+      }
+    }
+
+    const resourceId = this.getResourceId(req);
+    if (!resourceId) {
+      return null;
+    }
+
+    return this.resolveVisitorIdFromResourceId(options.resource, resourceId);
+  }
+
+  private visitorScopedPermission = (
+    action: "view" | "manage",
+    errorMessage: string,
+    options: {
+      resource: "visitor" | "visit" | "follow_up" | "prayer_request";
+      allowResponsibleList?: boolean;
+      queryIdIsVisitorId?: boolean;
+    },
+  ) => {
+    return async (req: Request, res: Response, next: NextFunction) => {
+      const context = await this.getAccessContext(req, res, errorMessage);
+      if (!context) return;
+
+      const canAccessAll =
+        context.isPrivilegedUser &&
+        hasActionPermission(context.permissions, "Visitors", action);
+      const visitorId = await this.resolveVisitorTargetId(req, {
+        resource: options.resource,
+        queryIdIsVisitorId: options.queryIdIsVisitorId,
+      });
+
+      if (canAccessAll) {
+        (req as any).visitorScope = { mode: "all" };
+        return next();
+      }
+
+      if (!visitorId) {
+        if (action === "view" && options.allowResponsibleList) {
+          (req as any).visitorScope = {
+            mode: "responsible",
+            memberId: context.userId,
+          };
+          return next();
+        }
+        return this.unauthorized(res, errorMessage);
+      }
+
+      const visitor = await prisma.visitor.findUnique({
+        where: { id: visitorId },
+        select: { id: true, responsibleMembers: true },
+      });
+      if (!visitor) return next();
+
+      const responsibleMembers = parseResponsibleMembers(visitor.responsibleMembers);
+      if (!responsibleMembers.includes(context.userId)) {
+        return this.unauthorized(res, errorMessage);
+      }
+
+      (req as any).visitorScope = {
+        mode: "responsible",
+        memberId: context.userId,
+      };
+      return next();
+    };
+  };
+
+  can_view_visitors_scoped = this.visitorScopedPermission(
+    "view",
+    "Not authorized to view visitors",
+    { resource: "visitor", allowResponsibleList: true },
+  );
+
+  can_manage_visitors_scoped = this.visitorScopedPermission(
+    "manage",
+    "Not authorized to update visitors",
+    { resource: "visitor" },
+  );
+
+  can_view_visitor_visits_scoped = this.visitorScopedPermission(
+    "view",
+    "Not authorized to view visits",
+    { resource: "visit", allowResponsibleList: true },
+  );
+
+  can_manage_visitor_visits_scoped = this.visitorScopedPermission(
+    "manage",
+    "Not authorized to update visits",
+    { resource: "visit" },
+  );
+
+  can_view_visitor_followups_scoped = this.visitorScopedPermission(
+    "view",
+    "Not authorized to view follow ups",
+    { resource: "follow_up", allowResponsibleList: true },
+  );
+
+  can_manage_visitor_followups_scoped = this.visitorScopedPermission(
+    "manage",
+    "Not authorized to update follow ups",
+    { resource: "follow_up" },
+  );
+
+  can_view_visitor_prayer_requests_scoped = this.visitorScopedPermission(
+    "view",
+    "Not authorized to view prayer requests",
+    { resource: "prayer_request", allowResponsibleList: true },
+  );
+
+  can_manage_visitor_prayer_requests_scoped = this.visitorScopedPermission(
+    "manage",
+    "Not authorized to update prayer requests",
+    { resource: "prayer_request" },
+  );
+
+  can_delete_visitors_scoped = this.checkPermission(
+    "Visitors",
+    "admin",
+    "Not authorized to delete visitors",
+  );
+
+  can_view_appointments_scoped = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    const errorMessage = "Not authorized to view appointments";
+    const context = await this.getAccessContext(req, res, errorMessage);
+    if (!context) return;
+
+    const hasGlobalView =
+      context.isPrivilegedUser &&
+      hasActionPermission(context.permissions, "Appointments", "view");
+    const exclusions = resolveDomainExclusions(context.permissions, "Appointments");
+    const bookingId = toPositiveInt(req.params?.id);
+
+    if (bookingId) {
+      const booking = await prisma.appointment.findUnique({
+        where: { id: bookingId },
+        select: {
+          id: true,
+          requesterId: true,
+          userId: true,
+        },
+      });
+      if (!booking) return next();
+
+      if (hasGlobalView) {
+        if (this.isExcluded(context.permissions, "Appointments", booking.userId)) {
+          return this.unauthorized(res, errorMessage);
+        }
+        (req as any).appointmentScope = {
+          mode: "all",
+          excludedAttendeeIds: exclusions,
+        };
+        return next();
+      }
+
+      if (
+        booking.requesterId === context.userId ||
+        booking.userId === context.userId
+      ) {
+        (req as any).appointmentScope = {
+          mode: "own",
+          userId: context.userId,
+        };
+        return next();
+      }
+
+      return this.unauthorized(res, errorMessage);
+    }
+
+    if (hasGlobalView) {
+      (req as any).appointmentScope = {
+        mode: "all",
+        excludedAttendeeIds: exclusions,
+      };
+      return next();
+    }
+
+    (req as any).appointmentScope = {
+      mode: "own",
+      userId: context.userId,
+    };
+    return next();
+  };
+
+  can_manage_appointments_scoped = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    const errorMessage = "Not authorized to manage appointments";
+    const context = await this.getAccessContext(req, res, errorMessage);
+    if (!context) return;
+
+    if (
+      !context.isPrivilegedUser ||
+      !hasActionPermission(context.permissions, "Appointments", "manage")
+    ) {
+      return this.unauthorized(res, errorMessage);
+    }
+
+    const attendeeFromRequest =
+      toPositiveInt(req.body?.userId) ||
+      toPositiveInt(req.body?.staffId) ||
+      toPositiveInt(req.body?.attendeeId) ||
+      toPositiveInt(req.body?.attendee_id) ||
+      toPositiveInt(req.query?.userId) ||
+      toPositiveInt(req.query?.staffId) ||
+      toPositiveInt(req.query?.attendeeId) ||
+      toPositiveInt(req.query?.attendee_id);
+
+    const bookingIdFromParams = toPositiveInt(req.params?.id);
+    const bookingIdFromQuery = toPositiveInt(req.query?.id);
+    const isAvailabilityPath = String(req.path || "").includes("availability");
+
+    let targetAttendeeId = attendeeFromRequest;
+
+    if (!targetAttendeeId && bookingIdFromParams) {
+      if (isAvailabilityPath) {
+        const availability = await prisma.availability.findUnique({
+          where: { id: bookingIdFromParams },
+          select: { userId: true },
+        });
+        targetAttendeeId = availability?.userId || null;
+      } else {
+        const booking = await prisma.appointment.findUnique({
+          where: { id: bookingIdFromParams },
+          select: { userId: true },
+        });
+        targetAttendeeId = booking?.userId || null;
+      }
+    }
+
+    if (!targetAttendeeId && bookingIdFromQuery) {
+      const booking = await prisma.appointment.findUnique({
+        where: { id: bookingIdFromQuery },
+        select: { userId: true },
+      });
+      targetAttendeeId = booking?.userId || null;
+    }
+
+    if (
+      targetAttendeeId &&
+      this.isExcluded(context.permissions, "Appointments", targetAttendeeId)
+    ) {
+      return this.unauthorized(res, errorMessage);
+    }
+
+    return next();
+  };
+
+  can_delete_appointments_scoped = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    const errorMessage = "Not authorized to delete appointments";
+    const context = await this.getAccessContext(req, res, errorMessage);
+    if (!context) return;
+
+    if (
+      !context.isPrivilegedUser ||
+      !hasActionPermission(context.permissions, "Appointments", "admin")
+    ) {
+      return this.unauthorized(res, errorMessage);
+    }
+
+    const bookingIdFromParams = toPositiveInt(req.params?.id);
+    const isAvailabilityPath = String(req.path || "").includes("availability");
+    if (bookingIdFromParams) {
+      if (isAvailabilityPath) {
+        const availability = await prisma.availability.findUnique({
+          where: { id: bookingIdFromParams },
+          select: { userId: true },
+        });
+        if (
+          availability?.userId &&
+          this.isExcluded(context.permissions, "Appointments", availability.userId)
+        ) {
+          return this.unauthorized(res, errorMessage);
+        }
+      } else {
+        const booking = await prisma.appointment.findUnique({
+          where: { id: bookingIdFromParams },
+          select: { userId: true },
+        });
+        if (
+          booking?.userId &&
+          this.isExcluded(context.permissions, "Appointments", booking.userId)
+        ) {
+          return this.unauthorized(res, errorMessage);
+        }
+      }
+    }
+
+    return next();
+  };
+
+  can_view_assets_scoped = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    const errorMessage = "Not authorized to view asset";
+    const context = await this.getAccessContext(req, res, errorMessage);
+    if (!context) return;
+
+    const canViewAll =
+      context.isPrivilegedUser &&
+      hasActionPermission(context.permissions, "Asset", "view");
+
+    if (canViewAll) {
+      (req as any).assetScope = { mode: "all" };
+      return next();
+    }
+
+    if (!context.departmentIds.length) {
+      return this.unauthorized(res, errorMessage);
+    }
+
+    const assetId = toPositiveInt(req.query?.id);
+    if (assetId) {
+      const asset = await prisma.assets.findUnique({
+        where: { id: assetId },
+        select: { id: true, department_assigned: true },
+      });
+      if (!asset) return next();
+
+      if (
+        !asset.department_assigned ||
+        !context.departmentIds.includes(asset.department_assigned)
+      ) {
+        return this.unauthorized(res, errorMessage);
+      }
+    }
+
+    (req as any).assetScope = {
+      mode: "department",
+      departmentIds: context.departmentIds,
+    };
+    return next();
+  };
+
+  can_view_life_center_scoped = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    const errorMessage = "Not authorized to view life center";
+    const context = await this.getAccessContext(req, res, errorMessage);
+    if (!context) return;
+
+    const canViewAll =
+      context.isPrivilegedUser &&
+      hasActionPermission(context.permissions, "Life Center", "view");
+
+    if (canViewAll) {
+      (req as any).lifeCenterScope = { mode: "all", lifeCenterIds: [] };
+      return next();
+    }
+
+    if (!context.lifeCenterIds.length) {
+      return this.unauthorized(res, errorMessage);
+    }
+
+    (req as any).lifeCenterScope = {
+      mode: "member",
+      lifeCenterIds: context.lifeCenterIds,
+    };
+    return next();
+  };
+
+  can_manage_life_center_scoped = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    const errorMessage = "Not authorized to manage life center data";
+    const context = await this.getAccessContext(req, res, errorMessage);
+    if (!context) return;
+
+    const canManageAll =
+      context.isPrivilegedUser &&
+      hasActionPermission(context.permissions, "Life Center", "manage");
+    if (canManageAll) {
+      (req as any).lifeCenterScope = { mode: "all", lifeCenterIds: [] };
+      return next();
+    }
+
+    if (!context.lifeCenterIds.length) {
+      return this.unauthorized(res, errorMessage);
+    }
+
+    const explicitLifeCenterId =
+      toPositiveInt(req.body?.lifeCenterId) || toPositiveInt(req.query?.lifeCenterId);
+    const soulId = toPositiveInt(req.query?.id) || toPositiveInt(req.params?.id);
+
+    if (explicitLifeCenterId) {
+      if (!context.lifeCenterIds.includes(explicitLifeCenterId)) {
+        return this.unauthorized(res, errorMessage);
+      }
+    } else if (soulId) {
+      const soul = await prisma.soul_won.findUnique({
+        where: { id: soulId },
+        select: { lifeCenterId: true },
+      });
+      if (soul && !context.lifeCenterIds.includes(soul.lifeCenterId)) {
+        return this.unauthorized(res, errorMessage);
+      }
+    }
+
+    (req as any).lifeCenterScope = {
+      mode: "member",
+      lifeCenterIds: context.lifeCenterIds,
+    };
+    return next();
+  };
+
+  can_manage_programs_or_facilitator = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    const errorMessage = "Not authorized to manage school of ministry data";
+    const context = await this.getAccessContext(req, res, errorMessage);
+    if (!context) return;
+
+    const canManageAll =
+      context.isPrivilegedUser &&
+      (hasActionPermission(context.permissions, "School_of_ministry", "manage") ||
+        hasActionPermission(context.permissions, "Program", "manage"));
+
+    const isFacilitator = Boolean((req as any).user?.instructor);
+    if (!canManageAll && !isFacilitator) {
+      return this.unauthorized(res, errorMessage);
+    }
+
+    return next();
+  };
+
+  can_create_order_scoped = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    const errorMessage = "Not authorized to create order for this user";
+    const context = await this.getAccessContext(req, res, errorMessage);
+    if (!context) return;
+
+    const canManageAll =
+      context.isPrivilegedUser &&
+      hasActionPermission(context.permissions, "Marketplace", "manage");
+
+    const payloadUserId = toPositiveInt((req as any).body?.user_id);
+    if (payloadUserId && payloadUserId !== context.userId && !canManageAll) {
+      return this.unauthorized(res, errorMessage);
+    }
+
+    if (!(req as any).body || typeof (req as any).body !== "object") {
+      (req as any).body = {};
+    }
+
+    if (!payloadUserId) {
+      (req as any).body.user_id = context.userId;
+    }
+
+    (req as any).orderScope = {
+      mode: canManageAll ? "all" : "own",
+      userId: context.userId,
+    };
+    return next();
+  };
+
+  can_view_orders_scoped = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    const errorMessage = "Not authorized to view this order";
+    const context = await this.getAccessContext(req, res, errorMessage);
+    if (!context) return;
+
+    const canViewAll =
+      context.isPrivilegedUser &&
+      hasActionPermission(context.permissions, "Marketplace", "view");
+
+    if (canViewAll) {
+      (req as any).orderScope = { mode: "all", userId: context.userId };
+      return next();
+    }
+
+    const orderId = toPositiveInt(req.query?.id);
+    if (orderId) {
+      const order = await prisma.orders.findUnique({
+        where: { id: orderId },
+        select: { user_id: true },
+      });
+      if (order && order.user_id !== context.userId) {
+        return this.unauthorized(res, errorMessage);
+      }
+    }
+
+    const orderNumber =
+      typeof req.query?.order_number === "string"
+        ? String(req.query.order_number).trim()
+        : "";
+    if (orderNumber) {
+      const order = await prisma.orders.findFirst({
+        where: { order_number: orderNumber },
+        select: { user_id: true },
+      });
+      if (order && order.user_id !== context.userId) {
+        return this.unauthorized(res, errorMessage);
+      }
+    }
+
+    const queryUserId = toPositiveInt(req.query?.user_id);
+    if (queryUserId && queryUserId !== context.userId) {
+      return this.unauthorized(res, errorMessage);
+    }
+
+    const routeKey = String((req as any).originalUrl || req.path || "").toLowerCase();
+    if (!queryUserId && routeKey.includes("get-orders-by-user")) {
+      (req as any).query = {
+        ...(req as any).query,
+        user_id: String(context.userId),
+      };
+    }
+
+    (req as any).orderScope = { mode: "own", userId: context.userId };
+    return next();
   };
 
   // Users/members
@@ -188,9 +1416,28 @@ export class Permissions {
     "Not authorized to delete events",
   );
 
+  // Church attendance
+  can_view_church_attendance = this.checkPermission(
+    "Church_Attendance",
+    "view",
+    "Not authorized to view church attendance",
+  );
+
+  can_manage_church_attendance = this.checkPermission(
+    "Church_Attendance",
+    "manage",
+    "Not authorized to manage church attendance",
+  );
+
+  can_delete_church_attendance = this.checkPermission(
+    "Church_Attendance",
+    "admin",
+    "Not authorized to delete church attendance",
+  );
+
   // Requisitions
   can_view_requisitions = this.checkPermission(
-    "Requisitions",
+    "Requisition",
     "view",
     "Not authorized to view requisitions",
   );
@@ -225,22 +1472,131 @@ export class Permissions {
     "admin",
     "Not authorized to delete programs",
   );
+
+  // Theme
+  can_manage_theme = this.checkPermission(
+    "Theme",
+    "manage",
+    "Not authorized to manage theme",
+  );
+
+  can_delete_theme = this.checkPermission(
+    "Theme",
+    "admin",
+    "Not authorized to delete theme",
+  );
+
+  // Financials
+  can_view_financials = this.checkPermission(
+    "Financials",
+    "view",
+    "Not authorized to view financials",
+  );
+
+  can_manage_financials = this.checkPermission(
+    "Financials",
+    "manage",
+    "Not authorized to manage financials",
+  );
+
+  can_delete_financials = this.checkPermission(
+    "Financials",
+    "admin",
+    "Not authorized to delete financials",
+  );
+
+  // Settings
+  can_view_settings = this.checkPermission(
+    "Settings",
+    "view",
+    "Not authorized to view settings",
+  );
+
+  can_manage_settings = this.checkPermission(
+    "Settings",
+    "manage",
+    "Not authorized to manage settings",
+  );
+
+  can_delete_settings = this.checkPermission(
+    "Settings",
+    "admin",
+    "Not authorized to delete settings",
+  );
+
+  // Marketplace
+  can_view_marketplace = this.checkPermission(
+    "Marketplace",
+    "view",
+    "Not authorized to view marketplace data",
+  );
+
+  can_manage_marketplace = this.checkPermission(
+    "Marketplace",
+    "manage",
+    "Not authorized to manage marketplace data",
+  );
+
+  can_delete_marketplace = this.checkPermission(
+    "Marketplace",
+    "admin",
+    "Not authorized to delete marketplace data",
+  );
+
+  // School of ministry
+  can_view_school_of_ministry = this.checkPermission(
+    "School_of_ministry",
+    "view",
+    "Not authorized to view school of ministry data",
+  );
+
+  can_manage_school_of_ministry = this.checkPermission(
+    "School_of_ministry",
+    "manage",
+    "Not authorized to manage school of ministry data",
+  );
+
+  can_delete_school_of_ministry = this.checkPermission(
+    "School_of_ministry",
+    "admin",
+    "Not authorized to delete school of ministry data",
+  );
+
+  // AI
+  can_view_ai = this.checkPermission(
+    "AI",
+    "view",
+    "Not authorized to view AI resources",
+  );
+
+  can_manage_ai = this.checkPermission(
+    "AI",
+    "manage",
+    "Not authorized to manage AI resources",
+  );
+
+  can_delete_ai = this.checkPermission(
+    "AI",
+    "admin",
+    "Not authorized to delete AI resources",
+  );
+
   // Life Center
   can_view_life_center = this.checkPermission(
     "Life Center",
     "view",
-    "Not authorized to view programs",
+    "Not authorized to view life center data",
   );
 
   can_manage_life_center = this.checkPermission(
     "Life Center",
     "manage",
-    "Not authorized to edit programs",
+    "Not authorized to manage life center data",
   );
 
   can_delete_life_center = this.checkPermission(
     "Life Center",
     "admin",
-    "Not authorized to delete programs",
+    "Not authorized to delete life center data",
   );
 }
