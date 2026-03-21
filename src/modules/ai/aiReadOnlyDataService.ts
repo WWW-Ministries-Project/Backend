@@ -1,4 +1,9 @@
-import { RequestApprovalStatus, appointment_status, payment_status } from "@prisma/client";
+import {
+  RequestApprovalStatus,
+  RequisitionApprovalInstanceStatus,
+  appointment_status,
+  payment_status,
+} from "@prisma/client";
 import { Dirent, promises as fs } from "fs";
 import path from "path";
 import { prisma } from "../../Models/context";
@@ -61,6 +66,38 @@ type FinancialMetrics = {
   net_income_like: number;
   numeric_values_scanned: number;
   top_amount_fields: FinancialMetricEntry[];
+};
+
+type AttendanceTimingStatus = "early" | "on_time" | "late";
+
+type AttendanceTimingDetail = {
+  event_id: number;
+  event_name: string;
+  user_id: number;
+  member_id: string | null;
+  member_name: string;
+  attendance_date: string;
+  arrival_time: string;
+  scheduled_start_time: string | null;
+  status: AttendanceTimingStatus;
+  minutes_from_start: number;
+  minutes_before_start: number;
+  minutes_after_start: number;
+};
+
+type AttendanceTimingAggregate = {
+  user_id: number;
+  member_id: string | null;
+  member_name: string;
+  events_attended_count: number;
+  early_arrival_count: number;
+  on_time_arrival_count: number;
+  late_arrival_count: number;
+  total_minutes_early: number;
+  max_minutes_early: number;
+  total_minutes_late: number;
+  max_minutes_late: number;
+  timing_records: AttendanceTimingDetail[];
 };
 
 export class AiReadOnlyDataServiceError extends Error {
@@ -134,7 +171,10 @@ export class AiReadOnlyDataService {
       operation !== "summary" &&
       operation !== "recent" &&
       operation !== "search" &&
-      operation !== "attendance_lookup"
+      operation !== "queue" &&
+      operation !== "attendance_lookup" &&
+      operation !== "early_arrivals" &&
+      operation !== "attendance_timing"
     ) {
       throw new AiReadOnlyDataServiceError(`Unsupported operation "${value}"`, 400);
     }
@@ -160,13 +200,46 @@ export class AiReadOnlyDataService {
   }
 
   private parseSearchTerm(input: Record<string, unknown>): string {
-    const queryRaw = input.q;
-    const query = String(queryRaw || "").trim();
+    const query = this.normalizeSearchTerm(input.q);
     if (query.length < 2) {
       throw new AiReadOnlyDataServiceError("q must be provided and at least 2 characters", 400);
     }
 
     return query;
+  }
+
+  private normalizeSearchTerm(raw: unknown): string {
+    return String(raw || "")
+      .trim()
+      .replace(/^['"`“”‘’]+|['"`“”‘’]+$/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  private parseOptionalQueryText(raw: unknown, fieldName: string): string | null {
+    if (raw === undefined || raw === null || raw === "") {
+      return null;
+    }
+
+    const query = this.normalizeSearchTerm(raw);
+    if (!query) {
+      return null;
+    }
+
+    if (query.length < 2) {
+      throw new AiReadOnlyDataServiceError(
+        `${fieldName} must be at least 2 characters`,
+        400,
+      );
+    }
+
+    return query;
+  }
+
+  private matchesSearchTerm(value: string, query: string): boolean {
+    return this.normalizeSearchTerm(value)
+      .toLowerCase()
+      .includes(this.normalizeSearchTerm(query).toLowerCase());
   }
 
   private parseOptionalDateFilter(raw: unknown): { start: Date; end: Date; iso: string } | null {
@@ -203,6 +276,34 @@ export class AiReadOnlyDataService {
     }
 
     return parsed;
+  }
+
+  private parseLimitWithFallback(raw: unknown, fallback: number): number {
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      return fallback;
+    }
+
+    return Math.max(1, Math.min(MAX_RECENT_LIMIT, Math.floor(parsed)));
+  }
+
+  private parseAttendanceTimingStatus(
+    raw: unknown,
+  ): AttendanceTimingStatus | "all" {
+    const normalized = String(raw || "all").trim().toLowerCase();
+    if (
+      normalized === "all" ||
+      normalized === "early" ||
+      normalized === "on_time" ||
+      normalized === "late"
+    ) {
+      return normalized;
+    }
+
+    throw new AiReadOnlyDataServiceError(
+      'status must be one of "early", "on_time", "late", or "all"',
+      400,
+    );
   }
 
   private parseDateRange(input: Record<string, unknown>): DateRangeFilter | null {
@@ -254,6 +355,59 @@ export class AiReadOnlyDataService {
     }
 
     return parsed;
+  }
+
+  private buildEventStartDateTime(
+    eventDate: string,
+    eventStartTime: string | null | undefined,
+    eventStartDate: Date | null | undefined,
+  ): Date | null {
+    const eventStart = new Date(`${eventDate}T00:00:00.000Z`);
+    const normalizedStartTime = String(eventStartTime || "").trim();
+    const timeMatch = normalizedStartTime.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+
+    if (timeMatch) {
+      eventStart.setUTCHours(
+        Number(timeMatch[1]),
+        Number(timeMatch[2]),
+        Number(timeMatch[3] || 0),
+        0,
+      );
+      return eventStart;
+    }
+
+    if (!eventStartDate) {
+      return null;
+    }
+
+    eventStart.setUTCHours(
+      eventStartDate.getUTCHours(),
+      eventStartDate.getUTCMinutes(),
+      eventStartDate.getUTCSeconds(),
+      eventStartDate.getUTCMilliseconds(),
+    );
+
+    return eventStart;
+  }
+
+  private formatTimeOfDay(value: Date | null | undefined): string | null {
+    if (!value || Number.isNaN(value.getTime())) {
+      return null;
+    }
+
+    return value.toISOString().slice(11, 19);
+  }
+
+  private getAttendanceTimingStatus(minutesFromStart: number): AttendanceTimingStatus {
+    if (minutesFromStart < 0) {
+      return "early";
+    }
+
+    if (minutesFromStart > 0) {
+      return "late";
+    }
+
+    return "on_time";
   }
 
   private appendDateRangeWhere(
@@ -995,7 +1149,7 @@ export class AiReadOnlyDataService {
 
     if (operation === "attendance_lookup") {
       const eventId = this.parseOptionalPositiveInt(input.event_id);
-      const eventName = String(input.event_name || "").trim();
+      const eventName = this.parseOptionalQueryText(input.event_name, "event_name");
       const dateFilter = this.parseOptionalDateFilter(input.date);
       const dateRangeForAttendance = dateFilter ? null : dateRange;
 
@@ -1081,7 +1235,7 @@ export class AiReadOnlyDataService {
         dataSource: "prisma.event_attendance_summary + event_mgt + event_act",
         appliedFilters: {
           event_id: eventId,
-          event_name: eventName || null,
+          event_name: eventName,
           date: dateFilter?.iso || null,
           start_date: dateRangeForAttendance?.start_iso || null,
           end_date: dateRangeForAttendance?.end_iso || null,
@@ -1091,6 +1245,489 @@ export class AiReadOnlyDataService {
           matched_records: mapped.length,
           totals,
           records: mapped,
+        },
+      };
+    }
+
+    if (operation === "early_arrivals" || operation === "attendance_timing") {
+      const eventId = this.parseOptionalPositiveInt(input.event_id);
+      const eventName = this.parseOptionalQueryText(input.event_name, "event_name");
+      const userId = this.parseOptionalPositiveInt(input.user_id);
+      const memberQuery = this.parseOptionalQueryText(input.member_query, "member_query");
+      const dateFilter = this.parseOptionalDateFilter(input.date);
+      const dateRangeForAttendance = dateFilter ? null : dateRange;
+      const requestedStatus =
+        operation === "early_arrivals"
+          ? "early"
+          : this.parseAttendanceTimingStatus(input.status);
+      const rankingLimit = this.parseLimitWithFallback(
+        input.limit,
+        operation === "early_arrivals" ? 3 : DEFAULT_RECENT_LIMIT,
+      );
+
+      const attendanceWhere: Record<string, unknown> = {};
+      if (dateFilter) {
+        attendanceWhere.created_at = {
+          gte: dateFilter.start,
+          lt: dateFilter.end,
+        };
+      } else if (dateRangeForAttendance) {
+        attendanceWhere.created_at = {
+          gte: dateRangeForAttendance.start,
+          lt: dateRangeForAttendance.endExclusive,
+        };
+      }
+      if (eventId) {
+        attendanceWhere.event_id = eventId;
+      }
+      if (userId) {
+        attendanceWhere.user_id = userId;
+      }
+      if (eventName) {
+        attendanceWhere.event = {
+          event: {
+            event_name: {
+              contains: eventName,
+            },
+          },
+        };
+      }
+
+      const attendanceRows = await prisma.event_attendance.findMany({
+        where: attendanceWhere,
+        orderBy: {
+          created_at: "asc",
+        },
+        select: {
+          event_id: true,
+          user_id: true,
+          created_at: true,
+        },
+      });
+
+      const earliestAttendanceByMemberEventDay = new Map<string, {
+        event_id: number;
+        user_id: number;
+        attendance_date: string;
+        arrival_time: Date;
+      }>();
+
+      for (const row of attendanceRows) {
+        const attendanceDate = row.created_at.toISOString().slice(0, 10);
+        const attendanceKey = `${row.event_id}:${attendanceDate}:${row.user_id}`;
+
+        if (!earliestAttendanceByMemberEventDay.has(attendanceKey)) {
+          earliestAttendanceByMemberEventDay.set(attendanceKey, {
+            event_id: row.event_id,
+            user_id: row.user_id,
+            attendance_date: attendanceDate,
+            arrival_time: row.created_at,
+          });
+        }
+      }
+
+      const earliestAttendanceRows = Array.from(
+        earliestAttendanceByMemberEventDay.values(),
+      );
+      const eventIds = Array.from(
+        new Set(earliestAttendanceRows.map((row) => row.event_id)),
+      );
+      const userIds = Array.from(
+        new Set(earliestAttendanceRows.map((row) => row.user_id)),
+      );
+
+      const [events, users] = await Promise.all([
+        eventIds.length
+          ? prisma.event_mgt.findMany({
+              where: {
+                id: {
+                  in: eventIds,
+                },
+              },
+              select: {
+                id: true,
+                start_time: true,
+                start_date: true,
+                event: {
+                  select: {
+                    event_name: true,
+                  },
+                },
+              },
+            })
+          : Promise.resolve([]),
+        userIds.length
+          ? prisma.user.findMany({
+              where: {
+                id: {
+                  in: userIds,
+                },
+              },
+              select: {
+                id: true,
+                name: true,
+                member_id: true,
+              },
+            })
+          : Promise.resolve([]),
+      ]);
+
+      const eventById = new Map(
+        events.map((row) => [
+          row.id,
+          {
+            event_name: row.event.event_name || `Event ${row.id}`,
+            start_time: row.start_time,
+            start_date: row.start_date,
+          },
+        ]),
+      );
+      const userById = new Map(
+        users.map((row) => [
+          row.id,
+          {
+            name: row.name,
+            member_id: row.member_id || null,
+          },
+        ]),
+      );
+
+      const aggregatesByUserId = new Map<number, AttendanceTimingAggregate>();
+      let assessedRecords = 0;
+      let skippedRecordsWithoutSchedule = 0;
+      const statusBreakdown = {
+        early: 0,
+        on_time: 0,
+        late: 0,
+      };
+      const matchingDetailedRecords: AttendanceTimingDetail[] = [];
+
+      for (const row of earliestAttendanceRows) {
+        const eventInfo = eventById.get(row.event_id);
+        const scheduledStart = eventInfo
+          ? this.buildEventStartDateTime(
+              row.attendance_date,
+              eventInfo.start_time,
+              eventInfo.start_date,
+            )
+          : null;
+
+        if (!scheduledStart) {
+          skippedRecordsWithoutSchedule += 1;
+          continue;
+        }
+
+        const userInfo = userById.get(row.user_id);
+        const memberName = userInfo?.name || `User ${row.user_id}`;
+        const memberId = userInfo?.member_id || null;
+        const memberSearchText = `${memberName} ${memberId || ""}`.trim();
+
+        if (memberQuery && !this.matchesSearchTerm(memberSearchText, memberQuery)) {
+          continue;
+        }
+
+        assessedRecords += 1;
+
+        const aggregate = aggregatesByUserId.get(row.user_id) || {
+          user_id: row.user_id,
+          member_id: memberId,
+          member_name: memberName,
+          events_attended_count: 0,
+          early_arrival_count: 0,
+          on_time_arrival_count: 0,
+          late_arrival_count: 0,
+          total_minutes_early: 0,
+          max_minutes_early: 0,
+          total_minutes_late: 0,
+          max_minutes_late: 0,
+          timing_records: [],
+        };
+
+        aggregate.events_attended_count += 1;
+
+        const minutesFromStart = Math.round(
+          (row.arrival_time.getTime() - scheduledStart.getTime()) / 60000,
+        );
+        const status = this.getAttendanceTimingStatus(minutesFromStart);
+        statusBreakdown[status] += 1;
+
+        const timingRecord: AttendanceTimingDetail = {
+          event_id: row.event_id,
+          event_name: eventInfo?.event_name || `Event ${row.event_id}`,
+          user_id: row.user_id,
+          member_id: memberId,
+          member_name: memberName,
+          attendance_date: row.attendance_date,
+          arrival_time: row.arrival_time.toISOString(),
+          scheduled_start_time: this.formatTimeOfDay(scheduledStart),
+          status,
+          minutes_from_start: minutesFromStart,
+          minutes_before_start: status === "early" ? Math.abs(minutesFromStart) : 0,
+          minutes_after_start: status === "late" ? minutesFromStart : 0,
+        };
+
+        if (status === "early") {
+          aggregate.early_arrival_count += 1;
+          aggregate.total_minutes_early += Math.abs(minutesFromStart);
+          aggregate.max_minutes_early = Math.max(
+            aggregate.max_minutes_early,
+            Math.abs(minutesFromStart),
+          );
+        } else if (status === "late") {
+          aggregate.late_arrival_count += 1;
+          aggregate.total_minutes_late += minutesFromStart;
+          aggregate.max_minutes_late = Math.max(
+            aggregate.max_minutes_late,
+            minutesFromStart,
+          );
+        } else {
+          aggregate.on_time_arrival_count += 1;
+        }
+
+        aggregate.timing_records.push(timingRecord);
+
+        if (requestedStatus === "all" || timingRecord.status === requestedStatus) {
+          matchingDetailedRecords.push(timingRecord);
+        }
+
+        aggregatesByUserId.set(row.user_id, aggregate);
+      }
+
+      const rankedCandidates = Array.from(aggregatesByUserId.values())
+        .map((row) => {
+          const averageMinutesEarly =
+            row.early_arrival_count > 0
+              ? Number(
+                  (row.total_minutes_early / row.early_arrival_count).toFixed(1),
+                )
+              : 0;
+          const averageMinutesLate =
+            row.late_arrival_count > 0
+              ? Number(
+                  (row.total_minutes_late / row.late_arrival_count).toFixed(1),
+                )
+              : 0;
+          const matchingStatusCount =
+            requestedStatus === "early"
+              ? row.early_arrival_count
+              : requestedStatus === "late"
+                ? row.late_arrival_count
+                : requestedStatus === "on_time"
+                  ? row.on_time_arrival_count
+                  : row.events_attended_count;
+          const recentMatchingRecords = row.timing_records
+            .slice()
+            .filter(
+              (record) =>
+                requestedStatus === "all" || record.status === requestedStatus,
+            )
+            .sort(
+              (left, right) =>
+                new Date(right.arrival_time).getTime() -
+                new Date(left.arrival_time).getTime(),
+            )
+            .slice(0, 3);
+
+          return {
+            user_id: row.user_id,
+            member_id: row.member_id,
+            member_name: row.member_name,
+            events_attended_count: row.events_attended_count,
+            early_arrival_count: row.early_arrival_count,
+            on_time_arrival_count: row.on_time_arrival_count,
+            late_arrival_count: row.late_arrival_count,
+            matching_status_count: matchingStatusCount,
+            matching_status_rate_percent:
+              row.events_attended_count > 0
+                ? Number(
+                    ((matchingStatusCount / row.events_attended_count) * 100).toFixed(
+                      1,
+                    ),
+                  )
+                : 0,
+            early_arrival_rate_percent:
+              row.events_attended_count > 0
+                ? Number(
+                    (
+                      (row.early_arrival_count / row.events_attended_count) *
+                      100
+                    ).toFixed(1),
+                  )
+                : 0,
+            on_time_arrival_rate_percent:
+              row.events_attended_count > 0
+                ? Number(
+                    (
+                      (row.on_time_arrival_count / row.events_attended_count) *
+                      100
+                    ).toFixed(1),
+                  )
+                : 0,
+            late_arrival_rate_percent:
+              row.events_attended_count > 0
+                ? Number(
+                    (
+                      (row.late_arrival_count / row.events_attended_count) *
+                      100
+                    ).toFixed(1),
+                  )
+                : 0,
+            average_minutes_early: averageMinutesEarly,
+            max_minutes_early: row.max_minutes_early,
+            average_minutes_late: averageMinutesLate,
+            max_minutes_late: row.max_minutes_late,
+            most_recent_matching_record: recentMatchingRecords[0] || null,
+            recent_matching_records: recentMatchingRecords,
+          };
+        })
+        .filter((row) => row.matching_status_count > 0)
+        .sort((left, right) => {
+          if (right.matching_status_count !== left.matching_status_count) {
+            return right.matching_status_count - left.matching_status_count;
+          }
+
+          if (requestedStatus === "early") {
+            if (right.average_minutes_early !== left.average_minutes_early) {
+              return right.average_minutes_early - left.average_minutes_early;
+            }
+            if (right.max_minutes_early !== left.max_minutes_early) {
+              return right.max_minutes_early - left.max_minutes_early;
+            }
+          } else if (requestedStatus === "late") {
+            if (right.average_minutes_late !== left.average_minutes_late) {
+              return right.average_minutes_late - left.average_minutes_late;
+            }
+            if (right.max_minutes_late !== left.max_minutes_late) {
+              return right.max_minutes_late - left.max_minutes_late;
+            }
+          } else if (requestedStatus === "on_time") {
+            if (
+              right.matching_status_rate_percent !== left.matching_status_rate_percent
+            ) {
+              return (
+                right.matching_status_rate_percent -
+                left.matching_status_rate_percent
+              );
+            }
+            if (right.events_attended_count !== left.events_attended_count) {
+              return right.events_attended_count - left.events_attended_count;
+            }
+          } else {
+            if (right.on_time_arrival_count !== left.on_time_arrival_count) {
+              return right.on_time_arrival_count - left.on_time_arrival_count;
+            }
+            if (right.early_arrival_count !== left.early_arrival_count) {
+              return right.early_arrival_count - left.early_arrival_count;
+            }
+            if (left.late_arrival_count !== right.late_arrival_count) {
+              return left.late_arrival_count - right.late_arrival_count;
+            }
+          }
+
+          return left.member_name.localeCompare(right.member_name);
+        });
+
+      const rankedMembers = rankedCandidates
+        .slice(0, rankingLimit)
+        .map((row, index) => ({
+          rank: index + 1,
+          ...row,
+        }));
+
+      const detailedRecords = matchingDetailedRecords
+        .slice()
+        .sort((left, right) => {
+          const dateCompare = right.attendance_date.localeCompare(left.attendance_date);
+          if (dateCompare !== 0) {
+            return dateCompare;
+          }
+
+          return (
+            new Date(right.arrival_time).getTime() -
+            new Date(left.arrival_time).getTime()
+          );
+        })
+        .slice(0, rankingLimit);
+
+      const rankingOrder =
+        requestedStatus === "early"
+          ? [
+              "early_arrival_count desc",
+              "average_minutes_early desc",
+              "max_minutes_early desc",
+              "member_name asc",
+            ]
+          : requestedStatus === "late"
+            ? [
+                "late_arrival_count desc",
+                "average_minutes_late desc",
+                "max_minutes_late desc",
+                "member_name asc",
+              ]
+            : requestedStatus === "on_time"
+              ? [
+                  "on_time_arrival_count desc",
+                  "on_time_arrival_rate_percent desc",
+                  "events_attended_count desc",
+                  "member_name asc",
+                ]
+              : [
+                  "events_attended_count desc",
+                  "on_time_arrival_count desc",
+                  "early_arrival_count desc",
+                  "late_arrival_count asc",
+                  "member_name asc",
+                ];
+
+      return {
+        dataSource: "prisma.event_attendance + event_mgt + event_act + user",
+        appliedFilters: {
+          event_id: eventId,
+          event_name: eventName,
+          user_id: userId,
+          member_query: memberQuery,
+          date: dateFilter?.iso || null,
+          start_date: dateRangeForAttendance?.start_iso || null,
+          end_date: dateRangeForAttendance?.end_iso || null,
+          status: requestedStatus,
+          limit: rankingLimit,
+        },
+        result: {
+          ranking_criteria: {
+            requested_status: requestedStatus,
+            status_definitions: {
+              early:
+                "A member is early when the earliest check-in for that event day is before the scheduled event start time.",
+              on_time:
+                "A member is on time when the earliest check-in for that event day matches the scheduled event start time exactly.",
+              late:
+                "A member is late when the earliest check-in for that event day is after the scheduled event start time.",
+            },
+            ranking_order: rankingOrder,
+          },
+          total_attendance_records_scanned: attendanceRows.length,
+          unique_member_event_days_scanned: earliestAttendanceRows.length,
+          assessed_member_event_days: assessedRecords,
+          skipped_member_event_days_without_schedule: skippedRecordsWithoutSchedule,
+          total_early_arrival_records: statusBreakdown.early,
+          total_on_time_records: statusBreakdown.on_time,
+          total_late_arrival_records: statusBreakdown.late,
+          total_members_with_early_arrivals: Array.from(aggregatesByUserId.values()).filter(
+            (row) => row.early_arrival_count > 0,
+          ).length,
+          total_members_with_on_time_arrivals: Array.from(aggregatesByUserId.values()).filter(
+            (row) => row.on_time_arrival_count > 0,
+          ).length,
+          total_members_with_late_arrivals: Array.from(aggregatesByUserId.values()).filter(
+            (row) => row.late_arrival_count > 0,
+          ).length,
+          total_members_matching_status: rankedCandidates.length,
+          total_matching_detailed_records: matchingDetailedRecords.length,
+          matching_attendance_found: matchingDetailedRecords.length > 0,
+          returned_ranked_members: rankedMembers.length,
+          returned_detailed_records: detailedRecords.length,
+          top_members: rankedMembers,
+          detailed_records: detailedRecords,
         },
       };
     }
@@ -1161,17 +1798,261 @@ export class AiReadOnlyDataService {
               name: true,
             },
           },
+          products: {
+            select: {
+              name: true,
+            },
+            orderBy: {
+              id: "asc",
+            },
+          },
         },
       });
 
       return {
-        dataSource: "prisma.request + user + department",
+        dataSource: "prisma.request + user + department + requested_item",
         appliedFilters: {
           limit,
           start_date: dateRange?.start_iso || null,
           end_date: dateRange?.end_iso || null,
         },
-        result: rows,
+        result: rows.map((row) => ({
+          id: row.id,
+          request_id: row.request_id,
+          request_approval_status: row.request_approval_status,
+          requisition_date: row.requisition_date,
+          product_names: row.products
+            .map((item) => String(item.name || "").trim())
+            .filter(Boolean),
+          user: row.user,
+          department: row.department,
+        })),
+      };
+    }
+
+    if (operation === "queue") {
+      const approverUserId = this.parseOptionalPositiveInt(input.approver_user_id);
+      const pendingRequestWhere = this.appendDateRangeWhere(
+        {
+          request_approval_status: {
+            in: [...PENDING_REQUISITION_STATUSES],
+          },
+        },
+        "requisition_date",
+        dateRange,
+      );
+
+      const pendingAssignmentRows = await prisma.requisition_approval_instances.findMany({
+        where: {
+          status: RequisitionApprovalInstanceStatus.PENDING,
+          ...(approverUserId ? { approver_user_id: approverUserId } : {}),
+          request: pendingRequestWhere,
+        },
+        select: {
+          id: true,
+          request_id: true,
+          step_order: true,
+          step_type: true,
+          approver_user_id: true,
+          position_id: true,
+          configured_user_id: true,
+          status: true,
+          acted_by_user_id: true,
+          acted_at: true,
+          comment: true,
+        },
+      });
+
+      const pendingRequestIds = Array.from(
+        new Set(pendingAssignmentRows.map((row) => row.request_id)),
+      );
+
+      const requestRows = await prisma.request.findMany({
+        where: {
+          ...pendingRequestWhere,
+          ...(approverUserId ? { id: { in: pendingRequestIds } } : {}),
+        },
+        orderBy: { requisition_date: "desc" },
+        take: limit,
+        select: {
+          id: true,
+          request_id: true,
+          request_approval_status: true,
+          requisition_date: true,
+          user: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+          department: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+          products: {
+            select: {
+              name: true,
+              unitPrice: true,
+              quantity: true,
+            },
+            orderBy: {
+              id: "asc",
+            },
+          },
+        },
+      });
+
+      const selectedRequestIds = new Set(requestRows.map((row) => row.id));
+      const relevantAssignments = pendingAssignmentRows.filter((row) =>
+        selectedRequestIds.has(row.request_id),
+      );
+
+      const approverUserIds = Array.from(
+        new Set(
+          relevantAssignments
+            .flatMap((row) => [row.approver_user_id, row.configured_user_id, row.acted_by_user_id])
+            .filter(
+              (value): value is number =>
+                value !== null && Number.isInteger(value) && value > 0,
+            ),
+        ),
+      );
+      const positionIds = Array.from(
+        new Set(
+          relevantAssignments
+            .map((row) => row.position_id)
+            .filter(
+              (value): value is number =>
+                value !== null && Number.isInteger(value) && value > 0,
+            ),
+        ),
+      );
+
+      const [approvalUsers, positions] = await Promise.all([
+        approverUserIds.length
+          ? prisma.user.findMany({
+              where: {
+                id: {
+                  in: approverUserIds,
+                },
+              },
+              select: {
+                id: true,
+                name: true,
+              },
+            })
+          : Promise.resolve([]),
+        positionIds.length
+          ? prisma.position.findMany({
+              where: {
+                id: {
+                  in: positionIds,
+                },
+              },
+              select: {
+                id: true,
+                name: true,
+              },
+            })
+          : Promise.resolve([]),
+      ]);
+
+      const approvalUserMap = new Map(
+        approvalUsers.map((approvalUser) => [approvalUser.id, approvalUser.name]),
+      );
+      const positionMap = new Map(positions.map((position) => [position.id, position.name]));
+      const assignmentsByRequestId = new Map<
+        number,
+        Array<{
+          approval_instance_id: number;
+          step_order: number;
+          step_type: string;
+          status: string;
+          approver_user_id: number;
+          approver_name: string | null;
+          configured_user_id: number | null;
+          configured_user_name: string | null;
+          position_id: number | null;
+          position_name: string | null;
+          acted_by_user_id: number | null;
+          acted_by_name: string | null;
+          acted_at: string | null;
+          comment: string | null;
+        }>
+      >();
+
+      for (const assignment of relevantAssignments) {
+        const item = {
+          approval_instance_id: assignment.id,
+          step_order: assignment.step_order,
+          step_type: assignment.step_type,
+          status: assignment.status,
+          approver_user_id: assignment.approver_user_id,
+          approver_name: approvalUserMap.get(assignment.approver_user_id) || null,
+          configured_user_id: assignment.configured_user_id ?? null,
+          configured_user_name:
+            assignment.configured_user_id !== null
+              ? approvalUserMap.get(assignment.configured_user_id) || null
+              : null,
+          position_id: assignment.position_id ?? null,
+          position_name:
+            assignment.position_id !== null
+              ? positionMap.get(assignment.position_id) || null
+              : null,
+          acted_by_user_id: assignment.acted_by_user_id ?? null,
+          acted_by_name:
+            assignment.acted_by_user_id !== null
+              ? approvalUserMap.get(assignment.acted_by_user_id) || null
+              : null,
+          acted_at: assignment.acted_at ? assignment.acted_at.toISOString() : null,
+          comment: assignment.comment ?? null,
+        };
+
+        const current = assignmentsByRequestId.get(assignment.request_id) || [];
+        current.push(item);
+        assignmentsByRequestId.set(assignment.request_id, current);
+      }
+
+      const records = requestRows.map((row) => {
+        const productNames = row.products
+          .map((product) => String(product.name || "").trim())
+          .filter(Boolean);
+        const currentPendingApprovers = assignmentsByRequestId.get(row.id) || [];
+
+        return {
+          id: row.id,
+          request_id: row.request_id,
+          request_approval_status: row.request_approval_status,
+          requisition_date: row.requisition_date,
+          requester: row.user,
+          department: row.department,
+          product_names: productNames,
+          total_amount: row.products.reduce(
+            (sum, product) =>
+              sum + Number(product.unitPrice || 0) * Number(product.quantity || 0),
+            0,
+          ),
+          current_pending_approver_names: currentPendingApprovers
+            .map((approver) => approver.approver_name)
+            .filter((name): name is string => Boolean(name)),
+          current_pending_approvers: currentPendingApprovers,
+        };
+      });
+
+      return {
+        dataSource: "prisma.request + requested_item + requisition_approval_instances + user + position",
+        appliedFilters: {
+          limit,
+          approver_user_id: approverUserId,
+          start_date: dateRange?.start_iso || null,
+          end_date: dateRange?.end_iso || null,
+        },
+        result: {
+          total_pending_requisitions: records.length,
+          records,
+        },
       };
     }
 
@@ -1190,6 +2071,22 @@ export class AiReadOnlyDataService {
                 user: {
                   name: {
                     contains: q,
+                  },
+                },
+              },
+              {
+                department: {
+                  name: {
+                    contains: q,
+                  },
+                },
+              },
+              {
+                products: {
+                  some: {
+                    name: {
+                      contains: q,
+                    },
                   },
                 },
               },
@@ -1217,18 +2114,43 @@ export class AiReadOnlyDataService {
               name: true,
             },
           },
+          products: {
+            select: {
+              name: true,
+            },
+            orderBy: {
+              id: "asc",
+            },
+          },
         },
       });
 
       return {
-        dataSource: "prisma.request + user + department",
+        dataSource: "prisma.request + user + department + requested_item",
         appliedFilters: {
           q,
           limit,
           start_date: dateRange?.start_iso || null,
           end_date: dateRange?.end_iso || null,
         },
-        result: rows,
+        result: rows.map((row) => {
+          const productNames = row.products
+            .map((item) => String(item.name || "").trim())
+            .filter(Boolean);
+
+          return {
+            id: row.id,
+            request_id: row.request_id,
+            request_approval_status: row.request_approval_status,
+            requisition_date: row.requisition_date,
+            product_names: productNames,
+            matching_product_names: productNames.filter((name) =>
+              this.matchesSearchTerm(name, q),
+            ),
+            user: row.user,
+            department: row.department,
+          };
+        }),
       };
     }
 

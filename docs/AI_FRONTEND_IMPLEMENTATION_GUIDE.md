@@ -149,6 +149,73 @@ Only metadata is returned; raw keys/secrets are never returned.
     "conversation_id": "uuid",
     "message_id": "uuid",
     "reply": "Here are the highest-risk visitors...",
+    "display": {
+      "format": "structured_markdown_v1",
+      "title": "Visitor Follow-up Risk",
+      "summary": "Three visitors need immediate follow-up this week.",
+      "sections": [
+        {
+          "heading": "Key Findings",
+          "blocks": [
+            {
+              "type": "table",
+              "columns": ["Segment", "Count", "Risk"],
+              "rows": [
+                ["First-time visitors", "2", "High"],
+                ["Pending callbacks", "1", "High"]
+              ]
+            },
+            {
+              "type": "list",
+              "items": [
+                "2 first-time visitors have not been contacted.",
+                "1 high-priority visitor has a pending callback."
+              ]
+            }
+          ],
+          "paragraphs": [],
+          "items": [
+            "2 first-time visitors have not been contacted.",
+            "1 high-priority visitor has a pending callback."
+          ],
+          "tables": [
+            {
+              "columns": ["Segment", "Count", "Risk"],
+              "rows": [
+                ["First-time visitors", "2", "High"],
+                ["Pending callbacks", "1", "High"]
+              ]
+            }
+          ]
+        },
+        {
+          "heading": "Next Actions",
+          "blocks": [
+            {
+              "type": "paragraph",
+              "text": "Assign outreach owners before end of day."
+            },
+            {
+              "type": "list",
+              "items": [
+                "Call high-priority visitors first.",
+                "Log outreach status after each contact."
+              ]
+            }
+          ],
+          "paragraphs": [
+            "Assign outreach owners before end of day."
+          ],
+          "items": [
+            "Call high-priority visitors first.",
+            "Log outreach status after each contact."
+          ],
+          "tables": []
+        }
+      ],
+      "markdown": "## Key Findings\n- 2 first-time visitors have not been contacted.\n- 1 high-priority visitor has a pending callback.",
+      "plain_text": "Key Findings\n2 first-time visitors have not been contacted.\n1 high-priority visitor has a pending callback."
+    },
     "created_at": "2026-02-28T08:30:00.000Z",
     "provider": "claude",
     "model": "claude-sonnet-4-6",
@@ -165,10 +232,24 @@ Only metadata is returned; raw keys/secrets are never returned.
       "token_limit": 5000000,
       "token_used": 1865000,
       "token_remaining": 3135000
+    },
+    "performance": {
+      "latency_ms": 1184
     }
   }
 }
 ```
+
+### Render Strategy
+
+- Render `display.title` as the card/header title when present.
+- Render `display.summary` as the lead paragraph under the title.
+- Prefer `display.sections[].blocks` for ordered rendering.
+- Render paragraph blocks as text paragraphs, list blocks as bullets, and table blocks as HTML tables.
+- Treat `paragraphs`, `items`, and `tables` as compatibility fallbacks.
+- Keep `reply` as a fallback for legacy clients.
+- Show `performance.latency_ms` as subtle metadata, not primary content.
+- Prefer markdown-aware typography, but do not depend on markdown parsing because `display.sections` is already normalized.
 
 ## 5. Idempotency Support (Recommended)
 

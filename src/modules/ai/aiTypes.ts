@@ -27,6 +27,47 @@ export type AiUsageSnapshot = {
   token_remaining: number;
 };
 
+export type AiDisplaySection = {
+  heading: string;
+  blocks: AiDisplayBlock[];
+  paragraphs: string[];
+  items: string[];
+  tables: AiDisplayTable[];
+};
+
+export type AiDisplayTable = {
+  columns: string[];
+  rows: string[][];
+};
+
+export type AiDisplayBlock =
+  | {
+      type: "paragraph";
+      text: string;
+    }
+  | {
+      type: "list";
+      items: string[];
+    }
+  | {
+      type: "table";
+      columns: string[];
+      rows: string[][];
+    };
+
+export type AiDisplay = {
+  format: "structured_markdown_v1";
+  title: string | null;
+  summary: string | null;
+  sections: AiDisplaySection[];
+  markdown: string;
+  plain_text: string;
+};
+
+export type AiResponsePerformance = {
+  latency_ms: number;
+};
+
 export type AiProviderResult = {
   reply: string;
   provider: string;

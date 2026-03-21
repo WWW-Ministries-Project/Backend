@@ -6,10 +6,10 @@ import { AiCredentialService, AiCredentialServiceError } from "./aiCredentialSer
 import { AiReadOnlyDataService } from "./aiReadOnlyDataService";
 
 const DEFAULT_TEMPERATURE = 0.3;
-const DEFAULT_OPENAI_MAX_TOKENS = 500;
-const DEFAULT_CLAUDE_MAX_TOKENS = 500;
-const DEFAULT_GEMINI_MAX_OUTPUT_TOKENS = 500;
-const DEFAULT_GEMINI_API_VERSION = "v1";
+const DEFAULT_OPENAI_MAX_TOKENS = 400;
+const DEFAULT_CLAUDE_MAX_TOKENS = 400;
+const DEFAULT_GEMINI_MAX_OUTPUT_TOKENS = 400;
+const DEFAULT_GEMINI_API_VERSION = "v1beta";
 const CLAUDE_MODEL_PREFIXES = ["claude-"];
 const CLAUDE_RECOMMENDED_MODELS = [
   "claude-sonnet-4-6",
@@ -18,14 +18,19 @@ const CLAUDE_RECOMMENDED_MODELS = [
 ];
 const OPENAI_MODEL_PREFIXES = ["gpt-", "o1", "o3", "o4"];
 const GEMINI_RESTRICTED_PREFIXES = ["gemini-1.5-"];
-const GEMINI_DEPRECATED_MODELS = new Set(["gemini-2.0-flash"]);
+const GEMINI_DEPRECATED_MODELS = new Set([
+  "gemini-2.0-flash",
+  "gemini-2.0-flash-001",
+  "gemini-2.0-flash-lite",
+  "gemini-2.0-flash-lite-001",
+]);
 const GEMINI_RECOMMENDED_MODELS = [
   "gemini-2.5-flash",
   "gemini-2.5-pro",
   "gemini-2.5-flash-lite",
 ];
-const AI_TOOL_MAX_ROUNDS = 4;
-const AI_TOOL_MAX_CALLS_PER_ROUND = 3;
+const AI_TOOL_MAX_ROUNDS = 3;
+const AI_TOOL_MAX_CALLS_PER_ROUND = 2;
 const OPENAI_TOOL_NAME_LIST_CONTRACTS = "list_read_only_query_contracts";
 const OPENAI_TOOL_NAME_READ_MODULE = "read_module_data";
 
@@ -71,9 +76,16 @@ type OpenAiChatMessage = {
   tool_calls?: any[];
 };
 
+type GeminiPart = {
+  text?: string;
+  functionCall?: Record<string, unknown>;
+  functionResponse?: Record<string, unknown>;
+  [key: string]: unknown;
+};
+
 type GeminiMessage = {
   role: "user" | "model";
-  parts: Array<{ text: string }>;
+  parts: GeminiPart[];
 };
 
 type ClaudeMessage = {
@@ -220,6 +232,7 @@ export class AiService {
       sanitizedMessage,
       sanitizedContext,
       sanitizedHistory,
+      options.actorId,
     );
     return {
       ...geminiResult,
@@ -250,8 +263,10 @@ export class AiService {
         completion_tokens: 0,
         total_tokens: 0,
       };
+      const maxToolRounds = this.getToolMaxRounds();
+      const maxToolCallsPerRound = this.getToolMaxCallsPerRound();
 
-      for (let round = 0; round < AI_TOOL_MAX_ROUNDS; round += 1) {
+      for (let round = 0; round < maxToolRounds; round += 1) {
         const completion = await openai.chat.completions.create({
           model,
           temperature: this.getTemperature(),
@@ -271,7 +286,7 @@ export class AiService {
         }
 
         const toolCalls = Array.isArray((assistantMessage as any).tool_calls)
-          ? ((assistantMessage as any).tool_calls as any[]).slice(0, AI_TOOL_MAX_CALLS_PER_ROUND)
+          ? ((assistantMessage as any).tool_calls as any[]).slice(0, maxToolCallsPerRound)
           : [];
 
         if (!toolCalls.length) {
@@ -359,8 +374,10 @@ export class AiService {
         completion_tokens: 0,
         total_tokens: 0,
       };
+      const maxToolRounds = this.getToolMaxRounds();
+      const maxToolCallsPerRound = this.getToolMaxCallsPerRound();
 
-      for (let round = 0; round < AI_TOOL_MAX_ROUNDS; round += 1) {
+      for (let round = 0; round < maxToolRounds; round += 1) {
         const response = await anthropic.messages.create({
           model,
           system: systemPrompt,
@@ -380,7 +397,7 @@ export class AiService {
           : [];
         const toolUses = contentBlocks
           .filter((block) => block?.type === "tool_use")
-          .slice(0, AI_TOOL_MAX_CALLS_PER_ROUND);
+          .slice(0, maxToolCallsPerRound);
 
         if (!toolUses.length) {
           const reply = this.extractClaudeReply(contentBlocks);
@@ -467,6 +484,7 @@ export class AiService {
     message: string,
     context: AiContext,
     history: AiChatHistoryMessage[],
+    actorId?: number,
   ): Promise<{ reply: string; provider: string; model: string; usage: AiUsage }> {
     try {
       const { GoogleGenAI } = await loadGeminiSdk();
@@ -479,50 +497,134 @@ export class AiService {
         temperature: this.getTemperature(),
         maxOutputTokens: this.getGeminiMaxOutputTokens(),
       };
+      const tools = this.buildGeminiTools();
+      const usage: AiUsage = {
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        total_tokens: 0,
+      };
+      const contents: GeminiMessage[] = this.buildGeminiContents(message, context, history);
+      let useInlineSystemPrompt = false;
+      const maxToolRounds = this.getToolMaxRounds();
+      const maxToolCallsPerRound = this.getToolMaxCallsPerRound();
 
-      let response;
-      try {
-        response = await gemini.models.generateContent({
-          model,
-          contents: this.buildGeminiContents(message, context, history),
-          config: {
-            ...baseConfig,
-            systemInstruction: systemPrompt,
-          },
-        });
-      } catch (firstError) {
-        if (!this.isGeminiSystemInstructionUnsupportedError(firstError)) {
-          throw firstError;
+      for (let round = 0; round < maxToolRounds; round += 1) {
+        let response;
+        try {
+          response = await gemini.models.generateContent({
+            model,
+            contents: useInlineSystemPrompt
+              ? this.prependGeminiSystemPrompt(contents, systemPrompt)
+              : contents,
+            config: {
+              ...baseConfig,
+              ...(useInlineSystemPrompt ? {} : { systemInstruction: systemPrompt }),
+              toolConfig: {
+                functionCallingConfig: {
+                  mode: "AUTO",
+                },
+              },
+              tools,
+            },
+          });
+        } catch (firstError) {
+          if (
+            useInlineSystemPrompt ||
+            !this.isGeminiSystemInstructionUnsupportedError(firstError)
+          ) {
+            throw firstError;
+          }
+
+          useInlineSystemPrompt = true;
+          response = await gemini.models.generateContent({
+            model,
+            contents: this.prependGeminiSystemPrompt(contents, systemPrompt),
+            config: {
+              ...baseConfig,
+              toolConfig: {
+                functionCallingConfig: {
+                  mode: "AUTO",
+                },
+              },
+              tools,
+            },
+          });
         }
 
-        // Fallback for endpoints/models that reject top-level systemInstruction.
-        response = await gemini.models.generateContent({
-          model,
-          contents: this.buildGeminiContents(
-            message,
-            context,
-            history,
-            systemPrompt,
-          ),
-          config: baseConfig,
+        usage.prompt_tokens += Number(response?.usageMetadata?.promptTokenCount || 0);
+        usage.completion_tokens += Number(response?.usageMetadata?.candidatesTokenCount || 0);
+        usage.total_tokens += Number(response?.usageMetadata?.totalTokenCount || 0);
+
+        const functionCalls = this.extractGeminiFunctionCalls(response).slice(
+          0,
+          maxToolCallsPerRound,
+        );
+
+        if (!functionCalls.length) {
+          const reply = this.extractGeminiReply(response);
+          if (!reply) {
+            const recoveredReply = await this.retryGeminiFinalReply(
+              gemini,
+              model,
+              contents,
+              systemPrompt,
+              useInlineSystemPrompt,
+              baseConfig,
+              usage,
+            );
+
+            if (!recoveredReply) {
+              throw new AiProviderError(
+                this.buildGeminiEmptyResponseMessage(response),
+                502,
+                "gemini",
+                this.extractGeminiEmptyResponsePayload(response),
+              );
+            }
+
+            return {
+              reply: recoveredReply,
+              provider: "gemini",
+              model,
+              usage,
+            };
+          }
+
+          return {
+            reply,
+            provider: "gemini",
+            model,
+            usage,
+          };
+        }
+
+        const toolResponseParts: GeminiPart[] = [];
+        for (const functionCall of functionCalls) {
+          const toolResult = await this.executeGeminiToolCall(functionCall, actorId);
+          toolResponseParts.push({
+            functionResponse: {
+              id:
+                typeof functionCall?.id === "string" && functionCall.id.trim()
+                  ? functionCall.id
+                  : undefined,
+              name: String(functionCall?.name || ""),
+              response: toolResult,
+            },
+          });
+        }
+
+        contents.push(this.extractGeminiModelContent(response, functionCalls));
+        contents.push({
+          role: "user",
+          parts: toolResponseParts,
         });
       }
 
-      const reply = String(response?.text || "").trim();
-      if (!reply) {
-        throw new AiProviderError("Gemini returned an empty response", 502, "gemini");
-      }
-
-      return {
-        reply,
-        provider: "gemini",
-        model,
-        usage: {
-          prompt_tokens: Number(response?.usageMetadata?.promptTokenCount || 0),
-          completion_tokens: Number(response?.usageMetadata?.candidatesTokenCount || 0),
-          total_tokens: Number(response?.usageMetadata?.totalTokenCount || 0),
-        },
-      };
+      throw new AiProviderError(
+        "Gemini tool-calling did not produce a final response",
+        502,
+        "gemini",
+      );
     } catch (error: any) {
       if (error instanceof AiProviderError) {
         throw error;
@@ -658,7 +760,7 @@ export class AiService {
               operation: {
                 type: "string",
                 description:
-                  "Operation name from the selected module contract (summary, recent, search, attendance_lookup).",
+                  "Operation name from the selected module contract (for example summary, recent, search, queue, attendance_lookup, early_arrivals, attendance_timing).",
               },
               input: {
                 type: "object",
@@ -709,7 +811,7 @@ export class AiService {
             operation: {
               type: "string",
               description:
-                "Operation name from the selected module contract (summary, recent, search, attendance_lookup).",
+                "Operation name from the selected module contract (for example summary, recent, search, queue, attendance_lookup, early_arrivals, attendance_timing).",
             },
             input: {
               type: "object",
@@ -722,6 +824,60 @@ export class AiService {
             },
           },
         },
+      },
+    ];
+  }
+
+  private buildGeminiTools(): any[] {
+    return [
+      {
+        functionDeclarations: [
+          {
+            name: OPENAI_TOOL_NAME_LIST_CONTRACTS,
+            description:
+              "List read-only query contracts by module so you know what data can be fetched safely.",
+            parametersJsonSchema: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                module: {
+                  type: "string",
+                  description: "Optional module name (e.g., event, user, requisitions).",
+                },
+              },
+            },
+          },
+          {
+            name: OPENAI_TOOL_NAME_READ_MODULE,
+            description:
+              "Run a read-only query contract against a backend module to fetch grounded facts.",
+            parametersJsonSchema: {
+              type: "object",
+              additionalProperties: false,
+              required: ["module", "operation"],
+              properties: {
+                module: {
+                  type: "string",
+                  description: "Module name from list_read_only_query_contracts.",
+                },
+                operation: {
+                type: "string",
+                description:
+                    "Operation name from the selected module contract (for example summary, recent, search, queue, attendance_lookup, early_arrivals, attendance_timing).",
+                },
+                input: {
+                  type: "object",
+                  description: "Operation input arguments (e.g., q, date, event_id, limit).",
+                },
+                cross_module: {
+                  type: "boolean",
+                  description:
+                    "Optional. Set true when answering a question that requires data from multiple modules.",
+                },
+              },
+            },
+          },
+        ],
       },
     ];
   }
@@ -754,6 +910,18 @@ export class AiService {
     const args =
       toolUse?.input && typeof toolUse.input === "object" && !Array.isArray(toolUse.input)
         ? (toolUse.input as Record<string, unknown>)
+        : {};
+
+    return this.executeToolCall(toolName, args, actorId);
+  }
+
+  private async executeGeminiToolCall(functionCall: any, actorId?: number) {
+    const toolName = String(functionCall?.name || "").trim();
+    const args =
+      functionCall?.args &&
+      typeof functionCall.args === "object" &&
+      !Array.isArray(functionCall.args)
+        ? (functionCall.args as Record<string, unknown>)
         : {};
 
     return this.executeToolCall(toolName, args, actorId);
@@ -893,6 +1061,148 @@ export class AiService {
     return contents;
   }
 
+  private prependGeminiSystemPrompt(
+    contents: GeminiMessage[],
+    systemPrompt: string,
+  ): GeminiMessage[] {
+    if (!systemPrompt.trim()) {
+      return [...contents];
+    }
+
+    return [
+      {
+        role: "user",
+        parts: [{ text: `System instructions:\n${systemPrompt}` }],
+      },
+      ...contents,
+    ];
+  }
+
+  private extractGeminiFunctionCalls(response: any): any[] {
+    if (Array.isArray(response?.functionCalls)) {
+      return response.functionCalls.filter(
+        (entry: any) => entry && typeof entry?.name === "string" && entry.name.trim(),
+      );
+    }
+
+    const candidateParts = response?.candidates?.[0]?.content?.parts;
+    if (!Array.isArray(candidateParts)) {
+      return [];
+    }
+
+    return candidateParts
+      .map((part: any) => part?.functionCall)
+      .filter((entry: any) => entry && typeof entry?.name === "string" && entry.name.trim());
+  }
+
+  private extractGeminiReply(response: any): string {
+    const responseText = typeof response?.text === "string" ? response.text.trim() : "";
+    if (responseText) {
+      return responseText;
+    }
+
+    const candidates = Array.isArray(response?.candidates) ? response.candidates : [];
+    for (const candidate of candidates) {
+      const parts = Array.isArray(candidate?.content?.parts) ? candidate.content.parts : [];
+      const candidateText = parts
+        .map((part: any) => (typeof part?.text === "string" ? part.text : ""))
+        .join(" ")
+        .trim();
+
+      if (candidateText) {
+        return candidateText;
+      }
+    }
+
+    return "";
+  }
+
+  private extractGeminiModelContent(response: any, functionCalls: any[]): GeminiMessage {
+    const candidateContent = response?.candidates?.[0]?.content;
+    if (candidateContent && Array.isArray(candidateContent.parts) && candidateContent.parts.length) {
+      return {
+        role: candidateContent.role === "user" ? "user" : "model",
+        parts: candidateContent.parts as GeminiPart[],
+      };
+    }
+
+    return {
+      role: "model",
+      parts: functionCalls.map((functionCall) => ({
+        functionCall,
+      })),
+    };
+  }
+
+  private async retryGeminiFinalReply(
+    gemini: GeminiSdkModule["GoogleGenAI"]["prototype"],
+    model: string,
+    contents: GeminiMessage[],
+    systemPrompt: string,
+    useInlineSystemPrompt: boolean,
+    baseConfig: Record<string, unknown>,
+    usage: AiUsage,
+  ): Promise<string> {
+    try {
+      const recoveryContents: GeminiMessage[] = [
+        ...contents,
+        {
+          role: "user",
+          parts: [
+            {
+              text:
+                "Answer the original request directly using the tool results and context already in this conversation. Do not call any tools. If the data is insufficient, say exactly what is missing.",
+            },
+          ],
+        },
+      ];
+
+      const recoveryResponse = await gemini.models.generateContent({
+        model,
+        contents: useInlineSystemPrompt
+          ? this.prependGeminiSystemPrompt(recoveryContents, systemPrompt)
+          : recoveryContents,
+        config: {
+          ...baseConfig,
+          ...(useInlineSystemPrompt ? {} : { systemInstruction: systemPrompt }),
+        },
+      });
+
+      usage.prompt_tokens += Number(recoveryResponse?.usageMetadata?.promptTokenCount || 0);
+      usage.completion_tokens += Number(
+        recoveryResponse?.usageMetadata?.candidatesTokenCount || 0,
+      );
+      usage.total_tokens += Number(recoveryResponse?.usageMetadata?.totalTokenCount || 0);
+
+      return this.extractGeminiReply(recoveryResponse);
+    } catch (error) {
+      return "";
+    }
+  }
+
+  private buildGeminiEmptyResponseMessage(response: any): string {
+    const finishReason = String(response?.candidates?.[0]?.finishReason || "").trim();
+    const blockReason = String(response?.promptFeedback?.blockReason || "").trim();
+    const reasons = [
+      finishReason ? `finishReason=${finishReason}` : "",
+      blockReason ? `blockReason=${blockReason}` : "",
+    ].filter(Boolean);
+
+    return reasons.length
+      ? `Gemini returned no text or tool calls (${reasons.join(", ")}).`
+      : "Gemini returned an empty response.";
+  }
+
+  private extractGeminiEmptyResponsePayload(response: any) {
+    return {
+      finish_reason: response?.candidates?.[0]?.finishReason || null,
+      block_reason: response?.promptFeedback?.blockReason || null,
+      parts_count: Array.isArray(response?.candidates?.[0]?.content?.parts)
+        ? response.candidates[0].content.parts.length
+        : 0,
+    };
+  }
+
   private getTemperature(): number {
     const value = getNumberEnv("AI_TEMPERATURE", DEFAULT_TEMPERATURE);
     if (value < 0) return 0;
@@ -919,6 +1229,17 @@ export class AiService {
     return getPositiveIntEnv(
       "GEMINI_MAX_OUTPUT_TOKENS",
       DEFAULT_GEMINI_MAX_OUTPUT_TOKENS,
+    );
+  }
+
+  private getToolMaxRounds(): number {
+    return getPositiveIntEnv("AI_TOOL_MAX_ROUNDS", AI_TOOL_MAX_ROUNDS);
+  }
+
+  private getToolMaxCallsPerRound(): number {
+    return getPositiveIntEnv(
+      "AI_TOOL_MAX_CALLS_PER_ROUND",
+      AI_TOOL_MAX_CALLS_PER_ROUND,
     );
   }
 
@@ -1037,6 +1358,14 @@ export class AiService {
       return;
     }
 
+    if (normalized.startsWith("gemini-2.0-flash-lite")) {
+      throw new AiProviderError(
+        `Model "${model}" does not support Gemini function calling in this database-backed workflow. ${suggestion}`,
+        400,
+        "gemini",
+      );
+    }
+
     if (GEMINI_RESTRICTED_PREFIXES.some((prefix) => normalized.startsWith(prefix))) {
       throw new AiProviderError(
         `Model "${model}" is restricted for this integration. ${suggestion}`,
@@ -1080,7 +1409,7 @@ export class AiService {
       return base;
     }
 
-    return `Model "${model}" is unavailable for this API key/version. Use @google/genai with apiVersion=v1 and try: ${GEMINI_RECOMMENDED_MODELS.join(", ")}.`;
+    return `Model "${model}" is unavailable for this API key/version. Try a supported Gemini API version and one of: ${GEMINI_RECOMMENDED_MODELS.join(", ")}.`;
   }
 
   private buildClaudeModelErrorMessage(

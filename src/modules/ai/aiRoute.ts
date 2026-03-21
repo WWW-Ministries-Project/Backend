@@ -25,6 +25,14 @@ aiRouter.put(
   (req: Request, res: Response) => aiController.updateCredential(req, res),
 );
 
+aiRouter.get("/chatbot/config", [protect], (req: Request, res: Response) =>
+  aiController.chatbotConfig(req, res),
+);
+
+aiRouter.post("/chatbot", [protect], (req: Request, res: Response) =>
+  aiController.chatbot(req, res),
+);
+
 aiRouter.post(
   "/chat",
   [protect, permissions.can_manage_ai],

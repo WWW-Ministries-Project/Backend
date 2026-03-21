@@ -1,9 +1,34 @@
 import { prisma } from "../../Models/context";
 import { AiCredentialCrypto, AiCredentialCryptoError } from "./aiCredentialCrypto";
 
-const SUPPORTED_PROVIDERS = new Set(["openai", "gemini", "claude"]);
+const SUPPORTED_PROVIDER_LIST = ["openai", "gemini", "claude"] as const;
+const SUPPORTED_PROVIDERS = new Set<string>(SUPPORTED_PROVIDER_LIST);
 
-type CredentialProvider = "openai" | "gemini" | "claude";
+type CredentialProvider = (typeof SUPPORTED_PROVIDER_LIST)[number];
+
+export type AiChatbotModelOption = {
+  provider: CredentialProvider;
+  model: string;
+  label: string;
+};
+
+const CHATBOT_MODEL_PRIORITY: AiChatbotModelOption[] = [
+  {
+    provider: "gemini",
+    model: "gemini-2.5-flash",
+    label: "Gemini 2.5 Flash",
+  },
+  {
+    provider: "openai",
+    model: "gpt-4.1-mini",
+    label: "GPT-4.1 Mini",
+  },
+  {
+    provider: "claude",
+    model: "claude-haiku-4-5",
+    label: "Claude Haiku 4.5",
+  },
+];
 
 type CreateCredentialPayload = {
   provider: string;
@@ -198,6 +223,40 @@ export class AiCredentialService {
       }
       throw error;
     }
+  }
+
+  async listAvailableChatbotModels(): Promise<AiChatbotModelOption[]> {
+    const credentials = await prisma.ai_provider_credential.findMany({
+      where: {
+        is_active: true,
+        provider: {
+          in: [...SUPPORTED_PROVIDER_LIST],
+        },
+      },
+      select: {
+        provider: true,
+      },
+      orderBy: {
+        updated_at: "desc",
+      },
+    });
+
+    const activeProviders = new Set<CredentialProvider>();
+    for (const credential of credentials) {
+      const normalizedProvider = credential.provider as CredentialProvider;
+      if (SUPPORTED_PROVIDERS.has(normalizedProvider)) {
+        activeProviders.add(normalizedProvider);
+      }
+    }
+
+    return CHATBOT_MODEL_PRIORITY.filter((option) =>
+      activeProviders.has(option.provider),
+    );
+  }
+
+  async resolveDefaultChatbotModel(): Promise<AiChatbotModelOption | null> {
+    const models = await this.listAvailableChatbotModels();
+    return models[0] ?? null;
   }
 
   private normalizeProvider(provider: string): CredentialProvider {
