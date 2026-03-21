@@ -19,6 +19,8 @@ type ImportDeviceInput = {
 type ImportRequest = {
   eventId?: unknown;
   event_id?: unknown;
+  eventIds?: unknown;
+  event_ids?: unknown;
   date?: unknown;
   deviceIds?: unknown;
   device_ids?: unknown;
@@ -322,6 +324,26 @@ export class EventBiometricAttendanceService {
     return this.mapImportJob(job);
   }
 
+  async createImportJobs(request: ImportRequest, actor: ImportActor) {
+    const eventIds = this.resolveRequestedEventIds(request);
+    const jobs: ImportJobSnapshot[] = [];
+
+    for (const eventId of eventIds) {
+      const job = await this.createImportJob(
+        {
+          ...request,
+          eventId,
+          event_id: eventId,
+        },
+        actor,
+      );
+
+      jobs.push(job);
+    }
+
+    return jobs;
+  }
+
   async getImportJob(jobId: number) {
     const job = await prisma.event_biometric_import_job.findUnique({
       where: {
@@ -541,6 +563,26 @@ export class EventBiometricAttendanceService {
       actorUser,
       window,
     };
+  }
+
+  private resolveRequestedEventIds(request: ImportRequest) {
+    const requestedIds = this.parsePositiveIntArray(
+      request?.eventIds ?? request?.event_ids,
+    );
+    const singleEventId = this.toPositiveInt(request?.eventId ?? request?.event_id);
+    const eventIds = [...requestedIds];
+
+    if (singleEventId && !eventIds.includes(singleEventId)) {
+      eventIds.unshift(singleEventId);
+    }
+
+    if (!eventIds.length) {
+      throw new EventBiometricAttendanceImportError(
+        "eventId or eventIds is required",
+      );
+    }
+
+    return eventIds;
   }
 
   private async runImportPipeline(

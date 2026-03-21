@@ -96,6 +96,7 @@ type EventReportApprovalConfigPayload = {
   notification_user_ids?: unknown;
   similar_item_lookback_days?: unknown;
   approvers?: unknown;
+  finance_approver?: unknown;
   is_active?: unknown;
 };
 
@@ -110,20 +111,29 @@ type EventReportApprovalConfigResponse = {
     position_id?: number;
     user_id?: number;
   }>;
+  finance_approver: {
+    type: EventReportApproverType;
+    position_id?: number;
+    user_id?: number;
+  } | null;
   is_active: boolean;
 };
 
-type NormalizedApproverStep = {
-  order: number;
+type NormalizedApproverDefinition = {
   type: EventReportApproverType;
   positionId: number | null;
   userId: number | null;
+};
+
+type NormalizedApproverStep = NormalizedApproverDefinition & {
+  order: number;
 };
 
 type NormalizedEventReportApprovalConfig = {
   notificationUserIds: number[];
   similarItemLookbackDays: number;
   approvers: NormalizedApproverStep[];
+  financeApprover: NormalizedApproverDefinition | null;
   isActive: boolean;
 };
 
@@ -157,6 +167,7 @@ const FINAL_APPROVED_EVENT: EventReportNotificationEventType =
   "event_report.final_approved";
 const FINAL_REJECTED_EVENT: EventReportNotificationEventType =
   "event_report.final_rejected";
+const SINGLE_FINANCE_APPROVAL_ROLE = EventReportFinanceRole.FINANCE_REP;
 
 const EVENT_REPORT_TABLE_NAMES = [
   "event_reports",
@@ -190,12 +201,18 @@ export const saveEventReportApprovalConfig = async (
         update: {
           is_active: normalizedPayload.isActive,
           similar_item_lookback_days: normalizedPayload.similarItemLookbackDays,
+          finance_approver_type: normalizedPayload.financeApprover?.type || null,
+          finance_position_id: normalizedPayload.financeApprover?.positionId || null,
+          finance_user_id: normalizedPayload.financeApprover?.userId || null,
           updated_by: actorUserId,
         },
         create: {
           module: EVENT_REPORT_MODULE,
           is_active: normalizedPayload.isActive,
           similar_item_lookback_days: normalizedPayload.similarItemLookbackDays,
+          finance_approver_type: normalizedPayload.financeApprover?.type || null,
+          finance_position_id: normalizedPayload.financeApprover?.positionId || null,
+          finance_user_id: normalizedPayload.financeApprover?.userId || null,
           created_by: actorUserId,
           updated_by: actorUserId,
         },
@@ -490,13 +507,27 @@ const getUserDepartmentIds = (
 
 const buildReportEventStartDateTime = (
   eventDate: string,
+  eventStartTime: string | null | undefined,
   eventStartDate: Date | null | undefined,
 ): Date | null => {
+  const reportEventStart = toUtcDayDate(eventDate);
+  const normalizedStartTime = String(eventStartTime || "").trim();
+  const timeMatch = normalizedStartTime.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+
+  if (timeMatch) {
+    reportEventStart.setUTCHours(
+      Number(timeMatch[1]),
+      Number(timeMatch[2]),
+      Number(timeMatch[3] || 0),
+      0,
+    );
+    return reportEventStart;
+  }
+
   if (!eventStartDate) {
     return null;
   }
 
-  const reportEventStart = toUtcDayDate(eventDate);
   reportEventStart.setUTCHours(
     eventStartDate.getUTCHours(),
     eventStartDate.getUTCMinutes(),
@@ -670,6 +701,95 @@ const parseSimilarItemLookbackDays = (value: unknown): number => {
   return parsed;
 };
 
+const parseEventReportApproverDefinition = (
+  value: unknown,
+  fieldPath: string,
+): NormalizedApproverDefinition => {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new InputValidationError(`${fieldPath} must be an object`);
+  }
+
+  const step = value as {
+    type?: unknown;
+    position_id?: unknown;
+    user_id?: unknown;
+  };
+
+  if (typeof step.type !== "string") {
+    throw new InputValidationError(`${fieldPath}.type is required`);
+  }
+
+  const type = step.type.trim().toUpperCase() as EventReportApproverType;
+  if (!Object.values(APPROVER_TYPE).includes(type)) {
+    throw new InputValidationError(
+      `${fieldPath}.type must be one of HEAD_OF_DEPARTMENT, POSITION, SPECIFIC_PERSON`,
+    );
+  }
+
+  const positionId =
+    step.position_id === undefined || step.position_id === null
+      ? null
+      : toPositiveInt(step.position_id);
+  const userId =
+    step.user_id === undefined || step.user_id === null
+      ? null
+      : toPositiveInt(step.user_id);
+
+  if (step.position_id !== undefined && step.position_id !== null && !positionId) {
+    throw new InputValidationError(
+      `${fieldPath}.position_id must be a positive integer when provided`,
+    );
+  }
+
+  if (step.user_id !== undefined && step.user_id !== null && !userId) {
+    throw new InputValidationError(
+      `${fieldPath}.user_id must be a positive integer when provided`,
+    );
+  }
+
+  if (type === APPROVER_TYPE.HEAD_OF_DEPARTMENT) {
+    if (positionId !== null || userId !== null) {
+      throw new InputValidationError(
+        `${fieldPath} HEAD_OF_DEPARTMENT must not include position_id or user_id`,
+      );
+    }
+  }
+
+  if (type === APPROVER_TYPE.POSITION) {
+    if (!positionId) {
+      throw new InputValidationError(
+        `${fieldPath} POSITION must include position_id`,
+      );
+    }
+
+    if (userId !== null) {
+      throw new InputValidationError(
+        `${fieldPath} POSITION must not include user_id`,
+      );
+    }
+  }
+
+  if (type === APPROVER_TYPE.SPECIFIC_PERSON) {
+    if (!userId) {
+      throw new InputValidationError(
+        `${fieldPath} SPECIFIC_PERSON must include user_id`,
+      );
+    }
+
+    if (positionId !== null) {
+      throw new InputValidationError(
+        `${fieldPath} SPECIFIC_PERSON must not include position_id`,
+      );
+    }
+  }
+
+  return {
+    type,
+    positionId,
+    userId,
+  };
+};
+
 const parseEventReportApprovers = (value: unknown): NormalizedApproverStep[] => {
   if (!Array.isArray(value) || !value.length) {
     throw new InputValidationError("approvers must be a non-empty array");
@@ -682,9 +802,6 @@ const parseEventReportApprovers = (value: unknown): NormalizedApproverStep[] => 
 
     const step = rawStep as {
       order?: unknown;
-      type?: unknown;
-      position_id?: unknown;
-      user_id?: unknown;
     };
 
     const order = toPositiveInt(step.order);
@@ -693,80 +810,14 @@ const parseEventReportApprovers = (value: unknown): NormalizedApproverStep[] => 
         `approvers[${index}].order must be a positive integer`,
       );
     }
-
-    if (typeof step.type !== "string") {
-      throw new InputValidationError(`approvers[${index}].type is required`);
-    }
-
-    const type = step.type.trim().toUpperCase() as EventReportApproverType;
-    if (!Object.values(APPROVER_TYPE).includes(type)) {
-      throw new InputValidationError(
-        `approvers[${index}].type must be one of HEAD_OF_DEPARTMENT, POSITION, SPECIFIC_PERSON`,
-      );
-    }
-
-    const positionId =
-      step.position_id === undefined || step.position_id === null
-        ? null
-        : toPositiveInt(step.position_id);
-    const userId =
-      step.user_id === undefined || step.user_id === null
-        ? null
-        : toPositiveInt(step.user_id);
-
-    if (step.position_id !== undefined && step.position_id !== null && !positionId) {
-      throw new InputValidationError(
-        `approvers[${index}].position_id must be a positive integer when provided`,
-      );
-    }
-
-    if (step.user_id !== undefined && step.user_id !== null && !userId) {
-      throw new InputValidationError(
-        `approvers[${index}].user_id must be a positive integer when provided`,
-      );
-    }
-
-    if (type === APPROVER_TYPE.HEAD_OF_DEPARTMENT) {
-      if (positionId !== null || userId !== null) {
-        throw new InputValidationError(
-          `approvers[${index}] HEAD_OF_DEPARTMENT must not include position_id or user_id`,
-        );
-      }
-    }
-
-    if (type === APPROVER_TYPE.POSITION) {
-      if (!positionId) {
-        throw new InputValidationError(
-          `approvers[${index}] POSITION must include position_id`,
-        );
-      }
-
-      if (userId !== null) {
-        throw new InputValidationError(
-          `approvers[${index}] POSITION must not include user_id`,
-        );
-      }
-    }
-
-    if (type === APPROVER_TYPE.SPECIFIC_PERSON) {
-      if (!userId) {
-        throw new InputValidationError(
-          `approvers[${index}] SPECIFIC_PERSON must include user_id`,
-        );
-      }
-
-      if (positionId !== null) {
-        throw new InputValidationError(
-          `approvers[${index}] SPECIFIC_PERSON must not include position_id`,
-        );
-      }
-    }
+    const approver = parseEventReportApproverDefinition(
+      rawStep,
+      `approvers[${index}]`,
+    );
 
     return {
       order,
-      type,
-      positionId,
-      userId,
+      ...approver,
     };
   });
 
@@ -787,6 +838,16 @@ const parseEventReportApprovers = (value: unknown): NormalizedApproverStep[] => 
   }
 
   return parsed.sort((a, b) => a.order - b.order);
+};
+
+const parseEventReportFinanceApprover = (
+  value: unknown,
+): NormalizedApproverDefinition | null => {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+
+  return parseEventReportApproverDefinition(value, "finance_approver");
 };
 
 const normalizeEventReportApprovalConfigPayload = (
@@ -823,6 +884,7 @@ const normalizeEventReportApprovalConfigPayload = (
       payload.similar_item_lookback_days,
     ),
     approvers: parseEventReportApprovers(payload.approvers),
+    financeApprover: parseEventReportFinanceApprover(payload.finance_approver),
     isActive,
   };
 };
@@ -834,9 +896,16 @@ const verifyEventReportApprovalConfigReferencesTx = async (
   const specificApproverUserIds = payload.approvers
     .map((step) => step.userId)
     .filter((id): id is number => Number.isInteger(id));
+  const financeApproverUserId = payload.financeApprover?.userId;
 
   const userIdsToCheck = Array.from(
-    new Set([...specificApproverUserIds, ...payload.notificationUserIds]),
+    new Set(
+      [
+        ...specificApproverUserIds,
+        ...payload.notificationUserIds,
+        financeApproverUserId,
+      ].filter((id): id is number => Number.isInteger(id)),
+    ),
   );
 
   if (userIdsToCheck.length) {
@@ -871,9 +940,12 @@ const verifyEventReportApprovalConfigReferencesTx = async (
 
   const positionIdsToCheck = Array.from(
     new Set(
-      payload.approvers
-        .map((step) => step.positionId)
-        .filter((id): id is number => Number.isInteger(id)),
+      [
+        ...payload.approvers
+          .map((step) => step.positionId)
+          .filter((id): id is number => Number.isInteger(id)),
+        payload.financeApprover?.positionId,
+      ].filter((id): id is number => Number.isInteger(id)),
     ),
   );
 
@@ -907,7 +979,14 @@ const getStoredEventReportApprovalConfigTx = async (tx: ApprovalWorkflowTx) => {
     where: {
       module: EVENT_REPORT_MODULE,
     },
-    include: {
+    select: {
+      id: true,
+      module: true,
+      is_active: true,
+      similar_item_lookback_days: true,
+      finance_approver_type: true,
+      finance_position_id: true,
+      finance_user_id: true,
       requesters: {
         orderBy: {
           user_id: "asc",
@@ -940,9 +1019,13 @@ const getStoredEventReportApprovalConfigTx = async (tx: ApprovalWorkflowTx) => {
 };
 
 const mapEventReportApprovalConfigResponse = (config: {
+  id: number;
   module: string;
   is_active: boolean;
   similar_item_lookback_days: number;
+  finance_approver_type: string | null;
+  finance_position_id: number | null;
+  finance_user_id: number | null;
   notifications: Array<{ user_id: number }>;
   steps: Array<{
     step_order: number;
@@ -968,6 +1051,17 @@ const mapEventReportApprovalConfigResponse = (config: {
       ...(step.position_id !== null && { position_id: step.position_id }),
       ...(step.user_id !== null && { user_id: step.user_id }),
     })),
+    finance_approver: config.finance_approver_type
+      ? {
+          type: config.finance_approver_type as EventReportApproverType,
+          ...(config.finance_position_id !== null && {
+            position_id: config.finance_position_id,
+          }),
+          ...(config.finance_user_id !== null && {
+            user_id: config.finance_user_id,
+          }),
+        }
+      : null,
     is_active: config.is_active,
   };
 };
@@ -983,14 +1077,6 @@ const parseApprovalAction = (value: unknown): "APPROVE" => {
 const parseFinalApprovalAction = (value: unknown): EventReportAction => {
   if (value !== "APPROVE" && value !== "REJECT") {
     throw new InputValidationError("action must be APPROVE or REJECT");
-  }
-
-  return value;
-};
-
-const parseFinanceRole = (value: unknown): EventReportFinanceRole => {
-  if (value !== EventReportFinanceRole.COUNTING_LEADER && value !== EventReportFinanceRole.FINANCE_REP) {
-    throw new InputValidationError("role must be COUNTING_LEADER or FINANCE_REP");
   }
 
   return value;
@@ -1140,6 +1226,7 @@ const loadEventByIdTx = async (tx: ApprovalWorkflowTx, eventId: number) => {
       id: true,
       created_by: true,
       start_date: true,
+      start_time: true,
       event: {
         select: {
           event_name: true,
@@ -1356,196 +1443,19 @@ const ensureFinanceRowTx = async (
   });
 };
 
-const getFinanceRoleOwnerFromEnv = (
-  role: EventReportFinanceRole,
-): number | null => {
-  const envName =
-    role === EventReportFinanceRole.COUNTING_LEADER
-      ? "EVENT_REPORT_COUNTING_LEADER_USER_ID"
-      : "EVENT_REPORT_FINANCE_REP_USER_ID";
-
-  return toPositiveInt(process.env[envName]);
-};
-
-const getFinanceRoleOwnerFromPositionTx = async (
-  tx: ApprovalWorkflowTx,
-  role: EventReportFinanceRole,
-): Promise<number | null> => {
-  const candidateUsers = await tx.user.findMany({
-    where: {
-      NOT: {
-        is_active: false,
-      },
-      position: {
-        isNot: null,
-      },
-    },
-    orderBy: {
-      id: "asc",
-    },
-    select: {
-      id: true,
-      position: {
-        select: {
-          name: true,
-        },
-      },
-    },
-  });
-
-  const acceptedPositionPatterns =
-    role === EventReportFinanceRole.COUNTING_LEADER
-      ? [/counting\s*leader/i]
-      : [/finance\s*rep/i, /finance\s*representative/i];
-
-  const matched = candidateUsers
-    .filter((user) => {
-      const positionName = user.position?.name || "";
-      return acceptedPositionPatterns.some((pattern) => pattern.test(positionName));
-    })
-    .map((user) => user.id);
-
-  if (!matched.length) {
+const pickPrimaryFinanceApprovalRow = <T extends {
+  role: EventReportFinanceRole;
+  status: EventReportSectionApprovalStatus;
+}>(rows: T[]): T | null => {
+  if (!rows.length) {
     return null;
   }
 
-  return matched[0];
-};
-
-const getFinanceRoleOwnerFromPermissionTx = async (
-  tx: ApprovalWorkflowTx,
-): Promise<number | null> => {
-  const users = await tx.user.findMany({
-    where: {
-      NOT: {
-        is_active: false,
-      },
-    },
-    orderBy: {
-      id: "asc",
-    },
-    select: {
-      id: true,
-      access: {
-        select: {
-          permissions: true,
-        },
-      },
-    },
-  });
-
-  const matched = users.find((user) =>
-    hasPermissionValue(user.access?.permissions, [
-      "Financials",
-      "Settings",
-      "Events",
-      "Church_Attendance",
-      "Church Attendance",
-    ]),
+  return (
+    rows.find((row) => row.status === EventReportSectionApprovalStatus.APPROVED) ||
+    rows.find((row) => row.role === SINGLE_FINANCE_APPROVAL_ROLE) ||
+    rows[0]
   );
-
-  return matched?.id || null;
-};
-
-const resolveFinanceRoleOwnerUserIdTx = async (
-  tx: ApprovalWorkflowTx,
-  role: EventReportFinanceRole,
-): Promise<number | null> => {
-  const fromEnv = getFinanceRoleOwnerFromEnv(role);
-  if (fromEnv) {
-    const user = await tx.user.findUnique({
-      where: {
-        id: fromEnv,
-      },
-      select: {
-        id: true,
-        is_active: true,
-      },
-    });
-
-    if (user && user.is_active !== false) {
-      return user.id;
-    }
-  }
-
-  const fromPosition = await getFinanceRoleOwnerFromPositionTx(tx, role);
-  if (fromPosition) {
-    return fromPosition;
-  }
-
-  return getFinanceRoleOwnerFromPermissionTx(tx);
-};
-
-const ensureFinanceApprovalRowsTx = async (
-  tx: ApprovalWorkflowTx,
-  eventReportId: number,
-) => {
-  const roles = [
-    EventReportFinanceRole.COUNTING_LEADER,
-    EventReportFinanceRole.FINANCE_REP,
-  ];
-
-  for (const role of roles) {
-    const row = await tx.event_report_finance_approvals.findUnique({
-      where: {
-        event_report_id_role: {
-          event_report_id: eventReportId,
-          role,
-        },
-      },
-      select: {
-        id: true,
-        role_owner_user_id: true,
-      },
-    });
-
-    const roleOwnerUserId =
-      row?.role_owner_user_id ||
-      (await resolveFinanceRoleOwnerUserIdTx(tx, role));
-
-    if (!row) {
-      await tx.event_report_finance_approvals.create({
-        data: {
-          event_report_id: eventReportId,
-          role,
-          role_owner_user_id: roleOwnerUserId,
-          status: EventReportSectionApprovalStatus.PENDING,
-        },
-      });
-      continue;
-    }
-
-    if (!row.role_owner_user_id && roleOwnerUserId) {
-      await tx.event_report_finance_approvals.update({
-        where: {
-          id: row.id,
-        },
-        data: {
-          role_owner_user_id: roleOwnerUserId,
-        },
-      });
-    }
-  }
-
-  return tx.event_report_finance_approvals.findMany({
-    where: {
-      event_report_id: eventReportId,
-    },
-    include: {
-      role_owner_user: {
-        select: {
-          id: true,
-          name: true,
-        },
-      },
-      approved_by_user: {
-        select: {
-          id: true,
-          name: true,
-        },
-      },
-    },
-  });
 };
 
 const ensureDepartmentApprovalRowsTx = async (
@@ -1861,6 +1771,142 @@ const resolveApproverUserIdForStep = async (
   return resolveSpecificApproverUserId(tx, step.user_id);
 };
 
+const getConfiguredFinanceApproverStepTx = async (
+  tx: ApprovalWorkflowTx,
+) => {
+  const config = await getStoredEventReportApprovalConfigTx(tx);
+
+  if (!config?.finance_approver_type) {
+    return null;
+  }
+
+  return {
+    step_type: config.finance_approver_type as EventReportApproverType,
+    position_id: config.finance_position_id,
+    user_id: config.finance_user_id,
+  };
+};
+
+const resolveConfiguredFinanceApproverUserIdTx = async (
+  tx: ApprovalWorkflowTx,
+  requesterId: number,
+): Promise<number | null> => {
+  const financeApproverStep = await getConfiguredFinanceApproverStepTx(tx);
+  if (!financeApproverStep) {
+    return null;
+  }
+
+  try {
+    return await resolveApproverUserIdForStep(tx, {
+      step: financeApproverStep,
+      requesterId,
+    });
+  } catch (error) {
+    if (error instanceof InputValidationError) {
+      return null;
+    }
+
+    throw error;
+  }
+};
+
+const ensureFinanceApprovalRowTx = async (
+  tx: ApprovalWorkflowTx,
+  args: {
+    eventReportId: number;
+    requesterId: number;
+  },
+) => {
+  const existingRows = await tx.event_report_finance_approvals.findMany({
+    where: {
+      event_report_id: args.eventReportId,
+    },
+    orderBy: [
+      {
+        approved_at: "desc",
+      },
+      {
+        id: "asc",
+      },
+    ],
+    include: {
+      role_owner_user: {
+        select: {
+          id: true,
+          name: true,
+        },
+      },
+      approved_by_user: {
+        select: {
+          id: true,
+          name: true,
+        },
+      },
+    },
+  });
+
+  const resolvedApproverUserId = await resolveConfiguredFinanceApproverUserIdTx(
+    tx,
+    args.requesterId,
+  );
+
+  const primaryRow = pickPrimaryFinanceApprovalRow(existingRows);
+  if (!primaryRow) {
+    return tx.event_report_finance_approvals.create({
+      data: {
+        event_report_id: args.eventReportId,
+        role: SINGLE_FINANCE_APPROVAL_ROLE,
+        role_owner_user_id: resolvedApproverUserId,
+        status: EventReportSectionApprovalStatus.PENDING,
+      },
+      include: {
+        role_owner_user: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+        approved_by_user: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+    });
+  }
+
+  if (
+    primaryRow.status !== EventReportSectionApprovalStatus.APPROVED &&
+    primaryRow.role_owner_user_id !== resolvedApproverUserId
+  ) {
+    return tx.event_report_finance_approvals.update({
+      where: {
+        id: primaryRow.id,
+      },
+      data: {
+        role_owner_user_id: resolvedApproverUserId,
+      },
+      include: {
+        role_owner_user: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+        approved_by_user: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+    });
+  }
+
+  return primaryRow;
+};
+
 const isAdminLikeUser = (user: any): boolean => {
   const permissions = user?.permissions as Prisma.JsonValue | null | undefined;
 
@@ -1936,6 +1982,7 @@ const getDepartmentBreakdownTx = async (
     eventReportId: number;
     eventId: number;
     eventDate: string;
+    eventStartTime: string | null;
     eventStartDate: Date | null;
     actorUserId: number;
   },
@@ -1943,6 +1990,7 @@ const getDepartmentBreakdownTx = async (
   const { start, end } = getUtcDayBounds(args.eventDate);
   const reportEventStartTime = buildReportEventStartDateTime(
     args.eventDate,
+    args.eventStartTime,
     args.eventStartDate,
   );
 
@@ -2203,53 +2251,39 @@ const getFinanceBlockTx = async (
   args: {
     eventReportId: number;
     actorUserId: number;
+    requesterId: number;
   },
 ) => {
   const finance = await ensureFinanceRowTx(tx, args.eventReportId);
-  const approvals = await ensureFinanceApprovalRowsTx(tx, args.eventReportId);
-
-  const countingLeaderApproval = approvals.find(
-    (approval) => approval.role === EventReportFinanceRole.COUNTING_LEADER,
-  );
-  const financeRepApproval = approvals.find(
-    (approval) => approval.role === EventReportFinanceRole.FINANCE_REP,
-  );
-
-  const countingLeaderBlock = buildApprovalBlock({
-    status:
-      countingLeaderApproval?.status || EventReportSectionApprovalStatus.PENDING,
-    approvedByUserId: countingLeaderApproval?.approved_by_user_id || null,
-    approvedByName: countingLeaderApproval?.approved_by_user?.name || null,
-    approvedAt: countingLeaderApproval?.approved_at || null,
-    canCurrentUserApprove:
-      countingLeaderApproval?.role_owner_user_id === args.actorUserId &&
-      countingLeaderApproval.status !== EventReportSectionApprovalStatus.APPROVED,
+  const approval = await ensureFinanceApprovalRowTx(tx, {
+    eventReportId: args.eventReportId,
+    requesterId: args.requesterId,
   });
 
-  const financeRepBlock = buildApprovalBlock({
-    status:
-      financeRepApproval?.status || EventReportSectionApprovalStatus.PENDING,
-    approvedByUserId: financeRepApproval?.approved_by_user_id || null,
-    approvedByName: financeRepApproval?.approved_by_user?.name || null,
-    approvedAt: financeRepApproval?.approved_at || null,
+  const financeApprovalBlock = buildApprovalBlock({
+    status: approval.status || EventReportSectionApprovalStatus.PENDING,
+    approvedByUserId: approval.approved_by_user_id || null,
+    approvedByName: approval.approved_by_user?.name || null,
+    approvedAt: approval.approved_at || null,
     canCurrentUserApprove:
-      financeRepApproval?.role_owner_user_id === args.actorUserId &&
-      financeRepApproval.status !== EventReportSectionApprovalStatus.APPROVED,
+      approval.role_owner_user_id === args.actorUserId &&
+      approval.status !== EventReportSectionApprovalStatus.APPROVED,
   });
+  const approverName = approval.role_owner_user?.name || null;
 
   return {
     finance: {
       income: parseStoredFinanceItems(finance.income_json, "income"),
       expense: parseStoredFinanceItems(finance.expense_json, "expense"),
-      counting_leader_name: countingLeaderApproval?.role_owner_user?.name || null,
-      finance_rep_name: financeRepApproval?.role_owner_user?.name || null,
-      counting_leader_approval: countingLeaderBlock,
-      finance_rep_approval: financeRepBlock,
+      approver_name: approverName,
+      approval: financeApprovalBlock,
+      counting_leader_name: approverName,
+      finance_rep_name: approverName,
+      counting_leader_approval: financeApprovalBlock,
+      finance_rep_approval: financeApprovalBlock,
     },
-    countingLeaderApproved:
-      countingLeaderBlock.status === EventReportSectionApprovalStatus.APPROVED,
-    financeRepApproved:
-      financeRepBlock.status === EventReportSectionApprovalStatus.APPROVED,
+    isApproved:
+      financeApprovalBlock.status === EventReportSectionApprovalStatus.APPROVED,
   };
 };
 
@@ -2314,13 +2348,9 @@ const buildFinalDecisionIdempotencyKey = (
 
 const getPreFinalCompletionStatus = (args: {
   churchAttendanceApproved: boolean;
-  countingLeaderApproved: boolean;
-  financeRepApproved: boolean;
+  financeApproved: boolean;
 }) => {
-  const allComplete =
-    args.churchAttendanceApproved &&
-    args.countingLeaderApproved &&
-    args.financeRepApproved;
+  const allComplete = args.churchAttendanceApproved && args.financeApproved;
 
   return {
     ...args,
@@ -2357,6 +2387,7 @@ const getEventReportDetailTx = async (
         eventReportId: report.id,
         eventId: report.event_id,
         eventDate,
+        eventStartTime: event.start_time,
         eventStartDate: event.start_date,
         actorUserId: args.actorUserId,
       }),
@@ -2369,13 +2400,13 @@ const getEventReportDetailTx = async (
       getFinanceBlockTx(tx, {
         eventReportId: report.id,
         actorUserId: args.actorUserId,
+        requesterId: report.created_by,
       }),
     ]);
 
   const completion = getPreFinalCompletionStatus({
     churchAttendanceApproved: churchAttendanceBlock.isApproved,
-    countingLeaderApproved: financeBlock.countingLeaderApproved,
-    financeRepApproved: financeBlock.financeRepApproved,
+    financeApproved: financeBlock.isApproved,
   });
 
   const activeConfig = await getEventReportApprovalConfigOrNullTx(tx);
@@ -2612,14 +2643,15 @@ export const upsertEventReportFinance = async (
       assertReportOpenForSectionApproval(report.status);
 
       await ensureFinanceRowTx(tx, report.id);
-      const financeApprovals = await ensureFinanceApprovalRowsTx(tx, report.id);
+      const financeApproval = await ensureFinanceApprovalRowTx(tx, {
+        eventReportId: report.id,
+        requesterId: report.created_by,
+      });
 
       const canEditFinance =
         report.created_by === actorUserId ||
         isAdminLikeUser(user) ||
-        financeApprovals.some(
-          (approval) => approval.role_owner_user_id === actorUserId,
-        );
+        financeApproval.role_owner_user_id === actorUserId;
 
       if (!canEditFinance) {
         throw new UnauthorizedError(
@@ -2674,6 +2706,7 @@ export const upsertEventReportFinance = async (
       const financeBlock = await getFinanceBlockTx(tx, {
         eventReportId: report.id,
         actorUserId,
+        requesterId: report.created_by,
       });
 
       return {
@@ -2906,7 +2939,6 @@ export const financeApprovalAction = async (
   }
 
   const eventDate = parseEventDateString(payload.event_date);
-  const role = parseFinanceRole(payload.role);
   parseApprovalAction(payload.action);
   const actorUserId = getAuthenticatedUserId(user);
 
@@ -2923,27 +2955,24 @@ export const financeApprovalAction = async (
       assertReportOpenForSectionApproval(report.status);
 
       await ensureFinanceRowTx(tx, report.id);
-      await ensureFinanceApprovalRowsTx(tx, report.id);
-
-      const approval = await tx.event_report_finance_approvals.findUnique({
-        where: {
-          event_report_id_role: {
-            event_report_id: report.id,
-            role,
-          },
-        },
+      const approval = await ensureFinanceApprovalRowTx(tx, {
+        eventReportId: report.id,
+        requesterId: report.created_by,
       });
 
       if (!approval) {
-        throw new NotFoundError("Finance approval role not found");
+        throw new NotFoundError("Finance approval record not found");
       }
 
-      const roleOwnerUserId =
-        approval.role_owner_user_id || (await resolveFinanceRoleOwnerUserIdTx(tx, role));
+      if (!approval.role_owner_user_id) {
+        throw new InputValidationError(
+          "No finance approver has been configured for event reports",
+        );
+      }
 
-      if (!roleOwnerUserId || roleOwnerUserId !== actorUserId) {
+      if (approval.role_owner_user_id !== actorUserId) {
         throw new UnauthorizedError(
-          "Only the mapped role owner can approve this finance step",
+          "Only the configured finance approver can approve this finance section",
         );
       }
 
@@ -2953,7 +2982,6 @@ export const financeApprovalAction = async (
             id: approval.id,
           },
           data: {
-            role_owner_user_id: roleOwnerUserId,
             status: EventReportSectionApprovalStatus.APPROVED,
             approved_by_user_id: actorUserId,
             approved_at: new Date(),
@@ -3022,6 +3050,7 @@ export const submitEventReportForFinalApproval = async (
         eventReportId: report.id,
         eventId,
         eventDate,
+        eventStartTime: event.start_time,
         eventStartDate: event.start_date,
         actorUserId,
       });
@@ -3034,12 +3063,12 @@ export const submitEventReportForFinalApproval = async (
       const financeBlock = await getFinanceBlockTx(tx, {
         eventReportId: report.id,
         actorUserId,
+        requesterId: report.created_by,
       });
 
       const completion = getPreFinalCompletionStatus({
         churchAttendanceApproved: churchAttendanceBlock.isApproved,
-        countingLeaderApproved: financeBlock.countingLeaderApproved,
-        financeRepApproved: financeBlock.financeRepApproved,
+        financeApproved: financeBlock.isApproved,
       });
 
       if (!completion.allComplete) {

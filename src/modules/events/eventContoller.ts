@@ -290,6 +290,16 @@ export class eventManagement {
     return new Date(now.getFullYear(), now.getMonth(), now.getDate());
   }
 
+  private getCurrentMonthDateRange(referenceDate: Date = new Date()) {
+    const currentYear = referenceDate.getFullYear();
+    const currentMonth = referenceDate.getMonth();
+
+    return {
+      gte: new Date(currentYear, currentMonth, 1),
+      lt: new Date(currentYear, currentMonth + 1, 1),
+    };
+  }
+
   private getCurrentYearDateRange(referenceDate: Date = new Date()) {
     const currentYear = referenceDate.getFullYear();
 
@@ -310,6 +320,10 @@ export class eventManagement {
 
   private getActorUserId(req: Request) {
     return this.toPositiveInt((req as any)?.user?.id);
+  }
+
+  private resolveEventFilterId(query: Request["query"]) {
+    return this.toPositiveInt(query?.event_id ?? query?.eventId);
   }
 
   private getWeekDayNumber(dateValue: Date | string | null | undefined) {
@@ -433,7 +447,7 @@ export class eventManagement {
       return this.getRollingWindowDateRange();
     }
 
-    return this.getCurrentYearDateRange();
+    return this.getCurrentMonthDateRange();
   }
 
   private normalizeOptionalString(value: unknown) {
@@ -1270,6 +1284,8 @@ export class eventManagement {
         year,
         event_type,
         event_status,
+        event_id,
+        eventId,
         page = 1,
         take,
       }: any = req.query;
@@ -1279,18 +1295,28 @@ export class eventManagement {
       const skip = (pageNum - 1) * pageSize;
       const hasTakeParam =
         take !== undefined && take !== null && `${take}`.trim() !== "";
+      const showPresentUpcoming =
+        this.resolveShowPresentUpcomingFilter(req.query);
       const monthRange = this.getMonthDateRange(month, year);
-      const useRollingWindow = !monthRange && !hasTakeParam;
+      const yearRange = this.getYearDateRange(year);
+      const useRollingWindow =
+        showPresentUpcoming === true && !monthRange && !yearRange && !hasTakeParam;
+      const eventFilterId = this.resolveEventFilterId(req.query);
 
       let whereClause: any = {
+        id: eventFilterId ?? undefined,
         event_type,
         event_status,
       };
 
       if (monthRange) {
         whereClause.start_date = monthRange;
+      } else if (yearRange) {
+        whereClause.start_date = yearRange;
       } else if (useRollingWindow) {
         whereClause.start_date = this.resolveStartDateRange(month, year, pageNum);
+      } else {
+        whereClause.start_date = this.getCurrentMonthDateRange();
       }
 
       let totalCount = 0;
@@ -1328,6 +1354,7 @@ export class eventManagement {
         const startOfToday = this.getStartOfToday();
         const latestEvent = await prisma.event_mgt.findFirst({
           where: {
+            id: eventFilterId ?? undefined,
             event_type,
             event_status,
             start_date: {
@@ -1405,8 +1432,10 @@ export class eventManagement {
         year,
         showPresentUpcoming,
       });
+      const eventFilterId = this.resolveEventFilterId(req.query);
 
       let whereClause: any = {
+        id: eventFilterId ?? undefined,
         event_type,
         event_status,
         start_date: startDateRange,
@@ -1472,12 +1501,17 @@ export class eventManagement {
   eventStats = async (req: Request, res: Response) => {
     try {
       const { month, year, event_type, event_status }: any = req.query;
+      const eventFilterId = this.resolveEventFilterId(req.query);
+      const startDateRange =
+        this.getMonthDateRange(month, year) ||
+        this.getYearDateRange(year) ||
+        this.getCurrentMonthDateRange();
       const data = await prisma.event_mgt.findMany({
         where: {
-          AND: [
-            { start_date: { gte: new Date(`${year}-01-01`) } }, // Start of the month
-            { end_date: { lte: new Date(`${year}-12-31`) } },
-          ],
+          id: eventFilterId ?? undefined,
+          event_type,
+          event_status,
+          start_date: startDateRange,
         },
         orderBy: {
           start_date: "asc",
@@ -2470,19 +2504,26 @@ export class eventManagement {
         });
       }
 
-      const job = await biometricAttendanceService.createImportJob(
+      const jobs = await biometricAttendanceService.createImportJobs(
         req.body,
         {
           id: actorUserId,
         },
       );
+      const responseData = jobs.length === 1 ? jobs[0] : jobs;
+      const actionLabel =
+        jobs[0]?.dry_run === true
+          ? jobs.length === 1
+            ? "Biometric attendance preview job started"
+            : "Biometric attendance preview jobs started"
+          : jobs.length === 1
+          ? "Biometric attendance import job started"
+          : "Biometric attendance import jobs started";
 
       return res.status(202).json({
         success: true,
-        message: job.dry_run
-          ? "Biometric attendance preview job started"
-          : "Biometric attendance import job started",
-        data: job,
+        message: actionLabel,
+        data: responseData,
       });
     } catch (error: any) {
       const statusCode =

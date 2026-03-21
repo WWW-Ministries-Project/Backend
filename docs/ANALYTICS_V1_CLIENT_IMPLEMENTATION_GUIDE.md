@@ -105,9 +105,13 @@ Useful query params on `/visitor/visitors`:
 
 Useful query params on `/event/list-events`:
 - `month`, `year`
+- `event_id`
 - `event_type`
 - `event_status`
 - `page`, `take`
+
+Default behavior:
+- if `month`/`year` are not provided, event listings now default to the current month
 
 ## Attendance
 - `GET /event/church-attendance`
