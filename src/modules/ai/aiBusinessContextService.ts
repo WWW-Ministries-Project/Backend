@@ -169,6 +169,11 @@ type DbKnowledge = {
   };
 };
 
+type CacheEntry = {
+  expiresAt: number;
+  value: unknown;
+};
+
 const MEMBERSHIP_TYPES = ["ONLINE", "IN_HOUSE"] as const;
 const ACTIVE_COHORT_STATUSES = ["Ongoing", "Upcoming"] as const;
 const PENDING_REQUISITION_STATUSES = [
@@ -177,8 +182,19 @@ const PENDING_REQUISITION_STATUSES = [
 ] as const;
 
 const MAX_LIST_ITEMS = 5;
+const DEFAULT_MEMBER_METRICS_CACHE_MS = 60_000;
+const DEFAULT_OPERATIONAL_SNAPSHOT_CACHE_MS = 45_000;
+const DEFAULT_ATTENDANCE_TODAY_CACHE_MS = 30_000;
+
+const getPositiveIntEnv = (key: string, fallback: number): number => {
+  const parsed = Number(process.env[key]);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
+};
 
 export class AiBusinessContextService {
+  private cache = new Map<string, CacheEntry>();
+  private inFlight = new Map<string, Promise<unknown>>();
+
   async enrichContext(
     message: string,
     context: AiContext,
@@ -187,9 +203,11 @@ export class AiBusinessContextService {
     const normalizedModule = this.normalizeModuleName(context.module);
     const safeMessage = String(message || "");
 
-    // Always include baseline member metrics. Keep other enrichments lightweight.
-    const includeMemberMetrics = true;
-    const includeAttendanceToday = this.matchesAny(safeMessage, ATTENDANCE_INTENT_PATTERNS);
+    const includeMemberMetrics = this.shouldIncludeMemberMetrics(
+      safeMessage,
+      normalizedModule,
+    );
+    const includeAttendanceToday = this.shouldIncludeAttendanceTodayMetrics(safeMessage);
 
     const warnings: string[] = [];
     const metrics: MetricBundle = {};
@@ -220,7 +238,7 @@ export class AiBusinessContextService {
       );
     }
 
-    const knowledgePromise = this.buildKnowledge(safeMessage).catch(() => {
+    const knowledgePromise = this.buildKnowledge(safeMessage, normalizedModule).catch(() => {
       warnings.push("db_knowledge_unavailable");
       return null;
     });
@@ -258,9 +276,11 @@ export class AiBusinessContextService {
 
   private async buildKnowledge(
     message: string,
+    normalizedModule: string,
   ): Promise<DbKnowledge | null> {
     const intents = this.detectIntents(message);
     const entityHints = this.detectEntityHints(message);
+    const hasDateLikeToken = this.hasDateLikeToken(message);
 
     // Keep prefetch lightweight. The model can fetch detailed data on demand via tools.
     const shouldLoadActivePrograms = false;
@@ -268,11 +288,13 @@ export class AiBusinessContextService {
     const shouldLoadPendingApprovals = false;
     const shouldLoadAttendanceLookup =
       intents.has("attendance_lookup") ||
-      entityHints.has("attendance") ||
-      this.hasDateLikeToken(message);
+      (entityHints.has("attendance") && hasDateLikeToken);
 
     const shouldLoadLookupHits = false;
-    const shouldLoadOperationalSnapshot = true;
+    const shouldLoadOperationalSnapshot =
+      normalizedModule === "operations" ||
+      intents.has("summary_lookup") ||
+      intents.has("operational_snapshot_lookup");
 
     const knowledge: DbKnowledge = {
       generated_at: new Date().toISOString(),
@@ -969,212 +991,230 @@ export class AiBusinessContextService {
   }
 
   private async getOperationalSnapshotKnowledge(): Promise<DbKnowledge["operational_snapshot"]> {
-    const { startOfDay, endOfDay } = this.getTodayBoundsServerLocal();
+    return this.getCachedValue(
+      this.buildDailyCacheKey("operational_snapshot"),
+      this.getOperationalSnapshotCacheTtlMs(),
+      async () => {
+        const { startOfDay, endOfDay } = this.getTodayBoundsServerLocal();
 
-    const [
-      totalMembers,
-      activePrograms,
-      pendingRequisitions,
-      upcomingEvents,
-      pendingAppointmentsToday,
-      visitorsToday,
-    ] = await Promise.all([
-      prisma.user_info.count({
-        where: {
-          user: {
-            membership_type: {
-              in: [...MEMBERSHIP_TYPES],
-            },
-          },
-        },
-      }),
-      prisma.program.count({
-        where: {
-          completed: false,
-          cohorts: {
-            some: {
-              status: {
-                in: [...ACTIVE_COHORT_STATUSES],
+        const [
+          totalMembers,
+          activePrograms,
+          pendingRequisitions,
+          upcomingEvents,
+          pendingAppointmentsToday,
+          visitorsToday,
+        ] = await Promise.all([
+          prisma.user_info.count({
+            where: {
+              user: {
+                membership_type: {
+                  in: [...MEMBERSHIP_TYPES],
+                },
               },
             },
-          },
-        },
-      }),
-      prisma.request.count({
-        where: {
-          request_approval_status: {
-            in: [...PENDING_REQUISITION_STATUSES],
-          },
-        },
-      }),
-      prisma.event_mgt.count({
-        where: {
-          OR: [
-            {
-              start_date: {
+          }),
+          prisma.program.count({
+            where: {
+              completed: false,
+              cohorts: {
+                some: {
+                  status: {
+                    in: [...ACTIVE_COHORT_STATUSES],
+                  },
+                },
+              },
+            },
+          }),
+          prisma.request.count({
+            where: {
+              request_approval_status: {
+                in: [...PENDING_REQUISITION_STATUSES],
+              },
+            },
+          }),
+          prisma.event_mgt.count({
+            where: {
+              OR: [
+                {
+                  start_date: {
+                    gte: startOfDay,
+                  },
+                },
+                {
+                  end_date: {
+                    gte: startOfDay,
+                  },
+                },
+              ],
+            },
+          }),
+          prisma.appointment.count({
+            where: {
+              status: appointment_status.PENDING,
+              date: {
                 gte: startOfDay,
+                lt: endOfDay,
               },
             },
-            {
-              end_date: {
+          }),
+          prisma.visitor.count({
+            where: {
+              visitDate: {
                 gte: startOfDay,
+                lt: endOfDay,
               },
             },
-          ],
-        },
-      }),
-      prisma.appointment.count({
-        where: {
-          status: appointment_status.PENDING,
-          date: {
-            gte: startOfDay,
-            lt: endOfDay,
-          },
-        },
-      }),
-      prisma.visitor.count({
-        where: {
-          visitDate: {
-            gte: startOfDay,
-            lt: endOfDay,
-          },
-        },
-      }),
-    ]);
+          }),
+        ]);
 
-    return {
-      data_source: "prisma.user_info + program + request + event_mgt + appointment + visitor",
-      date_basis: "server_local_time",
-      date: startOfDay.toISOString().slice(0, 10),
-      total_members: totalMembers,
-      active_programs: activePrograms,
-      pending_requisitions: pendingRequisitions,
-      upcoming_events: upcomingEvents,
-      pending_appointments_today: pendingAppointmentsToday,
-      visitors_today: visitorsToday,
-    };
+        return {
+          data_source: "prisma.user_info + program + request + event_mgt + appointment + visitor",
+          date_basis: "server_local_time",
+          date: startOfDay.toISOString().slice(0, 10),
+          total_members: totalMembers,
+          active_programs: activePrograms,
+          pending_requisitions: pendingRequisitions,
+          upcoming_events: upcomingEvents,
+          pending_appointments_today: pendingAppointmentsToday,
+          visitors_today: visitorsToday,
+        };
+      },
+    );
   }
 
   private async getMemberMetrics(): Promise<MemberMetrics> {
-    const [totalMembers, onlineMembers, inhouseMembers, groupedByGender] =
-      await Promise.all([
-        prisma.user_info.count({
-          where: {
-            user: {
-              membership_type: {
-                in: [...MEMBERSHIP_TYPES],
+    return this.getCachedValue(
+      "member_metrics",
+      this.getMemberMetricsCacheTtlMs(),
+      async () => {
+        const [totalMembers, onlineMembers, inhouseMembers, groupedByGender] =
+          await Promise.all([
+            prisma.user_info.count({
+              where: {
+                user: {
+                  membership_type: {
+                    in: [...MEMBERSHIP_TYPES],
+                  },
+                },
               },
-            },
-          },
-        }),
-        prisma.user_info.count({
-          where: {
-            user: {
-              membership_type: "ONLINE",
-            },
-          },
-        }),
-        prisma.user_info.count({
-          where: {
-            user: {
-              membership_type: "IN_HOUSE",
-            },
-          },
-        }),
-        prisma.user_info.groupBy({
-          by: ["gender"],
-          where: {
-            user: {
-              membership_type: {
-                in: [...MEMBERSHIP_TYPES],
+            }),
+            prisma.user_info.count({
+              where: {
+                user: {
+                  membership_type: "ONLINE",
+                },
               },
+            }),
+            prisma.user_info.count({
+              where: {
+                user: {
+                  membership_type: "IN_HOUSE",
+                },
+              },
+            }),
+            prisma.user_info.groupBy({
+              by: ["gender"],
+              where: {
+                user: {
+                  membership_type: {
+                    in: [...MEMBERSHIP_TYPES],
+                  },
+                },
+              },
+              _count: {
+                _all: true,
+              },
+            }),
+          ]);
+
+        let maleMembers = 0;
+        let femaleMembers = 0;
+        let otherMembers = 0;
+
+        for (const row of groupedByGender) {
+          const normalized = this.normalizeGender(row.gender);
+          const count = row._count._all;
+          if (normalized === "male") {
+            maleMembers += count;
+          } else if (normalized === "female") {
+            femaleMembers += count;
+          } else {
+            otherMembers += count;
+          }
+        }
+
+        return {
+          source: "prisma.user_info + user.membership_type",
+          total_members: totalMembers,
+          online_members: onlineMembers,
+          inhouse_members: inhouseMembers,
+          male_members: maleMembers,
+          female_members: femaleMembers,
+          other_members: otherMembers,
+        };
+      },
+    );
+  }
+
+  private async getAttendanceTodayMetrics(): Promise<AttendanceTodayMetrics> {
+    return this.getCachedValue(
+      this.buildDailyCacheKey("attendance_today"),
+      this.getAttendanceTodayCacheTtlMs(),
+      async () => {
+        const { startOfDay, endOfDay } = this.getTodayBoundsServerLocal();
+
+        const aggregate = await prisma.event_attendance_summary.aggregate({
+          where: {
+            date: {
+              gte: startOfDay,
+              lt: endOfDay,
             },
           },
           _count: {
             _all: true,
           },
-        }),
-      ]);
+          _sum: {
+            adultMale: true,
+            youthMale: true,
+            childrenMale: true,
+            adultFemale: true,
+            youthFemale: true,
+            childrenFemale: true,
+            visitors: true,
+            newMembers: true,
+            visitingPastors: true,
+          },
+        });
 
-    let maleMembers = 0;
-    let femaleMembers = 0;
-    let otherMembers = 0;
+        const adultMale = Number(aggregate._sum.adultMale || 0);
+        const youthMale = Number(aggregate._sum.youthMale || 0);
+        const childrenMale = Number(aggregate._sum.childrenMale || 0);
+        const adultFemale = Number(aggregate._sum.adultFemale || 0);
+        const youthFemale = Number(aggregate._sum.youthFemale || 0);
+        const childrenFemale = Number(aggregate._sum.childrenFemale || 0);
 
-    for (const row of groupedByGender) {
-      const normalized = this.normalizeGender(row.gender);
-      const count = row._count._all;
-      if (normalized === "male") {
-        maleMembers += count;
-      } else if (normalized === "female") {
-        femaleMembers += count;
-      } else {
-        otherMembers += count;
-      }
-    }
-
-    return {
-      source: "prisma.user_info + user.membership_type",
-      total_members: totalMembers,
-      online_members: onlineMembers,
-      inhouse_members: inhouseMembers,
-      male_members: maleMembers,
-      female_members: femaleMembers,
-      other_members: otherMembers,
-    };
-  }
-
-  private async getAttendanceTodayMetrics(): Promise<AttendanceTodayMetrics> {
-    const { startOfDay, endOfDay } = this.getTodayBoundsServerLocal();
-
-    const aggregate = await prisma.event_attendance_summary.aggregate({
-      where: {
-        date: {
-          gte: startOfDay,
-          lt: endOfDay,
-        },
+        return {
+          source: "prisma.event_attendance_summary",
+          date: startOfDay.toISOString().slice(0, 10),
+          day_basis: "server_local_time",
+          window_start: startOfDay.toISOString(),
+          window_end: endOfDay.toISOString(),
+          records: aggregate._count._all,
+          male_total: adultMale + youthMale + childrenMale,
+          female_total: adultFemale + youthFemale + childrenFemale,
+          adult_male: adultMale,
+          youth_male: youthMale,
+          children_male: childrenMale,
+          adult_female: adultFemale,
+          youth_female: youthFemale,
+          children_female: childrenFemale,
+          visitors: Number(aggregate._sum.visitors || 0),
+          new_members: Number(aggregate._sum.newMembers || 0),
+          visiting_pastors: Number(aggregate._sum.visitingPastors || 0),
+        };
       },
-      _count: {
-        _all: true,
-      },
-      _sum: {
-        adultMale: true,
-        youthMale: true,
-        childrenMale: true,
-        adultFemale: true,
-        youthFemale: true,
-        childrenFemale: true,
-        visitors: true,
-        newMembers: true,
-        visitingPastors: true,
-      },
-    });
-
-    const adultMale = Number(aggregate._sum.adultMale || 0);
-    const youthMale = Number(aggregate._sum.youthMale || 0);
-    const childrenMale = Number(aggregate._sum.childrenMale || 0);
-    const adultFemale = Number(aggregate._sum.adultFemale || 0);
-    const youthFemale = Number(aggregate._sum.youthFemale || 0);
-    const childrenFemale = Number(aggregate._sum.childrenFemale || 0);
-
-    return {
-      source: "prisma.event_attendance_summary",
-      date: startOfDay.toISOString().slice(0, 10),
-      day_basis: "server_local_time",
-      window_start: startOfDay.toISOString(),
-      window_end: endOfDay.toISOString(),
-      records: aggregate._count._all,
-      male_total: adultMale + youthMale + childrenMale,
-      female_total: adultFemale + youthFemale + childrenFemale,
-      adult_male: adultMale,
-      youth_male: youthMale,
-      children_male: childrenMale,
-      adult_female: adultFemale,
-      youth_female: youthFemale,
-      children_female: childrenFemale,
-      visitors: Number(aggregate._sum.visitors || 0),
-      new_members: Number(aggregate._sum.newMembers || 0),
-      visiting_pastors: Number(aggregate._sum.visitingPastors || 0),
-    };
+    );
   }
 
   private detectIntents(message: string): Set<string> {
@@ -1532,6 +1572,82 @@ export class AiBusinessContextService {
     return { startOfDay, endOfDay };
   }
 
+  private shouldIncludeMemberMetrics(message: string, normalizedModule: string): boolean {
+    return (
+      normalizedModule === "operations" ||
+      this.matchesAny(message, MEMBER_INTENT_PATTERNS) ||
+      this.matchesAny(message, SUMMARY_INTENT_PATTERNS)
+    );
+  }
+
+  private shouldIncludeAttendanceTodayMetrics(message: string): boolean {
+    return (
+      (/\btoday\b/i.test(message) && this.matchesAny(message, ATTENDANCE_LOOKUP_PATTERNS)) ||
+      /\bcame\s+to\s+church\b/i.test(message) ||
+      /\bchurch\s+today\b/i.test(message)
+    );
+  }
+
+  private async getCachedValue<T>(
+    key: string,
+    ttlMs: number,
+    loader: () => Promise<T>,
+  ): Promise<T> {
+    const now = Date.now();
+    const cached = this.cache.get(key);
+    if (cached && cached.expiresAt > now) {
+      return cached.value as T;
+    }
+
+    const existingPromise = this.inFlight.get(key);
+    if (existingPromise) {
+      return existingPromise as Promise<T>;
+    }
+
+    const loadPromise = loader()
+      .then((value) => {
+        if (ttlMs > 0) {
+          this.cache.set(key, {
+            expiresAt: Date.now() + ttlMs,
+            value,
+          });
+        }
+        return value;
+      })
+      .finally(() => {
+        this.inFlight.delete(key);
+      });
+
+    this.inFlight.set(key, loadPromise as Promise<unknown>);
+    return loadPromise;
+  }
+
+  private buildDailyCacheKey(prefix: string): string {
+    const { startOfDay } = this.getTodayBoundsServerLocal();
+    return `${prefix}:${startOfDay.toISOString().slice(0, 10)}`;
+  }
+
+  private getMemberMetricsCacheTtlMs(): number {
+    return getPositiveIntEnv(
+      "AI_CONTEXT_MEMBER_METRICS_CACHE_MS",
+      DEFAULT_MEMBER_METRICS_CACHE_MS,
+    );
+  }
+
+  private getOperationalSnapshotCacheTtlMs(): number {
+    return getPositiveIntEnv(
+      "AI_CONTEXT_OPERATIONAL_SNAPSHOT_CACHE_MS",
+      DEFAULT_OPERATIONAL_SNAPSHOT_CACHE_MS,
+    );
+  }
+
+  private getAttendanceTodayCacheTtlMs(): number {
+    return getPositiveIntEnv(
+      "AI_CONTEXT_ATTENDANCE_TODAY_CACHE_MS",
+      DEFAULT_ATTENDANCE_TODAY_CACHE_MS,
+    );
+  }
+
   private matchesAny(input: string, patterns: RegExp[]): boolean {
     return patterns.some((pattern) => pattern.test(input));
   }
@@ -1550,7 +1666,6 @@ const ATTENDANCE_INTENT_PATTERNS = [
   /\battend[a-z]*\b/i,
   /\bcame\s+to\s+church\b/i,
   /\bchurch\s+today\b/i,
-  /\btoday\b/i,
 ];
 const ATTENDANCE_LOOKUP_PATTERNS = [
   /\battend[a-z]*\b/i,

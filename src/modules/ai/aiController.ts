@@ -6,10 +6,13 @@ import { AiQuotaExceededError, AiUsageService } from "./aiUsageService";
 import { AiCredentialService, AiCredentialServiceError } from "./aiCredentialService";
 import { AiBusinessContextService } from "./aiBusinessContextService";
 import { AiReadOnlyDataService, AiReadOnlyDataServiceError } from "./aiReadOnlyDataService";
+import { AiResponseFormatter } from "./aiResponseFormatter";
 import {
   AiChatHistoryMessage,
   AiContext,
+  AiDisplay,
   AiReservation,
+  AiResponsePerformance,
   AiUsage,
   AiUsageSnapshot,
 } from "./aiTypes";
@@ -25,6 +28,8 @@ type ChatExecutionResult = {
   model: string;
   fallback_used: boolean;
   fallback_reason?: string;
+  display: AiDisplay;
+  performance: AiResponsePerformance;
 };
 
 export class AiController {
@@ -33,6 +38,7 @@ export class AiController {
   private credentialService = new AiCredentialService();
   private businessContextService = new AiBusinessContextService();
   private readOnlyDataService = new AiReadOnlyDataService();
+  private responseFormatter = new AiResponseFormatter();
 
   async listCredentials(req: Request, res: Response) {
     const provider =
@@ -144,6 +150,215 @@ export class AiController {
     }
   }
 
+  async chatbotConfig(req: Request, res: Response) {
+    if (!this.getAdminActorId(req, res)) {
+      return;
+    }
+
+    try {
+      const availableModels =
+        await this.credentialService.listAvailableChatbotModels();
+      const defaultModel = availableModels[0] ?? null;
+      const enabled = Boolean(defaultModel);
+
+      return res.status(200).json({
+        data: {
+          enabled,
+          default_model: defaultModel?.model ?? null,
+          provider: defaultModel?.provider ?? null,
+          available_models: availableModels,
+          default_context: {
+            module: "operations",
+            scope: "admin",
+          },
+          welcome_message: enabled
+            ? "Ask for operational summaries, data lookups, risk flags, and follow-up guidance."
+            : "AI chatbot is unavailable until an active provider credential is configured.",
+          suggested_prompts: enabled
+            ? [
+                "Summarize urgent operational issues today.",
+                "Show pending approvals and likely bottlenecks.",
+                "Which visitors or members need follow-up right now?",
+              ]
+            : [
+                "Open AI Console and activate an OpenAI, Gemini, or Claude credential.",
+              ],
+          unavailable_reason: enabled
+            ? null
+            : "Configure and activate an AI provider credential in AI Console to enable the chatbot.",
+        },
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        message: "Failed to load AI chatbot configuration",
+        data: null,
+      });
+    }
+  }
+
+  async chatbot(req: Request, res: Response) {
+    const actorId = this.getAdminActorId(req, res);
+    if (!actorId) {
+      return;
+    }
+
+    const message =
+      typeof req.body?.message === "string" ? req.body.message.trim() : "";
+    const conversationId =
+      typeof req.body?.conversation_id === "string"
+        ? req.body.conversation_id.trim()
+        : undefined;
+    const parsedContext = this.parseContext(req.body?.context);
+    const context = {
+      ...parsedContext,
+      module:
+        typeof parsedContext.module === "string" && parsedContext.module.trim()
+          ? parsedContext.module.trim()
+          : "operations",
+      scope: "admin",
+      chat_surface: "chatbot_widget",
+    };
+
+    const requestedModelValidation =
+      req.body?.model === undefined || req.body?.model === null
+        ? { ok: true as const, model: undefined }
+        : this.parseRequestedModel(req.body?.model);
+
+    if (!requestedModelValidation.ok) {
+      return res.status(400).json({
+        message: requestedModelValidation.error,
+        data: null,
+      });
+    }
+
+    if (!message) {
+      return res.status(400).json({
+        message: "message is required",
+        data: null,
+      });
+    }
+
+    const resolvedModel =
+      requestedModelValidation.model ||
+      (await this.credentialService.resolveDefaultChatbotModel())?.model;
+
+    if (!resolvedModel) {
+      return res.status(503).json({
+        message:
+          "AI chatbot is unavailable until an active provider credential is configured",
+        data: null,
+      });
+    }
+
+    const idempotencyKey = this.getIdempotencyKey(req);
+    const endpoint = "/ai/chatbot";
+    const requestHash = this.createRequestHash({
+      actor_id: actorId,
+      message,
+      conversation_id: conversationId || null,
+      context,
+      model: requestedModelValidation.model || null,
+    });
+
+    if (idempotencyKey) {
+      const existing = await prisma.ai_idempotency_key.findUnique({
+        where: {
+          actor_id_endpoint_key: {
+            actor_id: actorId,
+            endpoint,
+            key: idempotencyKey,
+          },
+        },
+      });
+
+      if (existing) {
+        if (existing.request_hash !== requestHash) {
+          return res.status(409).json({
+            message:
+              "Idempotency-Key already used with a different request payload",
+            data: null,
+          });
+        }
+
+        const replayPayload = this.parseResponsePayload(existing.response_payload);
+        if (replayPayload) {
+          return res.status(existing.status_code).json(replayPayload);
+        }
+      }
+    }
+
+    try {
+      const result = await this.executeChat({
+        actorId,
+        message,
+        context,
+        conversationId,
+        requestedModel: resolvedModel,
+        auditResource: endpoint,
+      });
+
+      const payload = {
+        data: this.buildChatResponseData(result),
+      };
+
+      if (idempotencyKey) {
+        await this.storeIdempotencyResult({
+          actorId,
+          endpoint,
+          key: idempotencyKey,
+          requestHash,
+          statusCode: 200,
+          payload,
+        });
+      }
+
+      return res.status(200).json(payload);
+    } catch (error: any) {
+      if (error instanceof AiQuotaExceededError) {
+        return res.status(429).json({
+          message: error.message,
+          data: {
+            usage_snapshot: error.snapshot,
+            reset_at: error.reset_at,
+          },
+        });
+      }
+
+      if (error instanceof Error && error.message === "Conversation not found") {
+        return res.status(404).json({
+          message: error.message,
+          data: null,
+        });
+      }
+
+      if (
+        error instanceof Error &&
+        error.message === "Not authorized to access this conversation"
+      ) {
+        return res.status(401).json({
+          message: error.message,
+          data: null,
+        });
+      }
+
+      if (error instanceof AiProviderError) {
+        const providerStatus =
+          error.status_code >= 500 || error.status_code === 429
+            ? 503
+            : error.status_code;
+        return res.status(providerStatus).json({
+          message: error.message,
+          data: null,
+        });
+      }
+
+      return res.status(500).json({
+        message: "Something went wrong",
+        data: null,
+      });
+    }
+  }
+
   async chat(req: Request, res: Response) {
     const actorId = this.getActorId(req);
     if (!actorId) {
@@ -221,18 +436,7 @@ export class AiController {
       });
 
       const payload = {
-        data: {
-          conversation_id: result.conversation_id,
-          message_id: result.message_id,
-          reply: result.reply,
-          created_at: result.created_at,
-          provider: result.provider,
-          model: result.model,
-          fallback_used: result.fallback_used,
-          fallback_reason: result.fallback_reason,
-          usage: result.usage,
-          usage_snapshot: result.usage_snapshot,
-        },
+        data: this.buildChatResponseData(result),
       };
 
       if (idempotencyKey) {
@@ -492,16 +696,7 @@ export class AiController {
       return res.status(200).json({
         data: {
           module: moduleName,
-          conversation_id: result.conversation_id,
-          message_id: result.message_id,
-          reply: result.reply,
-          created_at: result.created_at,
-          provider: result.provider,
-          model: result.model,
-          fallback_used: result.fallback_used,
-          fallback_reason: result.fallback_reason,
-          usage: result.usage,
-          usage_snapshot: result.usage_snapshot,
+          ...this.buildChatResponseData(result),
         },
       });
     } catch (error: any) {
@@ -560,23 +755,40 @@ export class AiController {
     auditResource: string;
   }): Promise<ChatExecutionResult> {
     let reservation: AiReservation | null = null;
+    const startedAt = Date.now();
     try {
       reservation = await this.usageService.reserveQuota();
-      const enrichedContext = await this.businessContextService.enrichContext(
-        params.message,
-        params.context,
-        params.actorId,
-      );
-      const conversation = await this.resolveConversation({
+      const conversationParams = {
         actorId: params.actorId,
         conversationId: params.conversationId,
         fallbackTitle:
           params.conversationTitle || this.createConversationTitle(params.message),
-      });
-      const history = await this.getConversationHistory(
-        conversation.id,
-        this.getChatHistoryLimit(),
-      );
+      };
+
+      let enrichedContext: AiContext;
+      let conversation: Awaited<ReturnType<AiController["resolveConversation"]>>;
+
+      if (params.conversationId) {
+        [enrichedContext, conversation] = await Promise.all([
+          this.businessContextService.enrichContext(
+            params.message,
+            params.context,
+            params.actorId,
+          ),
+          this.resolveConversation(conversationParams),
+        ]);
+      } else {
+        enrichedContext = await this.businessContextService.enrichContext(
+          params.message,
+          params.context,
+          params.actorId,
+        );
+        conversation = await this.resolveConversation(conversationParams);
+      }
+
+      const history = params.conversationId
+        ? await this.getConversationHistory(conversation.id, this.getChatHistoryLimit())
+        : [];
 
       await prisma.ai_message.create({
         data: {
@@ -646,6 +858,10 @@ export class AiController {
         model: providerResult.model,
         fallback_used: providerResult.fallback_used,
         fallback_reason: providerResult.fallback_reason,
+        display: this.responseFormatter.format(providerResult.reply),
+        performance: {
+          latency_ms: Date.now() - startedAt,
+        },
       };
     } finally {
       if (reservation) {
@@ -691,10 +907,38 @@ export class AiController {
     return context as AiContext;
   }
 
+  private getAdminActorId(req: Request, res: Response): number | null {
+    const actorId = this.getActorId(req);
+    if (!actorId) {
+      res.status(401).json({
+        message: "Not authorized. Token not found",
+        data: null,
+      });
+      return null;
+    }
+
+    if (!this.isAdminUser(req)) {
+      res.status(403).json({
+        message: "Admin access is required for the AI chatbot",
+        data: null,
+      });
+      return null;
+    }
+
+    return actorId;
+  }
+
   private getActorId(req: Request): number | null {
     const rawId = (req as any)?.user?.id;
     const parsed = Number(rawId);
     return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+  }
+
+  private isAdminUser(req: Request): boolean {
+    const userCategory = String((req as any)?.user?.user_category || "")
+      .trim()
+      .toLowerCase();
+    return userCategory === "admin";
   }
 
   private getIdempotencyKey(req: Request): string | null {
@@ -795,7 +1039,24 @@ export class AiController {
 
   private getChatHistoryLimit(): number {
     const parsed = Number(process.env.AI_CHAT_HISTORY_LIMIT);
-    return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 12;
+    return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 8;
+  }
+
+  private buildChatResponseData(result: ChatExecutionResult): Record<string, unknown> {
+    return {
+      conversation_id: result.conversation_id,
+      message_id: result.message_id,
+      reply: result.reply,
+      display: result.display,
+      created_at: result.created_at,
+      provider: result.provider,
+      model: result.model,
+      fallback_used: result.fallback_used,
+      fallback_reason: result.fallback_reason,
+      usage: result.usage,
+      usage_snapshot: result.usage_snapshot,
+      performance: result.performance,
+    };
   }
 
   private parseRequestedModel(value: unknown):

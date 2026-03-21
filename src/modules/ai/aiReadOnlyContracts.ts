@@ -27,7 +27,10 @@ export type AiReadOnlyOperationName =
   | "summary"
   | "recent"
   | "search"
-  | "attendance_lookup";
+  | "queue"
+  | "attendance_lookup"
+  | "early_arrivals"
+  | "attendance_timing";
 
 export type AiReadOnlyOperationContract = {
   name: AiReadOnlyOperationName;
@@ -97,6 +100,25 @@ const BASE_SUMMARY_SCHEMA = {
   },
 };
 
+const REQUISITION_QUEUE_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    ...DATE_RANGE_PROPERTIES,
+    approver_user_id: {
+      type: "integer",
+      minimum: 1,
+      description: "Optional approver user id to filter the pending queue.",
+    },
+    limit: {
+      type: "integer",
+      minimum: 1,
+      maximum: MAX_RECENT_LIMIT,
+      description: `Max rows to return (default ${DEFAULT_RECENT_LIMIT}).`,
+    },
+  },
+};
+
 const ATTENDANCE_LOOKUP_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -121,6 +143,73 @@ const ATTENDANCE_LOOKUP_SCHEMA = {
       minimum: 1,
       maximum: MAX_RECENT_LIMIT,
       description: `Max rows to return (default ${DEFAULT_RECENT_LIMIT}).`,
+    },
+  },
+};
+
+const EARLY_ARRIVALS_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    ...DATE_RANGE_PROPERTIES,
+    event_id: {
+      type: "integer",
+      minimum: 1,
+      description: "Optional event_mgt id filter.",
+    },
+    event_name: {
+      type: "string",
+      minLength: 2,
+      description: "Optional partial event name match.",
+    },
+    limit: {
+      type: "integer",
+      minimum: 1,
+      maximum: MAX_RECENT_LIMIT,
+      description: "Max ranked members to return (default 3).",
+    },
+  },
+};
+
+const ATTENDANCE_TIMING_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    ...DATE_RANGE_PROPERTIES,
+    date: {
+      type: "string",
+      description: "Optional attendance date in YYYY-MM-DD.",
+    },
+    event_id: {
+      type: "integer",
+      minimum: 1,
+      description: "Optional event_mgt id filter.",
+    },
+    event_name: {
+      type: "string",
+      minLength: 2,
+      description: "Optional partial event name match.",
+    },
+    user_id: {
+      type: "integer",
+      minimum: 1,
+      description: "Optional exact member user id filter.",
+    },
+    member_query: {
+      type: "string",
+      minLength: 2,
+      description: "Optional partial member name or member id match.",
+    },
+    status: {
+      type: "string",
+      enum: ["early", "on_time", "late", "all"],
+      description: "Timing status to analyze. Defaults to all.",
+    },
+    limit: {
+      type: "integer",
+      minimum: 1,
+      maximum: MAX_RECENT_LIMIT,
+      description: `Max leaderboard rows and detailed records to return (default ${DEFAULT_RECENT_LIMIT}).`,
     },
   },
 };
@@ -178,11 +267,13 @@ const CONTRACTS: Record<AiModuleName, AiModuleQueryContract> = {
   },
   event: {
     module: "event",
-    description: "Event calendar, registrations, and attendance summary.",
+    description: "Event calendar, registrations, attendance summaries, and member attendance timing.",
     operations: [
       { name: "summary", description: "Event count and attendance coverage summary.", input_schema: BASE_SUMMARY_SCHEMA },
       { name: "recent", description: "Most recently created events.", input_schema: BASE_RECENT_SCHEMA },
       { name: "attendance_lookup", description: "Attendance summary lookup by event/date.", input_schema: ATTENDANCE_LOOKUP_SCHEMA },
+      { name: "early_arrivals", description: "Rank members by how often they arrive before an event's scheduled start time.", input_schema: EARLY_ARRIVALS_SCHEMA },
+      { name: "attendance_timing", description: "Analyze member-level attendance timing, including early, on-time, and late arrivals with event, member, and date filters.", input_schema: ATTENDANCE_TIMING_SCHEMA },
     ],
   },
   requisitions: {
@@ -191,7 +282,8 @@ const CONTRACTS: Record<AiModuleName, AiModuleQueryContract> = {
     operations: [
       { name: "summary", description: "Requisition volume and status summary.", input_schema: BASE_SUMMARY_SCHEMA },
       { name: "recent", description: "Most recent requisitions.", input_schema: BASE_RECENT_SCHEMA },
-      { name: "search", description: "Search requisitions by request id or requester.", input_schema: BASE_SEARCH_SCHEMA },
+      { name: "search", description: "Search requisitions by request id, requester, department, or requested item name.", input_schema: BASE_SEARCH_SCHEMA },
+      { name: "queue", description: "List requisitions currently pending approval, including current approver assignments.", input_schema: REQUISITION_QUEUE_SCHEMA },
     ],
   },
   program: {

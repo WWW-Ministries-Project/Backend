@@ -19,6 +19,14 @@ import { notificationSmsService } from "./notificationSmsService";
 
 export type NotificationPriority = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 
+const DATABASE_UNAVAILABLE_PATTERNS = [
+  /can't reach database server/i,
+  /\bp1001\b/i,
+  /econnrefused/i,
+  /etimedout/i,
+  /server has closed the connection/i,
+] as const;
+
 type NotificationRow = {
   id: number;
   dedupe_key: string | null;
@@ -1405,26 +1413,42 @@ const notifyAdminsJobFailed = async (args: {
   actionUrl?: string | null;
   dedupeKey?: string | null;
 }) => {
-  const recipientUserIds = await listSystemFailureRecipientUserIds();
-  if (!recipientUserIds.length) {
-    return;
+  try {
+    const recipientUserIds = await listSystemFailureRecipientUserIds();
+    if (!recipientUserIds.length) {
+      return;
+    }
+
+    const body = `${args.jobName} failed: ${args.errorMessage}`;
+
+    await createManyInAppNotifications(
+      recipientUserIds.map((recipientUserId) => ({
+        type: "system.job_failed",
+        title: "System Job Failure",
+        body,
+        recipientUserId,
+        priority: "CRITICAL",
+        actionUrl: args.actionUrl || "/home/dashboard",
+        dedupeKey: args.dedupeKey
+          ? `${args.dedupeKey}:recipient:${recipientUserId}`
+          : null,
+      })),
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error || "");
+    const isDatabaseUnavailable =
+      error instanceof Prisma.PrismaClientInitializationError ||
+      DATABASE_UNAVAILABLE_PATTERNS.some((pattern) => pattern.test(message));
+
+    if (isDatabaseUnavailable) {
+      console.warn(
+        `[WARN] Skipping admin job failure notification for ${args.jobName}: database unavailable: ${message}`,
+      );
+      return;
+    }
+
+    throw error;
   }
-
-  const body = `${args.jobName} failed: ${args.errorMessage}`;
-
-  await createManyInAppNotifications(
-    recipientUserIds.map((recipientUserId) => ({
-      type: "system.job_failed",
-      title: "System Job Failure",
-      body,
-      recipientUserId,
-      priority: "CRITICAL",
-      actionUrl: args.actionUrl || "/home/dashboard",
-      dedupeKey: args.dedupeKey
-        ? `${args.dedupeKey}:recipient:${recipientUserId}`
-        : null,
-    })),
-  );
 };
 
 export const notificationService = {
