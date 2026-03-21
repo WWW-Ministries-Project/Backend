@@ -707,6 +707,9 @@ model requisition_approval_configs {
   module     RequisitionApprovalModule                @unique
   is_active  Boolean                                  @default(true)
   similar_item_lookback_days Int                      @default(30)
+  finance_approver_type RequisitionApproverType?
+  finance_position_id Int?
+  finance_user_id Int?
   created_by Int?
   updated_by Int?
   created_at DateTime                                 @default(now())
@@ -716,6 +719,9 @@ model requisition_approval_configs {
   notifications requisition_approval_config_notifications[]
   instances  requisition_approval_instances[]
   event_report_instances event_report_final_approval_instances[]
+
+  @@index([finance_position_id])
+  @@index([finance_user_id])
 }
 
 model requisition_approval_config_notifications {

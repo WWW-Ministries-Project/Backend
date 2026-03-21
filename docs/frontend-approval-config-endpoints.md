@@ -25,6 +25,10 @@ Success response:
     "requester_user_ids": [],
     "notification_user_ids": [618],
     "similar_item_lookback_days": 30,
+    "finance_approver": {
+      "type": "POSITION",
+      "position_id": 12
+    },
     "approvers": [
       { "order": 1, "type": "SPECIFIC_PERSON", "user_id": 1 }
     ],
@@ -44,6 +48,10 @@ Request body:
 {
   "notification_user_ids": [618],
   "similar_item_lookback_days": 30,
+  "finance_approver": {
+    "type": "POSITION",
+    "position_id": 12
+  },
   "approvers": [
     { "order": 1, "type": "SPECIFIC_PERSON", "user_id": 1 }
   ],
@@ -54,6 +62,7 @@ Request body:
 Notes:
 - `module` is not required. If sent, it must be `"EVENT_REPORT"`.
 - `requester_user_ids` is not used for event report config. Backend always stores/returns it as an empty array.
+- `finance_approver` configures the single approver used for the Finance section in event report details.
 - Approver `order` must be sequential from `1`.
 - `type` rules:
   - `HEAD_OF_DEPARTMENT`: no `position_id`, no `user_id`
