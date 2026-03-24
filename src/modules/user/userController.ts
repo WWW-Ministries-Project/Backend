@@ -25,6 +25,11 @@ import {
   upsertBidirectionalFamilyRelation,
 } from "./familyRelations";
 import {
+  buildPersistedWorkInfoData,
+  getMissingRequiredWorkFields,
+  hasAnyWorkInfoPayload,
+} from "./workInfoUtils";
+import {
   buildRoleEligibilityFailureResponse,
   isRoleEligibilityValidationError,
   roleEligibilityService,
@@ -522,12 +527,6 @@ export const updateUser = async (req: Request, res: Response) => {
       hasValue(emergency_country_code) ||
       hasValue(emergency_phone_number);
 
-    const hasWorkInfoPayload =
-      hasValue(work_name) ||
-      hasValue(work_industry) ||
-      hasValue(work_position) ||
-      hasValue(school_name);
-
     if (!resolvedUserInfoGender) {
       const missingProfileFields = ["personal_info.gender"];
 
@@ -622,12 +621,20 @@ export const updateUser = async (req: Request, res: Response) => {
       };
     }
 
+    const workInfoInput = {
+      employment_status,
+      work_name,
+      work_industry,
+      work_position,
+      school_name,
+    };
+    const hasWorkInfoPayload = hasAnyWorkInfoPayload(workInfoInput);
+
     if (hasWorkInfoPayload) {
-      const missingWorkFields = [
-        !hasValue(work_name) ? "work_info.work_name" : null,
-        !hasValue(work_industry) ? "work_info.work_industry" : null,
-        !hasValue(work_position) ? "work_info.work_position" : null,
-      ].filter((field): field is string => Boolean(field));
+      const missingWorkFields = getMissingRequiredWorkFields(
+        workInfoInput,
+        userExists.user_info?.work_info,
+      );
 
       if (missingWorkFields.length > 0) {
         return res.status(400).json({
@@ -639,13 +646,10 @@ export const updateUser = async (req: Request, res: Response) => {
         });
       }
 
-      const workInfoData = {
-        employment_status,
-        name_of_institution: work_name,
-        industry: work_industry,
-        position: work_position,
-        school_name,
-      };
+      const workInfoData = buildPersistedWorkInfoData(
+        workInfoInput,
+        userExists.user_info?.work_info,
+      );
 
       if (userExists.user_info?.work_info) {
         userInfoUpdateData.work_info = {
