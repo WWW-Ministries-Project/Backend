@@ -14,6 +14,11 @@ import {
   buildZtecoServiceRequestConfig,
   getZtecoServiceUrl,
 } from "../integrationUtils/ztecoServiceClient";
+import {
+  buildPersistedWorkInfoData,
+  getMissingRequiredWorkFields,
+  hasAnyWorkInfoPayload,
+} from "./workInfoUtils";
 
 type MemberStatusTransitionTarget = "CONFIRMED" | "MEMBER";
 type MemberStatusValue = "UNCONFIRMED" | "CONFIRMED" | "MEMBER" | null;
@@ -165,12 +170,14 @@ export class UserService {
       this.hasValue(emergency_contact_relation) ||
       this.hasValue(emergency_country_code) ||
       this.hasValue(emergency_phone_number);
-    const hasWorkInfoPayload =
-      this.hasValue(employment_status) ||
-      this.hasValue(work_name) ||
-      this.hasValue(work_industry) ||
-      this.hasValue(work_position) ||
-      this.hasValue(school_name);
+    const workInfoInput = {
+      employment_status,
+      work_name,
+      work_industry,
+      work_position,
+      school_name,
+    };
+    const hasWorkInfoPayload = hasAnyWorkInfoPayload(workInfoInput);
 
     if (isLoginUser && !this.isRealEmail(userEmail)) {
       throw new Error("A valid non-temporary email is required for login users.");
@@ -231,12 +238,9 @@ export class UserService {
       );
     }
 
-    if (
-      hasWorkInfoPayload &&
-      (!this.hasValue(work_name) ||
-        !this.hasValue(work_industry) ||
-        !this.hasValue(work_position))
-    ) {
+    const missingWorkFields = getMissingRequiredWorkFields(workInfoInput);
+
+    if (missingWorkFields.length > 0) {
       throw new InputValidationError(
         "Work name, industry, and position are required when adding work information.",
       );
@@ -294,13 +298,7 @@ export class UserService {
 
     if (hasWorkInfoPayload) {
       userInfoCreateData.work_info = {
-        create: {
-          employment_status,
-          name_of_institution: work_name,
-          industry: work_industry,
-          position: work_position,
-          school_name,
-        },
+        create: buildPersistedWorkInfoData(workInfoInput),
       };
     }
 
