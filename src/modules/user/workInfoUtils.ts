@@ -29,6 +29,12 @@ const normalizeEmploymentStatusKey = (value: unknown) => {
   return normalizedStatus.replace(/[\s-]+/g, "_").toUpperCase();
 };
 
+const workDetailsOptionalStatuses = new Set([
+  "STUDENT",
+  "UNEMPLOYED",
+  "RETIRED",
+]);
+
 const getEffectiveEmploymentStatus = (
   input: WorkInfoInput,
   existingWorkInfo?: ExistingWorkInfo,
@@ -46,6 +52,9 @@ export const hasAnyWorkInfoPayload = (input: WorkInfoInput) =>
 export const isUnemployedEmploymentStatus = (value: unknown) =>
   normalizeEmploymentStatusKey(value) === "UNEMPLOYED";
 
+export const isWorkDetailsOptionalEmploymentStatus = (value: unknown) =>
+  workDetailsOptionalStatuses.has(normalizeEmploymentStatusKey(value) || "");
+
 export const getMissingRequiredWorkFields = (
   input: WorkInfoInput,
   existingWorkInfo?: ExistingWorkInfo,
@@ -59,7 +68,7 @@ export const getMissingRequiredWorkFields = (
     existingWorkInfo,
   );
 
-  if (isUnemployedEmploymentStatus(effectiveEmploymentStatus)) {
+  if (isWorkDetailsOptionalEmploymentStatus(effectiveEmploymentStatus)) {
     return [];
   }
 
@@ -88,23 +97,25 @@ export const buildPersistedWorkInfoData = (
     input,
     existingWorkInfo,
   );
-  const isUnemployed = isUnemployedEmploymentStatus(effectiveEmploymentStatus);
+  const shouldClearWorkDetails = isWorkDetailsOptionalEmploymentStatus(
+    effectiveEmploymentStatus,
+  );
 
   return {
     employment_status: effectiveEmploymentStatus,
     name_of_institution:
       normalizeOptionalText(input.work_name) ||
-      (isUnemployed
+      (shouldClearWorkDetails
         ? ""
         : normalizeOptionalText(existingWorkInfo?.name_of_institution) || ""),
     industry:
       normalizeOptionalText(input.work_industry) ||
-      (isUnemployed
+      (shouldClearWorkDetails
         ? ""
         : normalizeOptionalText(existingWorkInfo?.industry) || ""),
     position:
       normalizeOptionalText(input.work_position) ||
-      (isUnemployed
+      (shouldClearWorkDetails
         ? ""
         : normalizeOptionalText(existingWorkInfo?.position) || ""),
     school_name:
