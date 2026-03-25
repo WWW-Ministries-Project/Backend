@@ -242,7 +242,7 @@ export class UserService {
 
     if (missingWorkFields.length > 0) {
       throw new InputValidationError(
-        "Work name, industry, and position are required when adding work information.",
+        "Work name, industry, and position are required for employed and self-employed members.",
       );
     }
 
