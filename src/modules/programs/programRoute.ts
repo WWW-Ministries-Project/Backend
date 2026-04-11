@@ -168,6 +168,11 @@ programRouter.post(
   [protect],
   programController.submitMCQAssignment,
 );
+programRouter.post(
+  "/submit-essay-assignment",
+  [protect],
+  programController.submitEssayAssignment,
+);
 programRouter.get(
   "/assignment-results",
   [protect],

@@ -505,6 +505,92 @@ export class ProgramController {
     }
   }
 
+  async submitEssayAssignment(req: Request, res: Response) {
+    try {
+      const { userId, programId, topicId, fileUrl } = req.body;
+
+      if (
+        !Number.isInteger(Number(userId)) ||
+        Number(userId) <= 0 ||
+        !Number.isInteger(Number(programId)) ||
+        Number(programId) <= 0 ||
+        !Number.isInteger(Number(topicId)) ||
+        Number(topicId) <= 0
+      ) {
+        return res.status(400).json({
+          message: "userId, programId and topicId must be positive integers",
+        });
+      }
+
+      if (!String(fileUrl || "").trim()) {
+        return res.status(400).json({
+          message: "fileUrl is required",
+        });
+      }
+
+      const result = await programService.submitEssayAssignment(
+        Number(userId),
+        Number(programId),
+        Number(topicId),
+        String(fileUrl).trim(),
+      );
+
+      return res.status(200).json({
+        message: "Essay assignment submitted",
+        data: result,
+      });
+    } catch (error: any) {
+      const notFoundErrors = [
+        "No essay assignment found for this topic",
+        "User is not enrolled in this program",
+      ];
+
+      const badRequestErrors = [
+        "Topic does not belong to the provided program",
+        "fileUrl is required",
+      ];
+
+      const forbiddenErrors = [
+        "Assignment has not been activated for your cohort",
+        "Assignment is not active for your cohort",
+        "Assignment due date has passed",
+      ];
+
+      if (notFoundErrors.includes(error?.message)) {
+        return res.status(404).json({
+          message: error.message,
+          error: error.message,
+        });
+      }
+
+      if (badRequestErrors.includes(error?.message)) {
+        return res.status(400).json({
+          message: error.message,
+          error: error.message,
+        });
+      }
+
+      if (forbiddenErrors.includes(error?.message)) {
+        return res.status(403).json({
+          message: error.message,
+          error: error.message,
+        });
+      }
+
+      if (error?.message?.startsWith("Maximum attempts of")) {
+        return res.status(409).json({
+          message: error.message,
+          error: error.message,
+        });
+      }
+
+      return res.status(500).json({
+        message: "Error submitting essay assignment",
+        error: error.message,
+      });
+    }
+  }
+
   async getAssignmentResults(req: Request, res: Response) {
     try {
       const { topicId, cohortId, programId } = req.query;

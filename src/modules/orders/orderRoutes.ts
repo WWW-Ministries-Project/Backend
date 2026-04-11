@@ -330,7 +330,7 @@ orderRouter.post("/hubtel-payment-webhook", orderController.hubtelWebhook);
  *                                 example: "Todlers"
  *                               image_url:
  *                                 type: string
- *                                 example: "https://res.cloudinary.com/dt8vgj0u3/image/upload/v1756285069/www-ministires/etb8naheuq9l6pumgnje.png"
+ *                                 example: "https://wwmchurch.s3.eu-north-1.amazonaws.com/www-ministires/uploads/order-image-example.png"
  *                               color:
  *                                 type: string
  *                                 example: "#8dd1ff"
@@ -478,7 +478,7 @@ orderRouter.get(
  *                                 example: "Todlers"
  *                               image_url:
  *                                 type: string
- *                                 example: "https://res.cloudinary.com/dt8vgj0u3/image/upload/v1756285069/www-ministires/etb8naheuq9l6pumgnje.png"
+ *                                 example: "https://wwmchurch.s3.eu-north-1.amazonaws.com/www-ministires/uploads/order-image-example.png"
  *                               color:
  *                                 type: string
  *                                 example: "#8dd1ff"
