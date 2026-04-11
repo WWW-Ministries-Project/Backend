@@ -27,6 +27,7 @@ if (shouldRunBackgroundJobs) {
   require("./src/cron-jobs/notificationRetentionCron");
   require("./src/cron-jobs/notificationPushRetryCron");
   require("./src/cron-jobs/notificationSmsRetryCron");
+  require("./src/cron-jobs/eventReminderCron");
 } else {
   logger.info("Background cron jobs are disabled for this process.");
 }
