@@ -1,8 +1,10 @@
-import { cloudinary } from "../../utils";
 import fs from "fs/promises";
+import { uploadLocalFileToS3 } from "../../utils";
 
 export const uploadImage = async (req: any, res: any) => {
   const filePath = req?.file?.path;
+  const originalName = req?.file?.originalname;
+  const contentType = req?.file?.mimetype;
   if (!filePath) {
     return res.status(400).json({
       message: "No file uploaded",
@@ -11,9 +13,12 @@ export const uploadImage = async (req: any, res: any) => {
   }
 
   try {
-    const result = await cloudinary.uploader.upload(filePath, {
-      folder: "www-ministires",
-      quality: "auto",
+    const result = await uploadLocalFileToS3({
+      filePath,
+      folder: "www-ministires/uploads",
+      originalName,
+      contentType,
+      baseName: "upload",
     });
 
     await fs.unlink(filePath).catch(() => undefined);
@@ -21,7 +26,7 @@ export const uploadImage = async (req: any, res: any) => {
     return res.status(200).json({
       message: "File uploaded successfully",
       result: {
-        link: result.secure_url,
+        link: result.url,
       },
     });
   } catch (error) {

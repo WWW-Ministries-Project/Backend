@@ -20,7 +20,7 @@ import {
   RequestApprovalStatus,
   RequisitionApprovalModule,
 } from "@prisma/client";
-import { cloudinary } from "../../utils";
+import { deleteS3ObjectByUrl } from "../../utils";
 import {
   InputValidationError,
   NotFoundError,
@@ -46,55 +46,6 @@ const encodeRequisitionIdForRoute = (requisitionId: number): string =>
 
 const buildRequisitionActionUrl = (requisitionId: number): string =>
   `/home/requests/${encodeRequisitionIdForRoute(requisitionId)}`;
-
-const getCloudinaryPublicIdFromUrl = (attachmentUrl: string): string | null => {
-  if (!attachmentUrl) return null;
-
-  try {
-    const parsedUrl = new URL(attachmentUrl);
-    if (!parsedUrl.hostname.includes("res.cloudinary.com")) {
-      return null;
-    }
-
-    const uploadIndex = parsedUrl.pathname.indexOf("/upload/");
-    if (uploadIndex < 0) {
-      return null;
-    }
-
-    let publicIdPath = parsedUrl.pathname.slice(uploadIndex + "/upload/".length);
-    publicIdPath = publicIdPath.replace(/^v\d+\//, "");
-
-    const segments = publicIdPath.split("/").filter(Boolean);
-    if (!segments.length) {
-      return null;
-    }
-
-    // Cloudinary URLs can have transformations before the version/public-id.
-    while (
-      segments.length > 1 &&
-      segments[0].includes(",") &&
-      !segments[0].startsWith("v")
-    ) {
-      segments.shift();
-    }
-
-    if (segments[0] && /^v\d+$/.test(segments[0])) {
-      segments.shift();
-    }
-
-    if (!segments.length) {
-      return null;
-    }
-
-    const lastSegment = segments[segments.length - 1];
-    segments[segments.length - 1] = lastSegment.replace(/\.[^/.]+$/, "");
-
-    const publicId = segments.join("/");
-    return publicId || null;
-  } catch (error) {
-    return null;
-  }
-};
 
 const getLocalAttachmentPath = (attachmentUrl: string): string | null => {
   if (!attachmentUrl) return null;
@@ -135,9 +86,10 @@ const deleteAttachmentImages = async (attachmentUrls: string[] = []) => {
 
   await Promise.allSettled(
     uniqueUrls.map(async (attachmentUrl) => {
-      const publicId = getCloudinaryPublicIdFromUrl(attachmentUrl);
-      if (publicId) {
-        await cloudinary.uploader.destroy(publicId);
+      const deletedFromS3 = await deleteS3ObjectByUrl(attachmentUrl).catch(
+        () => false,
+      );
+      if (deletedFromS3) {
         return;
       }
 

@@ -298,42 +298,60 @@ model event_act {
 }
 
 model event_mgt {
-  id                   Int                        @id @default(autoincrement())
-  start_time           String?
-  end_time             String?
-  location             String?
-  description          String?
-  poster               String?
-  qr_code              String?
-  public_registration_token String               @default(uuid()) @unique
-  created_by           Int
-  created_at           DateTime                   @default(now())
-  updated_by           Int?
-  updated_at           DateTime?
-  end_date             DateTime?
-  start_date           DateTime?
-  recurrence_end_date  DateTime?
-  event_status         event_status?
-  event_type           event_type?
-  requires_registration Boolean                  @default(false)
-  registration_end_date DateTime?
-  registration_capacity Int?
-  registration_audience event_registration_audience @default(MEMBERS_AND_NON_MEMBERS)
-  event_name_id        Int
-  event_attendance     event_attendance[]
-  attendance_summaries event_attendance_summary[]
-  biometric_punches    event_biometric_punch[]
-  biometric_import_jobs event_biometric_import_job[]
-  event                event_act                  @relation(fields: [event_name_id], references: [id])
-  event_registers      event_registers[]
-  markets              markets[]
-  request              request[]
-  event_reports        event_reports[]
-  visit                visit[]
+  id                        Int                         @id @default(autoincrement())
+  start_time                String?
+  end_time                  String?
+  location                  String?
+  description               String?
+  poster                    String?
+  qr_code                   String?
+  public_registration_token String                      @default(uuid()) @unique
+  created_by                Int
+  created_at                DateTime                    @default(now())
+  updated_by                Int?
+  updated_at                DateTime?
+  end_date                  DateTime?
+  start_date                DateTime?
+  recurrence_end_date       DateTime?
+  recurrence_series_id      String?
+  timezone                  String?                     @default("UTC")
+  event_status              event_status?
+  event_type                event_type?
+  requires_registration     Boolean                     @default(false)
+  registration_end_date     DateTime?
+  registration_capacity     Int?
+  registration_audience     event_registration_audience @default(MEMBERS_AND_NON_MEMBERS)
+  event_name_id             Int
+  event_attendance          event_attendance[]
+  attendance_summaries      event_attendance_summary[]
+  biometric_punches         event_biometric_punch[]
+  biometric_import_jobs     event_biometric_import_job[]
+  event                     event_act                   @relation(fields: [event_name_id], references: [id])
+  event_registers           event_registers[]
+  event_reminders           event_reminder[]
+  markets                   markets[]
+  request                   request[]
+  event_reports             event_reports[]
+  visit                     visit[]
 
   @@index([event_name_id], map: "event_mgt_event_name_id_fkey")
   @@index([start_date], map: "event_mgt_start_date_idx")
   @@index([event_type, event_status, start_date], map: "event_mgt_type_status_start_date_idx")
+  @@index([recurrence_series_id], map: "event_mgt_recurrence_series_id_idx")
+}
+
+model event_reminder {
+  id             Int             @id @default(autoincrement())
+  event_id       Int
+  remind_at      DateTime
+  offset_minutes Int
+  method         String          @default("in_app")
+  status         reminder_status @default(PENDING)
+  created_at     DateTime        @default(now())
+  event          event_mgt       @relation(fields: [event_id], references: [id], onDelete: Cascade)
+
+  @@index([remind_at, status], map: "event_reminder_remind_at_status_idx")
+  @@index([event_id], map: "event_reminder_event_id_idx")
 }
 
 model event_attendance_summary {
@@ -1859,4 +1877,11 @@ enum notification_sms_delivery_status {
   PROCESSING
   SENT
   DEAD
+}
+
+enum reminder_status {
+  PENDING
+  SENT
+  FAILED
+  CANCELLED
 }

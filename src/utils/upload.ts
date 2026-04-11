@@ -1,17 +1,13 @@
-import cloudinary from "./cloudinary";
+import { uploadDataUrlToS3 } from "./s3";
 
 const upload: any = async (file: any) => {
   try {
-    const data = await cloudinary.uploader.upload(
-      file,
-      { folder: "www-ministires/events_qr", quality: "auto" },
-      (err: any, result: any) => {
-        if (err) {
-          return "Error uploading file";
-        }
-      },
-    );
-    return data.secure_url;
+    const data = await uploadDataUrlToS3(String(file || ""), {
+      folder: "www-ministires/events_qr",
+      baseName: "event-qr",
+      originalName: "event-qr.png",
+    });
+    return data.url;
   } catch (error) {
     return "Unable to upload";
   }

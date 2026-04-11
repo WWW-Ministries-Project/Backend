@@ -8,7 +8,9 @@ const allowedMimeTypes = new Set([
   "image/png",
   "image/webp",
   "image/gif",
+  "application/msword",
   "application/pdf",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 ]);
 const maxUploadSizeBytes = Number(
   process.env.MAX_UPLOAD_SIZE_BYTES || 5 * 1024 * 1024,
