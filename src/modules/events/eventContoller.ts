@@ -2,8 +2,10 @@ import { generateQR, generateRecurringDates } from "../../utils";
 import { prisma } from "../../Models/context";
 import { Request, Response } from "express";
 import * as dotenv from "dotenv";
+import { randomUUID } from "crypto";
 import {
   addDays,
+  addMinutes,
   addMonths,
   differenceInCalendarDays,
   endOfDay,
@@ -130,6 +132,8 @@ const eventBaseSelect = {
   start_date: true,
   end_date: true,
   recurrence_end_date: true,
+  recurrence_series_id: true,
+  timezone: true,
   start_time: true,
   end_time: true,
   qr_code: true,
@@ -175,6 +179,8 @@ const eventMutationSelect = {
   description: true,
   end_date: true,
   recurrence_end_date: true,
+  recurrence_series_id: true,
+  timezone: true,
   end_time: true,
   event_status: true,
   event_name_id: true,
@@ -836,6 +842,10 @@ export class eventManagement {
       };
     }
 
+    // Assign a single series UUID to all occurrences of a recurring event so
+    // they can later be queried / edited as a group.
+    const recurrenceSeriesId = isRecurring ? randomUUID() : null;
+
     return {
       startDate,
       eventEndDate,
@@ -843,6 +853,7 @@ export class eventManagement {
       isRecurring,
       durationInDays,
       occurrenceDates,
+      recurrenceSeriesId,
     };
   }
 
@@ -922,6 +933,9 @@ export class eventManagement {
         });
       }
 
+      const timezone = this.normalizeOptionalString(data?.timezone) ?? "UTC";
+      const reminders = this.parseReminderOffsets(data?.reminders);
+
       for (const occurrenceStartDate of schedulePayload.occurrenceDates) {
         const eventId = await this.createEventController({
           ...data,
@@ -933,8 +947,14 @@ export class eventManagement {
             schedulePayload.durationInDays,
           ),
           recurrence_end_date: schedulePayload.recurrenceEndDate,
+          recurrence_series_id: schedulePayload.recurrenceSeriesId,
+          timezone,
         });
         createdEventIds.push(eventId);
+
+        if (reminders.length && data?.start_time) {
+          await this.createEventReminders(eventId, occurrenceStartDate, data.start_time, reminders);
+        }
       }
 
       const responseData = await this.listEventsP();
@@ -947,6 +967,7 @@ export class eventManagement {
         data: responseData,
         meta: {
           created_count: createdEventIds.length,
+          series_id: schedulePayload.recurrenceSeriesId,
           qr_status: registrationPayload.requires_registration
             ? "processing"
             : "skipped",
@@ -1276,6 +1297,361 @@ export class eventManagement {
       });
     }
   };
+
+  // ─── Series helpers ──────────────────────────────────────────────────────────
+
+  /**
+   * Resolves a `series_id` string from the request query or body and validates
+   * it is a non-empty string.
+   */
+  private resolveSeriesId(source: Record<string, unknown>): string | null {
+    return this.normalizeOptionalString(source?.series_id);
+  }
+
+  /**
+   * Collects all registered-attendee user IDs across a set of event IDs so we
+   * can send bulk cancellation / update notifications.
+   */
+  private async collectRegistrantUserIds(eventIds: number[]): Promise<number[]> {
+    if (!eventIds.length) return [];
+
+    const registrations = await prisma.event_registers.findMany({
+      where: { event_id: { in: eventIds } },
+      select: { user_id: true },
+    });
+
+    return Array.from(
+      new Set(
+        registrations
+          .map((r) => Number(r.user_id))
+          .filter((id): id is number => Number.isInteger(id) && id > 0),
+      ),
+    );
+  }
+
+  // ─── DELETE /event/delete-series ─────────────────────────────────────────────
+  /**
+   * Deletes every occurrence that belongs to a recurring series.
+   * Query: ?series_id=<uuid>
+   */
+  deleteEventSeries = async (req: Request, res: Response) => {
+    try {
+      const seriesId = this.resolveSeriesId(req.query as Record<string, unknown>);
+      if (!seriesId) {
+        return res.status(400).json({ message: "A valid series_id is required", data: null });
+      }
+
+      const actorUserId = this.getActorUserId(req);
+
+      const events = await prisma.event_mgt.findMany({
+        where: { recurrence_series_id: seriesId },
+        select: { id: true },
+      });
+
+      if (!events.length) {
+        return res.status(404).json({ message: "No events found for this series", data: null });
+      }
+
+      const eventIds = events.map((e) => e.id);
+      const recipientIds = await this.collectRegistrantUserIds(eventIds);
+
+      await prisma.event_mgt.deleteMany({ where: { recurrence_series_id: seriesId } });
+
+      if (recipientIds.length) {
+        await notificationService.createManyInAppNotifications(
+          recipientIds.map((recipientUserId) => ({
+            type: "event.cancelled",
+            title: "Event series cancelled",
+            body: "A recurring event series you registered for has been cancelled.",
+            recipientUserId,
+            actorUserId: Number.isInteger(actorUserId) && actorUserId! > 0 ? actorUserId : null,
+            entityType: "EVENT",
+            entityId: seriesId,
+            actionUrl: `/home/events/events`,
+            priority: "HIGH",
+            dedupeKey: `series:${seriesId}:cancelled:recipient:${recipientUserId}`,
+            sendSms: true,
+            smsBody: "A recurring event series you registered for has been cancelled.",
+          })),
+        );
+      }
+
+      return res.status(200).json({
+        message: "Event series deleted successfully",
+        data: await this.listEventsP(),
+        meta: { deleted_count: eventIds.length },
+      });
+    } catch (error: any) {
+      return res.status(500).json({ message: "Failed to delete event series", data: error.message });
+    }
+  };
+
+  // ─── DELETE /event/delete-series-from ────────────────────────────────────────
+  /**
+   * Deletes this occurrence and all following ones in a series.
+   * Query: ?series_id=<uuid>&from_date=YYYY-MM-DD
+   */
+  deleteEventSeriesFrom = async (req: Request, res: Response) => {
+    try {
+      const seriesId = this.resolveSeriesId(req.query as Record<string, unknown>);
+      if (!seriesId) {
+        return res.status(400).json({ message: "A valid series_id is required", data: null });
+      }
+
+      const fromDate = this.parseOptionalDate(req.query?.from_date);
+      if (!fromDate) {
+        return res.status(400).json({ message: "A valid from_date is required", data: null });
+      }
+
+      const actorUserId = this.getActorUserId(req);
+
+      const events = await prisma.event_mgt.findMany({
+        where: {
+          recurrence_series_id: seriesId,
+          start_date: { gte: fromDate },
+        },
+        select: { id: true },
+      });
+
+      if (!events.length) {
+        return res.status(404).json({ message: "No matching events found", data: null });
+      }
+
+      const eventIds = events.map((e) => e.id);
+      const recipientIds = await this.collectRegistrantUserIds(eventIds);
+
+      await prisma.event_mgt.deleteMany({
+        where: {
+          recurrence_series_id: seriesId,
+          start_date: { gte: fromDate },
+        },
+      });
+
+      if (recipientIds.length) {
+        await notificationService.createManyInAppNotifications(
+          recipientIds.map((recipientUserId) => ({
+            type: "event.cancelled",
+            title: "Event series partially cancelled",
+            body: "Some upcoming occurrences of a recurring event you registered for have been cancelled.",
+            recipientUserId,
+            actorUserId: Number.isInteger(actorUserId) && actorUserId! > 0 ? actorUserId : null,
+            entityType: "EVENT",
+            entityId: seriesId,
+            actionUrl: `/home/events/events`,
+            priority: "HIGH",
+            dedupeKey: `series:${seriesId}:cancelled-from:${fromDate.toISOString().slice(0, 10)}:recipient:${recipientUserId}`,
+            sendSms: true,
+            smsBody: "Some upcoming occurrences of a recurring event you registered for have been cancelled.",
+          })),
+        );
+      }
+
+      return res.status(200).json({
+        message: "Event series (from date) deleted successfully",
+        data: await this.listEventsP(),
+        meta: { deleted_count: eventIds.length },
+      });
+    } catch (error: any) {
+      return res.status(500).json({ message: "Failed to delete event series from date", data: error.message });
+    }
+  };
+
+  // ─── PUT /event/update-series ─────────────────────────────────────────────────
+  /**
+   * Updates all occurrences in a series with the supplied non-date fields.
+   * Body: { series_id, start_time?, end_time?, location?, description?, poster?,
+   *         event_status?, event_type?, timezone?, requires_registration?, ... }
+   */
+  updateEventSeries = async (req: Request, res: Response) => {
+    try {
+      const seriesId = this.resolveSeriesId(req.body);
+      if (!seriesId) {
+        return res.status(400).json({ message: "A valid series_id is required", data: null });
+      }
+
+      const actorUserId = this.getActorUserId(req);
+      if (!actorUserId) {
+        return res.status(401).json({ message: "A valid authenticated user is required", data: null });
+      }
+
+      const updatePayload = this.buildSeriesUpdatePayload(req.body, actorUserId);
+      if (!Object.keys(updatePayload).length) {
+        return res.status(400).json({ message: "No updatable fields provided", data: null });
+      }
+
+      const events = await prisma.event_mgt.findMany({
+        where: { recurrence_series_id: seriesId },
+        select: { id: true },
+      });
+
+      if (!events.length) {
+        return res.status(404).json({ message: "No events found for this series", data: null });
+      }
+
+      await prisma.event_mgt.updateMany({
+        where: { recurrence_series_id: seriesId },
+        data: updatePayload,
+      });
+
+      const eventIds = events.map((e) => e.id);
+      const recipientIds = await this.collectRegistrantUserIds(eventIds);
+
+      if (recipientIds.length) {
+        await notificationService.createManyInAppNotifications(
+          recipientIds.map((recipientUserId) => ({
+            type: "event.updated",
+            title: "Recurring event updated",
+            body: "A recurring event series you registered for has been updated.",
+            recipientUserId,
+            actorUserId,
+            entityType: "EVENT",
+            entityId: seriesId,
+            actionUrl: `/home/events/events`,
+            priority: "MEDIUM",
+            dedupeKey: `series:${seriesId}:updated:${Date.now()}:recipient:${recipientUserId}`,
+            sendSms: true,
+            smsBody: "A recurring event series you registered for has been updated. Open the app for details.",
+          })),
+        );
+      }
+
+      return res.status(200).json({
+        message: "Event series updated successfully",
+        data: await this.listEventsP(),
+        meta: { updated_count: eventIds.length },
+      });
+    } catch (error: any) {
+      return res.status(500).json({ message: "Failed to update event series", data: error.message });
+    }
+  };
+
+  // ─── PUT /event/update-series-from ───────────────────────────────────────────
+  /**
+   * Updates this occurrence and all following ones.
+   * Body: { series_id, from_date, ...same fields as update-series }
+   */
+  updateEventSeriesFrom = async (req: Request, res: Response) => {
+    try {
+      const seriesId = this.resolveSeriesId(req.body);
+      if (!seriesId) {
+        return res.status(400).json({ message: "A valid series_id is required", data: null });
+      }
+
+      const fromDate = this.parseOptionalDate(req.body?.from_date);
+      if (!fromDate) {
+        return res.status(400).json({ message: "A valid from_date is required", data: null });
+      }
+
+      const actorUserId = this.getActorUserId(req);
+      if (!actorUserId) {
+        return res.status(401).json({ message: "A valid authenticated user is required", data: null });
+      }
+
+      const updatePayload = this.buildSeriesUpdatePayload(req.body, actorUserId);
+      if (!Object.keys(updatePayload).length) {
+        return res.status(400).json({ message: "No updatable fields provided", data: null });
+      }
+
+      const events = await prisma.event_mgt.findMany({
+        where: {
+          recurrence_series_id: seriesId,
+          start_date: { gte: fromDate },
+        },
+        select: { id: true },
+      });
+
+      if (!events.length) {
+        return res.status(404).json({ message: "No matching events found", data: null });
+      }
+
+      await prisma.event_mgt.updateMany({
+        where: {
+          recurrence_series_id: seriesId,
+          start_date: { gte: fromDate },
+        },
+        data: updatePayload,
+      });
+
+      const eventIds = events.map((e) => e.id);
+      const recipientIds = await this.collectRegistrantUserIds(eventIds);
+
+      if (recipientIds.length) {
+        await notificationService.createManyInAppNotifications(
+          recipientIds.map((recipientUserId) => ({
+            type: "event.updated",
+            title: "Recurring event updated",
+            body: "Some upcoming occurrences of a recurring event you registered for have been updated.",
+            recipientUserId,
+            actorUserId,
+            entityType: "EVENT",
+            entityId: seriesId,
+            actionUrl: `/home/events/events`,
+            priority: "MEDIUM",
+            dedupeKey: `series:${seriesId}:updated-from:${fromDate.toISOString().slice(0, 10)}:${Date.now()}:recipient:${recipientUserId}`,
+            sendSms: true,
+            smsBody: "Some upcoming occurrences of a recurring event you registered for have been updated. Open the app for details.",
+          })),
+        );
+      }
+
+      return res.status(200).json({
+        message: "Event series (from date) updated successfully",
+        data: await this.listEventsP(),
+        meta: { updated_count: eventIds.length },
+      });
+    } catch (error: any) {
+      return res.status(500).json({ message: "Failed to update event series from date", data: error.message });
+    }
+  };
+
+  /**
+   * Builds the Prisma `data` payload for a series update, accepting only the
+   * non-date fields that are safe to bulk-apply across all occurrences.
+   */
+  private buildSeriesUpdatePayload(body: any, actorUserId: number): Record<string, any> {
+    const payload: Record<string, any> = { updated_by: actorUserId, updated_at: new Date() };
+
+    const stringFields = ["start_time", "end_time", "location", "description", "poster", "timezone"] as const;
+    for (const field of stringFields) {
+      if (Object.prototype.hasOwnProperty.call(body, field)) {
+        payload[field] = this.normalizeOptionalString(body[field]);
+      }
+    }
+
+    if (Object.prototype.hasOwnProperty.call(body, "event_status") && body.event_status) {
+      payload.event_status = body.event_status;
+    }
+    if (Object.prototype.hasOwnProperty.call(body, "event_type") && body.event_type) {
+      payload.event_type = body.event_type;
+    }
+
+    // Registration settings — only apply if explicitly included
+    if (Object.prototype.hasOwnProperty.call(body, "requires_registration")) {
+      const requiresRegistration = this.toBoolean(body.requires_registration);
+      payload.requires_registration = requiresRegistration;
+      if (!requiresRegistration) {
+        payload.registration_end_date = null;
+        payload.registration_capacity = null;
+        payload.registration_audience = "MEMBERS_AND_NON_MEMBERS";
+      } else {
+        if (body.registration_end_date) {
+          payload.registration_end_date = this.parseOptionalDate(body.registration_end_date);
+        }
+        if (body.registration_capacity) {
+          payload.registration_capacity = this.toPositiveInt(body.registration_capacity);
+        }
+        if (body.registration_audience) {
+          payload.registration_audience = this.normalizeRegistrationAudience(body.registration_audience);
+        }
+      }
+    }
+
+    // Remove the sentinel keys that were only used for routing
+    delete payload.series_id;
+    delete payload.from_date;
+
+    return payload;
+  }
 
   listEvents = async (req: Request, res: Response) => {
     try {
@@ -1708,6 +2084,8 @@ export class eventManagement {
           recurrence_end_date: data.recurrence_end_date
             ? new Date(data.recurrence_end_date)
             : null,
+          recurrence_series_id: data.recurrence_series_id ?? null,
+          timezone: data.timezone ?? "UTC",
           event_name_id: Number(data.event_name_id),
           start_time: data.start_time,
           end_time: data.end_time,
@@ -1733,6 +2111,292 @@ export class eventManagement {
       throw error;
     }
   }
+
+  // ─── Reminder helpers ────────────────────────────────────────────────────────
+
+  /**
+   * Parses the `reminders` payload from request body into a validated list of
+   * offset_minutes values.  Accepts either a JSON array or a comma-separated
+   * string of integers.  Supported values: 0, 5, 10, 15, 30, 60, 120, 1440, 2880, 10080.
+   */
+  private parseReminderOffsets(value: unknown): number[] {
+    const raw: unknown[] = Array.isArray(value)
+      ? value
+      : typeof value === "string" && value.trim()
+        ? value
+            .split(",")
+            .map((v) => v.trim())
+            .filter(Boolean)
+        : [];
+
+    const VALID_OFFSETS = new Set([0, 5, 10, 15, 30, 60, 120, 1440, 2880, 10080]);
+    return Array.from(
+      new Set(
+        raw
+          .map((v) => Number(v))
+          .filter((n) => Number.isInteger(n) && VALID_OFFSETS.has(n)),
+      ),
+    );
+  }
+
+  /**
+   * Computes the UTC `remind_at` timestamp for a given event start date + time
+   * string (HH:mm) minus offset_minutes.
+   */
+  private computeRemindAt(
+    eventStartDate: Date,
+    startTimeStr: string,
+    offsetMinutes: number,
+  ): Date | null {
+    const [hours, minutes] = startTimeStr.split(":").map(Number);
+    if (Number.isNaN(hours) || Number.isNaN(minutes)) {
+      return null;
+    }
+
+    const eventStart = new Date(eventStartDate);
+    eventStart.setHours(hours, minutes, 0, 0);
+    return addMinutes(eventStart, -offsetMinutes);
+  }
+
+  /**
+   * Bulk-inserts reminder rows for a single event occurrence.
+   */
+  private async createEventReminders(
+    eventId: number,
+    startDate: Date,
+    startTimeStr: string,
+    offsets: number[],
+  ) {
+    const rows = offsets
+      .map((offset) => {
+        const remindAt = this.computeRemindAt(startDate, startTimeStr, offset);
+        if (!remindAt) return null;
+        return {
+          event_id: eventId,
+          remind_at: remindAt,
+          offset_minutes: offset,
+          method: "in_app",
+          status: "PENDING" as const,
+        };
+      })
+      .filter((r): r is NonNullable<typeof r> => r !== null);
+
+    if (!rows.length) return;
+
+    await prisma.event_reminder.createMany({ data: rows });
+  }
+
+  // ─── iCal export ─────────────────────────────────────────────────────────────
+
+  /**
+   * GET /event/ical-export?event_id=123
+   * Returns a standards-compliant .ics file for a single event so users can
+   * import it into Google Calendar, Apple Calendar, Outlook, etc.
+   *
+   * Supports series export via ?series_id=<uuid> to export all occurrences.
+   */
+  icalExport = async (req: Request, res: Response) => {
+    try {
+      const seriesId = this.normalizeOptionalString(req.query?.series_id);
+      const singleEventId = this.toPositiveInt(req.query?.event_id ?? req.query?.id);
+
+      if (!singleEventId && !seriesId) {
+        return res.status(400).json({
+          message: "Provide either event_id or series_id",
+          data: null,
+        });
+      }
+
+      const whereClause = seriesId
+        ? { recurrence_series_id: seriesId }
+        : { id: singleEventId as number };
+
+      const events = await prisma.event_mgt.findMany({
+        where: whereClause,
+        select: {
+          id: true,
+          start_date: true,
+          end_date: true,
+          start_time: true,
+          end_time: true,
+          location: true,
+          description: true,
+          timezone: true,
+          recurrence_series_id: true,
+          public_registration_token: true,
+          event: { select: { event_name: true } },
+        },
+        orderBy: { start_date: "asc" },
+      });
+
+      if (!events.length) {
+        return res.status(404).json({ message: "No events found", data: null });
+      }
+
+      const lines: string[] = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//ARMS//Event Management//EN",
+        "CALSCALE:GREGORIAN",
+        "METHOD:PUBLISH",
+      ];
+
+      const escIcal = (s: string) =>
+        s.replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\n/g, "\\n");
+
+      const toIcalDate = (date: Date, timeStr?: string | null) => {
+        const d = new Date(date);
+        if (timeStr) {
+          const [h, m] = timeStr.split(":").map(Number);
+          if (!Number.isNaN(h) && !Number.isNaN(m)) {
+            d.setHours(h, m, 0, 0);
+          }
+        }
+        return d
+          .toISOString()
+          .replace(/[-:]/g, "")
+          .replace(/\.\d{3}/, "");
+      };
+
+      for (const event of events) {
+        const eventName = event.event?.event_name ?? "Event";
+        const startDate = event.start_date ?? new Date();
+        const endDate = event.end_date ?? startDate;
+        const uid = `event-${event.id}@arms`;
+
+        lines.push("BEGIN:VEVENT");
+        lines.push(`UID:${uid}`);
+        lines.push(`DTSTAMP:${toIcalDate(new Date())}`);
+        lines.push(`DTSTART:${toIcalDate(startDate, event.start_time)}`);
+        lines.push(`DTEND:${toIcalDate(endDate, event.end_time)}`);
+        lines.push(`SUMMARY:${escIcal(eventName)}`);
+        if (event.description) {
+          lines.push(`DESCRIPTION:${escIcal(event.description)}`);
+        }
+        if (event.location) {
+          lines.push(`LOCATION:${escIcal(event.location)}`);
+        }
+        lines.push("END:VEVENT");
+      }
+
+      lines.push("END:VCALENDAR");
+
+      const filename = seriesId
+        ? `event-series.ics`
+        : `event-${singleEventId}.ics`;
+
+      res.setHeader("Content-Type", "text/calendar; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      return res.send(lines.join("\r\n"));
+    } catch (error: any) {
+      return res.status(500).json({
+        message: "Failed to export event",
+        data: error.message,
+      });
+    }
+  };
+
+  // ─── Reminder management ─────────────────────────────────────────────────────
+
+  /**
+   * GET /event/reminders?event_id=123
+   * Returns all reminders for a given event.
+   */
+  getEventReminders = async (req: Request, res: Response) => {
+    try {
+      const eventId = this.toPositiveInt(req.query?.event_id);
+      if (!eventId) {
+        return res.status(400).json({ message: "A valid event_id is required", data: null });
+      }
+
+      const reminders = await prisma.event_reminder.findMany({
+        where: { event_id: eventId },
+        orderBy: { remind_at: "asc" },
+        select: {
+          id: true,
+          event_id: true,
+          remind_at: true,
+          offset_minutes: true,
+          method: true,
+          status: true,
+          created_at: true,
+        },
+      });
+
+      return res.status(200).json({ message: "OK", data: reminders });
+    } catch (error: any) {
+      return res.status(500).json({ message: "Failed to fetch reminders", data: error.message });
+    }
+  };
+
+  /**
+   * POST /event/reminders
+   * Body: { event_id: number, reminders: number[] }  (offsets in minutes)
+   * Creates / replaces reminder rows for an event.
+   */
+  upsertEventReminders = async (req: Request, res: Response) => {
+    try {
+      const eventId = this.toPositiveInt(req.body?.event_id);
+      if (!eventId) {
+        return res.status(400).json({ message: "A valid event_id is required", data: null });
+      }
+
+      const offsets = this.parseReminderOffsets(req.body?.reminders);
+      if (!offsets.length) {
+        return res.status(400).json({
+          message: "Provide at least one valid reminder offset (minutes before event)",
+          data: null,
+        });
+      }
+
+      const event = await prisma.event_mgt.findUnique({
+        where: { id: eventId },
+        select: { id: true, start_date: true, start_time: true },
+      });
+
+      if (!event) {
+        return res.status(404).json({ message: "Event not found", data: null });
+      }
+
+      // Replace existing reminders for this event
+      await prisma.event_reminder.deleteMany({ where: { event_id: eventId } });
+
+      if (event.start_date && event.start_time) {
+        await this.createEventReminders(eventId, event.start_date, event.start_time, offsets);
+      }
+
+      const reminders = await prisma.event_reminder.findMany({
+        where: { event_id: eventId },
+        orderBy: { remind_at: "asc" },
+      });
+
+      return res.status(200).json({ message: "Reminders saved", data: reminders });
+    } catch (error: any) {
+      return res.status(500).json({ message: "Failed to save reminders", data: error.message });
+    }
+  };
+
+  /**
+   * DELETE /event/reminders?id=<reminder_id>
+   * Cancels (soft-deletes) a single reminder.
+   */
+  cancelReminder = async (req: Request, res: Response) => {
+    try {
+      const reminderId = this.toPositiveInt(req.query?.id);
+      if (!reminderId) {
+        return res.status(400).json({ message: "A valid reminder id is required", data: null });
+      }
+
+      await prisma.event_reminder.update({
+        where: { id: reminderId },
+        data: { status: "CANCELLED" },
+      });
+
+      return res.status(200).json({ message: "Reminder cancelled", data: null });
+    } catch (error: any) {
+      return res.status(500).json({ message: "Failed to cancel reminder", data: error.message });
+    }
+  };
 
   private queueQrGeneration(eventIds: number[]) {
     if (!eventIds.length) {

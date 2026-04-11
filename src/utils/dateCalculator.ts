@@ -1,6 +1,7 @@
 import {
   addDays,
   addMonths,
+  addYears,
   differenceInCalendarWeeks,
   startOfDay,
 } from "date-fns";
@@ -166,6 +167,15 @@ export function generateRecurringDates(
       currentDate = addDays(currentDate, 1);
     }
 
+    return dates;
+  }
+
+  if (frequency === "yearly") {
+    let currentDate = new Date(parsedStartDate);
+    while (currentDate <= parsedEndDate) {
+      dates.push(new Date(currentDate));
+      currentDate = addYears(currentDate, interval);
+    }
     return dates;
   }
 

@@ -1049,6 +1049,9 @@ export class ProgramService {
       },
       include: {
         progress: true,
+        submissions: {
+          orderBy: [{ submittedAt: "desc" }, { attempt: "desc" }],
+        },
         course: {
           include: {
             cohort: {
@@ -1089,6 +1092,11 @@ export class ProgramService {
           (assignment) => assignment.cohortId === cohortId,
         ) ?? null;
       const progress = enrollment.progress.find((p) => p.topicId === topic.id);
+      const latestSubmission = topic.LearningUnit
+        ? enrollment.submissions.find(
+            (submission) => submission.learningUnitId === topic.LearningUnit?.id,
+          ) ?? null
+        : null;
 
       return {
         id: topic.id,
@@ -1099,6 +1107,17 @@ export class ProgramService {
         order_number: topic.order_number,
         completedAt: progress?.completedAt ?? null,
         score: progress?.score ?? 0,
+        submission: latestSubmission
+          ? {
+              id: latestSubmission.id,
+              attempt: latestSubmission.attempt,
+              status: latestSubmission.status,
+              submittedAt: latestSubmission.submittedAt,
+              fileUrl: latestSubmission.fileUrl,
+              score: latestSubmission.score,
+              feedback: latestSubmission.feedback,
+            }
+          : null,
         learningUnit: topic.LearningUnit
           ? {
               id: topic.LearningUnit.id,
@@ -1274,114 +1293,14 @@ export class ProgramService {
     topicId: number,
     answers: Record<string, string>,
   ) {
-    const learningUnit = await prisma.learningUnit.findUnique({
-      where: { topicId },
-      include: {
-        topic: {
-          select: { programId: true },
-        },
-      },
-    });
-
-    if (!learningUnit || !learningUnit.type.startsWith("assignment")) {
-      throw new Error("No MCQ assignment found for this topic");
-    }
-
-    if (learningUnit.topic.programId !== programId) {
-      throw new Error("Topic does not belong to the provided program");
-    }
-
-    const enrollments = await prisma.enrollment.findMany({
-      where: {
-        user_id: userId,
-        course: {
-          cohort: {
-            programId,
-          },
-        },
-      },
-      orderBy: {
-        enrolledAt: "desc",
-      },
-      include: {
-        course: {
-          include: {
-            cohort: true,
-          },
-        },
-      },
-    });
-
-    if (enrollments.length === 0) {
-      throw new Error("User is not enrolled in this program");
-    }
-
-    const cohortIds = [...new Set(enrollments.map((item) => item.course.cohortId))];
-
-    const cohortAssignments = await prisma.cohort_assignment.findMany({
-      where: {
-        cohortId: { in: cohortIds },
-        learningUnitId: learningUnit.id,
-      },
-      orderBy: [{ activatedAt: "desc" }, { id: "desc" }],
-    });
-
-    if (cohortAssignments.length === 0) {
-      throw new Error("Assignment has not been activated for your cohort");
-    }
-
-    const now = new Date();
-
-    const activeAssignment = cohortAssignments.find(
-      (assignment) =>
-        assignment.isActive &&
-        assignment.closedAt === null &&
-        (!assignment.dueDate || assignment.dueDate >= now),
-    );
-
-    if (!activeAssignment) {
-      const expiredAssignment = cohortAssignments.find(
-        (assignment) =>
-          assignment.isActive &&
-          assignment.closedAt === null &&
-          assignment.dueDate !== null &&
-          assignment.dueDate < now,
-      );
-
-      if (expiredAssignment) {
-        const expiredEnrollment =
-          enrollments.find(
-            (item) => item.course.cohortId === expiredAssignment.cohortId,
-          ) ?? enrollments[0];
-
-        await this.markUnsubmittedAssignmentAsExpired(
-          expiredEnrollment.id,
-          learningUnit.id,
-          topicId,
-        );
-        throw new Error("Assignment due date has passed");
-      }
-
-      throw new Error("Assignment is not active for your cohort");
-    }
-
-    const enrollment =
-      enrollments.find(
-        (item) => item.course.cohortId === activeAssignment.cohortId,
-      ) ?? enrollments[0];
-
-    const previousSubmissions = await prisma.assignment_submission.findMany({
-      where: {
-        enrollmentId: enrollment.id,
-        learningUnitId: learningUnit.id,
-      },
-    });
-
-    const { maxAttempts, passMark } = this.getAssignmentConfig(learningUnit);
-    const currentAttempt = previousSubmissions.length + 1;
-    if (currentAttempt > maxAttempts) {
-      throw new Error(`Maximum attempts of ${maxAttempts} exceeded`);
-    }
+    const { learningUnit, enrollment, currentAttempt, passMark, maxAttempts } =
+      await this.resolveAssignmentSubmissionContext({
+        userId,
+        programId,
+        topicId,
+        expectedType: "assignment",
+        notFoundMessage: "No MCQ assignment found for this topic",
+      });
 
     const learningUnitData = this.deserializeLearningUnitData(learningUnit.data);
     const questions = (learningUnitData as any)?.questions as any[];
@@ -1443,6 +1362,46 @@ export class ProgramService {
       percentageScore,
       maxAttempts,
       passMark,
+    };
+  }
+
+  async submitEssayAssignment(
+    userId: number,
+    programId: number,
+    topicId: number,
+    fileUrl: string,
+  ) {
+    const normalizedFileUrl = String(fileUrl || "").trim();
+    if (!normalizedFileUrl) {
+      throw new Error("fileUrl is required");
+    }
+
+    const { learningUnit, enrollment, currentAttempt, maxAttempts } =
+      await this.resolveAssignmentSubmissionContext({
+        userId,
+        programId,
+        topicId,
+        expectedType: "assignment-essay",
+        notFoundMessage: "No essay assignment found for this topic",
+      });
+
+    const submission = await prisma.assignment_submission.create({
+      data: {
+        enrollmentId: enrollment.id,
+        learningUnitId: learningUnit.id,
+        fileUrl: normalizedFileUrl,
+        attempt: currentAttempt,
+        status: "SUBMITTED",
+      },
+    });
+
+    return {
+      submissionId: submission.id,
+      attempt: currentAttempt,
+      maxAttempts,
+      status: submission.status,
+      fileUrl: submission.fileUrl,
+      submittedAt: submission.submittedAt,
     };
   }
 
@@ -1529,6 +1488,8 @@ export class ProgramService {
               score: latestSubmission.score,
               status: latestSubmission.status,
               submittedAt: latestSubmission.submittedAt,
+              fileUrl: latestSubmission.fileUrl,
+              feedback: latestSubmission.feedback,
             }
           : null,
 
@@ -1640,6 +1601,131 @@ export class ProgramService {
         : 3;
 
     return { maxAttempts, passMark };
+  }
+
+  private async resolveAssignmentSubmissionContext(args: {
+    userId: number;
+    programId: number;
+    topicId: number;
+    expectedType: "assignment" | "assignment-essay";
+    notFoundMessage: string;
+  }) {
+    const learningUnit = await prisma.learningUnit.findUnique({
+      where: { topicId: args.topicId },
+      include: {
+        topic: {
+          select: { programId: true },
+        },
+      },
+    });
+
+    if (!learningUnit || learningUnit.type !== args.expectedType) {
+      throw new Error(args.notFoundMessage);
+    }
+
+    if (learningUnit.topic.programId !== args.programId) {
+      throw new Error("Topic does not belong to the provided program");
+    }
+
+    const enrollments = await prisma.enrollment.findMany({
+      where: {
+        user_id: args.userId,
+        course: {
+          cohort: {
+            programId: args.programId,
+          },
+        },
+      },
+      orderBy: {
+        enrolledAt: "desc",
+      },
+      include: {
+        course: {
+          include: {
+            cohort: true,
+          },
+        },
+      },
+    });
+
+    if (enrollments.length === 0) {
+      throw new Error("User is not enrolled in this program");
+    }
+
+    const cohortIds = [...new Set(enrollments.map((item) => item.course.cohortId))];
+
+    const cohortAssignments = await prisma.cohort_assignment.findMany({
+      where: {
+        cohortId: { in: cohortIds },
+        learningUnitId: learningUnit.id,
+      },
+      orderBy: [{ activatedAt: "desc" }, { id: "desc" }],
+    });
+
+    if (cohortAssignments.length === 0) {
+      throw new Error("Assignment has not been activated for your cohort");
+    }
+
+    const now = new Date();
+
+    const activeAssignment = cohortAssignments.find(
+      (assignment) =>
+        assignment.isActive &&
+        assignment.closedAt === null &&
+        (!assignment.dueDate || assignment.dueDate >= now),
+    );
+
+    if (!activeAssignment) {
+      const expiredAssignment = cohortAssignments.find(
+        (assignment) =>
+          assignment.isActive &&
+          assignment.closedAt === null &&
+          assignment.dueDate !== null &&
+          assignment.dueDate < now,
+      );
+
+      if (expiredAssignment) {
+        const expiredEnrollment =
+          enrollments.find(
+            (item) => item.course.cohortId === expiredAssignment.cohortId,
+          ) ?? enrollments[0];
+
+        await this.markUnsubmittedAssignmentAsExpired(
+          expiredEnrollment.id,
+          learningUnit.id,
+          args.topicId,
+        );
+        throw new Error("Assignment due date has passed");
+      }
+
+      throw new Error("Assignment is not active for your cohort");
+    }
+
+    const enrollment =
+      enrollments.find(
+        (item) => item.course.cohortId === activeAssignment.cohortId,
+      ) ?? enrollments[0];
+
+    const previousSubmissions = await prisma.assignment_submission.findMany({
+      where: {
+        enrollmentId: enrollment.id,
+        learningUnitId: learningUnit.id,
+      },
+    });
+
+    const { maxAttempts, passMark } = this.getAssignmentConfig(learningUnit);
+    const currentAttempt = previousSubmissions.length + 1;
+    if (currentAttempt > maxAttempts) {
+      throw new Error(`Maximum attempts of ${maxAttempts} exceeded`);
+    }
+
+    return {
+      learningUnit,
+      enrollment,
+      currentAttempt,
+      maxAttempts,
+      passMark,
+    };
   }
 
   private getLearningUnitResponseData(

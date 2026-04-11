@@ -62,6 +62,34 @@ eventRouter.delete(
   eventContoller.deleteEvent,
 );
 
+// ─── Series delete ────────────────────────────────────────────────────────────
+// DELETE /event/delete-series?series_id=<uuid>            → all occurrences
+// DELETE /event/delete-series-from?series_id=<uuid>&from_date=YYYY-MM-DD  → this + following
+eventRouter.delete(
+  "/delete-series",
+  [protect, permissions.can_delete_events],
+  eventContoller.deleteEventSeries,
+);
+eventRouter.delete(
+  "/delete-series-from",
+  [protect, permissions.can_delete_events],
+  eventContoller.deleteEventSeriesFrom,
+);
+
+// ─── Series update ────────────────────────────────────────────────────────────
+// PUT /event/update-series       body: { series_id, ...fields }
+// PUT /event/update-series-from  body: { series_id, from_date, ...fields }
+eventRouter.put(
+  "/update-series",
+  [protect, permissions.can_manage_events],
+  eventContoller.updateEventSeries,
+);
+eventRouter.put(
+  "/update-series-from",
+  [protect, permissions.can_manage_events],
+  eventContoller.updateEventSeriesFrom,
+);
+
 eventRouter.post("/sign-attendance", eventContoller.eventAttendance);
 eventRouter.get("/search-user", eventContoller.searchUser1);
 
@@ -160,4 +188,25 @@ eventRouter.delete(
   "/church-attendance",
   [protect, permissions.can_delete_church_attendance],
   eventContoller.deleteAttendance,
+);
+
+// ─── iCal export ─────────────────────────────────────────────────────────────
+// GET /event/ical-export?event_id=123   → downloads a single event as .ics
+// GET /event/ical-export?series_id=<uuid> → downloads all occurrences in a series
+eventRouter.get("/ical-export", [protect], eventContoller.icalExport);
+
+// ─── Event reminders ─────────────────────────────────────────────────────────
+// GET    /event/reminders?event_id=123          → list reminders for event
+// POST   /event/reminders  { event_id, reminders: [15, 60, 1440] }  → create/replace
+// DELETE /event/reminders?id=<reminder_id>      → cancel a single reminder
+eventRouter.get("/reminders", [protect], eventContoller.getEventReminders);
+eventRouter.post(
+  "/reminders",
+  [protect, permissions.can_manage_events],
+  eventContoller.upsertEventReminders,
+);
+eventRouter.delete(
+  "/reminders",
+  [protect, permissions.can_manage_events],
+  eventContoller.cancelReminder,
 );
