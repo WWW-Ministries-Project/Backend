@@ -332,6 +332,30 @@ export class eventManagement {
     return this.toPositiveInt(query?.event_id ?? query?.eventId);
   }
 
+  private resolveIncludedEventId(query: Request["query"]) {
+    return this.toPositiveInt(
+      query?.include_event_id ??
+        query?.includeEventId ??
+        query?.selected_event_id ??
+        query?.selectedEventId,
+    );
+  }
+
+  private sortEventsByStartDate<T extends { start_date: Date | string | null }>(
+    events: T[],
+  ) {
+    return [...events].sort((left, right) => {
+      const leftTime = left?.start_date
+        ? new Date(left.start_date).getTime()
+        : Number.NEGATIVE_INFINITY;
+      const rightTime = right?.start_date
+        ? new Date(right.start_date).getTime()
+        : Number.NEGATIVE_INFINITY;
+
+      return leftTime - rightTime;
+    });
+  }
+
   private getWeekDayNumber(dateValue: Date | string | null | undefined) {
     if (!dateValue) {
       return null;
@@ -1809,6 +1833,7 @@ export class eventManagement {
         showPresentUpcoming,
       });
       const eventFilterId = this.resolveEventFilterId(req.query);
+      const includedEventId = this.resolveIncludedEventId(req.query);
 
       let whereClause: any = {
         id: eventFilterId ?? undefined,
@@ -1817,13 +1842,30 @@ export class eventManagement {
         start_date: startDateRange,
       };
 
-      const data = await prisma.event_mgt.findMany({
+      let data = await prisma.event_mgt.findMany({
         where: whereClause,
         orderBy: {
           start_date: "asc",
         },
         select: eventListSelect,
       });
+
+      if (
+        includedEventId &&
+        includedEventId !== eventFilterId &&
+        !data.some((event) => event.id === includedEventId)
+      ) {
+        const includedEvent = await prisma.event_mgt.findUnique({
+          where: {
+            id: includedEventId,
+          },
+          select: eventListSelect,
+        });
+
+        if (includedEvent) {
+          data = this.sortEventsByStartDate([...data, includedEvent]);
+        }
+      }
 
       const flat_data = data.map((event) => this.mapEventResponse(event));
 
