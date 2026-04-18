@@ -151,8 +151,11 @@ export class AiController {
   }
 
   async chatbotConfig(req: Request, res: Response) {
-    if (!this.getAdminActorId(req, res)) {
-      return;
+    if (!this.getActorId(req)) {
+      return res.status(401).json({
+        message: "Not authorized. Token not found",
+        data: null,
+      });
     }
 
     try {
@@ -169,7 +172,7 @@ export class AiController {
           available_models: availableModels,
           default_context: {
             module: "operations",
-            scope: "admin",
+            scope: "module_access",
           },
           welcome_message: enabled
             ? "Ask for operational summaries, data lookups, risk flags, and follow-up guidance."
@@ -197,9 +200,12 @@ export class AiController {
   }
 
   async chatbot(req: Request, res: Response) {
-    const actorId = this.getAdminActorId(req, res);
+    const actorId = this.getActorId(req);
     if (!actorId) {
-      return;
+      return res.status(401).json({
+        message: "Not authorized. Token not found",
+        data: null,
+      });
     }
 
     const message =
@@ -215,7 +221,10 @@ export class AiController {
         typeof parsedContext.module === "string" && parsedContext.module.trim()
           ? parsedContext.module.trim()
           : "operations",
-      scope: "admin",
+      scope:
+        typeof parsedContext.scope === "string" && parsedContext.scope.trim()
+          ? parsedContext.scope.trim()
+          : "module_access",
       chat_surface: "chatbot_widget",
     };
 
@@ -907,38 +916,10 @@ export class AiController {
     return context as AiContext;
   }
 
-  private getAdminActorId(req: Request, res: Response): number | null {
-    const actorId = this.getActorId(req);
-    if (!actorId) {
-      res.status(401).json({
-        message: "Not authorized. Token not found",
-        data: null,
-      });
-      return null;
-    }
-
-    if (!this.isAdminUser(req)) {
-      res.status(403).json({
-        message: "Admin access is required for the AI chatbot",
-        data: null,
-      });
-      return null;
-    }
-
-    return actorId;
-  }
-
   private getActorId(req: Request): number | null {
     const rawId = (req as any)?.user?.id;
     const parsed = Number(rawId);
     return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
-  }
-
-  private isAdminUser(req: Request): boolean {
-    const userCategory = String((req as any)?.user?.user_category || "")
-      .trim()
-      .toLowerCase();
-    return userCategory === "admin";
   }
 
   private getIdempotencyKey(req: Request): string | null {
