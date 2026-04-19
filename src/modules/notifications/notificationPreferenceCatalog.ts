@@ -92,6 +92,20 @@ export const NOTIFICATION_PREFERENCE_OPTIONS: NotificationPreferenceOption[] = [
     availableChannels: ALL_CHANNELS,
   },
   {
+    type: "financial.approval_requested",
+    title: "Financial approval requested",
+    description: "Alert the configured finance approver when a financial record is submitted.",
+    category: "Financials",
+    availableChannels: ALL_CHANNELS,
+  },
+  {
+    type: "financial.approved",
+    title: "Financial record approved",
+    description: "Notify stakeholders when a financial record is finally approved.",
+    category: "Financials",
+    availableChannels: ALL_CHANNELS,
+  },
+  {
     type: "follow_up.assigned",
     title: "Follow-up assigned",
     description: "Notify the assigned member about a new visitor follow-up.",

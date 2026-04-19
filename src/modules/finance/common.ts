@@ -67,6 +67,26 @@ export type FinancialPayload = Prisma.JsonObject & {
   };
 };
 
+export type FinanceSaveAction = "SAVE_DRAFT" | "SAVE_AND_APPROVE";
+
+export type FinancialMutationPayload = {
+  action: FinanceSaveAction;
+  payload: FinancialPayload;
+};
+
+export type FinanceApprovalConfigPayload = {
+  finance_approver_user_id: number;
+  notification_user_ids: number[];
+  is_active?: boolean;
+};
+
+export type FinanceApprovalStatus = "DRAFT" | "PENDING_APPROVAL" | "APPROVED";
+
+const isPositiveInteger = (value: unknown): value is number => {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0;
+};
+
 export const validateBasePayload = (
   body: unknown,
   options?: { percentageAllowed?: boolean },
@@ -176,6 +196,83 @@ export const validateFinancialPayload = (body: unknown): FinancialPayload => {
       periodDate: trimmedPeriodDate,
     },
   } as FinancialPayload;
+};
+
+export const validateFinancialMutationPayload = (
+  body: unknown,
+): FinancialMutationPayload => {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    throw new FinanceHttpError(
+      422,
+      "Invalid request payload. Expected a JSON object",
+    );
+  }
+
+  const source = body as Record<string, unknown>;
+  const actionRaw = String(source.action || "").trim().toUpperCase();
+  if (actionRaw !== "SAVE_DRAFT" && actionRaw !== "SAVE_AND_APPROVE") {
+    throw new FinanceHttpError(
+      422,
+      "action is required and must be SAVE_DRAFT or SAVE_AND_APPROVE",
+    );
+  }
+
+  const payloadSource = Object.fromEntries(
+    Object.entries(source).filter(([key]) => key !== "action"),
+  );
+
+  return {
+    action: actionRaw,
+    payload: validateFinancialPayload(payloadSource),
+  };
+};
+
+export const validateFinanceApprovalConfigPayload = (
+  body: unknown,
+): FinanceApprovalConfigPayload => {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    throw new FinanceHttpError(422, "Invalid request payload");
+  }
+
+  const payload = body as {
+    finance_approver_user_id?: unknown;
+    notification_user_ids?: unknown;
+    is_active?: unknown;
+  };
+
+  if (!isPositiveInteger(payload.finance_approver_user_id)) {
+    throw new FinanceHttpError(
+      422,
+      "finance_approver_user_id is required and must be a positive integer",
+    );
+  }
+
+  const notificationUserIds = Array.isArray(payload.notification_user_ids)
+    ? Array.from(
+        new Set(
+          payload.notification_user_ids
+            .map((value) => Number(value))
+            .filter((value) => isPositiveInteger(value)),
+        ),
+      )
+    : [];
+
+  if (
+    Array.isArray(payload.notification_user_ids) &&
+    notificationUserIds.length !== payload.notification_user_ids.length
+  ) {
+    throw new FinanceHttpError(
+      422,
+      "notification_user_ids must contain only positive integer user IDs",
+    );
+  }
+
+  return {
+    finance_approver_user_id: Number(payload.finance_approver_user_id),
+    notification_user_ids: notificationUserIds,
+    is_active:
+      payload.is_active === undefined ? true : Boolean(payload.is_active),
+  };
 };
 
 export const resolveFinanceError = (
