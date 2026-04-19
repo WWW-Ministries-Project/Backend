@@ -1,10 +1,23 @@
-import { execFile } from "child_process";
 import { promises as fs } from "fs";
-import { tmpdir } from "os";
-import { join, resolve } from "path";
-import { promisify } from "util";
 import { EventReportStatus, Prisma } from "@prisma/client";
+import {
+  AlignmentType,
+  BorderStyle,
+  Document,
+  Packer,
+  PageOrientation,
+  Paragraph,
+  Table,
+  TableCell,
+  TableLayoutType,
+  TableRow,
+  TextRun,
+  VerticalAlign,
+  WidthType,
+  convertMillimetersToTwip,
+} from "docx";
 import puppeteer from "puppeteer";
+import { resolve } from "path";
 import {
   InputValidationError,
   NotFoundError,
@@ -15,8 +28,6 @@ import {
   buildAttendanceVisitorCountsMap,
   getAttendanceVisitorCountsForRecord,
 } from "../events/attendanceVisitorCounts";
-
-const execFileAsync = promisify(execFile);
 
 type ApprovalWorkflowTx = Prisma.TransactionClient;
 
@@ -130,6 +141,72 @@ const SERVICE_SUMMARY_TEMPLATE_CANDIDATE_PATHS = [
   resolve(process.cwd(), "dist/src/libs/eventReports/serviceSummaryTemplate.html"),
   resolve(process.cwd(), "src/libs/eventReports/serviceSummaryTemplate.html"),
 ];
+const DOCX_PAGE_WIDTH_TWIPS = convertMillimetersToTwip(210);
+const DOCX_PAGE_HEIGHT_TWIPS = convertMillimetersToTwip(297);
+const DOCX_MARGIN_TOP_TWIPS = convertMillimetersToTwip(16);
+const DOCX_MARGIN_RIGHT_TWIPS = convertMillimetersToTwip(12);
+const DOCX_MARGIN_BOTTOM_TWIPS = convertMillimetersToTwip(16);
+const DOCX_MARGIN_LEFT_TWIPS = convertMillimetersToTwip(12);
+const DOCX_CONTENT_WIDTH_TWIPS =
+  DOCX_PAGE_WIDTH_TWIPS - DOCX_MARGIN_LEFT_TWIPS - DOCX_MARGIN_RIGHT_TWIPS;
+const DOCX_BORDER_COLOR = "111827";
+const DOCX_HEADER_FILL = "F3F4F6";
+
+const DOCX_TABLE_BORDERS = {
+  top: {
+    style: BorderStyle.SINGLE,
+    size: 8,
+    color: DOCX_BORDER_COLOR,
+  },
+  bottom: {
+    style: BorderStyle.SINGLE,
+    size: 8,
+    color: DOCX_BORDER_COLOR,
+  },
+  left: {
+    style: BorderStyle.SINGLE,
+    size: 8,
+    color: DOCX_BORDER_COLOR,
+  },
+  right: {
+    style: BorderStyle.SINGLE,
+    size: 8,
+    color: DOCX_BORDER_COLOR,
+  },
+  insideHorizontal: {
+    style: BorderStyle.SINGLE,
+    size: 8,
+    color: DOCX_BORDER_COLOR,
+  },
+  insideVertical: {
+    style: BorderStyle.SINGLE,
+    size: 8,
+    color: DOCX_BORDER_COLOR,
+  },
+} as const;
+
+const DOCX_CELL_BORDERS = {
+  top: {
+    style: BorderStyle.SINGLE,
+    size: 8,
+    color: DOCX_BORDER_COLOR,
+  },
+  bottom: {
+    style: BorderStyle.SINGLE,
+    size: 8,
+    color: DOCX_BORDER_COLOR,
+  },
+  left: {
+    style: BorderStyle.SINGLE,
+    size: 8,
+    color: DOCX_BORDER_COLOR,
+  },
+  right: {
+    style: BorderStyle.SINGLE,
+    size: 8,
+    color: DOCX_BORDER_COLOR,
+  },
+} as const;
 
 const readServiceSummaryTemplateHtml = async (): Promise<string> => {
   for (const templatePath of SERVICE_SUMMARY_TEMPLATE_CANDIDATE_PATHS) {
@@ -1007,27 +1084,348 @@ const renderServiceSummaryHtml = async (
   );
 };
 
-const generateDocxBufferFromHtml = async (html: string): Promise<Buffer> => {
-  const tempDir = await fs.mkdtemp(join(tmpdir(), "event-report-docx-"));
-  const inputPath = join(tempDir, "service-summary.html");
-  const outputPath = join(tempDir, "service-summary.docx");
+const toDocxColumnWidth = (ratio: number): number =>
+  Math.round(DOCX_CONTENT_WIDTH_TWIPS * ratio);
 
+const createDocxParagraph = (
+  text: string,
+  options?: {
+    alignment?: (typeof AlignmentType)[keyof typeof AlignmentType];
+    bold?: boolean;
+    size?: number;
+    allCaps?: boolean;
+    spacingBefore?: number;
+    spacingAfter?: number;
+  },
+): Paragraph =>
+  new Paragraph({
+    alignment: options?.alignment,
+    spacing: {
+      before: options?.spacingBefore,
+      after: options?.spacingAfter,
+    },
+    children: [
+      new TextRun({
+        text,
+        font: "Times New Roman",
+        bold: options?.bold,
+        size: options?.size,
+        allCaps: options?.allCaps,
+      }),
+    ],
+  });
+
+const createDocxCell = (
+  text: string,
+  options?: {
+    width?: number;
+    bold?: boolean;
+    fill?: string;
+    alignment?: (typeof AlignmentType)[keyof typeof AlignmentType];
+  },
+): TableCell =>
+  new TableCell({
+    width: options?.width
+      ? {
+          size: options.width,
+          type: WidthType.DXA,
+        }
+      : undefined,
+    shading: options?.fill
+      ? {
+          fill: options.fill,
+        }
+      : undefined,
+    verticalAlign: VerticalAlign.CENTER,
+    borders: DOCX_CELL_BORDERS,
+    margins: {
+      top: 100,
+      bottom: 100,
+      left: 120,
+      right: 120,
+    },
+    children: [
+      createDocxParagraph(text, {
+        bold: options?.bold,
+        alignment: options?.alignment,
+        size: 22,
+      }),
+    ],
+  });
+
+const createDocxKeyValueCell = (
+  label: string,
+  value: string,
+  width: number,
+): TableCell =>
+  new TableCell({
+    width: {
+      size: width,
+      type: WidthType.DXA,
+    },
+    borders: DOCX_CELL_BORDERS,
+    margins: {
+      top: 120,
+      bottom: 120,
+      left: 140,
+      right: 140,
+    },
+    children: [
+      new Paragraph({
+        children: [
+          new TextRun({
+            text: `${label}: `,
+            font: "Times New Roman",
+            bold: true,
+            size: 22,
+          }),
+          new TextRun({
+            text: value,
+            font: "Times New Roman",
+            size: 22,
+          }),
+        ],
+      }),
+    ],
+  });
+
+const createDocxTable = (
+  rows: TableRow[],
+  columnWidths: number[],
+): Table =>
+  new Table({
+    width: {
+      size: DOCX_CONTENT_WIDTH_TWIPS,
+      type: WidthType.DXA,
+    },
+    layout: TableLayoutType.FIXED,
+    alignment: AlignmentType.CENTER,
+    borders: DOCX_TABLE_BORDERS,
+    columnWidths,
+    rows,
+  });
+
+const createDepartmentDocxTable = (
+  attendees: DepartmentAttendanceDetail[],
+): Table => {
+  const columnWidths = [0.18, 0.36, 0.22, 0.24].map(toDocxColumnWidth);
+  const rows = [
+    new TableRow({
+      tableHeader: true,
+      children: [
+        createDocxCell("Arrival Time", {
+          width: columnWidths[0],
+          bold: true,
+          fill: DOCX_HEADER_FILL,
+        }),
+        createDocxCell("Name", {
+          width: columnWidths[1],
+          bold: true,
+          fill: DOCX_HEADER_FILL,
+        }),
+        createDocxCell("Relative To Start", {
+          width: columnWidths[2],
+          bold: true,
+          fill: DOCX_HEADER_FILL,
+        }),
+        createDocxCell("Status", {
+          width: columnWidths[3],
+          bold: true,
+          fill: DOCX_HEADER_FILL,
+        }),
+      ],
+    }),
+  ];
+
+  if (!attendees.length) {
+    rows.push(
+      new TableRow({
+        children: [
+          new TableCell({
+            columnSpan: 4,
+            width: {
+              size: DOCX_CONTENT_WIDTH_TWIPS,
+              type: WidthType.DXA,
+            },
+            verticalAlign: VerticalAlign.CENTER,
+            borders: DOCX_CELL_BORDERS,
+            margins: {
+              top: 100,
+              bottom: 100,
+              left: 120,
+              right: 120,
+            },
+            children: [
+              createDocxParagraph("No attendance rows recorded for this department.", {
+                alignment: AlignmentType.CENTER,
+                size: 22,
+              }),
+            ],
+          }),
+        ],
+      }),
+    );
+    return createDocxTable(rows, columnWidths);
+  }
+
+  rows.push(
+    ...attendees.map(
+      (attendee) =>
+        new TableRow({
+          children: [
+            createDocxCell(attendee.reported_time, {
+              width: columnWidths[0],
+            }),
+            createDocxCell(attendee.name, {
+              width: columnWidths[1],
+            }),
+            createDocxCell(attendee.relative_to_start, {
+              width: columnWidths[2],
+            }),
+            createDocxCell(formatAttendanceStatusLabel(attendee.status), {
+              width: columnWidths[3],
+            }),
+          ],
+        }),
+    ),
+  );
+
+  return createDocxTable(rows, columnWidths);
+};
+
+const createRegistrySummaryDocxTable = (
+  churchAttendance: ServiceSummaryPayload["church_attendance"],
+): Table => {
+  const columnWidths = [toDocxColumnWidth(0.4), toDocxColumnWidth(0.6)];
+  const rows = [
+    ["Male", churchAttendance.adult_male],
+    ["Female", churchAttendance.adult_female],
+    ["Youth", churchAttendance.youth_male + churchAttendance.youth_female],
+    ["Children", churchAttendance.children_male + churchAttendance.children_female],
+    ["Visitors", churchAttendance.visitors],
+    ["New Members", churchAttendance.new_members],
+    ["Visiting Pastors", churchAttendance.visiting_pastors],
+    ["Tot. Attendance", churchAttendance.total_attendance],
+  ].map(
+    ([label, value]) =>
+      new TableRow({
+        children: [
+          createDocxCell(String(label), {
+            width: columnWidths[0],
+            bold: true,
+            fill: DOCX_HEADER_FILL,
+          }),
+          createDocxCell(String(value), {
+            width: columnWidths[1],
+          }),
+        ],
+      }),
+  );
+
+  return createDocxTable(rows, columnWidths);
+};
+
+const generateDocxBufferFromSummary = async (
+  payload: ServiceSummaryPayload,
+): Promise<Buffer> => {
   try {
-    await fs.writeFile(inputPath, html, "utf8");
-    await execFileAsync("textutil", [
-      "-convert",
-      "docx",
-      "-output",
-      outputPath,
-      inputPath,
-    ]);
+    const halfWidth = Math.round(DOCX_CONTENT_WIDTH_TWIPS / 2);
+    const children: Array<Paragraph | Table> = [
+      createDocxParagraph("WORLDWIDE WORD MINISTRIES", {
+        alignment: AlignmentType.CENTER,
+        bold: true,
+        size: 28,
+        allCaps: true,
+        spacingAfter: 80,
+      }),
+      createDocxParagraph("SERVICE SUMMARY REPORT", {
+        alignment: AlignmentType.CENTER,
+        bold: true,
+        size: 26,
+        allCaps: true,
+        spacingAfter: 80,
+      }),
+      createDocxParagraph(formatDisplayDate(payload.event_date), {
+        alignment: AlignmentType.CENTER,
+        size: 22,
+        spacingAfter: 220,
+      }),
+      createDocxParagraph(payload.event_name, {
+        bold: true,
+        size: 24,
+        allCaps: true,
+        spacingAfter: 100,
+      }),
+      createDocxTable(
+        [
+          new TableRow({
+            children: [
+              createDocxKeyValueCell("Date", formatDisplayDate(payload.event_date), halfWidth),
+              createDocxKeyValueCell("Venue", payload.venue, halfWidth),
+            ],
+          }),
+          new TableRow({
+            children: [
+              createDocxKeyValueCell("Start Time", payload.start_time, halfWidth),
+              createDocxKeyValueCell("Closing Time", payload.closing_time, halfWidth),
+            ],
+          }),
+        ],
+        [halfWidth, halfWidth],
+      ),
+    ];
 
-    return await fs.readFile(outputPath);
+    for (const department of payload.departments) {
+      children.push(
+        createDocxParagraph(department.department_name, {
+          bold: true,
+          size: 24,
+          allCaps: true,
+          spacingBefore: 220,
+          spacingAfter: 100,
+        }),
+        createDepartmentDocxTable(department.attendees),
+      );
+    }
+
+    children.push(
+      createDocxParagraph("Registry Summary", {
+        bold: true,
+        size: 24,
+        allCaps: true,
+        spacingBefore: 220,
+        spacingAfter: 100,
+      }),
+      createRegistrySummaryDocxTable(payload.church_attendance),
+    );
+
+    const document = new Document({
+      sections: [
+        {
+          properties: {
+            page: {
+              size: {
+                width: DOCX_PAGE_WIDTH_TWIPS,
+                height: DOCX_PAGE_HEIGHT_TWIPS,
+                orientation: PageOrientation.PORTRAIT,
+              },
+              margin: {
+                top: DOCX_MARGIN_TOP_TWIPS,
+                right: DOCX_MARGIN_RIGHT_TWIPS,
+                bottom: DOCX_MARGIN_BOTTOM_TWIPS,
+                left: DOCX_MARGIN_LEFT_TWIPS,
+              },
+            },
+          },
+          children,
+        },
+      ],
+    });
+
+    return await Packer.toBuffer(document);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new InputValidationError(`Unable to generate DOCX report: ${message}`);
-  } finally {
-    await fs.rm(tempDir, { recursive: true, force: true });
   }
 };
 
@@ -1442,18 +1840,18 @@ export const generateServiceSummaryReport = async (
     }),
   );
 
-  const html = await renderServiceSummaryHtml(summaryPayload);
   const fileBaseName = `${slugifyFilePart(summaryPayload.event_name)}-${eventDate}-service-summary`;
 
   if (format === "docx") {
     return {
-      buffer: await generateDocxBufferFromHtml(html),
+      buffer: await generateDocxBufferFromSummary(summaryPayload),
       contentType:
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
       fileName: `${fileBaseName}.docx`,
     };
   }
 
+  const html = await renderServiceSummaryHtml(summaryPayload);
   return {
     buffer: await generatePdfBufferFromHtml(html),
     contentType: "application/pdf",
