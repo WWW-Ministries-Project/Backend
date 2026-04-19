@@ -159,7 +159,7 @@ export const departmentRouter = Router();
  */
 departmentRouter.post(
   "/create-department",
-  [permissions.protect, permissions.can_manage_department],
+  [permissions.protect, permissions.can_manage_department_scoped],
   createDepartment,
 );
 /**
@@ -190,7 +190,7 @@ departmentRouter.post(
  */
 departmentRouter.put(
   "/update-department",
-  [protect, permissions.can_manage_department],
+  [protect, permissions.can_manage_department_scoped],
   updateDepartment,
 );
 /**
@@ -213,7 +213,7 @@ departmentRouter.put(
 
 departmentRouter.delete(
   "/delete-department",
-  [protect, permissions.can_delete_department],
+  [protect, permissions.can_delete_department_scoped],
   deleteDepartment,
 );
 
@@ -262,7 +262,7 @@ departmentRouter.delete(
  */
 departmentRouter.get(
   "/list-departments",
-  [protect],
+  [protect, permissions.can_view_department_scoped],
   listDepartments,
 );
 /**
@@ -319,12 +319,12 @@ departmentRouter.get(
  */
 departmentRouter.get(
   "/get-department",
-  [protect, permissions.can_view_department],
+  [protect, permissions.can_view_department_scoped],
   getDepartment,
 );
 
 departmentRouter.get(
   "/list-departments-light",
-  [protect, permissions.can_view_department],
+  [protect, permissions.can_view_department_scoped],
   listDepartmentsLight,
 );

@@ -1,60 +1,43 @@
 import Router from "express";
 import { Permissions } from "../../middleWare/authorization";
 import {
-  churchAttendanceApprovalActionHandler,
-  finalApprovalActionHandler,
-  financeApprovalActionHandler,
-  getEventReportApprovalConfigHandler,
+  generateEventReportHandler,
+  generateServiceSummaryReportHandler,
   getEventReportDetailHandler,
-  saveEventReportApprovalConfigHandler,
-  submitFinalApprovalHandler,
-  upsertEventReportFinanceHandler,
+  getEventReportOverviewHandler,
+  listEligibleEventReportsHandler,
 } from "./eventReportController";
 
 export const eventReportRouter = Router();
 const permissions = new Permissions();
 const protect = permissions.protect;
 
+eventReportRouter.get(
+  "/eligible-events",
+  [protect, permissions.can_view_events],
+  listEligibleEventReportsHandler,
+);
+
 eventReportRouter.post(
-  "/upsert-approval-config",
+  "/generate",
   [protect, permissions.can_manage_events],
-  saveEventReportApprovalConfigHandler,
+  generateEventReportHandler,
 );
 
 eventReportRouter.get(
-  "/get-approval-config",
+  "/overview",
   [protect, permissions.can_view_events],
-  getEventReportApprovalConfigHandler,
+  getEventReportOverviewHandler,
 );
 
-eventReportRouter.get("/get-report", [protect], getEventReportDetailHandler);
-
-eventReportRouter.post(
-  "/upsert-finance",
-  [protect],
-  upsertEventReportFinanceHandler,
-);
-
-eventReportRouter.post(
-  "/church-attendance-approval-action",
-  [protect],
-  churchAttendanceApprovalActionHandler,
+eventReportRouter.get(
+  "/get-report",
+  [protect, permissions.can_view_events],
+  getEventReportDetailHandler,
 );
 
 eventReportRouter.post(
-  "/finance-approval-action",
-  [protect],
-  financeApprovalActionHandler,
-);
-
-eventReportRouter.post(
-  "/submit-final-approval",
-  [protect],
-  submitFinalApprovalHandler,
-);
-
-eventReportRouter.post(
-  "/final-approval-action",
-  [protect],
-  finalApprovalActionHandler,
+  "/generate-service-summary",
+  [protect, permissions.can_view_events],
+  generateServiceSummaryReportHandler,
 );

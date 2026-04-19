@@ -22,7 +22,6 @@ const shouldRunBackgroundJobs = !["false", "0", "no"].includes(
 if (shouldRunBackgroundJobs) {
   require("./src/cron-jobs/hubtelPaymentReconciliationCron");
   require("./src/cron-jobs/requisitionNotificationCron");
-  require("./src/cron-jobs/eventReportNotificationCron");
   require("./src/cron-jobs/followUpNotificationCron");
   require("./src/cron-jobs/notificationRetentionCron");
   require("./src/cron-jobs/notificationPushRetryCron");
@@ -67,6 +66,17 @@ app.get("/metrics", async (req, res) => {
 app.use(notFoundHandler);
 app.use(globalErrorHandler);
 
-app.listen(port, () => {
+const server = app.listen(port, () => {
   logger.info(`Server running on port ${port}`);
+});
+
+server.on("error", (err: NodeJS.ErrnoException) => {
+  if (err.code === "EADDRINUSE") {
+    logger.error(
+      `Port ${port} is already in use. Stop the existing process and try again.`,
+    );
+  } else {
+    logger.error(`Server failed to start: ${err.message}`);
+  }
+  process.exit(1);
 });
