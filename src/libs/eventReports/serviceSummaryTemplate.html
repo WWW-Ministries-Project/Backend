@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Service Summary Report</title>
+  <style>
+    body {
+      font-family: "Times New Roman", Georgia, serif;
+      color: #111827;
+      margin: 0;
+      font-size: 11px;
+      line-height: 1.35;
+    }
+
+    .page {
+      width: 100%;
+    }
+
+    .report-header {
+      text-align: center;
+      margin-bottom: 14px;
+    }
+
+    .report-header .brand {
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .report-header .title {
+      font-size: 16px;
+      font-weight: 700;
+      margin-top: 4px;
+      text-transform: uppercase;
+    }
+
+    .report-header .date {
+      margin-top: 4px;
+      font-size: 12px;
+    }
+
+    .event-panel {
+      border: 1px solid #111827;
+      padding: 10px 12px;
+      margin-bottom: 14px;
+    }
+
+    .event-name {
+      font-size: 14px;
+      font-weight: 700;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+
+    .event-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 6px 12px;
+    }
+
+    .event-grid div strong {
+      display: inline-block;
+      min-width: 92px;
+    }
+
+    .department-section {
+      margin-bottom: 16px;
+      page-break-inside: avoid;
+    }
+
+    .department-title {
+      font-size: 13px;
+      font-weight: 700;
+      margin-bottom: 6px;
+      text-transform: uppercase;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .department-table th,
+    .department-table td,
+    .summary-table th,
+    .summary-table td {
+      border: 1px solid #111827;
+      padding: 6px 7px;
+      vertical-align: top;
+    }
+
+    .department-table th,
+    .summary-table th {
+      background: #f3f4f6;
+      text-align: left;
+      font-weight: 700;
+    }
+
+    .department-table th:nth-child(1),
+    .department-table td:nth-child(1) {
+      width: 18%;
+    }
+
+    .department-table th:nth-child(2),
+    .department-table td:nth-child(2) {
+      width: 36%;
+    }
+
+    .department-table th:nth-child(3),
+    .department-table td:nth-child(3) {
+      width: 22%;
+    }
+
+    .department-table th:nth-child(4),
+    .department-table td:nth-child(4) {
+      width: 24%;
+    }
+
+    .empty-row {
+      text-align: center;
+      color: #6b7280;
+      font-style: italic;
+    }
+
+    .summary-title {
+      font-size: 13px;
+      font-weight: 700;
+      margin: 18px 0 8px;
+      text-transform: uppercase;
+    }
+
+    .summary-table th {
+      width: 40%;
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header class="report-header">
+      <div class="brand">WORLDWIDE WORD MINISTRIES</div>
+      <div class="title">SERVICE SUMMARY REPORT</div>
+      <div class="date">{{REPORT_DATE}}</div>
+    </header>
+
+    <section class="event-panel">
+      <div class="event-name">{{EVENT_NAME}}</div>
+      <div class="event-grid">
+        <div><strong>Date:</strong> {{EVENT_DATE}}</div>
+        <div><strong>Venue:</strong> {{VENUE}}</div>
+        <div><strong>Start Time:</strong> {{START_TIME}}</div>
+        <div><strong>Closing Time:</strong> {{CLOSING_TIME}}</div>
+      </div>
+    </section>
+
+    {{DEPARTMENT_SECTIONS}}
+
+    <section class="summary-section">
+      <div class="summary-title">Registry Summary</div>
+      <table class="summary-table">
+        <tbody>
+          {{REGISTRY_SUMMARY_ROWS}}
+        </tbody>
+      </table>
+    </section>
+  </main>
+</body>
+</html>

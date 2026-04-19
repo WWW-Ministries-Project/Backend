@@ -115,6 +115,15 @@ const parseResponsibleMembers = (responsibleMembers: any): number[] => {
   return Array.from(new Set(ids));
 };
 
+const normalizeScopeValue = (value: any) => {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  if (normalized === "assigned_departments") {
+    return normalized;
+  }
+  return null;
+};
+
 const getNestedExclusionSource = (permissions: any) => {
   const parsedPermissions = parsePermissionsObject(permissions);
   if (Object.keys(parsedPermissions).length === 0) return null;
@@ -172,6 +181,52 @@ const resolveDomainExclusions = (permissions: any, permissionType: string) => {
   }
 
   return [];
+};
+
+const resolveDomainScope = (permissions: any, permissionType: string) => {
+  const parsedPermissions = parsePermissionsObject(permissions);
+  if (Object.keys(parsedPermissions).length === 0) {
+    return null;
+  }
+
+  const aliasKeys = PERMISSION_KEY_ALIASES[permissionType] || [permissionType];
+  const scopesSource =
+    parsedPermissions?.Scopes &&
+    typeof parsedPermissions.Scopes === "object" &&
+    !Array.isArray(parsedPermissions.Scopes)
+      ? parsedPermissions.Scopes
+      : null;
+
+  const candidateKeys = Array.from(
+    new Set(
+      aliasKeys.flatMap((key) => [
+        key,
+        key.replace(/\s+/g, "_"),
+        `${key}_scope`,
+        `${key.replace(/\s+/g, "_")}_scope`,
+      ]),
+    ),
+  );
+
+  for (const key of candidateKeys) {
+    const directScope = normalizeScopeValue(parsedPermissions?.[key]);
+    if (directScope) {
+      return directScope;
+    }
+  }
+
+  if (!scopesSource) {
+    return null;
+  }
+
+  for (const key of candidateKeys) {
+    const nestedScope = normalizeScopeValue((scopesSource as any)?.[key]);
+    if (nestedScope) {
+      return nestedScope;
+    }
+  }
+
+  return null;
 };
 
 const hasActionPermission = (
@@ -719,6 +774,14 @@ export class Permissions {
     );
   }
 
+  private getDepartmentTargetId(req: Request | any) {
+    return (
+      toPositiveInt(req.query?.department_id) ||
+      toPositiveInt(req.body?.department_id) ||
+      this.getResourceId(req)
+    );
+  }
+
   private async resolveVisitorIdFromResourceId(
     resource: "visitor" | "visit" | "follow_up" | "prayer_request",
     resourceId: number,
@@ -1111,6 +1174,62 @@ export class Permissions {
     };
     return next();
   };
+
+  private departmentScopedPermission = (
+    action: "view" | "manage" | "admin",
+    errorMessage: string,
+  ) => {
+    return async (req: Request, res: Response, next: NextFunction) => {
+      const context = await this.getAccessContext(req, res, errorMessage);
+      if (!context) return;
+
+      if (
+        !context.isPrivilegedUser ||
+        !hasActionPermission(context.permissions, "Departments", action)
+      ) {
+        return this.unauthorized(res, errorMessage);
+      }
+
+      const scopeMode = resolveDomainScope(context.permissions, "Departments");
+      if (scopeMode !== "assigned_departments") {
+        (req as any).departmentScope = { mode: "all", departmentIds: [] };
+        return next();
+      }
+
+      if (!context.departmentIds.length) {
+        return this.unauthorized(res, errorMessage);
+      }
+
+      const targetDepartmentId = this.getDepartmentTargetId(req);
+      if (
+        targetDepartmentId &&
+        !context.departmentIds.includes(targetDepartmentId)
+      ) {
+        return this.unauthorized(res, errorMessage);
+      }
+
+      (req as any).departmentScope = {
+        mode: "assigned",
+        departmentIds: context.departmentIds,
+      };
+      return next();
+    };
+  };
+
+  can_view_department_scoped = this.departmentScopedPermission(
+    "view",
+    "Not authorized to view departments",
+  );
+
+  can_manage_department_scoped = this.departmentScopedPermission(
+    "manage",
+    "Not authorized to manage departments",
+  );
+
+  can_delete_department_scoped = this.departmentScopedPermission(
+    "admin",
+    "Not authorized to delete departments",
+  );
 
   can_view_life_center_scoped = async (
     req: Request,

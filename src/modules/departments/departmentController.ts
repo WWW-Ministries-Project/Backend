@@ -19,6 +19,51 @@ const toPositiveInt = (value: unknown) => {
 const DEFAULT_DEPARTMENT_MEMBER_PAGE = 1;
 const DEFAULT_DEPARTMENT_MEMBER_PAGE_SIZE = 12;
 
+type DepartmentScope = {
+  mode: "all" | "assigned";
+  departmentIds: number[];
+};
+
+const getDepartmentScope = (req: Request): DepartmentScope => {
+  const rawScope = (req as any)?.departmentScope;
+  const departmentIds = Array.isArray(rawScope?.departmentIds)
+    ? rawScope.departmentIds
+        .map((id: unknown) => Number(id))
+        .filter((id: number) => Number.isInteger(id) && id > 0)
+    : [];
+
+  if (rawScope?.mode === "assigned") {
+    return {
+      mode: "assigned",
+      departmentIds,
+    };
+  }
+
+  return {
+    mode: "all",
+    departmentIds: [],
+  };
+};
+
+const getDepartmentScopeWhere = (req: Request) => {
+  const scope = getDepartmentScope(req);
+
+  if (scope.mode !== "assigned") {
+    return undefined;
+  }
+
+  return {
+    id: {
+      in: scope.departmentIds,
+    },
+  };
+};
+
+const isDepartmentInScope = (req: Request, departmentId: number) => {
+  const scope = getDepartmentScope(req);
+  return scope.mode !== "assigned" || scope.departmentIds.includes(departmentId);
+};
+
 const getDepartmentMemberWhere = (
   departmentId: number,
   searchTerm?: string,
@@ -126,6 +171,13 @@ export const createDepartment = async (req: Request, res: Response) => {
   const { name, department_head, description, created_by } = req.body;
   departmentSchema.validate(req.body);
   try {
+    if (getDepartmentScope(req).mode === "assigned") {
+      return res.status(403).json({
+        message: "Assigned department access cannot create new departments",
+        data: null,
+      });
+    }
+
     if (!name || name.trim() === "") {
       return res.status(400).json({
         message: "Empty Department Name",
@@ -198,6 +250,21 @@ export const updateDepartment = async (req: Request, res: Response) => {
   const { id, name, department_head, description, updated_by } = req.body;
 
   try {
+    const departmentId = toPositiveInt(id);
+    if (!departmentId) {
+      return res.status(400).json({
+        message: "Department id is required",
+        data: null,
+      });
+    }
+
+    if (!isDepartmentInScope(req, departmentId)) {
+      return res.status(403).json({
+        message: "You do not have access to update this department",
+        data: null,
+      });
+    }
+
     if (!name || name.trim() === "") {
       return res.status(400).json({
         message: "We cannot have an empty department name, you get it?",
@@ -215,7 +282,7 @@ export const updateDepartment = async (req: Request, res: Response) => {
 
     const response = await prisma.department.update({
       where: {
-        id,
+        id: departmentId,
       },
       data: {
         name: toCapitalizeEachWord(name),
@@ -257,9 +324,24 @@ export const deleteDepartment = async (req: Request, res: Response) => {
   const { id } = req.query;
 
   try {
+    const departmentId = toPositiveInt(id);
+    if (!departmentId) {
+      return res.status(400).json({
+        message: "Department id is required",
+        data: null,
+      });
+    }
+
+    if (!isDepartmentInScope(req, departmentId)) {
+      return res.status(403).json({
+        message: "You do not have access to delete this department",
+        data: null,
+      });
+    }
+
     await prisma.department.delete({
       where: {
-        id: Number(id),
+        id: departmentId,
       },
     });
     const data = await prisma.department.findMany({
@@ -291,13 +373,17 @@ export const deleteDepartment = async (req: Request, res: Response) => {
 export const listDepartments = async (req: Request, res: Response) => {
   try {
     const { page = 1, take = 10 }: any = req.query;
-    const total = await prisma.department.count();
+    const departmentScopeWhere = getDepartmentScopeWhere(req);
+    const total = await prisma.department.count({
+      where: departmentScopeWhere,
+    });
 
     const pageNum = parseInt(page, 10) || 1;
     const pageSize = parseInt(take, 10) || 10;
     const memberIdsByDepartment = await getDepartmentMemberCounts();
 
     const response = await prisma.department.findMany({
+      where: departmentScopeWhere,
       orderBy: {
         name: "asc",
       },
@@ -347,7 +433,9 @@ export const listDepartments = async (req: Request, res: Response) => {
 
 export const listDepartmentsLight = async (req: Request, res: Response) => {
   try {
+    const departmentScopeWhere = getDepartmentScopeWhere(req);
     const response = await prisma.department.findMany({
+      where: departmentScopeWhere,
       orderBy: {
         name: "asc",
       },
@@ -399,6 +487,13 @@ export const getDepartment = async (req: Request, res: Response) => {
     if (!departmentId) {
       return res.status(400).json({
         message: "Department id is required",
+        data: null,
+      });
+    }
+
+    if (!isDepartmentInScope(req, departmentId)) {
+      return res.status(403).json({
+        message: "You do not have access to view this department",
         data: null,
       });
     }

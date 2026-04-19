@@ -1,34 +1,42 @@
 import { Request, Response } from "express";
 import {
-  churchAttendanceApprovalAction,
-  fetchEventReportApprovalConfig,
-  finalApprovalAction,
-  financeApprovalAction,
+  generateEventReport,
+  generateServiceSummaryReport,
   getEventReportDetail,
-  saveEventReportApprovalConfig,
-  submitEventReportForFinalApproval,
-  upsertEventReportFinance,
+  getEventReportOverview,
+  listEligibleEventReports,
 } from "./eventReportService";
 
-export const saveEventReportApprovalConfigHandler = async (
+export const listEligibleEventReportsHandler = async (
   req: Request,
   res: Response,
 ) => {
-  const data = await saveEventReportApprovalConfig(req.body, (req as any).user?.id);
+  const data = await listEligibleEventReports();
   res.status(200).json({
-    message: "Saved successfully",
-    data,
+    message: "Operation successful",
+    ...data,
   });
 };
 
-export const getEventReportApprovalConfigHandler = async (
+export const generateEventReportHandler = async (
   req: Request,
   res: Response,
 ) => {
-  const data = await fetchEventReportApprovalConfig();
+  const data = await generateEventReport(req.body, (req as any).user);
+  res.status(200).json({
+    message: "Report generated successfully",
+    ...data,
+  });
+};
+
+export const getEventReportOverviewHandler = async (
+  req: Request,
+  res: Response,
+) => {
+  const data = await getEventReportOverview(req.query);
   res.status(200).json({
     message: "Operation successful",
-    data,
+    ...data,
   });
 };
 
@@ -36,64 +44,22 @@ export const getEventReportDetailHandler = async (
   req: Request,
   res: Response,
 ) => {
-  const data = await getEventReportDetail(req.query, (req as any).user);
+  const data = await getEventReportDetail(req.query);
   res.status(200).json({
     message: "Operation successful",
     ...data,
   });
 };
 
-export const upsertEventReportFinanceHandler = async (
+export const generateServiceSummaryReportHandler = async (
   req: Request,
   res: Response,
 ) => {
-  const data = await upsertEventReportFinance(req.body, (req as any).user);
-  res.status(200).json({
-    message: "Finance updated successfully",
-    ...data,
+  const file = await generateServiceSummaryReport({
+    ...req.body,
+    format: req.query.format ?? req.body?.format,
   });
-};
-
-export const churchAttendanceApprovalActionHandler = async (
-  req: Request,
-  res: Response,
-) => {
-  const data = await churchAttendanceApprovalAction(req.body, (req as any).user);
-  res.status(200).json({
-    message: "Church attendance approval updated successfully",
-    ...data,
-  });
-};
-
-export const financeApprovalActionHandler = async (
-  req: Request,
-  res: Response,
-) => {
-  const data = await financeApprovalAction(req.body, (req as any).user);
-  res.status(200).json({
-    message: "Finance approval updated successfully",
-    ...data,
-  });
-};
-
-export const submitFinalApprovalHandler = async (
-  req: Request,
-  res: Response,
-) => {
-  const data = await submitEventReportForFinalApproval(req.body, (req as any).user);
-  res.status(200).json({
-    message: "Submitted for final approval successfully",
-    ...data,
-  });
-};
-
-export const finalApprovalActionHandler = async (
-  req: Request,
-  res: Response,
-) => {
-  const data = await finalApprovalAction(req.body, (req as any).user);
-  res.status(200).json({
-    message: "Final approval action processed successfully",
-    ...data,
-  });
+  res.setHeader("Content-Type", file.contentType);
+  res.setHeader("Content-Disposition", `attachment; filename=\"${file.fileName}\"`);
+  res.status(200).send(file.buffer);
 };
