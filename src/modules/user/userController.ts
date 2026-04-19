@@ -29,6 +29,7 @@ import {
   getMissingRequiredWorkFields,
   hasAnyWorkInfoPayload,
 } from "./workInfoUtils";
+import { MinimumAccessLevel, userHasMinimumDomainAccess } from "../../utils/permissionResolver";
 import {
   buildRoleEligibilityFailureResponse,
   isRoleEligibilityValidationError,
@@ -1952,6 +1953,14 @@ export const ListUsersLight = async (req: Request, res: Response) => {
     const excludedMemberIds: number[] = Array.isArray(memberScope?.exclusions)
       ? memberScope.exclusions
       : [];
+    const permissionDomain = String(req.query.permission_domain || "").trim();
+    const minimumAccessRaw = String(req.query.minimum_access || "").trim().toLowerCase();
+    const minimumAccess: MinimumAccessLevel =
+      minimumAccessRaw === "manage"
+        ? "manage"
+        : minimumAccessRaw === "admin"
+          ? "admin"
+          : "view";
     const users = await prisma.user.findMany({
       orderBy: {
         name: "asc",
@@ -1970,10 +1979,26 @@ export const ListUsersLight = async (req: Request, res: Response) => {
         email: true,
         is_user: true,
         position_id: true,
+        access: {
+          select: {
+            permissions: true,
+          },
+        },
       },
     });
 
-    const userIds = users.map((user) => user.id);
+    const filteredUsers =
+      permissionDomain.length > 0
+        ? users.filter((user) =>
+            userHasMinimumDomainAccess(
+              user.access?.permissions,
+              permissionDomain,
+              minimumAccess,
+            ),
+          )
+        : users;
+
+    const userIds = filteredUsers.map((user) => user.id);
     const [userDepartments, departmentPositions] = await Promise.all([
       userIds.length
         ? prisma.user_departments.findMany({
@@ -2069,7 +2094,7 @@ export const ListUsersLight = async (req: Request, res: Response) => {
 
     res.status(200).json({
       message: "Operation Successful",
-      data: users.map((user) => {
+      data: filteredUsers.map((user) => {
         const fallbackRows = departmentPositionsByUserId.get(user.id) || [];
         const fallbackDepartment = fallbackRows.find(
           (item) => item.department,

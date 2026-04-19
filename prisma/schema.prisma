@@ -1524,11 +1524,51 @@ model titheBreakdownConfig {
 }
 
 model financials {
-  id         String   @id @default(cuid())
-  payload    String   @db.LongText
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-  periodDate String?  @unique
+  id                 String   @id @default(cuid())
+  payload            String   @db.LongText
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  periodDate         String?  @unique
+  status             String   @default("DRAFT")
+  created_by_user_id Int?
+  updated_by_user_id Int?
+  submitted_by_user_id Int?
+  submitted_at       DateTime?
+  approved_by_user_id Int?
+  approved_at        DateTime?
+
+  @@index([status], map: "financials_status_idx")
+  @@index([created_by_user_id], map: "financials_created_by_user_id_idx")
+  @@index([updated_by_user_id], map: "financials_updated_by_user_id_idx")
+  @@index([submitted_by_user_id], map: "financials_submitted_by_user_id_idx")
+  @@index([approved_by_user_id], map: "financials_approved_by_user_id_idx")
+}
+
+model finance_approval_config {
+  id                     Int      @id @default(autoincrement())
+  config_key             String   @unique @default("FINANCE")
+  finance_approver_user_id Int
+  is_active              Boolean  @default(true)
+  created_by_user_id     Int?
+  updated_by_user_id     Int?
+  created_at             DateTime @default(now())
+  updated_at             DateTime @updatedAt
+  notifications          finance_approval_config_notification[]
+
+  @@index([finance_approver_user_id], map: "finance_approval_config_approver_user_id_idx")
+  @@index([updated_by_user_id], map: "finance_approval_config_updated_by_user_id_idx")
+}
+
+model finance_approval_config_notification {
+  id        Int      @id @default(autoincrement())
+  config_id Int
+  user_id   Int
+  created_at DateTime @default(now())
+  config    finance_approval_config @relation(fields: [config_id], references: [id], onDelete: Cascade)
+
+  @@unique([config_id, user_id], map: "finance_approval_config_notification_config_id_user_id_key")
+  @@index([config_id], map: "finance_approval_config_notification_config_id_idx")
+  @@index([user_id], map: "finance_approval_config_notification_user_id_idx")
 }
 
 model availability {
