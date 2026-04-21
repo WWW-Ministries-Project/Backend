@@ -29,6 +29,20 @@ const DEFAULT_CATEGORY = "Other";
 
 export const NOTIFICATION_PREFERENCE_OPTIONS: NotificationPreferenceOption[] = [
   {
+    type: "assignment.submitted",
+    title: "Assignment submitted",
+    description: "Alert instructors when a student submits an assignment.",
+    category: "School of Ministry",
+    availableChannels: ALL_CHANNELS,
+  },
+  {
+    type: "assignment.graded",
+    title: "Assignment graded",
+    description: "Notify students when an instructor grades an assignment.",
+    category: "School of Ministry",
+    availableChannels: ALL_CHANNELS,
+  },
+  {
     type: "appointment.booked",
     title: "Appointment booked",
     description: "Alert staff when a member books an appointment with them.",

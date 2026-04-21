@@ -1,8 +1,86 @@
 import { max, sub } from "date-fns";
 import { prisma } from "../../Models/context";
 import { toCapitalizeEachWord } from "../../utils";
+import { notificationService } from "../notifications/notificationService";
 
 export class ProgramService {
+  private buildInstructorAssignmentActionUrl(
+    programId: number,
+    cohortId: number,
+    topicId: number,
+  ) {
+    return `/member/school-of-ministries/programs/instructor-portal/${programId}/cohort/${cohortId}/grades/${topicId}`;
+  }
+
+  private buildStudentProgramActionUrl(programId: number) {
+    return `/member/school-of-ministries/programs/my-enrolled-programs/${programId}`;
+  }
+
+  private async notifyInstructorOfAssignmentSubmission(args: {
+    recipientUserId?: number | null;
+    actorUserId: number;
+    actorName: string;
+    topicName: string;
+    programId: number;
+    cohortId: number;
+    topicId: number;
+  }) {
+    const recipientUserId =
+      typeof args.recipientUserId === "number" && args.recipientUserId > 0
+        ? args.recipientUserId
+        : null;
+
+    if (!recipientUserId || recipientUserId === args.actorUserId) {
+      return;
+    }
+
+    await notificationService.createInAppNotification({
+      type: "assignment.submitted",
+      title: "Assignment submitted",
+      body: `${args.actorName} submitted "${args.topicName}" for grading.`,
+      recipientUserId,
+      actorUserId: args.actorUserId,
+      entityType: "assignment_submission",
+      entityId: String(args.topicId),
+      actionUrl: this.buildInstructorAssignmentActionUrl(
+        args.programId,
+        args.cohortId,
+        args.topicId,
+      ),
+      priority: "HIGH",
+    });
+  }
+
+  private async notifyStudentOfAssignmentGrade(args: {
+    recipientUserId?: number | null;
+    actorUserId?: number | null;
+    topicName: string;
+    programId: number;
+    topicId: number;
+    grade: number;
+  }) {
+    const recipientUserId =
+      typeof args.recipientUserId === "number" && args.recipientUserId > 0
+        ? args.recipientUserId
+        : null;
+
+    if (!recipientUserId) {
+      return;
+    }
+
+    await notificationService.createInAppNotification({
+      type: "assignment.graded",
+      title: "Assignment graded",
+      body: `Your "${args.topicName}" assignment has been graded. Score: ${args.grade}%.`,
+      recipientUserId,
+      actorUserId: args.actorUserId ?? null,
+      entityType: "assignment_submission",
+      entityId: String(args.topicId),
+      actionUrl: this.buildStudentProgramActionUrl(args.programId),
+      priority: "HIGH",
+    });
+  }
+
   async reorderTopics(
     programId: number,
     topics: Array<{ id: number; order_number: number }>,
@@ -1354,6 +1432,16 @@ export class ProgramService {
       },
     });
 
+    await this.notifyInstructorOfAssignmentSubmission({
+      recipientUserId: enrollment.course.instructorId,
+      actorUserId: userId,
+      actorName: enrollment.user?.name?.trim() || "A student",
+      topicName: learningUnit.topic.name,
+      programId,
+      cohortId: enrollment.course.cohortId,
+      topicId,
+    });
+
     return {
       submissionId: submission.id,
       attempt: currentAttempt,
@@ -1393,6 +1481,16 @@ export class ProgramService {
         attempt: currentAttempt,
         status: "SUBMITTED",
       },
+    });
+
+    await this.notifyInstructorOfAssignmentSubmission({
+      recipientUserId: enrollment.course.instructorId,
+      actorUserId: userId,
+      actorName: enrollment.user?.name?.trim() || "A student",
+      topicName: learningUnit.topic.name,
+      programId,
+      cohortId: enrollment.course.cohortId,
+      topicId,
     });
 
     return {
@@ -1535,6 +1633,21 @@ export class ProgramService {
             cohortId: cohort.id,
           },
         },
+        submissions: {
+          include: {
+            enrollment: {
+              select: {
+                id: true,
+                course: {
+                  select: {
+                    cohortId: true,
+                  },
+                },
+              },
+            },
+          },
+          orderBy: [{ enrollmentId: "asc" }, { attempt: "desc" }, { submittedAt: "desc" }],
+        },
       },
       orderBy: {
         topic: {
@@ -1545,6 +1658,26 @@ export class ProgramService {
 
     return learningUnits.map((lu) => {
       const activation = lu.cohortAssignments[0] ?? null;
+      const latestSubmissionByEnrollment = new Map<
+        number,
+        (typeof lu.submissions)[number]
+      >();
+
+      lu.submissions.forEach((submission) => {
+        if (submission.enrollment.course.cohortId !== cohort.id) {
+          return;
+        }
+
+        if (!latestSubmissionByEnrollment.has(submission.enrollmentId)) {
+          latestSubmissionByEnrollment.set(submission.enrollmentId, submission);
+        }
+      });
+
+      const latestSubmissions = Array.from(latestSubmissionByEnrollment.values());
+      const submissionsCount = latestSubmissions.length;
+      const pendingCount = latestSubmissions.filter(
+        (submission) => submission.status !== "GRADED",
+      ).length;
 
       return {
         learningUnitId: lu.id,
@@ -1564,15 +1697,180 @@ export class ProgramService {
               activatedAt: activation.activatedAt,
               dueDate: activation.dueDate,
               closedAt: activation.closedAt,
+              submissions: submissionsCount,
+              pending: pendingCount,
             }
           : {
               isActive: false,
               activatedAt: null,
               dueDate: null,
               closedAt: null,
+              submissions: submissionsCount,
+              pending: pendingCount,
             },
       };
     });
+  }
+
+  async gradeAssignmentSubmission(args: {
+    submissionId: number;
+    grade: number;
+    actorUserId?: number | null;
+    feedback?: string | null;
+  }) {
+    const submission = await prisma.assignment_submission.findUnique({
+      where: { id: args.submissionId },
+      include: {
+        enrollment: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+            course: {
+              select: {
+                cohortId: true,
+                cohort: {
+                  select: {
+                    programId: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+        learningUnit: {
+          include: {
+            topic: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!submission) {
+      throw new Error("Assignment submission not found");
+    }
+
+    const grade = Math.max(0, Math.min(100, Math.round(args.grade)));
+    const now = new Date();
+    const { passMark } = this.getAssignmentConfig(submission.learningUnit);
+    const nextStatus = grade >= passMark ? "PASS" : "FAIL";
+    const normalizedFeedback = String(args.feedback || "").trim() || null;
+
+    const result = await prisma.$transaction(async (tx) => {
+      const updatedSubmission = await tx.assignment_submission.update({
+        where: { id: submission.id },
+        data: {
+          status: "GRADED",
+          score: grade,
+          feedback: normalizedFeedback,
+          gradedById:
+            typeof args.actorUserId === "number" && args.actorUserId > 0
+              ? args.actorUserId
+              : null,
+          gradedAt: now,
+        },
+      });
+
+      await tx.progress.upsert({
+        where: {
+          enrollmentId_topicId: {
+            enrollmentId: submission.enrollmentId,
+            topicId: submission.learningUnit.topicId,
+          },
+        },
+        update: {
+          score: grade,
+          status: nextStatus,
+          completed: true,
+          completedAt: now,
+        },
+        create: {
+          enrollmentId: submission.enrollmentId,
+          topicId: submission.learningUnit.topicId,
+          score: grade,
+          status: nextStatus,
+          completed: true,
+          completedAt: now,
+        },
+      });
+
+      const remaining = await tx.progress.count({
+        where: {
+          enrollmentId: submission.enrollmentId,
+          completed: false,
+        },
+      });
+
+      if (remaining === 0) {
+        await tx.enrollment.update({
+          where: { id: submission.enrollmentId },
+          data: {
+            completed: true,
+            completedAt: now,
+          },
+        });
+      }
+
+      return updatedSubmission;
+    });
+
+    await this.notifyStudentOfAssignmentGrade({
+      recipientUserId: submission.enrollment.user?.id,
+      actorUserId: args.actorUserId ?? null,
+      topicName: submission.learningUnit.topic.name,
+      programId: submission.enrollment.course.cohort.programId,
+      topicId: submission.learningUnit.topic.id,
+      grade,
+    });
+
+    return {
+      submissionId: result.id,
+      studentId: submission.enrollment.user?.id ?? null,
+      studentName: submission.enrollment.user?.name ?? "Unknown student",
+      submittedAt: result.submittedAt,
+      fileUrl: result.fileUrl,
+      grade,
+      status: "graded" as const,
+      feedback: result.feedback,
+      gradedAt: result.gradedAt,
+    };
+  }
+
+  async gradeAssignmentSubmissions(args: {
+    submissionIds: number[];
+    grade: number;
+    actorUserId?: number | null;
+    feedback?: string | null;
+  }) {
+    const uniqueSubmissionIds = Array.from(
+      new Set(
+        args.submissionIds.filter(
+          (submissionId) =>
+            Number.isInteger(submissionId) && Number(submissionId) > 0,
+        ),
+      ),
+    );
+
+    const results = [];
+    for (const submissionId of uniqueSubmissionIds) {
+      const gradedSubmission = await this.gradeAssignmentSubmission({
+        submissionId,
+        grade: args.grade,
+        actorUserId: args.actorUserId,
+        feedback: args.feedback,
+      });
+      results.push(gradedSubmission);
+    }
+
+    return results;
   }
 
   private getAssignmentConfig(learningUnit: {
@@ -1614,7 +1912,7 @@ export class ProgramService {
       where: { topicId: args.topicId },
       include: {
         topic: {
-          select: { programId: true },
+          select: { programId: true, name: true },
         },
       },
     });
@@ -1643,6 +1941,12 @@ export class ProgramService {
         course: {
           include: {
             cohort: true,
+          },
+        },
+        user: {
+          select: {
+            id: true,
+            name: true,
           },
         },
       },

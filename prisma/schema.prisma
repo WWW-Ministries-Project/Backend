@@ -236,6 +236,7 @@ model position {
   sync_id              Int?
   department_positions department_positions[]
   department           department?            @relation(fields: [department_id], references: [id])
+  eligibility_rules    position_eligibility_rules[]
   user                 user[]
 
   @@index([department_id], map: "position_department_id_fkey")
@@ -981,6 +982,7 @@ model program {
   prerequisitePrograms program_prerequisites[] @relation("ProgramToPrerequisite")
   topics               topic[]
   eligibility_rules    role_eligibility_rules[]
+  position_eligibility_rules position_eligibility_rules[]
 }
 
 model role_eligibility_rules {
@@ -993,6 +995,20 @@ model role_eligibility_rules {
 
   @@unique([role_key, program_id])
   @@index([program_id], map: "role_eligibility_rules_program_id_idx")
+}
+
+model position_eligibility_rules {
+  id          Int      @id @default(autoincrement())
+  position_id Int
+  program_id  Int
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+  position    position @relation(fields: [position_id], references: [id], onDelete: Cascade)
+  program     program  @relation(fields: [program_id], references: [id], onDelete: Cascade)
+
+  @@unique([position_id, program_id])
+  @@index([position_id], map: "position_eligibility_rules_position_id_idx")
+  @@index([program_id], map: "position_eligibility_rules_program_id_idx")
 }
 
 model program_prerequisites {

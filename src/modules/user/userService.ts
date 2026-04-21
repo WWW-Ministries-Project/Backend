@@ -266,6 +266,31 @@ export class UserService {
       isNaN(parseInt(position_id)) || parseInt(position_id) === 0
         ? null
         : parseInt(position_id);
+
+    if (positionId) {
+      await roleEligibilityService.assertEligibleForPosition(positionId);
+    }
+
+    const departmentPositionIds = Array.isArray(department_positions)
+      ? Array.from(
+          new Set(
+            department_positions
+              .map((departmentPosition: { position_id?: unknown }) =>
+                Number(departmentPosition?.position_id),
+              )
+              .filter(
+                (departmentPositionId) =>
+                  Number.isInteger(departmentPositionId) &&
+                  departmentPositionId > 0,
+              ),
+          ),
+        )
+      : [];
+
+    for (const departmentPositionId of departmentPositionIds) {
+      await roleEligibilityService.assertEligibleForPosition(departmentPositionId);
+    }
+
     const userInfoCreateData: any = {
       title,
       first_name,

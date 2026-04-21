@@ -31,7 +31,9 @@ import {
 } from "./workInfoUtils";
 import { MinimumAccessLevel, userHasMinimumDomainAccess } from "../../utils/permissionResolver";
 import {
+  buildPositionEligibilityFailureResponse,
   buildRoleEligibilityFailureResponse,
+  isPositionEligibilityValidationError,
   isRoleEligibilityValidationError,
   roleEligibilityService,
 } from "../settings/roleEligibilityService";
@@ -366,6 +368,12 @@ export const registerUser = async (req: Request, res: Response) => {
   } catch (error: any) {
     console.error(error);
 
+    if (isPositionEligibilityValidationError(error)) {
+      return res
+        .status(error.statusCode)
+        .json(buildPositionEligibilityFailureResponse(error));
+    }
+
     if (isRoleEligibilityValidationError(error)) {
       return res
         .status(error.statusCode)
@@ -452,6 +460,9 @@ export const updateUser = async (req: Request, res: Response) => {
       normalizedPayload,
       "family",
     );
+    const hasPrimaryPositionField =
+      hasOwn(normalizedPayload?.church_info, "position_id") ||
+      hasOwn(normalizedPayload, "position_id");
 
     const userExists = await prisma.user.findUnique({
       where: { id: Number(user_id) },
@@ -515,6 +526,47 @@ export const updateUser = async (req: Request, res: Response) => {
 
     if (nextStatus === "MEMBER" && userExists?.status !== "MEMBER") {
       await roleEligibilityService.assertEligible("member", Number(user_id));
+    }
+
+    const parsedNextPositionId = hasPrimaryPositionField
+      ? Number(position_id)
+      : null;
+    const validNextPositionId =
+      typeof parsedNextPositionId === "number" &&
+      Number.isInteger(parsedNextPositionId) &&
+      parsedNextPositionId > 0
+        ? parsedNextPositionId
+        : null;
+
+    if (validNextPositionId) {
+      await roleEligibilityService.assertEligibleForPosition(
+        validNextPositionId,
+        Number(user_id),
+      );
+    }
+
+    const departmentPositionIds =
+      Array.isArray(department_positions) && department_positions.length > 0
+        ? Array.from(
+            new Set(
+              department_positions
+                .map((departmentPosition: { position_id?: unknown }) =>
+                  Number(departmentPosition?.position_id),
+                )
+                .filter(
+                  (departmentPositionId) =>
+                    Number.isInteger(departmentPositionId) &&
+                    departmentPositionId > 0,
+                ),
+            ),
+          )
+        : [];
+
+    for (const departmentPositionId of departmentPositionIds) {
+      await roleEligibilityService.assertEligibleForPosition(
+        departmentPositionId,
+        Number(user_id),
+      );
     }
 
     const normalizedGender = normalizeGenderValue(gender);
