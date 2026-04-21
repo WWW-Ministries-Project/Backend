@@ -178,6 +178,16 @@ programRouter.get(
   [protect],
   programController.getAssignmentResults,
 );
+programRouter.put(
+  "/grade-assignment",
+  [protect, permissions.can_manage_programs_or_facilitator],
+  programController.gradeAssignmentSubmission,
+);
+programRouter.put(
+  "/grade-assignments",
+  [protect, permissions.can_manage_programs_or_facilitator],
+  programController.gradeAssignmentSubmissions,
+);
 
 programRouter.get(
   "/get-cohort-assigments",

@@ -613,6 +613,105 @@ export class ProgramController {
     }
   }
 
+  async gradeAssignmentSubmission(req: Request, res: Response) {
+    try {
+      const { submissionId, grade, feedback } = req.body;
+      const parsedSubmissionId = Number(submissionId);
+      const parsedGrade = Number(grade);
+      const actorUserId = Number((req as any)?.user?.id);
+
+      if (!Number.isInteger(parsedSubmissionId) || parsedSubmissionId <= 0) {
+        return res.status(400).json({
+          message: "submissionId must be a positive integer",
+        });
+      }
+
+      if (!Number.isFinite(parsedGrade) || parsedGrade < 0 || parsedGrade > 100) {
+        return res.status(400).json({
+          message: "grade must be a number between 0 and 100",
+        });
+      }
+
+      const result = await programService.gradeAssignmentSubmission({
+        submissionId: parsedSubmissionId,
+        grade: parsedGrade,
+        actorUserId: Number.isInteger(actorUserId) && actorUserId > 0 ? actorUserId : null,
+        feedback: typeof feedback === "string" ? feedback : null,
+      });
+
+      return res.status(200).json({
+        message: "Assignment graded successfully",
+        data: result,
+      });
+    } catch (error: any) {
+      if (error?.message === "Assignment submission not found") {
+        return res.status(404).json({
+          message: error.message,
+          error: error.message,
+        });
+      }
+
+      return res.status(500).json({
+        message: "Error grading assignment submission",
+        error: error.message,
+      });
+    }
+  }
+
+  async gradeAssignmentSubmissions(req: Request, res: Response) {
+    try {
+      const { submissionIds, grade, feedback } = req.body;
+      const parsedGrade = Number(grade);
+      const actorUserId = Number((req as any)?.user?.id);
+
+      if (!Array.isArray(submissionIds) || submissionIds.length === 0) {
+        return res.status(400).json({
+          message: "submissionIds must be a non-empty array",
+        });
+      }
+
+      if (!Number.isFinite(parsedGrade) || parsedGrade < 0 || parsedGrade > 100) {
+        return res.status(400).json({
+          message: "grade must be a number between 0 and 100",
+        });
+      }
+
+      const normalizedSubmissionIds = submissionIds
+        .map((submissionId) => Number(submissionId))
+        .filter((submissionId) => Number.isInteger(submissionId) && submissionId > 0);
+
+      if (normalizedSubmissionIds.length === 0) {
+        return res.status(400).json({
+          message: "submissionIds must contain positive integers",
+        });
+      }
+
+      const result = await programService.gradeAssignmentSubmissions({
+        submissionIds: normalizedSubmissionIds,
+        grade: parsedGrade,
+        actorUserId: Number.isInteger(actorUserId) && actorUserId > 0 ? actorUserId : null,
+        feedback: typeof feedback === "string" ? feedback : null,
+      });
+
+      return res.status(200).json({
+        message: "Assignments graded successfully",
+        data: result,
+      });
+    } catch (error: any) {
+      if (error?.message === "Assignment submission not found") {
+        return res.status(404).json({
+          message: error.message,
+          error: error.message,
+        });
+      }
+
+      return res.status(500).json({
+        message: "Error grading assignments",
+        error: error.message,
+      });
+    }
+  }
+
   async getAssignmentsByCohort(req: Request, res: Response) {
     try {
       const { cohortId } = req.query;
