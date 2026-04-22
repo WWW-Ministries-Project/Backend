@@ -1,6 +1,7 @@
 import { prisma } from "../../Models/context";
 import { Request, Response } from "express";
 import { toCapitalizeEachWord } from "../../utils";
+import { getRelationBranchScopedWhere } from "../branches/branchService";
 
 export const createPosition = async (req: Request, res: Response) => {
   const { name, department_id, description, created_by } = req.body;
@@ -46,6 +47,10 @@ export const createPosition = async (req: Request, res: Response) => {
       },
     });
     const data = await prisma.position.findMany({
+      where: getRelationBranchScopedWhere(
+        req.query?.branch_id ?? req.body?.branch_id,
+        "department",
+      ),
       orderBy: {
         name: "asc",
       },
@@ -125,6 +130,7 @@ export const deletePosition = async (req: Request, res: Response) => {
       },
     });
     const data = await prisma.position.findMany({
+      where: getRelationBranchScopedWhere(req.query?.branch_id, "department"),
       orderBy: {
         id: "desc",
       },
@@ -153,6 +159,7 @@ export const deletePosition = async (req: Request, res: Response) => {
 export const listPositions = async (req: Request, res: Response) => {
   try {
     const response = await prisma.position.findMany({
+      where: getRelationBranchScopedWhere(req.query?.branch_id, "department"),
       orderBy: {
         name: "asc",
       },
@@ -182,6 +189,7 @@ export const listPositions = async (req: Request, res: Response) => {
 export const listPositionsLight = async (req: Request, res: Response) => {
   try {
     const response = await prisma.position.findMany({
+      where: getRelationBranchScopedWhere(req.query?.branch_id, "department"),
       orderBy: {
         name: "asc",
       },

@@ -20,6 +20,7 @@ export interface RequisitionInterface {
   id?: number;
   requester_name?: string;
   comment?: string;
+  edit_justification_comment?: string;
   comment_id?: number;
   request_date?: string;
   department_id: number;

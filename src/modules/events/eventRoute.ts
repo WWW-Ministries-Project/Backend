@@ -156,7 +156,7 @@ eventRouter.get(
 
 eventRouter.get(
   "/biometric-attendance",
-  [protect, permissions.can_view_church_attendance],
+  [protect, permissions.can_view_church_attendance_scoped],
   eventContoller.getBiometricAttendances,
 );
 

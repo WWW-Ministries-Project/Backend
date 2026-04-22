@@ -120,7 +120,7 @@ export const preApprovalSimilarItemsHandler = async (
 
 export const listRequisitionHandler = async (req: Request, res: Response) => {
   const user = (req as any).user;
-  const requisitions = await listRequisition(user);
+  const requisitions = await listRequisition(user, req.query?.branch_id);
   res.status(200).json({
     message: "Requisitions retrieved successfully",
     data: requisitions,
@@ -129,7 +129,7 @@ export const listRequisitionHandler = async (req: Request, res: Response) => {
 
 export const userRequisitionsHandler = async (req: Request, res: Response) => {
   const user = (req as any).user;
-  const response = await getmyRequisition(user);
+  const response = await getmyRequisition(user, req.query?.branch_id);
   res.status(201).json({
     message: "Operation successful",
     data: response,
@@ -154,7 +154,7 @@ export const staffRequestHandler = async (req: Request, res: Response) => {
     throw new NotFoundError("User not found");
   }
 
-  const response = await getStaffRequisition(user);
+  const response = await getStaffRequisition(user, req.query?.branch_id);
 
   res.status(201).json({
     message: "Operation successful",

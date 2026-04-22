@@ -56,7 +56,7 @@ export class LifeCenterController {
 
   async createLifeCenter(req: Request, res: Response) {
     try {
-      const { name, description, location, meeting_dates } = req.body;
+      const { name, description, location, meeting_dates, branch_id } = req.body;
 
       const meetingDays = Array.isArray(meeting_dates)
         ? meeting_dates.join(", ")
@@ -67,6 +67,7 @@ export class LifeCenterController {
         description,
         meetingLocation: location,
         meetingDays,
+        branch_id,
       };
 
       const newLifeCenter = await lifeCenterService.create(data);
@@ -86,7 +87,9 @@ export class LifeCenterController {
   async getAllLifeCenters(req: Request, res: Response) {
     try {
       const lifeCenterScope = (req as any).lifeCenterScope;
-      const lifeCenters = await lifeCenterService.getAllLifeCenters();
+      const lifeCenters = await lifeCenterService.getAllLifeCenters(
+        req.query?.branch_id,
+      );
       const scopedLifeCenters =
         lifeCenterScope?.mode === "member" &&
         Array.isArray(lifeCenterScope?.lifeCenterIds)
@@ -136,7 +139,7 @@ export class LifeCenterController {
         return res.status(400).json({ message: "Invalid Life Center ID" });
       }
 
-      const { name, description, location, meeting_dates } = req.body;
+      const { name, description, location, meeting_dates, branch_id } = req.body;
 
       const meetingDays = Array.isArray(meeting_dates)
         ? meeting_dates.join(", ")
@@ -147,6 +150,7 @@ export class LifeCenterController {
         description,
         meetingLocation: location,
         meetingDays,
+        branch_id,
       };
 
       const updatedLifeCenter = await lifeCenterService.updateLifeCenter(

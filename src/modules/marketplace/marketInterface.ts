@@ -6,6 +6,7 @@ export interface CreateMarketDto {
   event_id?: number;
   start_date?: Date;
   end_date?: Date;
+  branch_id?: number;
   created_by_id?: number;
 }
 
@@ -15,12 +16,14 @@ export interface UpdateMarketDto {
   event_id?: number;
   start_date?: Date;
   end_date?: Date;
+  branch_id?: number;
   updated_at_id?: number;
 }
 
 export interface MarketFilters {
   name?: string;
   event_id?: number;
+  branch_id?: number;
   deleted?: boolean;
   start_date?: Date;
   end_date?: Date;
@@ -36,6 +39,7 @@ export interface MarketDto {
   end_date?: string;
   event_name?: string | null;
   event_id?: number | null;
+  branch_id?: number | null;
 }
 
 const marketWithEvent = Prisma.validator<Prisma.marketsDefaultArgs>()({

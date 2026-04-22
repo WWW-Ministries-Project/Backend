@@ -1,4 +1,8 @@
 import { prisma } from "../../Models/context";
+import {
+  getBranchScopedWhere,
+  resolveBranchIdOrDefault,
+} from "../branches/branchService";
 
 export class AnnualThemeService {
   async create(data: {
@@ -9,9 +13,11 @@ export class AnnualThemeService {
     message: string;
     imageUrl?: string;
     isActive?: boolean;
+    branch_id?: number | string | null;
   }) {
     if (data.isActive) {
       await prisma.annualTheme.updateMany({
+        where: getBranchScopedWhere(data.branch_id),
         data: { isActive: false },
       });
     }
@@ -25,19 +31,24 @@ export class AnnualThemeService {
         message: data.message,
         imageUrl: data.imageUrl,
         isActive: data.isActive,
+        branch_id: await resolveBranchIdOrDefault(data.branch_id),
       },
     });
   }
 
-  async findAll() {
+  async findAll(branchId?: unknown) {
     return prisma.annualTheme.findMany({
+      where: getBranchScopedWhere(branchId),
       orderBy: { year: "desc" },
     });
   }
 
-  async findActive() {
+  async findActive(branchId?: unknown) {
     return prisma.annualTheme.findFirst({
-      where: { isActive: true },
+      where: {
+        isActive: true,
+        ...(getBranchScopedWhere(branchId) || {}),
+      },
     });
   }
 
@@ -57,20 +68,31 @@ export class AnnualThemeService {
       message: string;
       imageUrl: string;
       isActive: boolean;
+      branch_id: number | string | null;
     }>,
   ) {
     if (data.isActive) {
       await prisma.annualTheme.updateMany({
-        where: { id: { not: id } },
+        where: {
+          id: { not: id },
+          ...(getBranchScopedWhere(data.branch_id) || {}),
+        },
         data: { isActive: false },
       });
     }
 
+    const { branch_id, ...themeData } = data;
+
     return prisma.annualTheme.update({
       where: { id },
       data: {
-        ...data,
-        year: data.year ? Number(data.year) : undefined,
+        ...themeData,
+        year: themeData.year ? Number(themeData.year) : undefined,
+        ...(branch_id !== undefined
+          ? {
+              branch_id: await resolveBranchIdOrDefault(branch_id),
+            }
+          : {}),
       },
     });
   }

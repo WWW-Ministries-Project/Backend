@@ -6,6 +6,10 @@ import {
   isRoleEligibilityValidationError,
   roleEligibilityService,
 } from "../settings/roleEligibilityService";
+import {
+  getBranchScopedWhere,
+  resolveBranchIdOrDefault,
+} from "../branches/branchService";
 
 const toPositiveInt = (value: unknown) => {
   const parsedValue = Number(value);
@@ -168,7 +172,7 @@ const getDepartmentMemberCounts = async () => {
 };
 
 export const createDepartment = async (req: Request, res: Response) => {
-  const { name, department_head, description, created_by } = req.body;
+  const { name, department_head, description, created_by, branch_id } = req.body;
   departmentSchema.validate(req.body);
   try {
     if (getDepartmentScope(req).mode === "assigned") {
@@ -211,10 +215,13 @@ export const createDepartment = async (req: Request, res: Response) => {
         department_head,
         description,
         created_by,
+        branch_id: await resolveBranchIdOrDefault(branch_id),
       },
     });
 
+    const branchWhere = getBranchScopedWhere(req.query?.branch_id ?? branch_id);
     const data = await prisma.department.findMany({
+      where: branchWhere,
       orderBy: {
         id: "desc",
       },
@@ -222,6 +229,7 @@ export const createDepartment = async (req: Request, res: Response) => {
         id: true,
         name: true,
         description: true,
+        branch_id: true,
         department_head_info: {
           select: {
             id: true,
@@ -247,7 +255,7 @@ export const createDepartment = async (req: Request, res: Response) => {
 };
 
 export const updateDepartment = async (req: Request, res: Response) => {
-  const { id, name, department_head, description, updated_by } = req.body;
+  const { id, name, department_head, description, updated_by, branch_id } = req.body;
 
   try {
     const departmentId = toPositiveInt(id);
@@ -280,6 +288,16 @@ export const updateDepartment = async (req: Request, res: Response) => {
       );
     }
 
+    const existingDepartment = await prisma.department.findUnique({
+      where: {
+        id: departmentId,
+      },
+      select: {
+        id: true,
+        branch_id: true,
+      },
+    });
+
     const response = await prisma.department.update({
       where: {
         id: departmentId,
@@ -290,12 +308,16 @@ export const updateDepartment = async (req: Request, res: Response) => {
         description,
         updated_by,
         updated_at: new Date(),
+        branch_id: await resolveBranchIdOrDefault(
+          branch_id ?? existingDepartment?.branch_id,
+        ),
         is_sync: false, //setting to to out of sync for cron job to sync to device
       },
       select: {
         id: true,
         name: true,
         description: true,
+        branch_id: true,
         department_head_info: {
           select: {
             id: true,
@@ -345,6 +367,7 @@ export const deleteDepartment = async (req: Request, res: Response) => {
       },
     });
     const data = await prisma.department.findMany({
+      where: getBranchScopedWhere(req.query?.branch_id),
       orderBy: {
         id: "desc",
       },
@@ -352,6 +375,7 @@ export const deleteDepartment = async (req: Request, res: Response) => {
         id: true,
         name: true,
         description: true,
+        branch_id: true,
         department_head_info: {
           select: {
             id: true,
@@ -374,8 +398,13 @@ export const listDepartments = async (req: Request, res: Response) => {
   try {
     const { page = 1, take = 10 }: any = req.query;
     const departmentScopeWhere = getDepartmentScopeWhere(req);
+    const branchWhere = getBranchScopedWhere(req.query?.branch_id);
+    const whereClauses = [departmentScopeWhere, branchWhere].filter(Boolean) as any[];
+    const whereFilter: any = whereClauses.length
+      ? { AND: whereClauses }
+      : undefined;
     const total = await prisma.department.count({
-      where: departmentScopeWhere,
+      where: whereFilter,
     });
 
     const pageNum = parseInt(page, 10) || 1;
@@ -383,7 +412,7 @@ export const listDepartments = async (req: Request, res: Response) => {
     const memberIdsByDepartment = await getDepartmentMemberCounts();
 
     const response = await prisma.department.findMany({
-      where: departmentScopeWhere,
+      where: whereFilter,
       orderBy: {
         name: "asc",
       },
@@ -391,6 +420,7 @@ export const listDepartments = async (req: Request, res: Response) => {
         id: true,
         name: true,
         description: true,
+        branch_id: true,
         department_head: true,
         department_head_info: {
           select: {
@@ -434,14 +464,17 @@ export const listDepartments = async (req: Request, res: Response) => {
 export const listDepartmentsLight = async (req: Request, res: Response) => {
   try {
     const departmentScopeWhere = getDepartmentScopeWhere(req);
+    const branchWhere = getBranchScopedWhere(req.query?.branch_id);
+    const whereClauses = [departmentScopeWhere, branchWhere].filter(Boolean) as any[];
     const response = await prisma.department.findMany({
-      where: departmentScopeWhere,
+      where: whereClauses.length ? { AND: whereClauses } : undefined,
       orderBy: {
         name: "asc",
       },
       select: {
         id: true,
         name: true,
+        branch_id: true,
         department_head_info: {
           select: {
             id: true,
@@ -464,7 +497,7 @@ export const listDepartmentsLight = async (req: Request, res: Response) => {
       return {
         ...rest,
         department_head: department_head_info?.name || "No Department Head",
-        positions: position?.map((p) => p.name) || [],
+        positions: position?.map((p: any) => p.name) || [],
       };
     });
 
@@ -514,6 +547,7 @@ export const getDepartment = async (req: Request, res: Response) => {
         id: true,
         name: true,
         description: true,
+        branch_id: true,
         department_head: true,
         department_head_info: {
           select: {
@@ -540,8 +574,15 @@ export const getDepartment = async (req: Request, res: Response) => {
       typeof name === "string" ? name : undefined,
     );
 
+    const memberWhereClauses = [
+      memberWhere,
+      getBranchScopedWhere(req.query?.branch_id),
+    ].filter(Boolean) as any[];
+
     const total = await prisma.user.count({
-      where: memberWhere,
+      where: {
+        AND: memberWhereClauses,
+      },
     });
 
     const members = await prisma.user.findMany({
@@ -550,7 +591,9 @@ export const getDepartment = async (req: Request, res: Response) => {
       orderBy: {
         name: "asc",
       },
-      where: memberWhere,
+      where: {
+        AND: memberWhereClauses,
+      },
       select: {
         id: true,
         name: true,
@@ -559,6 +602,7 @@ export const getDepartment = async (req: Request, res: Response) => {
         created_at: true,
         is_active: true,
         is_user: true,
+        branch_id: true,
         department_id: true,
         membership_type: true,
         status: true,

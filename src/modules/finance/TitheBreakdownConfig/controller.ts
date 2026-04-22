@@ -27,7 +27,10 @@ export class TitheBreakdownConfigController {
   async findAll(req: Request, res: Response): Promise<Response> {
     try {
       const pagination = parsePagination(req);
-      const result = await titheBreakdownConfigService.findAll(pagination);
+      const result = await titheBreakdownConfigService.findAll(
+        pagination,
+        req.query?.branch_id,
+      );
 
       return res.status(200).json({
         message: "Success",

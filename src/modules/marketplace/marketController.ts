@@ -6,7 +6,7 @@ const marketService = new MarketService();
 export class MarketController {
   async createMarket(req: Request, res: Response) {
     try {
-      const { name, description, event_id, start_date, end_date } = req.body;
+      const { name, description, event_id, start_date, end_date, branch_id } = req.body;
 
       const market = await marketService.createMarket({
         name,
@@ -14,6 +14,7 @@ export class MarketController {
         event_id,
         start_date,
         end_date,
+        branch_id,
       });
       return res
         .status(200)
@@ -27,7 +28,7 @@ export class MarketController {
 
   async updateMarket(req: Request, res: Response) {
     try {
-      const { id, name, description, event_id, start_date, end_date } =
+      const { id, name, description, event_id, start_date, end_date, branch_id } =
         req.body;
       const market = await marketService.updateMarket(id, {
         name,
@@ -35,6 +36,7 @@ export class MarketController {
         event_id,
         start_date,
         end_date,
+        branch_id,
       });
       return res
         .status(200)
@@ -76,7 +78,11 @@ export class MarketController {
 
   async listMarkets(req: Request, res: Response) {
     try {
-      const markets = await marketService.getAllMarkets(req.body.filters);
+      const filters = {
+        ...(req.body.filters || {}),
+        branch_id: req.query?.branch_id ?? req.body?.filters?.branch_id,
+      };
+      const markets = await marketService.getAllMarkets(filters);
       return res.status(200).json({ data: markets });
     } catch (error: any) {
       return res

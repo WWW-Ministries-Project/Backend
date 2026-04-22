@@ -84,6 +84,9 @@ model user {
   position                 position?                  @relation(fields: [position_id], references: [id])
   spouse                   user?                      @relation("SpouseRelation", fields: [spouse_id], references: [id])
   spouse_of                user?                      @relation("SpouseRelation")
+  branch_id                Int?
+  branch                   branch?                    @relation(fields: [branch_id], references: [id])
+  pastor_in_charge_branches branch[]                  @relation("branch_pastor_in_charge")
   department               user_departments?
   user_info                user_info?
 
@@ -95,6 +98,40 @@ model user {
   @@index([is_user], map: "user_is_user_idx")
   @@index([is_active], map: "user_is_active_idx")
   @@index([name], map: "user_name_idx")
+  @@index([branch_id], map: "user_branch_id_idx")
+}
+
+model branch {
+  id                     Int                     @id @default(autoincrement())
+  name                   String                  @unique
+  description            String?
+  location               String?
+  pastor_in_charge_id    Int?
+  is_default             Boolean                 @default(false)
+  created_at             DateTime                @default(now())
+  updated_at             DateTime                @updatedAt
+  pastor_in_charge       user?                   @relation("branch_pastor_in_charge", fields: [pastor_in_charge_id], references: [id], onDelete: SetNull)
+  users                  user[]
+  departments            department[]
+  assets                 assets[]
+  events                 event_mgt[]
+  requests               request[]
+  event_reports          event_reports[]
+  programs               program[]
+  visitors               visitor[]
+  life_centers           life_center[]
+  markets                markets[]
+  annual_themes          AnnualTheme[]
+  receipt_configs        receiptConfig[]
+  payment_configs        paymentConfig[]
+  bank_account_configs   bankAccountConfig[]
+  tithe_breakdown_configs titheBreakdownConfig[]
+  financials             financials[]
+  finance_approval_configs finance_approval_config[]
+  availabilities         availability[]
+  appointments           appointment[]
+
+  @@index([pastor_in_charge_id], map: "branch_pastor_in_charge_id_idx")
 }
 
 model system_notification_settings {
@@ -202,8 +239,10 @@ model department {
   updated_at           DateTime?
   is_sync              Boolean?               @default(false)
   sync_id              Int?
+  branch_id            Int?
   assets               assets[]
   department_head_info user?                  @relation(fields: [department_head], references: [id])
+  branch               branch?                @relation(fields: [branch_id], references: [id])
   department_positions department_positions[]
   position             position[]
   request              request[]
@@ -211,6 +250,7 @@ model department {
   user_departments     user_departments[]
 
   @@index([department_head], map: "department_department_head_fkey")
+  @@index([branch_id], map: "department_branch_id_idx")
 }
 
 model user_departments {
@@ -271,10 +311,13 @@ model assets {
   updated_by          Int?
   created_at          DateTime      @default(now())
   department_assigned Int?
+  branch_id           Int?
   asset_id            String?
   assigned_to         department?   @relation(fields: [department_assigned], references: [id])
+  branch              branch?       @relation(fields: [branch_id], references: [id])
 
   @@index([department_assigned], map: "assets_department_assigned_fkey")
+  @@index([branch_id], map: "assets_branch_id_idx")
 }
 
 model asset_history {
@@ -323,11 +366,13 @@ model event_mgt {
   registration_capacity     Int?
   registration_audience     event_registration_audience @default(MEMBERS_AND_NON_MEMBERS)
   event_name_id             Int
+  branch_id                 Int?
   event_attendance          event_attendance[]
   attendance_summaries      event_attendance_summary[]
   biometric_punches         event_biometric_punch[]
   biometric_import_jobs     event_biometric_import_job[]
   event                     event_act                   @relation(fields: [event_name_id], references: [id])
+  branch                    branch?                     @relation(fields: [branch_id], references: [id])
   event_registers           event_registers[]
   event_reminders           event_reminder[]
   markets                   markets[]
@@ -336,6 +381,7 @@ model event_mgt {
   visit                     visit[]
 
   @@index([event_name_id], map: "event_mgt_event_name_id_fkey")
+  @@index([branch_id], map: "event_mgt_branch_id_idx")
   @@index([start_date], map: "event_mgt_start_date_idx")
   @@index([event_type, event_status, start_date], map: "event_mgt_type_status_start_date_idx")
   @@index([recurrence_series_id], map: "event_mgt_recurrence_series_id_idx")
@@ -481,7 +527,9 @@ model request {
   user_sign               String?
   updated_by_user_id      Int?
   updated_at              DateTime?
+  branch_id               Int?
   attachmentsList         request_attachment[]
+  branch                  branch?                          @relation(fields: [branch_id], references: [id])
   department              department                       @relation(fields: [department_id], references: [id])
   event                   event_mgt?                       @relation(fields: [event_id], references: [id])
   user                    user                             @relation(fields: [user_id], references: [id])
@@ -494,6 +542,7 @@ model request {
   @@index([user_id], map: "request_user_id_fkey")
   @@index([department_id], map: "request_department_id_fkey")
   @@index([event_id], map: "request_event_id_fkey")
+  @@index([branch_id], map: "request_branch_id_idx")
   @@index([updated_by_user_id], map: "request_updated_by_user_id_idx")
   @@index([request_approval_status], map: "request_approval_status_idx")
 }
@@ -510,6 +559,8 @@ model event_reports {
   updated_by           Int?
   created_at           DateTime                             @default(now())
   updated_at           DateTime                             @default(now()) @updatedAt
+  branch_id            Int?
+  branch               branch?                              @relation(fields: [branch_id], references: [id])
   event                event_mgt                            @relation(fields: [event_id], references: [id], onDelete: Cascade)
   creator              user                                 @relation("event_report_created_by", fields: [created_by], references: [id])
   updater              user?                                @relation("event_report_updated_by", fields: [updated_by], references: [id])
@@ -524,6 +575,7 @@ model event_reports {
 
   @@unique([event_id, event_date])
   @@index([event_id])
+  @@index([branch_id])
   @@index([status])
   @@index([final_approver_user_id])
   @@index([created_by])
@@ -976,6 +1028,8 @@ model program {
   leader_required      Boolean                 @default(false)
   member_required      Boolean                 @default(false)
   ministry_required    Boolean                 @default(false)
+  branch_id            Int?
+  branch               branch?                 @relation(fields: [branch_id], references: [id])
   certificate          certificate[]
   cohorts              cohort[]
   requiredForPrograms  program_prerequisites[] @relation("ProgramToRequired")
@@ -983,6 +1037,8 @@ model program {
   topics               topic[]
   eligibility_rules    role_eligibility_rules[]
   position_eligibility_rules position_eligibility_rules[]
+
+  @@index([branch_id], map: "program_branch_id_idx")
 }
 
 model role_eligibility_rules {
@@ -1181,10 +1237,14 @@ model visitor {
   otherName          String?
   title              String?
   responsibleMembers String?          @db.LongText
+  branch_id          Int?
+  branch             branch?          @relation(fields: [branch_id], references: [id])
   followUps          follow_up[]
   notes              note[]
   prayerRequests     prayer_request[]
   visits             visit[]
+
+  @@index([branch_id], map: "visitor_branch_id_idx")
 }
 
 model visit {
@@ -1266,8 +1326,12 @@ model life_center {
   description        String
   meetingLocation    String
   meetingDays        String
+  branch_id          Int?
+  branch             branch?              @relation(fields: [branch_id], references: [id])
   life_center_member life_center_member[]
   soul_won           soul_won[]           @relation("life_center_soul_won")
+
+  @@index([branch_id], map: "life_center_branch_id_idx")
 }
 
 model life_center_member {
@@ -1356,11 +1420,14 @@ model markets {
   created_by_id Int?
   updated_at_id Int?
   event_mgt_id  Int?
+  branch_id     Int?
+  branch        branch?       @relation(fields: [branch_id], references: [id])
   event         event_mgt?    @relation(fields: [event_mgt_id], references: [id])
   order_items   order_items[]
   products      products[]
 
   @@index([event_mgt_id], map: "markets_event_mgt_id_fkey")
+  @@index([branch_id], map: "markets_branch_id_idx")
 }
 
 model products {
@@ -1501,24 +1568,36 @@ model AnnualTheme {
   message        String
   imageUrl       String?
   isActive       Boolean  @default(false)
+  branch_id      Int?
+  branch         branch?  @relation(fields: [branch_id], references: [id])
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
+
+  @@index([branch_id], map: "annual_theme_branch_id_idx")
 }
 
 model receiptConfig {
   id          String   @id @default(cuid())
   name        String   @unique
   description String?
+  branch_id   Int?
+  branch      branch?  @relation(fields: [branch_id], references: [id])
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+
+  @@index([branch_id], map: "receipt_config_branch_id_idx")
 }
 
 model paymentConfig {
   id          String   @id @default(cuid())
   name        String   @unique
   description String?
+  branch_id   Int?
+  branch      branch?  @relation(fields: [branch_id], references: [id])
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+
+  @@index([branch_id], map: "payment_config_branch_id_idx")
 }
 
 model bankAccountConfig {
@@ -1526,8 +1605,12 @@ model bankAccountConfig {
   name        String   @unique
   description String?
   percentage  Float?
+  branch_id   Int?
+  branch      branch?  @relation(fields: [branch_id], references: [id])
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+
+  @@index([branch_id], map: "bank_account_config_branch_id_idx")
 }
 
 model titheBreakdownConfig {
@@ -1535,8 +1618,12 @@ model titheBreakdownConfig {
   name        String   @unique
   description String?
   percentage  Float?
+  branch_id   Int?
+  branch      branch?  @relation(fields: [branch_id], references: [id])
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+
+  @@index([branch_id], map: "tithe_breakdown_config_branch_id_idx")
 }
 
 model financials {
@@ -1552,8 +1639,11 @@ model financials {
   submitted_at       DateTime?
   approved_by_user_id Int?
   approved_at        DateTime?
+  branch_id          Int?
+  branch             branch?  @relation(fields: [branch_id], references: [id])
 
   @@index([status], map: "financials_status_idx")
+  @@index([branch_id], map: "financials_branch_id_idx")
   @@index([created_by_user_id], map: "financials_created_by_user_id_idx")
   @@index([updated_by_user_id], map: "financials_updated_by_user_id_idx")
   @@index([submitted_by_user_id], map: "financials_submitted_by_user_id_idx")
@@ -1565,12 +1655,15 @@ model finance_approval_config {
   config_key             String   @unique @default("FINANCE")
   finance_approver_user_id Int
   is_active              Boolean  @default(true)
+  branch_id              Int?
+  branch                 branch?  @relation(fields: [branch_id], references: [id])
   created_by_user_id     Int?
   updated_by_user_id     Int?
   created_at             DateTime @default(now())
   updated_at             DateTime @updatedAt
   notifications          finance_approval_config_notification[]
 
+  @@index([branch_id], map: "finance_approval_config_branch_id_idx")
   @@index([finance_approver_user_id], map: "finance_approval_config_approver_user_id_idx")
   @@index([updated_by_user_id], map: "finance_approval_config_updated_by_user_id_idx")
 }
@@ -1595,9 +1688,12 @@ model availability {
   endTime                String
   sessionDurationMinutes Int            @default(30)
   userId                 Int
+  branch_id              Int?
+  branch                 branch?        @relation(fields: [branch_id], references: [id])
   user                   user           @relation(fields: [userId], references: [id])
   sessions               session_slot[]
 
+  @@index([branch_id], map: "availability_branch_id_idx")
   @@index([userId])
 }
 
@@ -1625,9 +1721,12 @@ model appointment {
   createdAt   DateTime           @default(now())
   userId      Int
   requesterId Int?
+  branch_id   Int?
+  branch      branch?            @relation(fields: [branch_id], references: [id])
   user        user               @relation(fields: [userId], references: [id])
 
   @@index([email])
+  @@index([branch_id], map: "appointment_branch_id_idx")
   @@index([userId])
   @@index([requesterId])
   @@index([userId, date, status], map: "appointment_user_date_status_idx")

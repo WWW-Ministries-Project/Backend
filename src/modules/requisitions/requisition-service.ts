@@ -18,6 +18,7 @@ import {
 import {
   Prisma,
   RequestApprovalStatus,
+  RequisitionApprovalInstanceStatus,
   RequisitionApprovalModule,
 } from "@prisma/client";
 import { deleteS3ObjectByUrl } from "../../utils";
@@ -37,6 +38,10 @@ import {
   validateApprovalActionPayload,
 } from "./requisition-approval-workflow";
 import { notificationService } from "../notifications/notificationService";
+import {
+  getBranchScopedWhere,
+  resolveBranchIdOrDefault,
+} from "../branches/branchService";
 
 const UPLOADS_DIR = path.resolve(process.cwd(), "uploads");
 const DEFAULT_SIMILAR_ITEM_LOOKBACK_DAYS = 30;
@@ -46,6 +51,48 @@ const encodeRequisitionIdForRoute = (requisitionId: number): string =>
 
 const buildRequisitionActionUrl = (requisitionId: number): string =>
   `/home/requests/${encodeRequisitionIdForRoute(requisitionId)}`;
+
+const REQUISITION_CHANGED_FIELD_LABELS: Record<string, string> = {
+  request_date: "request date",
+  department_id: "department",
+  event_id: "event",
+  currency: "currency",
+  user_sign: "signature",
+  approval_status: "approval status",
+  products: "requested items",
+  attachmentLists: "attachments",
+  comment: "comment",
+};
+
+const stringifyCommentPreview = (value: string) =>
+  value.length > 220 ? `${value.slice(0, 217)}...` : value;
+
+const summarizeChangedFields = (changedFields: string[]): string => {
+  const labels = Array.from(
+    new Set(
+      changedFields
+        .filter((field) => field !== "comment")
+        .map((field) => REQUISITION_CHANGED_FIELD_LABELS[field] || field),
+    ),
+  );
+
+  if (!labels.length) {
+    return "requisition details";
+  }
+
+  if (labels.length === 1) {
+    return labels[0];
+  }
+
+  if (labels.length === 2) {
+    return `${labels[0]} and ${labels[1]}`;
+  }
+
+  return `${labels.slice(0, -1).join(", ")}, and ${labels[labels.length - 1]}`;
+};
+
+const getContentChangedFields = (changedFields: string[]): string[] =>
+  changedFields.filter((field) => field !== "comment");
 
 const getLocalAttachmentPath = (attachmentUrl: string): string | null => {
   if (!attachmentUrl) return null;
@@ -379,6 +426,23 @@ const ensureRequisitionAccess = (user: any, requisitionOwnerId: number) => {
   }
 };
 
+const canAccessRequisitionByApprovalParticipation = (
+  actorUserId: number,
+  approvalInstances:
+    | Array<{
+        approver_user_id: number;
+        acted_by_user_id?: number | null;
+      }>
+    | undefined,
+): boolean =>
+  Boolean(
+    approvalInstances?.some(
+      (instance) =>
+        instance.approver_user_id === actorUserId ||
+        instance.acted_by_user_id === actorUserId,
+    ),
+  );
+
 const isMissingWorkflowTablesError = (error: unknown): boolean => {
   return (
     isRequisitionApprovalTableMissingError(error) ||
@@ -570,6 +634,113 @@ const notifyRequisitionCommentParticipants = async (args: {
       ).toString("base64").slice(0, 32)}`,
       sendSms: true,
       smsBody: `New comment on requisition ${requisitionReference}: ${shortComment}`,
+    })),
+  );
+};
+
+const notifyApproverEditedRequisitionParticipants = async (args: {
+  requisitionId: number;
+  actorUserId: number;
+  changedFields: string[];
+  justificationComment: string;
+}) => {
+  const trimmedJustification = String(args.justificationComment || "").trim();
+  const contentChangedFields = getContentChangedFields(args.changedFields);
+
+  if (!trimmedJustification || !contentChangedFields.length) {
+    return;
+  }
+
+  const requisition = await prisma.request.findUnique({
+    where: {
+      id: args.requisitionId,
+    },
+    select: {
+      id: true,
+      request_id: true,
+      user_id: true,
+      user: {
+        select: {
+          name: true,
+        },
+      },
+      approval_instances: {
+        where: {
+          status: RequisitionApprovalInstanceStatus.APPROVED,
+        },
+        orderBy: {
+          step_order: "asc",
+        },
+        select: {
+          step_order: true,
+          approver_user_id: true,
+          acted_by_user_id: true,
+        },
+      },
+    },
+  });
+
+  if (!requisition) {
+    return;
+  }
+
+  const actor = await prisma.user.findUnique({
+    where: {
+      id: args.actorUserId,
+    },
+    select: {
+      name: true,
+    },
+  });
+
+  const recipientUserIds = Array.from(
+    new Set(
+      [
+        requisition.user_id,
+        ...requisition.approval_instances.map(
+          (instance) => instance.acted_by_user_id || instance.approver_user_id,
+        ),
+      ].filter(
+        (userId): userId is number =>
+          Number.isInteger(userId) &&
+          userId > 0 &&
+          userId !== args.actorUserId,
+      ),
+    ),
+  );
+
+  if (!recipientUserIds.length) {
+    return;
+  }
+
+  const requisitionReference = requisition.request_id || `#${requisition.id}`;
+  const actorName = actor?.name || "Current approver";
+  const requesterName = requisition.user?.name || "Requester";
+  const changedFieldSummary = summarizeChangedFields(contentChangedFields);
+  const shortJustification = stringifyCommentPreview(trimmedJustification);
+  const actionUrl = buildRequisitionActionUrl(requisition.id);
+  const body = `${actorName} updated requisition ${requisitionReference} for ${requesterName}. Changed: ${changedFieldSummary}. Reason: ${shortJustification}`;
+
+  await notificationService.createManyInAppNotifications(
+    recipientUserIds.map((recipientUserId) => ({
+      type: "requisition.updated_by_approver",
+      title: "Requisition updated by approver",
+      body,
+      recipientUserId,
+      actorUserId: args.actorUserId,
+      entityType: "REQUISITION",
+      entityId: String(requisition.id),
+      actionUrl,
+      priority: "HIGH",
+      dedupeKey: `requisition:${requisition.id}:updated_by_approver:${args.actorUserId}:${recipientUserId}:${Buffer.from(
+        `${changedFieldSummary}|${shortJustification}`,
+        "utf8",
+      )
+        .toString("base64")
+        .slice(0, 48)}`,
+      emailSubject: `Requisition updated by approver: ${requisitionReference}`,
+      sendSms: true,
+      smsBody: body,
     })),
   );
 };
@@ -866,6 +1037,7 @@ export const createRequisition = async (
     request_id: requestId,
     user_sign: data.user_sign,
     user_id: actorUserId,
+    branch_id: await resolveBranchIdOrDefault((data as any).branch_id),
     department_id: data.department_id,
     event_id: normalizedEventId,
     requisition_date: new Date(data.request_date as string),
@@ -998,11 +1170,24 @@ export const updateRequisition = async (
       }),
     ]);
 
-  let existingApprovalInstance: { id: number } | null = null;
+  let approvalInstances: Array<{
+    id: number;
+    status: RequisitionApprovalInstanceStatus;
+    approver_user_id: number;
+    acted_by_user_id: number | null;
+    step_order: number;
+  }> = [];
   try {
-    existingApprovalInstance = await prisma.requisition_approval_instances.findFirst({
+    approvalInstances = await prisma.requisition_approval_instances.findMany({
       where: { request_id: data.id },
-      select: { id: true },
+      orderBy: { step_order: "asc" },
+      select: {
+        id: true,
+        status: true,
+        approver_user_id: true,
+        acted_by_user_id: true,
+        step_order: true,
+      },
     });
   } catch (error) {
     if (!isMissingWorkflowTablesError(error)) {
@@ -1013,16 +1198,39 @@ export const updateRequisition = async (
   if (!findRequest) {
     throw new NotFoundError("Requisition not found");
   }
-  // check if logged user has permission to update the requisition
-  const { isHOD, isPastor, isMember } = checkPermissions(
-    user,
-    findRequest.user_id,
-  );
 
-  const hasApprovalWorkflow = Boolean(existingApprovalInstance);
+  const actorIsRequester = token_user_id === findRequest.user_id;
+  const actorHasManagePermission = hasRequisitionManagePermission(user);
+  let isHOD = false;
+  let isPastor = false;
+  let isMember = false;
+
+  if (actorIsRequester || actorHasManagePermission) {
+    ({ isHOD, isPastor, isMember } = checkPermissions(user, findRequest.user_id));
+  }
+
+  const hasApprovalWorkflow = approvalInstances.length > 0;
+  const hasAnyApprovedStep = approvalInstances.some(
+    (instance) => instance.status === RequisitionApprovalInstanceStatus.APPROVED,
+  );
+  const currentPendingApprovalInstance =
+    approvalInstances.find(
+      (instance) => instance.status === RequisitionApprovalInstanceStatus.PENDING,
+    ) || null;
+  const actorIsCurrentPendingApprover =
+    currentPendingApprovalInstance?.approver_user_id === token_user_id;
+  const isClosedRequisition =
+    findRequest.request_approval_status === RequestApprovalStatus.APPROVED ||
+    findRequest.request_approval_status === RequestApprovalStatus.REJECTED;
   const isSignedAction = Boolean(updateInput.user_sign?.trim());
 
-  if (hasApprovalWorkflow && !isMember && isSignedAction) {
+  if (hasApprovalWorkflow && !actorIsRequester && isSignedAction) {
+    if (!actorIsCurrentPendingApprover) {
+      throw new UnauthorizedError(
+        "Only the current pending approver can approve or reject this requisition",
+      );
+    }
+
     const action =
       updateInput.approval_status === RequestApprovalStatus.REJECTED
         ? "REJECT"
@@ -1070,6 +1278,32 @@ export const updateRequisition = async (
     }
 
     return getRequisition(data.id, user);
+  }
+
+  if (hasApprovalWorkflow) {
+    if (actorIsRequester) {
+      if (hasAnyApprovedStep) {
+        throw new UnauthorizedError(
+          "Requester can no longer edit this requisition after approval has started",
+        );
+      }
+
+      if (isClosedRequisition) {
+        throw new InputValidationError("Requisition is already closed");
+      }
+    } else if (actorIsCurrentPendingApprover) {
+      if (isClosedRequisition) {
+        throw new InputValidationError("Requisition is already closed");
+      }
+    } else {
+      throw new UnauthorizedError(
+        "Only the current pending approver can edit this requisition",
+      );
+    }
+  } else if (!actorIsRequester && !actorHasManagePermission) {
+    throw new UnauthorizedError(
+      "You do not have permission to edit this requisition",
+    );
   }
 
   const incomingAttachments = updateInput.attachmentLists || [];
@@ -1140,6 +1374,22 @@ export const updateRequisition = async (
   const effectiveChangedFields = shouldSubmitByRequester
     ? Array.from(new Set([...changedFields, "approval_status"]))
     : changedFields;
+  const contentChangedFields = getContentChangedFields(effectiveChangedFields);
+  const trimmedEditJustificationComment = String(
+    updateInput.edit_justification_comment || "",
+  ).trim();
+  const isApproverContentEdit =
+    actorIsCurrentPendingApprover && contentChangedFields.length > 0;
+
+  if (contentChangedFields.length > 0 && isClosedRequisition) {
+    throw new InputValidationError("Requisition is already closed");
+  }
+
+  if (isApproverContentEdit && !trimmedEditJustificationComment) {
+    throw new InputValidationError(
+      "Justification is required when an approver edits this requisition",
+    );
+  }
 
   const effectiveRequestApprovalStatus = shouldSubmitByRequester
     ? findRequest.request_approval_status
@@ -1192,6 +1442,16 @@ export const updateRequisition = async (
         // Create new comment
         await tx.request_comments.create({ data: commentData });
       }
+    }
+
+    if (isApproverContentEdit) {
+      await tx.request_comments.create({
+        data: {
+          request_id: data.id as number,
+          comment: trimmedEditJustificationComment,
+          user_id: token_user_id,
+        },
+      });
     }
 
     // Update the requisition
@@ -1255,6 +1515,15 @@ export const updateRequisition = async (
     });
   }
 
+  if (isApproverContentEdit) {
+    await notifyApproverEditedRequisitionParticipants({
+      requisitionId: data.id as number,
+      actorUserId: token_user_id,
+      changedFields: contentChangedFields,
+      justificationComment: trimmedEditJustificationComment,
+    });
+  }
+
   // Return the latest record shape after deletions.
   return getRequisition(data.id, user);
 };
@@ -1314,20 +1583,22 @@ export const deleteRequisition = async (id: any, user: any) => {
   return result;
 };
 
-export const listRequisition = async (user: any) => {
+export const listRequisition = async (user: any, branchId?: unknown) => {
   const actorUserId = getAuthenticatedUserId(user);
   if (hasRequisitionManagePermission(user)) {
-    return getRequisitionSummaryFromRequests();
+    return getRequisitionSummaryFromRequests(getBranchScopedWhere(branchId));
   }
 
   return getRequisitionSummaryFromRequests({
+    ...(getBranchScopedWhere(branchId) || {}),
     user_id: actorUserId,
   });
 };
 
-export const getmyRequisition = async (user: any) => {
+export const getmyRequisition = async (user: any, branchId?: unknown) => {
   const userId = getAuthenticatedUserId(user);
   return getRequisitionSummaryFromRequests({
+    ...(getBranchScopedWhere(branchId) || {}),
     user_id: userId,
   });
 };
@@ -1646,8 +1917,9 @@ export const actionRequisitionApproval = async (
   return getRequisition(validated.requisitionId, user);
 };
 
-export const getStaffRequisition = async (user: any) => {
+export const getStaffRequisition = async (user: any, branchId?: unknown) => {
   return getRequisitionSummaryFromRequests({
+    ...(getBranchScopedWhere(branchId) || {}),
     request_approval_status: {
       not: RequestApprovalStatus.Draft,
     },
@@ -1730,9 +2002,15 @@ export const getRequisition = async (id: any, user: any) => {
       throw new NotFoundError("Requisition not found");
     }
 
+    const canAccessByApprovalParticipation = canAccessRequisitionByApprovalParticipation(
+      actorUserId,
+      response.approval_instances,
+    );
+
     if (
       actorUserId !== response.user_id &&
-      !hasRequisitionManagePermission(user)
+      !hasRequisitionManagePermission(user) &&
+      !canAccessByApprovalParticipation
     ) {
       throw new UnauthorizedError(
         "You do not have permission to access this requisition",

@@ -66,6 +66,7 @@ export class FinancialsController {
       const result = await financialsService.findAll(
         pagination,
         (req as any).user?.id,
+        req.query?.branch_id,
       );
 
       return res.status(200).json({
@@ -85,7 +86,11 @@ export class FinancialsController {
   async findOne(req: Request, res: Response): Promise<Response> {
     try {
       const id = parseIdFromQuery(req);
-      const financial = await financialsService.findOne(id, (req as any).user?.id);
+      const financial = await financialsService.findOne(
+        id,
+        (req as any).user?.id,
+        req.query?.branch_id,
+      );
 
       return res.status(200).json({
         message: "Success",

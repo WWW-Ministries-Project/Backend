@@ -162,6 +162,14 @@ export const NOTIFICATION_PREFERENCE_OPTIONS: NotificationPreferenceOption[] = [
     availableChannels: ALL_CHANNELS,
   },
   {
+    type: "requisition.updated_by_approver",
+    title: "Requisition updated by approver",
+    description:
+      "Notify the requester and prior approvers when the current approver edits a requisition.",
+    category: "Requisitions",
+    availableChannels: ALL_CHANNELS,
+  },
+  {
     type: "requisition.final_approved",
     title: "Requisition approved",
     description: "Notify stakeholders when a requisition is finally approved.",

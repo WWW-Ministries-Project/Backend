@@ -1,6 +1,10 @@
 import { Request, Response } from "express";
 import { assetSchema, toCapitalizeEachWord } from "../../utils";
 import { prisma } from "../../Models/context";
+import {
+  getBranchScopedWhere,
+  resolveBranchIdOrDefault,
+} from "../branches/branchService";
 
 export const createAsset = async (req: any, res: any) => {
   try {
@@ -15,6 +19,7 @@ export const createAsset = async (req: any, res: any) => {
       description,
       created_by,
       photo,
+      branch_id,
     } = req.body;
     const user_id = req.user?.id;
     assetSchema.validate(req.body);
@@ -47,6 +52,7 @@ export const createAsset = async (req: any, res: any) => {
         supplier,
         photo,
         created_by: user_id,
+        branch_id: await resolveBranchIdOrDefault(branch_id),
       },
     });
 
@@ -78,6 +84,7 @@ export const updateAsset = async (req: any, res: Response) => {
       supplier,
       id,
       photo,
+      branch_id,
     } = req.body;
     assetSchema.validate(req.body);
     const user_id = req.user?.id;
@@ -115,6 +122,7 @@ export const updateAsset = async (req: any, res: Response) => {
         photo: photo || existing.photo,
         updated_by: user_id,
         updated_at: new Date(),
+        branch_id: await resolveBranchIdOrDefault(branch_id ?? existing.branch_id),
       },
     });
     res.status(200).json({
@@ -133,6 +141,7 @@ export const listAssets = async (req: Request, res: Response) => {
     const assetScope = (req as any).assetScope;
 
     const whereFilter: any = {};
+    Object.assign(whereFilter, getBranchScopedWhere(req.query?.branch_id) || {});
     if (
       assetScope?.mode === "department" &&
       Array.isArray(assetScope?.departmentIds) &&
@@ -181,6 +190,7 @@ export const getAsset = async (req: Request, res: Response) => {
     const whereFilter: any = {
       id: Number(id),
     };
+    Object.assign(whereFilter, getBranchScopedWhere(req.query?.branch_id) || {});
 
     if (
       assetScope?.mode === "department" &&

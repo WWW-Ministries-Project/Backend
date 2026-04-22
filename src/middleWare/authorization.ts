@@ -376,6 +376,7 @@ const fetchAuthContextSnapshotFromDb = async (
       department_id: number | null;
       permissions: string | null;
       scoped_department_id: number | null;
+      headed_department_id: number | null;
       life_center_id: number | null;
     }>
   >`
@@ -386,12 +387,15 @@ const fetchAuthContextSnapshotFromDb = async (
       u.department_id,
       al.permissions,
       dp.department_id AS scoped_department_id,
+      dh.id AS headed_department_id,
       lcm.lifeCenterId AS life_center_id
     FROM \`user\` u
     LEFT JOIN \`access_level\` al
       ON al.id = u.access_level_id
     LEFT JOIN \`department_positions\` dp
       ON dp.user_id = u.id
+    LEFT JOIN \`department\` dh
+      ON dh.department_head = u.id
     LEFT JOIN \`life_center_member\` lcm
       ON lcm.userId = u.id
     WHERE u.id = ${userId}
@@ -404,7 +408,7 @@ const fetchAuthContextSnapshotFromDb = async (
 
   const firstRow = rows[0];
   const departmentIdsFromRows = toUniquePositiveIds(
-    rows.map((row) => row.scoped_department_id),
+    rows.flatMap((row) => [row.scoped_department_id, row.headed_department_id]),
   );
   const lifeCenterIdsFromRows = toUniquePositiveIds(
     rows.map((row) => row.life_center_id),
@@ -1229,6 +1233,47 @@ export class Permissions {
   can_delete_department_scoped = this.departmentScopedPermission(
     "admin",
     "Not authorized to delete departments",
+  );
+
+  private attendanceScopedPermission = (
+    action: "view" | "manage" | "admin",
+    errorMessage: string,
+  ) => {
+    return async (req: Request, res: Response, next: NextFunction) => {
+      const context = await this.getAccessContext(req, res, errorMessage);
+      if (!context) return;
+
+      if (
+        !context.isPrivilegedUser ||
+        !hasActionPermission(context.permissions, "Church_Attendance", action)
+      ) {
+        return this.unauthorized(res, errorMessage);
+      }
+
+      const scopeMode = resolveDomainScope(
+        context.permissions,
+        "Church_Attendance",
+      );
+      if (scopeMode !== "assigned_departments") {
+        (req as any).attendanceScope = { mode: "all", departmentIds: [] };
+        return next();
+      }
+
+      if (!context.departmentIds.length) {
+        return this.unauthorized(res, errorMessage);
+      }
+
+      (req as any).attendanceScope = {
+        mode: "department",
+        departmentIds: context.departmentIds,
+      };
+      return next();
+    };
+  };
+
+  can_view_church_attendance_scoped = this.attendanceScopedPermission(
+    "view",
+    "Not authorized to view church attendance",
   );
 
   can_view_life_center_scoped = async (

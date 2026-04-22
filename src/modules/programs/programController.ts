@@ -122,7 +122,11 @@ export class ProgramController {
         take = parsedTake;
       }
 
-      const programs = await programService.getAllPrograms({ page, take });
+      const programs = await programService.getAllPrograms({
+        page,
+        take,
+        branch_id: req.query?.branch_id,
+      });
       return res.status(200).json({ data: programs });
     } catch (error: any) {
       return res
@@ -250,7 +254,10 @@ export class ProgramController {
         }
       }
 
-      const programs = await programService.getAllProgramForMember(userId);
+      const programs = await programService.getAllProgramForMember(
+        userId,
+        req.query?.branch_id,
+      );
       return res
         .status(200)
         .json({ message: "Program successfully", data: programs });

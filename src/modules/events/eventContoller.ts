@@ -21,6 +21,11 @@ import {
   createEmptyAttendanceVisitorCounts,
   getAttendanceVisitorCountsForRecord,
 } from "./attendanceVisitorCounts";
+import {
+  getBranchScopedWhere,
+  getRelationBranchScopedWhere,
+  resolveBranchIdOrDefault,
+} from "../branches/branchService";
 
 dotenv.config();
 
@@ -128,6 +133,7 @@ const eventRegistrationSelect = {
 
 const eventBaseSelect = {
   id: true,
+  branch_id: true,
   poster: true,
   start_date: true,
   end_date: true,
@@ -175,6 +181,7 @@ const eventDetailSelect = {
 
 const eventMutationSelect = {
   id: true,
+  branch_id: true,
   start_time: true,
   description: true,
   end_date: true,
@@ -959,11 +966,13 @@ export class eventManagement {
 
       const timezone = this.normalizeOptionalString(data?.timezone) ?? "UTC";
       const reminders = this.parseReminderOffsets(data?.reminders);
+      const branch_id = await resolveBranchIdOrDefault(data?.branch_id);
 
       for (const occurrenceStartDate of schedulePayload.occurrenceDates) {
         const eventId = await this.createEventController({
           ...data,
           ...registrationPayload,
+          branch_id,
           created_by: actorUserId,
           start_date: occurrenceStartDate,
           end_date: addDays(
@@ -981,7 +990,7 @@ export class eventManagement {
         }
       }
 
-      const responseData = await this.listEventsP();
+      const responseData = await this.listEventsP(branch_id);
       if (registrationPayload.requires_registration) {
         this.queueQrGeneration(createdEventIds);
       }
@@ -1023,6 +1032,7 @@ export class eventManagement {
         registration_end_date,
         registration_capacity,
         registration_audience,
+        branch_id,
       } = req.body;
       const actorUserId = this.getActorUserId(req);
 
@@ -1174,6 +1184,9 @@ export class eventManagement {
           registration_audience:
             registrationPayload?.registration_audience ??
             existance.registration_audience,
+          ...(branch_id !== undefined
+            ? { branch_id: await resolveBranchIdOrDefault(branch_id) }
+            : {}),
           qr_code:
             registrationPayload?.requires_registration === false
               ? null
@@ -1238,7 +1251,7 @@ export class eventManagement {
 
       res.status(200).json({
         message: "Event Updated Succesfully",
-        data: await this.listEventsP(),
+        data: await this.listEventsP(req.query?.branch_id ?? branch_id),
       });
     } catch (error: any) {
       return res.status(500).json({
@@ -1707,6 +1720,7 @@ export class eventManagement {
         id: eventFilterId ?? undefined,
         event_type,
         event_status,
+        ...(getBranchScopedWhere(req.query?.branch_id) || {}),
       };
 
       if (monthRange) {
@@ -1757,6 +1771,7 @@ export class eventManagement {
             id: eventFilterId ?? undefined,
             event_type,
             event_status,
+            ...(getBranchScopedWhere(req.query?.branch_id) || {}),
             start_date: {
               gte: startOfToday,
             },
@@ -1840,6 +1855,7 @@ export class eventManagement {
         event_type,
         event_status,
         start_date: startDateRange,
+        ...(getBranchScopedWhere(req.query?.branch_id) || {}),
       };
 
       let data = await prisma.event_mgt.findMany({
@@ -1855,9 +1871,10 @@ export class eventManagement {
         includedEventId !== eventFilterId &&
         !data.some((event) => event.id === includedEventId)
       ) {
-        const includedEvent = await prisma.event_mgt.findUnique({
+        const includedEvent = await prisma.event_mgt.findFirst({
           where: {
             id: includedEventId,
+            ...(getBranchScopedWhere(req.query?.branch_id) || {}),
           },
           select: eventListSelect,
         });
@@ -1885,6 +1902,7 @@ export class eventManagement {
   listUpcomingEvents = async (req: Request, res: Response) => {
     try {
       const date1 = new Date();
+      const branchWhere = getBranchScopedWhere(req.query?.branch_id);
       const data = await prisma.event_mgt.findMany({
         where: {
           AND: [
@@ -1897,6 +1915,7 @@ export class eventManagement {
                 ),
               },
             },
+            ...(branchWhere ? [branchWhere] : []),
           ],
         },
         orderBy: {
@@ -1930,6 +1949,7 @@ export class eventManagement {
           event_type,
           event_status,
           start_date: startDateRange,
+          ...(getBranchScopedWhere(req.query?.branch_id) || {}),
         },
         orderBy: {
           start_date: "asc",
@@ -1988,9 +2008,10 @@ export class eventManagement {
   getEvent = async (req: Request, res: Response) => {
     try {
       const { id } = req.query;
-      const response = await prisma.event_mgt.findUnique({
+      const response = await prisma.event_mgt.findFirst({
         where: {
           id: Number(id),
+          ...(getBranchScopedWhere(req.query?.branch_id) || {}),
         },
         select: eventDetailSelect,
       });
@@ -2144,6 +2165,7 @@ export class eventManagement {
           registration_audience: this.normalizeRegistrationAudience(
             data.registration_audience,
           ),
+          branch_id: data.branch_id,
         },
         select: eventMutationSelect,
       });
@@ -2566,9 +2588,10 @@ export class eventManagement {
     }
   }
 
-  private async listEventsP() {
+  private async listEventsP(branchId?: unknown) {
     try {
       let date = new Date();
+      const branchWhere = getBranchScopedWhere(branchId);
       const raw_events = await prisma.event_mgt.findMany({
         where: {
           AND: [
@@ -2579,6 +2602,7 @@ export class eventManagement {
                 ),
               },
             }, // Start of the month
+            ...(branchWhere ? [branchWhere] : []),
           ],
         },
         orderBy: {
@@ -3333,8 +3357,12 @@ export class eventManagement {
 
       /* ---------------- Transaction ---------------- */
       const record = await prisma.$transaction(async (tx) => {
-        const event = await tx.event_mgt.findUnique({
-          where: { id: event_mgt_id },
+        const event = await tx.event_mgt.findFirst({
+          where: {
+            id: event_mgt_id,
+            ...(getBranchScopedWhere(req.body?.branch_id ?? req.query?.branch_id) ||
+              {}),
+          },
           select: { id: true },
         });
 
@@ -3462,6 +3490,10 @@ export class eventManagement {
           lt: endOfDay,
         };
       }
+      const branchWhere = getRelationBranchScopedWhere(req.query?.branch_id, "event");
+      if (branchWhere) {
+        Object.assign(filter, branchWhere);
+      }
 
       const records = await prisma.event_attendance_summary.findMany({
         where: filter,
@@ -3574,12 +3606,48 @@ export class eventManagement {
         }
       }
 
+      const attendanceScope = (req as any)?.attendanceScope;
+      const scopedDepartmentIds =
+        attendanceScope?.mode === "department" &&
+        Array.isArray(attendanceScope?.departmentIds)
+          ? attendanceScope.departmentIds
+              .map((departmentId: unknown) => this.toPositiveInt(departmentId))
+              .filter((departmentId: number | null): departmentId is number =>
+                Boolean(departmentId),
+              )
+          : [];
+      const departmentScopedWhere = scopedDepartmentIds.length
+        ? {
+            matched_user: {
+              is: {
+                OR: [
+                  {
+                    department_id: {
+                      in: scopedDepartmentIds,
+                    },
+                  },
+                  {
+                    department_positions: {
+                      some: {
+                        department_id: {
+                          in: scopedDepartmentIds,
+                        },
+                      },
+                    },
+                  },
+                ],
+              },
+            },
+          }
+        : {};
+
       const punches = await prisma.event_biometric_punch.findMany({
         where: {
           ...filter,
           matched_user_id: {
             not: null,
           },
+          ...departmentScopedWhere,
         },
         include: {
           event: {
