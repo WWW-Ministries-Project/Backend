@@ -19,6 +19,7 @@ import {
   getMissingRequiredWorkFields,
   hasAnyWorkInfoPayload,
 } from "./workInfoUtils";
+import { resolveBranchIdOrDefault } from "../branches/branchService";
 
 type MemberStatusTransitionTarget = "CONFIRMED" | "MEMBER";
 type MemberStatusValue = "UNCONFIRMED" | "CONFIRMED" | "MEMBER" | null;
@@ -135,6 +136,7 @@ export class UserService {
         department_id,
         position_id,
         member_since,
+        branch_id,
       } = {},
 
       children = [],
@@ -338,6 +340,7 @@ export class UserService {
         is_user: isLoginUser,
         is_active: false,
         status,
+        branch_id: await resolveBranchIdOrDefault(branch_id),
         department_id: departmentId,
         position_id: positionId,
         membership_type,

@@ -1,6 +1,10 @@
 import { tr } from "date-fns/locale";
 import { prisma } from "../../Models/context";
 import { roleEligibilityService } from "../settings/roleEligibilityService";
+import {
+  getBranchScopedWhere,
+  resolveBranchIdOrDefault,
+} from "../branches/branchService";
 
 export class LifeCenterService {
   /**
@@ -11,6 +15,7 @@ export class LifeCenterService {
     description: string;
     meetingLocation: string;
     meetingDays: string;
+    branch_id?: number | string | null;
   }) {
     const response = await prisma.life_center.create({
       data: {
@@ -18,6 +23,7 @@ export class LifeCenterService {
         description: data.description,
         meetingLocation: data.meetingLocation,
         meetingDays: data.meetingDays,
+        branch_id: await resolveBranchIdOrDefault(data.branch_id),
       },
     });
 
@@ -28,6 +34,7 @@ export class LifeCenterService {
         description: response.description,
         location: response.meetingLocation,
         meeting_dates: response.meetingDays.split(","),
+        branch_id: response.branch_id ?? null,
       };
       return response_data;
     }
@@ -35,8 +42,9 @@ export class LifeCenterService {
     return null;
   }
 
-  async getAllLifeCenters() {
+  async getAllLifeCenters(branchId?: unknown) {
     const results = await prisma.life_center.findMany({
+      where: getBranchScopedWhere(branchId),
       orderBy: {
         name: "asc",
       },
@@ -59,6 +67,7 @@ export class LifeCenterService {
         meeting_dates: response.meetingDays.split(",").map((day) => day.trim()),
         totalMembers: response._count.life_center_member,
         totalSoulsWon: response._count.soul_won,
+        branch_id: response.branch_id ?? null,
       };
     });
   }
@@ -118,6 +127,7 @@ export class LifeCenterService {
       description: raw.description,
       location: raw.meetingLocation,
       meeting_dates: raw.meetingDays.split(",").map((day: any) => day.trim()),
+      branch_id: raw.branch_id ?? null,
 
       members: raw.life_center_member.map((member: any) => ({
         id: member.id,
@@ -167,11 +177,20 @@ export class LifeCenterService {
       description: string;
       meetingLocation: string;
       meetingDays: string;
+      branch_id?: number | string | null;
     },
   ) {
+    const { branch_id, ...lifeCenterData } = data;
     const response = await prisma.life_center.update({
       where: { id },
-      data,
+      data: {
+        ...lifeCenterData,
+        ...(branch_id !== undefined
+          ? {
+              branch_id: await resolveBranchIdOrDefault(branch_id),
+            }
+          : {}),
+      },
     });
 
     return {
@@ -179,6 +198,7 @@ export class LifeCenterService {
       description: response.description,
       location: response.meetingLocation,
       meeting_dates: response.meetingDays.split(",").map((day) => day.trim()),
+      branch_id: response.branch_id ?? null,
     };
   }
 

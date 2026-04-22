@@ -32,6 +32,8 @@ const OPTIONAL_PERMISSION_KEYS = [
   "Settings",
 ];
 
+const ALLOWED_SCOPE_VALUES = new Set(["assigned_departments"]);
+
 const PERMISSION_KEY_NORMALIZER: Record<string, string> = {
   Members: "Members",
   Departments: "Departments",
@@ -59,6 +61,11 @@ const PERMISSION_KEY_NORMALIZER: Record<string, string> = {
 const ALLOWED_PERMISSION_KEYS = [
   ...REQUIRED_PERMISSION_KEYS,
   ...OPTIONAL_PERMISSION_KEYS,
+];
+
+const SCOPE_SUPPORTED_PERMISSION_KEYS = [
+  "Departments",
+  "Church_Attendance",
 ];
 
 const toPositiveInt = (value: any) => {
@@ -252,6 +259,32 @@ const normalizeExclusions = (payload: any) => {
   return normalized;
 };
 
+const normalizeScopes = (payload: any) => {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return null;
+  }
+
+  const normalized: Record<string, string> = {};
+  for (const [rawKey, rawValue] of Object.entries(payload)) {
+    const normalizedKey =
+      PERMISSION_KEY_NORMALIZER[String(rawKey).trim()] || String(rawKey).trim();
+    if (!SCOPE_SUPPORTED_PERMISSION_KEYS.includes(normalizedKey)) {
+      continue;
+    }
+
+    if (
+      typeof rawValue !== "string" ||
+      !ALLOWED_SCOPE_VALUES.has(String(rawValue))
+    ) {
+      return null;
+    }
+
+    normalized[normalizedKey] = String(rawValue);
+  }
+
+  return normalized;
+};
+
 const normalizePermissionPayload = (payload: any) => {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     return null;
@@ -263,6 +296,11 @@ const normalizePermissionPayload = (payload: any) => {
     payload?.exclusions ||
     payload?.exclusion_list ||
     payload?.exclusionList;
+  const scopePayload =
+    payload?.Scopes ||
+    payload?.scopes ||
+    payload?.scope_list ||
+    payload?.scopeList;
 
   if (exclusionPayload !== undefined) {
     const normalizedExclusions = normalizeExclusions(exclusionPayload);
@@ -272,11 +310,26 @@ const normalizePermissionPayload = (payload: any) => {
     normalized.Exclusions = normalizedExclusions;
   }
 
+  if (scopePayload !== undefined) {
+    const normalizedScopes = normalizeScopes(scopePayload);
+    if (!normalizedScopes) {
+      return null;
+    }
+    normalized.Scopes = normalizedScopes;
+  }
+
   for (const [rawKey, rawValue] of Object.entries(payload)) {
     if (
-      ["Exclusions", "exclusions", "exclusion_list", "exclusionList"].includes(
-        String(rawKey),
-      )
+      [
+        "Exclusions",
+        "exclusions",
+        "exclusion_list",
+        "exclusionList",
+        "Scopes",
+        "scopes",
+        "scope_list",
+        "scopeList",
+      ].includes(String(rawKey))
     ) {
       continue;
     }

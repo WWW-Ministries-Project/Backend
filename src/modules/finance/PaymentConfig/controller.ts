@@ -27,7 +27,10 @@ export class PaymentConfigController {
   async findAll(req: Request, res: Response): Promise<Response> {
     try {
       const pagination = parsePagination(req);
-      const result = await paymentConfigService.findAll(pagination);
+      const result = await paymentConfigService.findAll(
+        pagination,
+        req.query?.branch_id,
+      );
 
       return res.status(200).json({
         message: "Success",

@@ -55,6 +55,7 @@ export const parseIdFromQuery = (req: Request): string => {
 export type BaseConfigPayload = {
   name: string;
   description?: string;
+  branch_id?: number;
 };
 
 export type PercentageConfigPayload = BaseConfigPayload & {
@@ -72,12 +73,14 @@ export type FinanceSaveAction = "SAVE_DRAFT" | "SAVE_AND_APPROVE";
 export type FinancialMutationPayload = {
   action: FinanceSaveAction;
   payload: FinancialPayload;
+  branch_id?: number;
 };
 
 export type FinanceApprovalConfigPayload = {
   finance_approver_user_id: number;
   notification_user_ids: number[];
   is_active?: boolean;
+  branch_id?: number;
 };
 
 export type FinanceApprovalStatus = "DRAFT" | "PENDING_APPROVAL" | "APPROVED";
@@ -99,6 +102,7 @@ export const validateBasePayload = (
     name?: unknown;
     description?: unknown;
     percentage?: unknown;
+    branch_id?: unknown;
   };
 
   if (!isNonEmptyString(payload.name)) {
@@ -115,12 +119,25 @@ export const validateBasePayload = (
     );
   }
 
+  const branchId =
+    payload.branch_id === undefined
+      ? undefined
+      : isPositiveInteger(payload.branch_id)
+        ? Number(payload.branch_id)
+        : (() => {
+            throw new FinanceHttpError(
+              422,
+              "branch_id must be a positive integer when provided",
+            );
+          })();
+
   if (!options?.percentageAllowed) {
     return {
       name: payload.name.trim(),
       ...(payload.description !== undefined && {
         description: (payload.description as string).trim(),
       }),
+      ...(branchId !== undefined && { branch_id: branchId }),
     };
   }
 
@@ -141,6 +158,7 @@ export const validateBasePayload = (
         description: (payload.description as string).trim(),
       }),
       percentage: numericPercentage,
+      ...(branchId !== undefined && { branch_id: branchId }),
     };
   }
 
@@ -149,6 +167,7 @@ export const validateBasePayload = (
     ...(payload.description !== undefined && {
       description: (payload.description as string).trim(),
     }),
+    ...(branchId !== undefined && { branch_id: branchId }),
   };
 };
 
@@ -217,13 +236,29 @@ export const validateFinancialMutationPayload = (
     );
   }
 
+  const branchIdRaw = source.branch_id;
+  let branchId: number | undefined;
+  if (branchIdRaw !== undefined) {
+    if (!isPositiveInteger(branchIdRaw)) {
+      throw new FinanceHttpError(
+        422,
+        "branch_id must be a positive integer when provided",
+      );
+    }
+
+    branchId = Number(branchIdRaw);
+  }
+
   const payloadSource = Object.fromEntries(
-    Object.entries(source).filter(([key]) => key !== "action"),
+    Object.entries(source).filter(
+      ([key]) => key !== "action" && key !== "branch_id",
+    ),
   );
 
   return {
     action: actionRaw,
     payload: validateFinancialPayload(payloadSource),
+    ...(branchId !== undefined && { branch_id: branchId }),
   };
 };
 
@@ -238,6 +273,7 @@ export const validateFinanceApprovalConfigPayload = (
     finance_approver_user_id?: unknown;
     notification_user_ids?: unknown;
     is_active?: unknown;
+    branch_id?: unknown;
   };
 
   if (!isPositiveInteger(payload.finance_approver_user_id)) {
@@ -267,11 +303,24 @@ export const validateFinanceApprovalConfigPayload = (
     );
   }
 
+  let branchId: number | undefined;
+  if (payload.branch_id !== undefined) {
+    if (!isPositiveInteger(payload.branch_id)) {
+      throw new FinanceHttpError(
+        422,
+        "branch_id must be a positive integer when provided",
+      );
+    }
+
+    branchId = Number(payload.branch_id);
+  }
+
   return {
     finance_approver_user_id: Number(payload.finance_approver_user_id),
     notification_user_ids: notificationUserIds,
     is_active:
       payload.is_active === undefined ? true : Boolean(payload.is_active),
+    ...(branchId !== undefined && { branch_id: branchId }),
   };
 };
 

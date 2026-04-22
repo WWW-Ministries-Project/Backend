@@ -3,6 +3,7 @@ import * as dotenv from "dotenv";
 import {
   departmentRouter,
   positionRouter,
+  branchRouter,
   accessRouter,
   landingPage,
   uploadRouter,
@@ -42,6 +43,7 @@ appRouter.get("/", landingPage);
 appRouter.use("/user", userRouter);
 appRouter.use("/department", departmentRouter);
 appRouter.use("/position", positionRouter);
+appRouter.use("/branch", branchRouter);
 appRouter.use("/access", accessRouter);
 appRouter.use("/upload", uploadRouter);
 appRouter.use("/assets", assetRouter);

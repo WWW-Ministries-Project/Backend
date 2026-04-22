@@ -126,6 +126,7 @@ export const updateDataPayload = (
 
   return {
     user_sign: isMember ? data.user_sign : undefined,
+    branch_id: (data as any).branch_id,
     department_id: data.department_id,
     event_id: data.event_id,
     requisition_date: data.request_date
@@ -185,6 +186,7 @@ export const updateRequestReturnValue = (
     edited_at: updatedAt,
     department_id:
       updatedRequest.department_id ?? updatedRequest.department?.id ?? null,
+    branch_id: updatedRequest.branch_id ?? null,
     event_id: updatedRequest.event_id ?? updatedRequest.event?.id ?? null,
     event_name: eventName,
     request_date: updatedRequest.requisition_date || null,

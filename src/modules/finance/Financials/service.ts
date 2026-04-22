@@ -10,6 +10,10 @@ import {
 } from "../common";
 import { notificationService } from "../../notifications/notificationService";
 import { userHasMinimumDomainAccess } from "../../../utils/permissionResolver";
+import {
+  getBranchScopedWhere,
+  resolveBranchIdOrDefault,
+} from "../../branches/branchService";
 
 type FinancialRecordRow = {
   id: string;
@@ -24,6 +28,7 @@ type FinancialRecordRow = {
   submitted_at: Date | null;
   approved_by_user_id: number | null;
   approved_at: Date | null;
+  branch_id: number | null;
 };
 
 type FinanceApprovalConfigRow = {
@@ -53,6 +58,7 @@ type FinancialEntity = {
   approvedAt: Date | null;
   isEditable: boolean;
   notificationUserIds: number[];
+  branch_id: number | null;
 };
 
 type FinancialSaveResult = {
@@ -284,6 +290,7 @@ export class FinancialsService {
         financeApproverUserId,
       }),
       notificationUserIds,
+      branch_id: financial.branch_id,
     };
   }
 
@@ -398,6 +405,7 @@ export class FinancialsService {
         submitted_at: mutation.action === "SAVE_AND_APPROVE" ? now : null,
         approved_by_user_id: nextStatus === "APPROVED" ? normalizedActorUserId : null,
         approved_at: nextStatus === "APPROVED" ? now : null,
+        branch_id: await resolveBranchIdOrDefault(mutation.branch_id),
       },
       select: {
         id: true,
@@ -412,6 +420,7 @@ export class FinancialsService {
         submitted_at: true,
         approved_by_user_id: true,
         approved_at: true,
+        branch_id: true,
       },
     });
 
@@ -468,14 +477,18 @@ export class FinancialsService {
   async findAll(
     pagination: { skip: number; take: number },
     actorUserId?: number | null,
+    branchId?: unknown,
   ): Promise<{
     data: FinancialEntity[];
     total: number;
   }> {
     const config = await this.getFinanceApprovalConfig();
     const [total, financials] = await Promise.all([
-      prisma.financials.count(),
+      prisma.financials.count({
+        where: getBranchScopedWhere(branchId),
+      }),
       prisma.financials.findMany({
+        where: getBranchScopedWhere(branchId),
         orderBy: { createdAt: "desc" },
         skip: pagination.skip,
         take: pagination.take,
@@ -492,6 +505,7 @@ export class FinancialsService {
           submitted_at: true,
           approved_by_user_id: true,
           approved_at: true,
+          branch_id: true,
         },
       }),
     ]);
@@ -504,7 +518,11 @@ export class FinancialsService {
     };
   }
 
-  async findOne(id: string, actorUserId?: number | null): Promise<FinancialEntity> {
+  async findOne(
+    id: string,
+    actorUserId?: number | null,
+    branchId?: unknown,
+  ): Promise<FinancialEntity> {
     const [config, existing] = await Promise.all([
       this.getFinanceApprovalConfig(),
       prisma.financials.findUnique({
@@ -522,11 +540,17 @@ export class FinancialsService {
           submitted_at: true,
           approved_by_user_id: true,
           approved_at: true,
+          branch_id: true,
         },
       }),
     ]);
 
     if (!existing) {
+      throw new FinanceHttpError(404, "Financial record not found");
+    }
+
+    const branchWhere = getBranchScopedWhere(branchId);
+    if (branchId !== undefined && branchWhere?.branch_id !== existing.branch_id) {
       throw new FinanceHttpError(404, "Financial record not found");
     }
 
@@ -557,12 +581,13 @@ export class FinancialsService {
         status: true,
         created_by_user_id: true,
         updated_by_user_id: true,
-        submitted_by_user_id: true,
-        submitted_at: true,
-        approved_by_user_id: true,
-        approved_at: true,
-      },
-    });
+          submitted_by_user_id: true,
+          submitted_at: true,
+          approved_by_user_id: true,
+          approved_at: true,
+          branch_id: true,
+        },
+      });
 
     if (!existing) {
       throw new FinanceHttpError(404, "Financial record not found");
@@ -612,6 +637,11 @@ export class FinancialsService {
         submitted_at: mutation.action === "SAVE_AND_APPROVE" ? now : null,
         approved_by_user_id: nextStatus === "APPROVED" ? normalizedActorUserId : null,
         approved_at: nextStatus === "APPROVED" ? now : null,
+        ...(mutation.branch_id !== undefined
+          ? {
+              branch_id: await resolveBranchIdOrDefault(mutation.branch_id),
+            }
+          : {}),
       },
       select: {
         id: true,
@@ -626,6 +656,7 @@ export class FinancialsService {
         submitted_at: true,
         approved_by_user_id: true,
         approved_at: true,
+        branch_id: true,
       },
     });
 

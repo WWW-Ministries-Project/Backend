@@ -28,6 +28,7 @@ import {
   buildAttendanceVisitorCountsMap,
   getAttendanceVisitorCountsForRecord,
 } from "../events/attendanceVisitorCounts";
+import { getBranchScopedWhere } from "../branches/branchService";
 
 type ApprovalWorkflowTx = Prisma.TransactionClient;
 
@@ -490,6 +491,7 @@ const loadEventByIdTx = async (tx: ApprovalWorkflowTx, eventId: number) => {
     },
     select: {
       id: true,
+      branch_id: true,
       created_by: true,
       start_date: true,
       start_time: true,
@@ -544,6 +546,7 @@ const createEventReportTx = async (
     eventId: number;
     eventDate: string;
     actorUserId: number;
+    branchId?: number | null;
   },
 ) => {
   try {
@@ -554,6 +557,7 @@ const createEventReportTx = async (
         status: EventReportStatus.DRAFT,
         created_by: args.actorUserId,
         updated_by: args.actorUserId,
+        branch_id: args.branchId ?? null,
       },
       select: {
         id: true,
@@ -1549,12 +1553,14 @@ const buildOverviewGrouping = (
   );
 };
 
-export const listEligibleEventReports = async () => {
+export const listEligibleEventReports = async (query?: { branch_id?: unknown }) => {
   const today = getTodayDateString();
+  const branchWhere = getBranchScopedWhere(query?.branch_id);
 
   const [events, reports] = await Promise.all([
     prisma.event_mgt.findMany({
       where: {
+        ...(branchWhere || {}),
         start_date: {
           not: null,
           lte: new Date(`${today}T23:59:59.999Z`),
@@ -1574,6 +1580,7 @@ export const listEligibleEventReports = async () => {
       },
     }),
     prisma.event_reports.findMany({
+      where: branchWhere,
       select: {
         event_id: true,
         event_date: true,
@@ -1645,6 +1652,7 @@ export const generateEventReport = async (
       eventId,
       eventDate,
       actorUserId,
+      branchId: event.branch_id,
     });
 
     return {
@@ -1690,6 +1698,7 @@ export const getEventReportOverview = async (query: {
   to_date?: unknown;
   month?: unknown;
   year?: unknown;
+  branch_id?: unknown;
 }) => {
   const search =
     typeof query.search === "string" && query.search.trim()
@@ -1708,6 +1717,7 @@ export const getEventReportOverview = async (query: {
       ? "month"
       : "all";
   const eventId = toPositiveInt(query.event_id);
+  const branchWhere = getBranchScopedWhere(query.branch_id);
 
   let fromDate = parseOptionalDate(query.from_date);
   let toDate = parseOptionalDate(query.to_date);
@@ -1738,6 +1748,7 @@ export const getEventReportOverview = async (query: {
   const reports = await prisma.event_reports.findMany({
     where: {
       event_id: eventId || undefined,
+      ...(branchWhere || {}),
       status: status ? (status as EventReportStatus) : undefined,
       event_date:
         fromDate || toDate

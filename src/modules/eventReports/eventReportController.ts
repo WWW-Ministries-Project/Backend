@@ -11,7 +11,7 @@ export const listEligibleEventReportsHandler = async (
   req: Request,
   res: Response,
 ) => {
-  const data = await listEligibleEventReports();
+  const data = await listEligibleEventReports(req.query);
   res.status(200).json({
     message: "Operation successful",
     ...data,

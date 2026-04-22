@@ -1,5 +1,9 @@
 import { appointment_status } from "@prisma/client";
 import { prisma } from "../../Models/context";
+import {
+  getBranchScopedWhere,
+  resolveBranchIdOrDefault,
+} from "../branches/branchService";
 
 const availabilityInclude = {
   sessions: true,
@@ -545,6 +549,7 @@ export const AppointmentService = {
         endTime: session.end,
         userId: staffId,
         requesterId,
+        branch_id: await resolveBranchIdOrDefault(payload?.branch_id),
         status: "PENDING",
       },
       include: appointmentInclude,
@@ -608,6 +613,7 @@ export const AppointmentService = {
           data: {
             userId: parsedUserId,
             day,
+            branch_id: await resolveBranchIdOrDefault(payload?.branch_id),
             maxBookingsPerSlot: parsedMaxBookings,
             startTime: slot.startTime.trim(),
             endTime: slot.endTime.trim(),
@@ -637,10 +643,14 @@ export const AppointmentService = {
   },
 
   // FETCH ALL AVAILABILITY (OPTIONAL STAFF FILTER)
-  async getAllAvailability(userId?: number, scope?: AppointmentScope) {
+  async getAllAvailability(
+    userId?: number,
+    scope?: AppointmentScope,
+    branchId?: unknown,
+  ) {
     const excludedAttendeeIds =
       scope?.mode === "all" ? scope?.excludedAttendeeIds || [] : [];
-    const where: any = {};
+    const where: any = { ...(getBranchScopedWhere(branchId) || {}) };
 
     if (scope?.mode === "own" && scope?.userId) {
       where.userId = scope.userId;
@@ -681,6 +691,10 @@ export const AppointmentService = {
         throw new Error("userId must be a valid positive number");
       }
       updateData.userId = parsedUserId;
+    }
+
+    if (payload.branch_id !== undefined) {
+      updateData.branch_id = await resolveBranchIdOrDefault(payload.branch_id);
     }
 
     if (payload.day !== undefined) {
@@ -803,10 +817,12 @@ export const AppointmentService = {
   },
 
   // FETCH AVAILABILITY WITH SLOT/SESSION STATUS TAGS (ALL DAYS)
-  async getAvailabilityWithSessionStatus(scope?: AppointmentScope) {
+  async getAvailabilityWithSessionStatus(scope?: AppointmentScope, branchId?: unknown) {
     const excludedAttendeeIds =
       scope?.mode === "all" ? scope?.excludedAttendeeIds || [] : [];
-    const availabilityWhere: any = {};
+    const availabilityWhere: any = {
+      ...(getBranchScopedWhere(branchId) || {}),
+    };
     if (scope?.mode === "own" && scope?.userId) {
       availabilityWhere.userId = scope.userId;
     } else if (excludedAttendeeIds.length > 0) {
@@ -1018,10 +1034,16 @@ export const AppointmentService = {
       email?: string;
       status?: string;
       date?: string;
+      branch_id?: unknown;
     },
     scope?: AppointmentScope,
   ) {
     const whereAnd: any[] = [];
+
+    const branchWhere = getBranchScopedWhere(filters.branch_id);
+    if (branchWhere) {
+      whereAnd.push(branchWhere);
+    }
 
     if (filters.staffId !== undefined) {
       whereAnd.push({ userId: filters.staffId });
@@ -1170,6 +1192,11 @@ export const AppointmentService = {
         endTime: nextSession.end,
         userId: nextstaffId,
         requesterId: nextRequesterId,
+        ...(payload.branch_id !== undefined
+          ? {
+              branch_id: await resolveBranchIdOrDefault(payload.branch_id),
+            }
+          : {}),
         status,
       },
       include: appointmentInclude,

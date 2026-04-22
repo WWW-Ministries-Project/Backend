@@ -45,6 +45,7 @@ export class AppointmentController {
       const data = await AppointmentService.getAllAvailability(
         userId !== undefined ? Number(userId) : undefined,
         appointmentScope,
+        req.query?.branch_id,
       );
 
       res.status(200).json({
@@ -128,7 +129,10 @@ export class AppointmentController {
     try {
       const appointmentScope = (req as any).appointmentScope;
       const data =
-        await AppointmentService.getAvailabilityWithSessionStatus(appointmentScope);
+        await AppointmentService.getAvailabilityWithSessionStatus(
+          appointmentScope,
+          req.query?.branch_id,
+        );
 
       res.status(200).json({
         message: "Availability status fetched successfully",
@@ -231,6 +235,7 @@ export class AppointmentController {
         email,
         status,
         date,
+        branch_id: req.query?.branch_id,
       }, appointmentScope);
 
       res.status(200).json({

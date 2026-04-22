@@ -10,6 +10,9 @@ export * from "./departments/departmentRoute";
 export * from "./positions/positionController";
 export * from "./positions/positionRoute";
 
+export * from "./branches/branchController";
+export * from "./branches/branchRoute";
+
 export * from "./user/userController";
 export * from "./user/userRoutes";
 

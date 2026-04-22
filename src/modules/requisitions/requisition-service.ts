@@ -38,6 +38,10 @@ import {
   validateApprovalActionPayload,
 } from "./requisition-approval-workflow";
 import { notificationService } from "../notifications/notificationService";
+import {
+  getBranchScopedWhere,
+  resolveBranchIdOrDefault,
+} from "../branches/branchService";
 
 const UPLOADS_DIR = path.resolve(process.cwd(), "uploads");
 const DEFAULT_SIMILAR_ITEM_LOOKBACK_DAYS = 30;
@@ -1033,6 +1037,7 @@ export const createRequisition = async (
     request_id: requestId,
     user_sign: data.user_sign,
     user_id: actorUserId,
+    branch_id: await resolveBranchIdOrDefault((data as any).branch_id),
     department_id: data.department_id,
     event_id: normalizedEventId,
     requisition_date: new Date(data.request_date as string),
@@ -1578,20 +1583,22 @@ export const deleteRequisition = async (id: any, user: any) => {
   return result;
 };
 
-export const listRequisition = async (user: any) => {
+export const listRequisition = async (user: any, branchId?: unknown) => {
   const actorUserId = getAuthenticatedUserId(user);
   if (hasRequisitionManagePermission(user)) {
-    return getRequisitionSummaryFromRequests();
+    return getRequisitionSummaryFromRequests(getBranchScopedWhere(branchId));
   }
 
   return getRequisitionSummaryFromRequests({
+    ...(getBranchScopedWhere(branchId) || {}),
     user_id: actorUserId,
   });
 };
 
-export const getmyRequisition = async (user: any) => {
+export const getmyRequisition = async (user: any, branchId?: unknown) => {
   const userId = getAuthenticatedUserId(user);
   return getRequisitionSummaryFromRequests({
+    ...(getBranchScopedWhere(branchId) || {}),
     user_id: userId,
   });
 };
@@ -1910,8 +1917,9 @@ export const actionRequisitionApproval = async (
   return getRequisition(validated.requisitionId, user);
 };
 
-export const getStaffRequisition = async (user: any) => {
+export const getStaffRequisition = async (user: any, branchId?: unknown) => {
   return getRequisitionSummaryFromRequests({
+    ...(getBranchScopedWhere(branchId) || {}),
     request_approval_status: {
       not: RequestApprovalStatus.Draft,
     },

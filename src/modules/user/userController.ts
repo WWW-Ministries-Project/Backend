@@ -38,6 +38,10 @@ import {
   roleEligibilityService,
 } from "../settings/roleEligibilityService";
 import { InputValidationError } from "../../utils/custom-error-handlers";
+import {
+  getBranchScopedWhere,
+  resolveBranchIdOrDefault,
+} from "../branches/branchService";
 
 dotenv.config();
 
@@ -129,6 +133,7 @@ const normalizeMemberPayload = (payload: any = {}) => {
     position_id: "position_id",
     department_id: "department_id",
     member_since: "member_since",
+    branch_id: "branch_id",
   };
 
   for (const [sourceKey, targetKey] of Object.entries(topLevelToChurchInfo)) {
@@ -449,6 +454,7 @@ export const updateUser = async (req: Request, res: Response) => {
         position_id,
         department_id,
         member_since,
+        branch_id,
       } = {},
       children = [],
       family = [],
@@ -738,6 +744,7 @@ export const updateUser = async (req: Request, res: Response) => {
         status: status || userExists?.status,
         position_id: Number(position_id) || userExists?.position_id,
         department_id: Number(department_id) || userExists?.department_id,
+        branch_id: await resolveBranchIdOrDefault(branch_id ?? userExists?.branch_id),
         membership_type: membership_type || userExists?.membership_type,
         user_info: {
           upsert: {
@@ -1816,6 +1823,10 @@ export const ListUsers = async (req: Request, res: Response) => {
 
   try {
     const whereConditions: any[] = [];
+    const branchWhere = getBranchScopedWhere(req.query?.branch_id);
+    if (branchWhere) {
+      whereConditions.push(branchWhere);
+    }
 
     if (is_active !== undefined) {
       whereConditions.push({
@@ -1914,6 +1925,7 @@ export const ListUsers = async (req: Request, res: Response) => {
           created_at: true,
           is_active: true,
           is_user: true,
+          branch_id: true,
           department_id: true,
           membership_type: true,
           status: true,
@@ -1976,6 +1988,7 @@ export const ListUsers = async (req: Request, res: Response) => {
         user_info: userInfo,
         department_id: primaryDepartmentId,
         department_name: primaryDepartmentName,
+        branch_id: user.branch_id ?? null,
         department_names: departmentNamesFromPositions,
         department_positions: departmentPositions.map((entry: any) => ({
           department_id: entry.department_id,
@@ -2013,23 +2026,28 @@ export const ListUsersLight = async (req: Request, res: Response) => {
         : minimumAccessRaw === "admin"
           ? "admin"
           : "view";
+    const branchWhere = getBranchScopedWhere(req.query?.branch_id);
     const users = await prisma.user.findMany({
       orderBy: {
         name: "asc",
       },
       where:
-        excludedMemberIds.length > 0
-          ? {
-              id: {
-                notIn: excludedMemberIds,
-              },
-            }
-          : undefined,
+        {
+          ...(excludedMemberIds.length > 0
+            ? {
+                id: {
+                  notIn: excludedMemberIds,
+                },
+              }
+            : {}),
+          ...(branchWhere || {}),
+        },
       select: {
         id: true,
         name: true,
         email: true,
         is_user: true,
+        branch_id: true,
         position_id: true,
         access: {
           select: {
@@ -2195,6 +2213,11 @@ export const filterUsersInfo = async (req: Request, res: Response) => {
     const skip = (pageNum - 1) * limitNum;
 
     const filters: any = {};
+    const branchWhere = getBranchScopedWhere(req.query?.branch_id);
+
+    if (branchWhere) {
+      Object.assign(filters, branchWhere);
+    }
 
     if (name) {
       filters.name = {
@@ -2596,15 +2619,22 @@ const calculateStats = (users: any[]) => {
 
 export const statsUsers = async (req: Request, res: Response) => {
   try {
+    const branchWhere = getBranchScopedWhere(req.query?.branch_id);
     const [onlineUsers, inhouseUsers] = await Promise.all([
       prisma.user_info.findMany({
         where: {
-          user: { membership_type: "ONLINE" },
+          user: {
+            membership_type: "ONLINE",
+            ...(branchWhere || {}),
+          },
         },
       }),
       prisma.user_info.findMany({
         where: {
-          user: { membership_type: "IN_HOUSE" },
+          user: {
+            membership_type: "IN_HOUSE",
+            ...(branchWhere || {}),
+          },
         },
       }),
     ]);
@@ -2915,9 +2945,11 @@ export const currentuser = async (req: Request, res: Response) => {
     const user = await prisma.user.findUnique({
       where: { id: authenticatedUserId },
       select: {
+        id: true,
         name: true,
         email: true,
         membership_type: true,
+        branch_id: true,
       },
     });
 
@@ -2965,11 +2997,13 @@ export const currentuser = async (req: Request, res: Response) => {
       .filter((value): value is string => Boolean(value));
 
     const data = {
+      id: authenticatedUserId,
       name: user.name,
       email: user.email,
       phone: userInfo?.primary_number || null,
       member_since: userInfo?.member_since || null,
       department,
+      branch_id: user.branch_id ?? null,
       membership_type: user.membership_type || null,
     };
 

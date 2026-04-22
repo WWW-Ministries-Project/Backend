@@ -4,6 +4,10 @@ import {
   PaginationQuery,
   PercentageConfigPayload,
 } from "../common";
+import {
+  getBranchScopedWhere,
+  resolveBranchIdOrDefault,
+} from "../../branches/branchService";
 
 type TitheBreakdownConfigEntity = {
   id: string;
@@ -71,6 +75,7 @@ export class TitheBreakdownConfigurationService {
         name: data.name,
         ...(data.description !== undefined && { description: data.description }),
         ...(data.percentage !== undefined && { percentage: data.percentage }),
+        branch_id: await resolveBranchIdOrDefault(data.branch_id),
       },
       select: {
         id: true,
@@ -83,13 +88,16 @@ export class TitheBreakdownConfigurationService {
     return this.mapResponse(created);
   }
 
-  async findAll(pagination: PaginationQuery): Promise<{
+  async findAll(pagination: PaginationQuery, branchId?: unknown): Promise<{
     data: TitheBreakdownConfigEntity[];
     total: number;
   }> {
     const [total, configs] = await Promise.all([
-      prisma.titheBreakdownConfig.count(),
+      prisma.titheBreakdownConfig.count({
+        where: getBranchScopedWhere(branchId),
+      }),
       prisma.titheBreakdownConfig.findMany({
+        where: getBranchScopedWhere(branchId),
         orderBy: { createdAt: "desc" },
         skip: pagination.skip,
         take: pagination.take,
@@ -146,6 +154,11 @@ export class TitheBreakdownConfigurationService {
         name: data.name,
         ...(data.description !== undefined && { description: data.description }),
         ...(data.percentage !== undefined && { percentage: data.percentage }),
+        ...(data.branch_id !== undefined
+          ? {
+              branch_id: await resolveBranchIdOrDefault(data.branch_id),
+            }
+          : {}),
       },
       select: {
         id: true,

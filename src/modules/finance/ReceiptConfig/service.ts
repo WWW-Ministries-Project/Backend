@@ -1,5 +1,9 @@
 import { prisma } from "../../../Models/context";
 import { BaseConfigPayload, FinanceHttpError, PaginationQuery } from "../common";
+import {
+  getBranchScopedWhere,
+  resolveBranchIdOrDefault,
+} from "../../branches/branchService";
 
 type ReceiptConfigEntity = {
   id: string;
@@ -34,6 +38,7 @@ export class ReceiptConfigurationService {
       data: {
         name: data.name,
         ...(data.description !== undefined && { description: data.description }),
+        branch_id: await resolveBranchIdOrDefault(data.branch_id),
       },
       select: {
         id: true,
@@ -45,13 +50,16 @@ export class ReceiptConfigurationService {
     return this.mapResponse(created);
   }
 
-  async findAll(pagination: PaginationQuery): Promise<{
+  async findAll(pagination: PaginationQuery, branchId?: unknown): Promise<{
     data: ReceiptConfigEntity[];
     total: number;
   }> {
     const [total, configs] = await Promise.all([
-      prisma.receiptConfig.count(),
+      prisma.receiptConfig.count({
+        where: getBranchScopedWhere(branchId),
+      }),
       prisma.receiptConfig.findMany({
+        where: getBranchScopedWhere(branchId),
         orderBy: { createdAt: "desc" },
         skip: pagination.skip,
         take: pagination.take,
@@ -96,6 +104,11 @@ export class ReceiptConfigurationService {
       data: {
         name: data.name,
         ...(data.description !== undefined && { description: data.description }),
+        ...(data.branch_id !== undefined
+          ? {
+              branch_id: await resolveBranchIdOrDefault(data.branch_id),
+            }
+          : {}),
       },
       select: {
         id: true,

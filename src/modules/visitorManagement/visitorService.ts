@@ -6,6 +6,10 @@ import {
 import { UserService } from "../user/userService";
 import { VisitService } from "./visitService";
 import { toSentenceCase } from "../../utils";
+import {
+  getBranchScopedWhere,
+  resolveBranchIdOrDefault,
+} from "../branches/branchService";
 
 const userService = new UserService();
 const visitService = new VisitService();
@@ -399,6 +403,7 @@ export class VisitorService {
       consentToContact,
       membershipWish,
       event,
+      branch_id,
     } = body;
     const hasResponsibleMembers = hasOwnProperty(body, "responsibleMembers");
     const responsibleMembers = hasResponsibleMembers
@@ -440,6 +445,11 @@ export class VisitorService {
             ),
           }
         : {}),
+      ...(branch_id !== undefined
+        ? {
+            branch_id: await resolveBranchIdOrDefault(branch_id),
+          }
+        : {}),
       // is_member is not included here; optionally set it if needed
     };
 
@@ -457,8 +467,10 @@ export class VisitorService {
     };
   }
   async getVisitorById(id: number) {
-    const visitor = await prisma.visitor.findUnique({
-      where: { id },
+    const visitor = await prisma.visitor.findFirst({
+      where: {
+        id,
+      },
       include: {
         visits: {
           include: {
@@ -539,6 +551,7 @@ export class VisitorService {
       page?: string;
       limit?: string;
       take?: string;
+      branch_id?: string;
     },
     scope?: {
       mode?: "all" | "responsible";
@@ -554,6 +567,7 @@ export class VisitorService {
       page = "1",
       limit = "10",
       take,
+      branch_id,
     } = query;
     const normalizedSearch = typeof search === "string" ? search.trim() : "";
 
@@ -571,6 +585,7 @@ export class VisitorService {
     const skip = (pageNumber - 1) * pageSize;
 
     const where: any = {};
+    Object.assign(where, getBranchScopedWhere(branch_id) || {});
 
     if (normalizedSearch) {
       where.OR = [
@@ -712,6 +727,7 @@ export class VisitorService {
       visit,
       consentToContact,
       membershipWish,
+      branch_id,
     } = body;
     const hasResponsibleMembers = hasOwnProperty(body, "responsibleMembers");
     const responsibleMembers = hasResponsibleMembers
@@ -821,6 +837,7 @@ export class VisitorService {
       churchRole: clergyFields.churchRole,
       responsibleMembers: serializeResponsibleMemberIds(responsibleMembers),
       is_member: false,
+      branch_id: await resolveBranchIdOrDefault(branch_id),
     };
 
     const createdVisitor = await prisma.visitor.create({
@@ -969,6 +986,7 @@ export class VisitorService {
         department_id: null,
         position_id: null,
         member_since: resolvedMemberSince,
+        branch_id: payload?.branch_id ?? visitor.branch_id ?? null,
       },
       picture: {},
       children: [],

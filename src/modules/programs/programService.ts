@@ -2,6 +2,10 @@ import { max, sub } from "date-fns";
 import { prisma } from "../../Models/context";
 import { toCapitalizeEachWord } from "../../utils";
 import { notificationService } from "../notifications/notificationService";
+import {
+  getBranchScopedWhere,
+  resolveBranchIdOrDefault,
+} from "../branches/branchService";
 
 export class ProgramService {
   private buildInstructorAssignmentActionUrl(
@@ -125,10 +129,11 @@ export class ProgramService {
     });
   }
 
-  async getAllProgramForMember(userId?: number) {
+  async getAllProgramForMember(userId?: number, branchId?: unknown) {
     const programs = await prisma.program.findMany({
       where: {
         completed: false,
+        ...(getBranchScopedWhere(branchId) || {}),
         cohorts: {
           some: {
             status: { in: ["Ongoing", "Upcoming"] },
@@ -286,6 +291,7 @@ export class ProgramService {
           member_required: data.member_required,
           leader_required: data.leader_required,
           ministry_required: data.ministry_required,
+          branch_id: await resolveBranchIdOrDefault(data.branch_id),
           topics: {
             create: data.topics.map((topic: string, index: number) => ({
               name: topic,
@@ -318,7 +324,11 @@ export class ProgramService {
     });
   }
 
-  async getAllPrograms(filters?: { page?: number; take?: number }) {
+  async getAllPrograms(filters?: {
+    page?: number;
+    take?: number;
+    branch_id?: unknown;
+  }) {
     const shouldPaginate =
       typeof filters?.page === "number" && typeof filters?.take === "number";
     const skip = shouldPaginate ? (filters.page! - 1) * filters.take! : undefined;
@@ -326,6 +336,7 @@ export class ProgramService {
     return await prisma.program.findMany({
       skip,
       take: shouldPaginate ? filters?.take : undefined,
+      where: getBranchScopedWhere(filters?.branch_id),
       include: {
         topics: true,
         cohorts: true,
@@ -765,6 +776,11 @@ export class ProgramService {
           member_required: data.member_required,
           leader_required: data.leader_required,
           ministry_required: data.ministry_required,
+          ...(data.branch_id !== undefined
+            ? {
+                branch_id: await resolveBranchIdOrDefault(data.branch_id),
+              }
+            : {}),
         },
         include: { topics: true },
       });

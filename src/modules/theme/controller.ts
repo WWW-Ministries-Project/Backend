@@ -21,7 +21,7 @@ export class AnnualThemeController {
   }
 
   async findAll(req: Request, res: Response) {
-    const themes = await annualThemeService.findAll();
+    const themes = await annualThemeService.findAll(req.query?.branch_id);
 
     return res.status(200).json({
       data: themes,
@@ -29,7 +29,7 @@ export class AnnualThemeController {
   }
 
   async findActive(req: Request, res: Response) {
-    const theme = await annualThemeService.findActive();
+    const theme = await annualThemeService.findActive(req.query?.branch_id);
 
     return res.status(200).json({
       data: theme,

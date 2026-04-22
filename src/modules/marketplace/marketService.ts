@@ -1,5 +1,9 @@
 import { prisma } from "../../Models/context";
 import {
+  getBranchScopedWhere,
+  resolveBranchIdOrDefault,
+} from "../branches/branchService";
+import {
   CreateMarketDto,
   MarketDto,
   MarketFilters,
@@ -13,14 +17,14 @@ export class MarketService {
    */
   async createMarket(input: CreateMarketDto) {
     try {
-      const event = this.determineEventId(input);
       const market = await prisma.markets.create({
         data: {
           name: input.name.trim(),
           description: input.description?.trim() || undefined,
           start_date: input.start_date ? new Date(input.start_date) : undefined,
           end_date: input.end_date ? new Date(input.end_date) : undefined,
-          event,
+          branch_id: await resolveBranchIdOrDefault(input.branch_id),
+          event_mgt_id: input.event_id,
         },
         include: { event: true },
       });
@@ -28,10 +32,6 @@ export class MarketService {
     } catch (error: any) {
       throw new Error(`Failed to create market: ${error.message}`);
     }
-  }
-
-  private determineEventId(input: CreateMarketDto | UpdateMarketDto) {
-    return input.event_id ? { connect: { id: input.event_id } } : undefined;
   }
 
   /**
@@ -47,6 +47,7 @@ export class MarketService {
       if (filters?.event_id) {
         where.event_mgt_id = filters.event_id;
       }
+      Object.assign(where, getBranchScopedWhere(filters?.branch_id) || {});
       if (filters?.start_date) {
         where.start_date = { gte: filters.start_date };
       }
@@ -99,9 +100,14 @@ export class MarketService {
         data: {
           name: data.name?.trim(),
           description: data.description?.trim(),
-          event: this.determineEventId(data),
+          event_mgt_id: data.event_id,
           start_date: data.start_date ? new Date(data.start_date) : undefined,
           end_date: data.end_date ? new Date(data.end_date) : undefined,
+          ...(data.branch_id !== undefined
+            ? {
+                branch_id: await resolveBranchIdOrDefault(data.branch_id),
+              }
+            : {}),
           updated_at: new Date(),
         },
         include: { event: true },
@@ -244,6 +250,7 @@ export class MarketService {
         : undefined,
       event_id: data.event?.id,
       event_name: eventRecord?.event_name || "No Event",
+      branch_id: data.branch_id ?? null,
     };
   }
 }
