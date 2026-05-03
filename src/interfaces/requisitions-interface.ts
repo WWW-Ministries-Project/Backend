@@ -25,6 +25,7 @@ export interface RequisitionInterface {
   request_date?: string;
   department_id: number;
   event_id?: number | null;
+  event_type_id?: number | null;
   currency: string;
   approval_status?: RequestApprovalStatus;
   user_id: number;
