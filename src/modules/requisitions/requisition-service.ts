@@ -35,6 +35,7 @@ import {
   processRequisitionApprovalAction,
   triggerRequisitionNotificationEventProcessing,
   upsertRequisitionApprovalConfig,
+  validateRequesterIsNotConfiguredApproverTx,
   validateApprovalActionPayload,
 } from "./requisition-approval-workflow";
 import { notificationService } from "../notifications/notificationService";
@@ -528,6 +529,23 @@ const normalizeUpdateEventId = (
   }
 
   return normalizeOptionalEventIdValue((payload as any).event_id);
+};
+
+const ensureSelectedEventTypeExists = async (
+  eventId: number | null | undefined,
+) => {
+  if (eventId === null || eventId === undefined) {
+    return;
+  }
+
+  const event = await prisma.event_act.findUnique({
+    where: { id: eventId },
+    select: { id: true },
+  });
+
+  if (!event) {
+    throw new InputValidationError("Selected event type does not exist.");
+  }
 };
 
 const shouldSubmitOnCreate = (data: RequisitionInterface): boolean => {
@@ -1033,13 +1051,15 @@ export const createRequisition = async (
   const requestId = await generateRequestId();
   const shouldSubmit = shouldSubmitOnCreate(data);
   const normalizedEventId = normalizeCreateEventId((data as any).event_id);
+  await ensureSelectedEventTypeExists(normalizedEventId);
   const requestCreateData: Prisma.requestUncheckedCreateInput = {
     request_id: requestId,
     user_sign: data.user_sign,
     user_id: actorUserId,
     branch_id: await resolveBranchIdOrDefault((data as any).branch_id),
     department_id: data.department_id,
-    event_id: normalizedEventId,
+    event_id: null,
+    event_type_id: normalizedEventId,
     requisition_date: new Date(data.request_date as string),
     request_approval_status: RequestApprovalStatus.Draft,
     currency: data.currency,
@@ -1071,6 +1091,11 @@ export const createRequisition = async (
   let shouldTriggerNotificationProcessing = false;
 
   const createdRequest = await prisma.$transaction(async (tx) => {
+    await validateRequesterIsNotConfiguredApproverTx(tx, {
+      requesterId: actorUserId,
+      fallbackDepartmentId: data.department_id,
+    });
+
     const request = await tx.request.create({
       data: requestCreateData,
       select: {
@@ -1146,6 +1171,7 @@ export const updateRequisition = async (
   // Requester identity is immutable after creation.
   delete (updateInput as any).user_id;
   updateInput.event_id = normalizeUpdateEventId(updateInput);
+  await ensureSelectedEventTypeExists(updateInput.event_id);
 
   const [
     findRequest,
@@ -1363,7 +1389,7 @@ export const updateRequisition = async (
     existingRequest: {
       requisition_date: findRequest.requisition_date,
       department_id: findRequest.department_id,
-      event_id: findRequest.event_id,
+      event_id: findRequest.event_type_id ?? findRequest.event_id,
       request_approval_status: findRequest.request_approval_status,
       currency: findRequest.currency,
       user_sign: findRequest.user_sign,
@@ -1409,6 +1435,11 @@ export const updateRequisition = async (
   let shouldTriggerNotificationProcessing = false;
 
   await prisma.$transaction(async (tx) => {
+    await validateRequesterIsNotConfiguredApproverTx(tx, {
+      requesterId: findRequest.user_id,
+      fallbackDepartmentId: updateInput.department_id ?? findRequest.department_id,
+    });
+
     if (existingApproval) {
       await tx.request_approvals.update({
         where: { request_id: data.id },
@@ -1951,6 +1982,15 @@ export const getRequisition = async (id: any, user: any) => {
         },
       },
       department: { select: { id: true, name: true } },
+      eventType: {
+        select: {
+          id: true,
+          event_name: true,
+          event_type: true,
+          event_status: true,
+          event_description: true,
+        },
+      },
       event: {
         select: {
           id: true,

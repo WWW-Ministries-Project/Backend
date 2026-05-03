@@ -2,6 +2,7 @@ import { Logger } from "winston";
 import e, { Request, Response, NextFunction } from "express";
 import { AppError, InputValidationError } from "./custom-error-handlers";
 import { StatusCodes } from "http-status-codes";
+import { Prisma } from "@prisma/client";
 
 const development =
   process.env.NODE_ENV === "development" || process.env.NODE_ENV === "test";
@@ -57,19 +58,88 @@ const handleError = (
   req: Request,
   res: Response,
   next: NextFunction,
-): void => {
+): void | Response => {
+  if (res.headersSent) {
+    return next(error);
+  }
+
   if (error instanceof InputValidationError) {
-    res.status(StatusCodes.BAD_REQUEST).json({
+    return res.status(StatusCodes.BAD_REQUEST).json({
       status: "error",
       statusCode: StatusCodes.BAD_REQUEST,
       message: error.message,
     });
   }
-  if (development) {
-    handleDevelopmentError(error, req, res, next);
-  } else {
-    handleProductionError(error, req, res, next);
+
+  if (error instanceof AppError) {
+    return res.status(error.statusCode).json({
+      status: "error",
+      statusCode: error.statusCode,
+      message: error.message,
+    });
   }
+
+  if (error instanceof Prisma.PrismaClientKnownRequestError) {
+    const prismaError = buildPrismaKnownRequestError(error);
+    return res.status(prismaError.statusCode).json({
+      status: "error",
+      statusCode: prismaError.statusCode,
+      message: prismaError.message,
+    });
+  }
+
+  if (development) {
+    return handleDevelopmentError(error, req, res, next);
+  } else {
+    return handleProductionError(error, req, res, next);
+  }
+};
+
+const buildPrismaKnownRequestError = (
+  error: Prisma.PrismaClientKnownRequestError,
+): { statusCode: number; message: string } => {
+  if (error.code === "P2003") {
+    const fieldName = String(error.meta?.field_name || "");
+    const isRequisitionEventConstraint =
+      fieldName.includes("request_event_id_fkey") ||
+      fieldName.includes("request_event_type_id_fkey") ||
+      fieldName.includes("event_id") ||
+      fieldName.includes("event_type_id");
+
+    if (isRequisitionEventConstraint) {
+      return {
+        statusCode: StatusCodes.BAD_REQUEST,
+        message:
+          "The selected event is not valid for this requisition. Please refresh the page, choose an event from the Event dropdown again, and save.",
+      };
+    }
+
+    return {
+      statusCode: StatusCodes.BAD_REQUEST,
+      message:
+        "One of the selected records no longer exists. Please refresh the page, review your selections, and try again.",
+    };
+  }
+
+  if (error.code === "P2002") {
+    return {
+      statusCode: StatusCodes.CONFLICT,
+      message: "A record with the same unique value already exists.",
+    };
+  }
+
+  if (error.code === "P2025") {
+    return {
+      statusCode: StatusCodes.NOT_FOUND,
+      message: "Requested record was not found.",
+    };
+  }
+
+  return {
+    statusCode: StatusCodes.BAD_REQUEST,
+    message:
+      "The request could not be saved because some submitted data is invalid. Please review the form and try again.",
+  };
 };
 
 type ExpressHandler = (

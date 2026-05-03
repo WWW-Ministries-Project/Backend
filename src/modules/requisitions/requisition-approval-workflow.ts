@@ -75,6 +75,9 @@ type ApprovalAction = RequisitionApprovalActionPayload["action"];
 
 type ApprovalWorkflowTx = Prisma.TransactionClient;
 
+const APPROVER_REQUESTER_CONFLICT_MESSAGE =
+  "You are assigned as an approver for this requisition, so you cannot also submit it. This keeps the approval process independent and fair. Please ask another authorized requester to raise the requisition, or choose a department where you are not the approver.";
+
 const APPROVAL_MODULE_LITERAL_VALUES = {
   REQUISITION: "REQUISITION",
   EVENT_REPORT: "EVENT_REPORT",
@@ -1008,7 +1011,7 @@ const resolveHeadOfDepartmentApproverUserId = async (
     },
   });
 
-  const departmentId = requesterDepartment?.department_id || fallbackDepartmentId;
+  const departmentId = fallbackDepartmentId || requesterDepartment?.department_id;
 
   if (!departmentId) {
     throw new InputValidationError(
@@ -1048,6 +1051,42 @@ const resolveHeadOfDepartmentApproverUserId = async (
   }
 
   return departmentHead.id;
+};
+
+const ensureRequesterIsNotApprover = (
+  requesterId: number,
+  approverUserId: number,
+) => {
+  if (requesterId === approverUserId) {
+    throw new InputValidationError(APPROVER_REQUESTER_CONFLICT_MESSAGE);
+  }
+};
+
+export const validateRequesterIsNotConfiguredApproverTx = async (
+  tx: ApprovalWorkflowTx,
+  args: {
+    requesterId: number;
+    fallbackDepartmentId?: number;
+  },
+): Promise<void> => {
+  const config = await getConfigByModuleTx(tx, REQUISITION_MODULE);
+
+  if (!config || !config.is_active || !config.approvers.length) {
+    return;
+  }
+
+  for (const approver of config.approvers) {
+    const resolvedApproverUserId = await resolveApproverUserIdForStep(tx, {
+      step: {
+        step_type: approver.type,
+        position_id: approver.position_id ?? null,
+        user_id: approver.user_id ?? null,
+      },
+      requesterId: args.requesterId,
+      fallbackDepartmentId: args.fallbackDepartmentId,
+    });
+    ensureRequesterIsNotApprover(args.requesterId, resolvedApproverUserId);
+  }
 };
 
 const resolvePositionApproverUserId = async (
@@ -1328,6 +1367,11 @@ export const buildRequisitionApprovalSnapshotTx = async (
 
   const config = await getActiveConfigForSubmissionTx(tx);
 
+  await validateRequesterIsNotConfiguredApproverTx(tx, {
+    requesterId,
+    fallbackDepartmentId,
+  });
+
   const requesterAllowed = config.effective_requester_user_ids.includes(
     requesterId,
   );
@@ -1346,6 +1390,7 @@ export const buildRequisitionApprovalSnapshotTx = async (
       requesterId,
       fallbackDepartmentId,
     });
+    ensureRequesterIsNotApprover(requesterId, resolvedApproverUserId);
 
     snapshotRows.push({
       request_id: requestId,
