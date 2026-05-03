@@ -128,7 +128,8 @@ export const updateDataPayload = (
     user_sign: isMember ? data.user_sign : undefined,
     branch_id: (data as any).branch_id,
     department_id: data.department_id,
-    event_id: data.event_id,
+    event_id: undefined,
+    event_type_id: data.event_id,
     requisition_date: data.request_date
       ? new Date(data.request_date)
       : undefined,
@@ -147,7 +148,8 @@ export const updateRequestReturnValue = (
     updated_at?: Date | string | null;
   } | null,
 ) => {
-  const eventName = updatedRequest.event?.event?.event_name || null;
+  const eventType = updatedRequest.eventType || updatedRequest.event?.event || null;
+  const eventName = eventType?.event_name || null;
   const approvalInstances = updatedRequest.approval_instances || [];
   const actedInstances = approvalInstances.filter(
     (instance: any) => instance.acted_at,
@@ -187,7 +189,9 @@ export const updateRequestReturnValue = (
     department_id:
       updatedRequest.department_id ?? updatedRequest.department?.id ?? null,
     branch_id: updatedRequest.branch_id ?? null,
-    event_id: updatedRequest.event_id ?? updatedRequest.event?.id ?? null,
+    event_id: eventType?.id ?? updatedRequest.event_id ?? updatedRequest.event?.id ?? null,
+    event_type_id: eventType?.id ?? null,
+    scheduled_event_id: updatedRequest.event_id ?? updatedRequest.event?.id ?? null,
     event_name: eventName,
     request_date: updatedRequest.requisition_date || null,
     approval_status: updatedRequest.request_approval_status || null,
@@ -216,7 +220,9 @@ export const updateRequestReturnValue = (
       edited_at: updatedAt,
       department_id: updatedRequest.department?.id || null,
       program: eventName,
-      program_id: updatedRequest.event?.id || null,
+      program_id: eventType?.id || null,
+      event_type_id: eventType?.id || null,
+      scheduled_event_id: updatedRequest.event_id ?? updatedRequest.event?.id ?? null,
       request_date: updatedRequest.requisition_date,
       total_cost: totalCost,
       status: updatedRequest.request_approval_status,

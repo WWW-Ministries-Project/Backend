@@ -11,6 +11,22 @@ const isDevelopment =
   process.env.NODE_ENV === "development" || process.env.NODE_ENV === "test";
 
 const buildPrismaError = (error: Prisma.PrismaClientKnownRequestError) => {
+  if (error.code === "P2003") {
+    const fieldName = String(error.meta?.field_name || "");
+    const isRequisitionEventConstraint =
+      fieldName.includes("request_event_id_fkey") ||
+      fieldName.includes("request_event_type_id_fkey") ||
+      fieldName.includes("event_id") ||
+      fieldName.includes("event_type_id");
+
+    return {
+      statusCode: StatusCodes.BAD_REQUEST,
+      message: isRequisitionEventConstraint
+        ? "The selected event is not valid for this requisition. Please refresh the page, choose an event from the Event dropdown again, and save."
+        : "One of the selected records no longer exists. Please refresh the page, review your selections, and try again.",
+    };
+  }
+
   if (error.code === "P2002") {
     return {
       statusCode: StatusCodes.CONFLICT,
