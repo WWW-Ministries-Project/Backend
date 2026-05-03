@@ -4,17 +4,34 @@ import {
   resolveBranchIdOrDefault,
 } from "../branches/branchService";
 
+type AnnualThemePayload = {
+  year: number | string;
+  title: string;
+  verseReference: string;
+  verse: string;
+  message: string;
+  imageUrl?: string | null;
+  image?: string | null;
+  isActive?: boolean;
+  branch_id?: number | string | null;
+};
+
+type AnnualThemeUpdatePayload = Partial<AnnualThemePayload>;
+
+const resolveImageUrl = (data: AnnualThemeUpdatePayload) => {
+  if (Object.prototype.hasOwnProperty.call(data, "imageUrl")) {
+    return data.imageUrl || null;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(data, "image")) {
+    return data.image || null;
+  }
+
+  return undefined;
+};
+
 export class AnnualThemeService {
-  async create(data: {
-    year: number | string;
-    title: string;
-    verseReference: string;
-    verse: string;
-    message: string;
-    imageUrl?: string;
-    isActive?: boolean;
-    branch_id?: number | string | null;
-  }) {
+  async create(data: AnnualThemePayload) {
     if (data.isActive) {
       await prisma.annualTheme.updateMany({
         where: getBranchScopedWhere(data.branch_id),
@@ -22,15 +39,15 @@ export class AnnualThemeService {
       });
     }
 
-    const result = await prisma.annualTheme.create({
+    return prisma.annualTheme.create({
       data: {
         year: Number(data.year),
         title: data.title,
         verseReference: data.verseReference,
         verse: data.verse,
         message: data.message,
-        imageUrl: data.imageUrl,
-        isActive: data.isActive,
+        imageUrl: resolveImageUrl(data),
+        isActive: data.isActive ?? false,
         branch_id: await resolveBranchIdOrDefault(data.branch_id),
       },
     });
@@ -60,16 +77,7 @@ export class AnnualThemeService {
 
   async update(
     id: number,
-    data: Partial<{
-      year: string | number;
-      title: string;
-      verseReference: string;
-      verse: string;
-      message: string;
-      imageUrl: string;
-      isActive: boolean;
-      branch_id: number | string | null;
-    }>,
+    data: AnnualThemeUpdatePayload,
   ) {
     if (data.isActive) {
       await prisma.annualTheme.updateMany({
@@ -81,13 +89,15 @@ export class AnnualThemeService {
       });
     }
 
-    const { branch_id, ...themeData } = data;
+    const imageUrl = resolveImageUrl(data);
+    const { branch_id, image: _legacyImage, ...themeData } = data;
 
     return prisma.annualTheme.update({
       where: { id },
       data: {
         ...themeData,
         year: themeData.year ? Number(themeData.year) : undefined,
+        imageUrl,
         ...(branch_id !== undefined
           ? {
               branch_id: await resolveBranchIdOrDefault(branch_id),
