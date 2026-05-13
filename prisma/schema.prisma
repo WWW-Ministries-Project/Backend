@@ -60,6 +60,7 @@ model user {
   matched_biometric_punches event_biometric_punch[] @relation("event_biometric_punch_matched_user")
   imported_biometric_punches event_biometric_punch[] @relation("event_biometric_punch_imported_by_user")
   created_biometric_import_jobs event_biometric_import_job[] @relation("event_biometric_import_job_created_by_user")
+  created_biometric_stage_batches event_biometric_stage_batch[] @relation("event_biometric_stage_batch_created_by_user")
   event_reports_created    event_reports[]                 @relation("event_report_created_by")
   event_reports_updated    event_reports[]                 @relation("event_report_updated_by")
   event_reports_final_acted event_reports[]                @relation("event_report_final_acted_by")
@@ -471,6 +472,7 @@ model event_biometric_punch {
 model event_biometric_import_job {
   id                  Int                           @id @default(autoincrement())
   event_mgt_id        Int
+  source_stage_batch_id Int?
   occurrence_date     DateTime
   dry_run             Boolean                       @default(false)
   status              biometric_import_job_status   @default(QUEUED)
@@ -489,10 +491,58 @@ model event_biometric_import_job {
   updated_at          DateTime                      @updatedAt
   event               event_mgt                     @relation(fields: [event_mgt_id], references: [id])
   created_by_user     user                          @relation("event_biometric_import_job_created_by_user", fields: [created_by], references: [id])
+  source_stage_batch  event_biometric_stage_batch? @relation(fields: [source_stage_batch_id], references: [id])
 
   @@index([event_mgt_id, occurrence_date], map: "event_biometric_import_job_event_date_idx")
   @@index([status, created_at], map: "event_biometric_import_job_status_created_idx")
   @@index([created_by, created_at], map: "event_biometric_import_job_created_by_time_idx")
+  @@index([source_stage_batch_id], map: "event_biometric_import_job_stage_batch_idx")
+}
+
+model event_biometric_stage_batch {
+  id             Int                           @id @default(autoincrement())
+  status         biometric_import_job_status   @default(QUEUED)
+  source         String                        @default("ZTECO_LIBRARY")
+  total_punches  Int                           @default(0)
+  staged_punches Int                           @default(0)
+  duplicate_punches Int                        @default(0)
+  event_count    Int                           @default(0)
+  request_payload Json
+  result_payload Json?
+  error_message  String?                       @db.Text
+  created_by     Int
+  created_by_name String
+  created_at     DateTime                      @default(now())
+  started_at     DateTime?
+  completed_at   DateTime?
+  failed_at      DateTime?
+  updated_at     DateTime                      @updatedAt
+  created_by_user user                         @relation("event_biometric_stage_batch_created_by_user", fields: [created_by], references: [id])
+  punches        event_biometric_stage_punch[]
+  import_jobs    event_biometric_import_job[]
+
+  @@index([status, created_at], map: "event_biometric_stage_batch_status_created_idx")
+  @@index([created_by, created_at], map: "event_biometric_stage_batch_created_by_time_idx")
+}
+
+model event_biometric_stage_punch {
+  id                Int                          @id @default(autoincrement())
+  batch_id          Int
+  device_id         Int?
+  device_ip         String
+  device_port       String?
+  device_user_id    String
+  device_user_name  String?
+  record_time       DateTime
+  state             Int                          @default(-1)
+  source_fingerprint String
+  raw_payload       Json
+  created_at        DateTime                     @default(now())
+  batch             event_biometric_stage_batch  @relation(fields: [batch_id], references: [id], onDelete: Cascade)
+
+  @@unique([batch_id, source_fingerprint], map: "event_biometric_stage_punch_batch_fingerprint_key")
+  @@index([batch_id, record_time], map: "event_biometric_stage_punch_batch_time_idx")
+  @@index([device_ip, record_time], map: "event_biometric_stage_punch_device_time_idx")
 }
 
 model event_registers {

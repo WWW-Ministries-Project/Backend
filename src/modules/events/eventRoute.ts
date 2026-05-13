@@ -124,6 +124,12 @@ eventRouter.get(
 );
 
 eventRouter.post(
+  "/stage-biometric-attendance",
+  [protect, permissions.can_manage_church_attendance],
+  eventContoller.stageBiometricAttendance,
+);
+
+eventRouter.post(
   "/import-biometric-attendance",
   [protect, permissions.can_manage_church_attendance],
   eventContoller.importBiometricAttendance,

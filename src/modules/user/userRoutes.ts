@@ -4,6 +4,7 @@ import {
   ListUsers,
   changePassword,
   deleteUser,
+  deleteOwnAccount,
   forgetPassword,
   getUser,
   landingPage,
@@ -84,6 +85,9 @@ userRouter.delete(
   [protect, permissions.can_delete_member_details],
   deleteUser,
 );
+
+userRouter.delete("/delete-account", [protect], deleteOwnAccount);
+
 userRouter.put(
   "/activate-account",
   [protect, permissions.can_manage_member_details],
