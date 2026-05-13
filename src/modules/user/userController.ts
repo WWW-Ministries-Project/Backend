@@ -1194,6 +1194,70 @@ export const deleteUser = async (req: Request, res: Response) => {
   }
 };
 
+export const deleteOwnAccount = async (req: Request, res: Response) => {
+  const authenticatedUserId = Number((req as any).user?.id);
+  if (!Number.isInteger(authenticatedUserId) || authenticatedUserId <= 0) {
+    return res.status(401).json({ message: "Unauthorized", data: null });
+  }
+
+  try {
+    const existingUser = await prisma.user.findUnique({
+      where: { id: authenticatedUserId },
+      select: { id: true },
+    });
+
+    if (!existingUser) {
+      return res.status(404).json({ message: "User not found", data: null });
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.notification_push_subscription.updateMany({
+        where: { user_id: authenticatedUserId },
+        data: { is_active: false },
+      });
+
+      await tx.user_info.updateMany({
+        where: { user_id: authenticatedUserId },
+        data: {
+          first_name: null,
+          last_name: null,
+          other_name: null,
+          primary_number: null,
+          other_number: null,
+          email: null,
+          address: null,
+          city: null,
+          state_region: null,
+          occupation: null,
+          company: null,
+          photo: null,
+          payment_info_token: null,
+        },
+      });
+
+      await tx.user.update({
+        where: { id: authenticatedUserId },
+        data: {
+          name: `Deleted User ${authenticatedUserId}`,
+          email: null,
+          password: null,
+          is_active: false,
+          is_user: false,
+          updated_at: new Date(),
+        },
+      });
+    });
+
+    return res
+      .status(200)
+      .json({ message: "Account deleted successfully", data: null });
+  } catch (error: any) {
+    return res
+      .status(500)
+      .json({ message: "Internal Server Error", data: null });
+  }
+};
+
 export const login = async (req: Request, res: Response) => {
   const { email, password } = req.body;
   try {

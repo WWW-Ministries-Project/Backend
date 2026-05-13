@@ -29,6 +29,41 @@ type ImportRequest = {
   lead_time_minutes?: unknown;
   dryRun?: unknown;
   dry_run?: unknown;
+  sourceStageBatchId?: unknown;
+  source_stage_batch_id?: unknown;
+  punches?: unknown;
+};
+
+type StagePunchInput = {
+  ip?: unknown;
+  device_ip?: unknown;
+  port?: unknown;
+  device_port?: unknown;
+  user_Id?: unknown;
+  user_id?: unknown;
+  userId?: unknown;
+  uid?: unknown;
+  userid?: unknown;
+  user_name?: unknown;
+  name?: unknown;
+  state?: unknown;
+  record_time?: unknown;
+  recordTime?: unknown;
+  timestamp?: unknown;
+  record_time_ms?: unknown;
+  [key: string]: unknown;
+};
+
+type ParsedStagePunch = {
+  device_id: number | null;
+  device_ip: string;
+  device_port: string | null;
+  device_user_id: string;
+  device_user_name: string | null;
+  record_time: Date;
+  state: number;
+  source_fingerprint: string;
+  raw_payload: Prisma.InputJsonValue;
 };
 
 type ResolvedDevice = {
@@ -245,34 +280,39 @@ export class EventBiometricAttendanceService {
   async createImportJob(request: ImportRequest, actor: ImportActor) {
     const context = await this.resolveImportContext(request, actor);
     const occurrenceDate = this.toOccurrenceDate(context.window.occurrenceDate);
+    const sourceStageBatchId = this.toPositiveInt(
+      request?.sourceStageBatchId ?? request?.source_stage_batch_id,
+    );
 
-    const existingJob = await prisma.event_biometric_import_job.findFirst({
-      where: {
-        event_mgt_id: context.event.id,
-        occurrence_date: occurrenceDate,
-        dry_run: context.dryRun,
-        status: {
-          in: [
-            biometric_import_job_status.QUEUED,
-            biometric_import_job_status.RUNNING,
-          ],
-        },
-      },
-      include: {
-        event: {
-          select: {
+    const existingJob = sourceStageBatchId
+      ? null
+      : await prisma.event_biometric_import_job.findFirst({
+          where: {
+            event_mgt_id: context.event.id,
+            occurrence_date: occurrenceDate,
+            dry_run: context.dryRun,
+            status: {
+              in: [
+                biometric_import_job_status.QUEUED,
+                biometric_import_job_status.RUNNING,
+              ],
+            },
+          },
+          include: {
             event: {
               select: {
-                event_name: true,
+                event: {
+                  select: {
+                    event_name: true,
+                  },
+                },
               },
             },
           },
-        },
-      },
-      orderBy: {
-        created_at: "desc",
-      },
-    });
+          orderBy: {
+            created_at: "desc",
+          },
+        });
 
     if (existingJob) {
       if (
@@ -291,6 +331,8 @@ export class EventBiometricAttendanceService {
       date: context.window.occurrenceDate,
       dryRun: context.dryRun,
       leadTimeMinutes: context.window.leadTimeMinutes,
+      sourceStageBatchId,
+      source_stage_batch_id: sourceStageBatchId,
     });
 
     const job = await prisma.event_biometric_import_job.create({
@@ -305,6 +347,7 @@ export class EventBiometricAttendanceService {
         request_payload: requestPayload,
         created_by: context.actorUser.id,
         created_by_name: context.actorUser.name,
+        source_stage_batch_id: sourceStageBatchId,
       },
       include: {
         event: {
@@ -342,6 +385,118 @@ export class EventBiometricAttendanceService {
     }
 
     return jobs;
+  }
+
+  async stageAttendanceBatch(request: ImportRequest, actor: ImportActor) {
+    const actorUser = await this.requireActorUser(actor);
+    const eventIds = this.resolveRequestedEventIds(request);
+    const devices = await this.resolveDevices(request);
+    const parsedPunches = this.parseStagePunchInputs(request?.punches, devices);
+
+    if (!parsedPunches.totalCount) {
+      throw new EventBiometricAttendanceImportError(
+        "At least one attendance punch is required for staging",
+      );
+    }
+
+    if (!parsedPunches.punches.length) {
+      throw new EventBiometricAttendanceImportError(
+        "No valid attendance punches were found in the staging payload",
+      );
+    }
+
+    const requestPayload = this.toJsonPayload({
+      eventIds,
+      date: request?.date,
+      dryRun: this.toBoolean(request?.dryRun ?? request?.dry_run),
+      leadTimeMinutes:
+        this.toPositiveInt(
+          request?.leadTimeMinutes ?? request?.lead_time_minutes,
+        ) || this.defaultLeadTimeMinutes,
+      deviceIds: devices
+        .map((device) => device.id)
+        .filter((deviceId): deviceId is number => deviceId !== null),
+      devices: devices.map((device) => ({
+        id: device.id,
+        ip: device.ip,
+        port: device.port,
+      })),
+      totals: {
+        received: parsedPunches.totalCount,
+        unique: parsedPunches.punches.length,
+        duplicates: parsedPunches.duplicateCount,
+      },
+    });
+
+    const batch = await prisma.$transaction(async (tx) => {
+      const createdBatch = await tx.event_biometric_stage_batch.create({
+        data: {
+          status: biometric_import_job_status.RUNNING,
+          source: "ZTECO_LIBRARY",
+          total_punches: parsedPunches.totalCount,
+          staged_punches: parsedPunches.punches.length,
+          duplicate_punches: parsedPunches.duplicateCount,
+          event_count: eventIds.length,
+          request_payload: requestPayload,
+          created_by: actorUser.id,
+          created_by_name: actorUser.name,
+          started_at: new Date(),
+        },
+      });
+
+      await this.persistStagePunches(
+        tx,
+        createdBatch.id,
+        parsedPunches.punches,
+      );
+
+      const jobs: ImportJobSnapshot[] = [];
+      for (const eventId of eventIds) {
+        const job = await this.createImportJobWithClient(
+          tx,
+          {
+            ...request,
+            eventId,
+            event_id: eventId,
+            deviceIds: devices
+              .map((device) => device.id)
+              .filter((deviceId): deviceId is number => deviceId !== null),
+            devices: devices.map((device) => ({
+              id: device.id,
+              ip: device.ip,
+              port: device.port,
+            })),
+            sourceStageBatchId: createdBatch.id,
+            source_stage_batch_id: createdBatch.id,
+          },
+          actorUser,
+        );
+
+        jobs.push(job);
+      }
+
+      await tx.event_biometric_stage_batch.update({
+        where: { id: createdBatch.id },
+        data: {
+          status: biometric_import_job_status.COMPLETED,
+          completed_at: new Date(),
+          result_payload: this.toJsonPayload({
+            job_ids: jobs.map((job) => job.id),
+          }),
+        },
+      });
+
+      return {
+        id: createdBatch.id,
+        jobs,
+      };
+    });
+
+    for (const job of batch.jobs) {
+      this.startImportJob(job.id);
+    }
+
+    return batch;
   }
 
   async getImportJob(jobId: number) {
@@ -389,6 +544,56 @@ export class EventBiometricAttendanceService {
       },
       context,
     );
+  }
+
+  private async createImportJobWithClient(
+    tx: Prisma.TransactionClient,
+    request: ImportRequest,
+    actorUser: { id: number; name: string },
+  ) {
+    const context = await this.resolveImportContext(request, { id: actorUser.id });
+    const occurrenceDate = this.toOccurrenceDate(context.window.occurrenceDate);
+    const sourceStageBatchId = this.toPositiveInt(
+      request?.sourceStageBatchId ?? request?.source_stage_batch_id,
+    );
+    const requestPayload = this.toJsonPayload({
+      ...request,
+      eventId: context.event.id,
+      date: context.window.occurrenceDate,
+      dryRun: context.dryRun,
+      leadTimeMinutes: context.window.leadTimeMinutes,
+      sourceStageBatchId,
+      source_stage_batch_id: sourceStageBatchId,
+    });
+
+    const job = await tx.event_biometric_import_job.create({
+      data: {
+        event_mgt_id: context.event.id,
+        occurrence_date: occurrenceDate,
+        dry_run: context.dryRun,
+        status: biometric_import_job_status.QUEUED,
+        progress_percentage: 0,
+        current_step: "Queued",
+        progress_payload: this.toJsonPayload(this.createEmptyProgress()),
+        request_payload: requestPayload,
+        created_by: actorUser.id,
+        created_by_name: actorUser.name,
+        source_stage_batch_id: sourceStageBatchId,
+      },
+      include: {
+        event: {
+          select: {
+            event: {
+              select: {
+                event_name: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    return this.mapImportJob(job);
   }
 
   private startImportJob(jobId: number) {
@@ -534,20 +739,7 @@ export class EventBiometricAttendanceService {
       throw new EventBiometricAttendanceImportError("Event not found", 404);
     }
 
-    const actorUser = await prisma.user.findUnique({
-      where: { id: actor.id },
-      select: {
-        id: true,
-        name: true,
-      },
-    });
-
-    if (!actorUser) {
-      throw new EventBiometricAttendanceImportError(
-        "Authenticated user not found",
-        401,
-      );
-    }
+    const actorUser = await this.requireActorUser(actor);
 
     const leadTimeMinutes =
       this.toPositiveInt(
@@ -563,6 +755,25 @@ export class EventBiometricAttendanceService {
       actorUser,
       window,
     };
+  }
+
+  private async requireActorUser(actor: ImportActor) {
+    const actorUser = await prisma.user.findUnique({
+      where: { id: actor.id },
+      select: {
+        id: true,
+        name: true,
+      },
+    });
+
+    if (!actorUser) {
+      throw new EventBiometricAttendanceImportError(
+        "Authenticated user not found",
+        401,
+      );
+    }
+
+    return actorUser;
   }
 
   private resolveRequestedEventIds(request: ImportRequest) {
@@ -596,6 +807,9 @@ export class EventBiometricAttendanceService {
     const context =
       resolvedContext || (await this.resolveImportContext(request, actor));
     const { dryRun, event, actorUser, window } = context;
+    const sourceStageBatchId = this.toPositiveInt(
+      request?.sourceStageBatchId ?? request?.source_stage_batch_id,
+    );
 
     await reportProgress?.({
       percentage: 10,
@@ -606,20 +820,28 @@ export class EventBiometricAttendanceService {
 
     await reportProgress?.({
       percentage: 15,
-      step: `Fetching punches from ${devices.length} device${
-        devices.length === 1 ? "" : "s"
-      }`,
+      step: sourceStageBatchId
+        ? "Loading staged punches"
+        : `Fetching punches from ${devices.length} device${
+            devices.length === 1 ? "" : "s"
+          }`,
       patch: {
         total_devices: devices.length,
         processed_devices: 0,
       },
     });
 
-    const rawPunches = await this.fetchPunchesFromZteco(
-      devices,
-      window,
-      reportProgress,
-    );
+    const rawPunches = sourceStageBatchId
+      ? await this.fetchPunchesFromStageBatch(
+          sourceStageBatchId,
+          devices,
+          reportProgress,
+        )
+      : await this.fetchPunchesFromZteco(
+          devices,
+          window,
+          reportProgress,
+        );
     const matcher = await this.buildUserMatcher();
 
     await reportProgress?.({
@@ -1088,6 +1310,97 @@ export class EventBiometricAttendanceService {
       .filter((device): device is ResolvedDevice => Boolean(device));
   }
 
+  private parseStagePunchInputs(
+    value: unknown,
+    devices: ResolvedDevice[],
+  ): {
+    totalCount: number;
+    duplicateCount: number;
+    punches: ParsedStagePunch[];
+  } {
+    if (!Array.isArray(value)) {
+      return {
+        totalCount: 0,
+        duplicateCount: 0,
+        punches: [],
+      };
+    }
+
+    const deviceByIp = new Map<string, ResolvedDevice>();
+    for (const device of devices) {
+      deviceByIp.set(device.ip, device);
+    }
+
+    const punchesByFingerprint = new Map<string, ParsedStagePunch>();
+    let duplicateCount = 0;
+
+    for (const rawPunch of value) {
+      if (!rawPunch || typeof rawPunch !== "object" || Array.isArray(rawPunch)) {
+        continue;
+      }
+
+      const typedPunch = rawPunch as StagePunchInput;
+      const deviceIp = this.normalizeText(
+        typedPunch.device_ip ?? typedPunch.ip,
+      );
+      const deviceUserId = this.normalizeText(
+        typedPunch.user_Id ??
+          typedPunch.user_id ??
+          typedPunch.userId ??
+          typedPunch.uid ??
+          typedPunch.userid,
+      );
+      const recordTime = this.parseRecordTime(
+        typedPunch as unknown as Record<string, unknown>,
+      );
+      const parsedState = Number(typedPunch.state);
+
+      if (!deviceIp || !deviceUserId || !recordTime) {
+        continue;
+      }
+
+      const fingerprint = this.buildStagePunchFingerprint({
+        device_ip: deviceIp,
+        device_user_id: deviceUserId,
+        record_time: recordTime,
+        state: Number.isFinite(parsedState) ? Math.trunc(parsedState) : -1,
+      });
+      const device = deviceByIp.get(deviceIp);
+      const parsedPunch: ParsedStagePunch = {
+        device_id: device?.id ?? null,
+        device_ip: deviceIp,
+        device_port:
+          device?.port !== null && device?.port !== undefined
+            ? String(device.port)
+            : this.normalizeNullableText(
+                typedPunch.device_port ?? typedPunch.port,
+              ),
+        device_user_id: deviceUserId,
+        device_user_name: this.normalizeNullableText(
+          typedPunch.user_name ?? typedPunch.name,
+        ),
+        record_time: recordTime,
+        state: Number.isFinite(parsedState) ? Math.trunc(parsedState) : -1,
+        source_fingerprint: fingerprint,
+        raw_payload: this.toJsonPayload(typedPunch),
+      };
+
+      if (punchesByFingerprint.has(fingerprint)) {
+        duplicateCount += 1;
+      }
+
+      punchesByFingerprint.set(fingerprint, parsedPunch);
+    }
+
+    return {
+      totalCount: value.length,
+      duplicateCount,
+      punches: Array.from(punchesByFingerprint.values()).sort(
+        (left, right) => left.record_time.getTime() - right.record_time.getTime(),
+      ),
+    };
+  }
+
   private parsePositiveIntArray(value: unknown): number[] {
     if (!Array.isArray(value)) return [];
 
@@ -1098,6 +1411,20 @@ export class EventBiometricAttendanceService {
           .filter((entry): entry is number => Boolean(entry)),
       ),
     );
+  }
+
+  private buildStagePunchFingerprint(punch: {
+    device_ip: string;
+    device_user_id: string;
+    record_time: Date;
+    state: number;
+  }) {
+    return [
+      punch.device_ip,
+      punch.device_user_id,
+      punch.record_time.toISOString(),
+      punch.state,
+    ].join(":");
   }
 
   private async resolveDevices(request: ImportRequest): Promise<ResolvedDevice[]> {
@@ -1184,6 +1511,61 @@ export class EventBiometricAttendanceService {
     }
 
     return allPunches;
+  }
+
+  private async fetchPunchesFromStageBatch(
+    batchId: number,
+    devices: ResolvedDevice[],
+    reportProgress?: ImportProgressReporter,
+  ): Promise<Record<string, unknown>[]> {
+    const deviceIps = Array.from(
+      new Set(devices.map((device) => device.ip).filter(Boolean)),
+    );
+
+    const punches = await prisma.event_biometric_stage_punch.findMany({
+      where: {
+        batch_id: batchId,
+        ...(deviceIps.length
+          ? {
+              device_ip: {
+                in: deviceIps,
+              },
+            }
+          : {}),
+      },
+      orderBy: {
+        record_time: "asc",
+      },
+      select: {
+        raw_payload: true,
+      },
+    });
+
+    await reportProgress?.({
+      percentage: 45,
+      step: `Loaded ${punches.length} staged punch${
+        punches.length === 1 ? "" : "es"
+      }`,
+      patch: {
+        total_devices: devices.length,
+        processed_devices: devices.length,
+        raw_punches_fetched: punches.length,
+      },
+    });
+
+    return punches
+      .map((punch) => {
+        if (
+          punch.raw_payload &&
+          typeof punch.raw_payload === "object" &&
+          !Array.isArray(punch.raw_payload)
+        ) {
+          return punch.raw_payload as Record<string, unknown>;
+        }
+
+        return null;
+      })
+      .filter((punch): punch is Record<string, unknown> => Boolean(punch));
   }
 
   private async fetchPunchesForDevice(
@@ -1469,6 +1851,34 @@ export class EventBiometricAttendanceService {
       createdCount: createResult.count,
       upgradedMatchCount,
     };
+  }
+
+  private async persistStagePunches(
+    tx: Prisma.TransactionClient,
+    batchId: number,
+    punches: ParsedStagePunch[],
+  ) {
+    if (!punches.length) return;
+
+    const chunkSize = 500;
+    for (let index = 0; index < punches.length; index += chunkSize) {
+      const chunk = punches.slice(index, index + chunkSize);
+      await tx.event_biometric_stage_punch.createMany({
+        data: chunk.map((punch) => ({
+          batch_id: batchId,
+          device_id: punch.device_id,
+          device_ip: punch.device_ip,
+          device_port: punch.device_port,
+          device_user_id: punch.device_user_id,
+          device_user_name: punch.device_user_name,
+          record_time: punch.record_time,
+          state: punch.state,
+          source_fingerprint: punch.source_fingerprint,
+          raw_payload: punch.raw_payload,
+        })),
+        skipDuplicates: true,
+      });
+    }
   }
 
   private buildAttendanceCandidates(

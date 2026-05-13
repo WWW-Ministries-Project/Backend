@@ -3275,6 +3275,53 @@ export class eventManagement {
     }
   };
 
+  stageBiometricAttendance = async (req: Request, res: Response) => {
+    try {
+      const actorUserId = this.getActorUserId(req);
+      if (!actorUserId) {
+        return res.status(401).json({
+          success: false,
+          message: "A valid authenticated user is required",
+        });
+      }
+
+      const batch = await biometricAttendanceService.stageAttendanceBatch(
+        req.body,
+        {
+          id: actorUserId,
+        },
+      );
+      const responseData = batch.jobs.length === 1 ? batch.jobs[0] : batch.jobs;
+
+      return res.status(202).json({
+        success: true,
+        message:
+          batch.jobs.length === 1
+            ? "Biometric attendance staging batch accepted"
+            : "Biometric attendance staging batch accepted",
+        data: responseData,
+        batch_id: batch.id,
+      });
+    } catch (error: any) {
+      const statusCode =
+        error instanceof EventBiometricAttendanceImportError
+          ? error.statusCode
+          : 500;
+
+      return res.status(statusCode).json({
+        success: false,
+        message:
+          error instanceof EventBiometricAttendanceImportError
+            ? error.message
+            : "Unable to stage biometric attendance",
+        data:
+          error instanceof EventBiometricAttendanceImportError
+            ? null
+            : error?.message || null,
+      });
+    }
+  };
+
   getBiometricAttendanceImportJob = async (req: Request, res: Response) => {
     try {
       const jobId = this.toPositiveInt(req.query?.id);
