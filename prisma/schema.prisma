@@ -491,7 +491,7 @@ model event_biometric_import_job {
   updated_at          DateTime                      @updatedAt
   event               event_mgt                     @relation(fields: [event_mgt_id], references: [id])
   created_by_user     user                          @relation("event_biometric_import_job_created_by_user", fields: [created_by], references: [id])
-  source_stage_batch  event_biometric_stage_batch? @relation(fields: [source_stage_batch_id], references: [id])
+  source_stage_batch  event_biometric_stage_batch?  @relation(fields: [source_stage_batch_id], references: [id])
 
   @@index([event_mgt_id, occurrence_date], map: "event_biometric_import_job_event_date_idx")
   @@index([status, created_at], map: "event_biometric_import_job_status_created_idx")
@@ -500,45 +500,45 @@ model event_biometric_import_job {
 }
 
 model event_biometric_stage_batch {
-  id             Int                           @id @default(autoincrement())
-  status         biometric_import_job_status   @default(QUEUED)
-  source         String                        @default("ZTECO_LIBRARY")
-  total_punches  Int                           @default(0)
-  staged_punches Int                           @default(0)
+  id               Int                         @id @default(autoincrement())
+  status           biometric_import_job_status @default(QUEUED)
+  source           String                      @default("ZTECO_LIBRARY")
+  total_punches    Int                         @default(0)
+  staged_punches   Int                         @default(0)
   duplicate_punches Int                        @default(0)
-  event_count    Int                           @default(0)
-  request_payload Json
-  result_payload Json?
-  error_message  String?                       @db.Text
-  created_by     Int
-  created_by_name String
-  created_at     DateTime                      @default(now())
-  started_at     DateTime?
-  completed_at   DateTime?
-  failed_at      DateTime?
-  updated_at     DateTime                      @updatedAt
-  created_by_user user                         @relation("event_biometric_stage_batch_created_by_user", fields: [created_by], references: [id])
-  punches        event_biometric_stage_punch[]
-  import_jobs    event_biometric_import_job[]
+  event_count      Int                         @default(0)
+  request_payload  Json
+  result_payload   Json?
+  error_message    String?                     @db.Text
+  created_by       Int
+  created_by_name  String
+  created_at       DateTime                    @default(now())
+  started_at       DateTime?
+  completed_at     DateTime?
+  failed_at        DateTime?
+  updated_at       DateTime                    @updatedAt
+  created_by_user  user                        @relation("event_biometric_stage_batch_created_by_user", fields: [created_by], references: [id])
+  punches          event_biometric_stage_punch[]
+  import_jobs      event_biometric_import_job[]
 
   @@index([status, created_at], map: "event_biometric_stage_batch_status_created_idx")
   @@index([created_by, created_at], map: "event_biometric_stage_batch_created_by_time_idx")
 }
 
 model event_biometric_stage_punch {
-  id                Int                          @id @default(autoincrement())
-  batch_id          Int
-  device_id         Int?
-  device_ip         String
-  device_port       String?
-  device_user_id    String
-  device_user_name  String?
-  record_time       DateTime
-  state             Int                          @default(-1)
+  id                 Int                          @id @default(autoincrement())
+  batch_id           Int
+  device_id          Int?
+  device_ip          String
+  device_port        String?
+  device_user_id     String
+  device_user_name   String?
+  record_time        DateTime
+  state              Int                          @default(-1)
   source_fingerprint String
-  raw_payload       Json
-  created_at        DateTime                     @default(now())
-  batch             event_biometric_stage_batch  @relation(fields: [batch_id], references: [id], onDelete: Cascade)
+  raw_payload        Json
+  created_at         DateTime                     @default(now())
+  batch              event_biometric_stage_batch  @relation(fields: [batch_id], references: [id], onDelete: Cascade)
 
   @@unique([batch_id, source_fingerprint], map: "event_biometric_stage_punch_batch_fingerprint_key")
   @@index([batch_id, record_time], map: "event_biometric_stage_punch_batch_time_idx")

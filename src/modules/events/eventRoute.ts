@@ -130,6 +130,18 @@ eventRouter.post(
 );
 
 eventRouter.post(
+  "/biometric-attendance-upload-intent",
+  [protect, permissions.can_manage_church_attendance],
+  eventContoller.createBiometricAttendanceUploadIntent,
+);
+
+eventRouter.post(
+  "/stage-biometric-attendance-from-upload",
+  [protect, permissions.can_manage_church_attendance],
+  eventContoller.importBiometricAttendanceFromUpload,
+);
+
+eventRouter.post(
   "/import-biometric-attendance",
   [protect, permissions.can_manage_church_attendance],
   eventContoller.importBiometricAttendance,

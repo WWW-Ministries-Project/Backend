@@ -3295,10 +3295,7 @@ export class eventManagement {
 
       return res.status(202).json({
         success: true,
-        message:
-          batch.jobs.length === 1
-            ? "Biometric attendance staging batch accepted"
-            : "Biometric attendance staging batch accepted",
+        message: "Biometric attendance staging batch accepted",
         data: responseData,
         batch_id: batch.id,
       });
@@ -3314,6 +3311,98 @@ export class eventManagement {
           error instanceof EventBiometricAttendanceImportError
             ? error.message
             : "Unable to stage biometric attendance",
+        data:
+          error instanceof EventBiometricAttendanceImportError
+            ? null
+            : error?.message || null,
+      });
+    }
+  };
+
+  createBiometricAttendanceUploadIntent = async (
+    req: Request,
+    res: Response,
+  ) => {
+    try {
+      const actorUserId = this.getActorUserId(req);
+      if (!actorUserId) {
+        return res.status(401).json({
+          success: false,
+          message: "A valid authenticated user is required",
+        });
+      }
+
+      const uploadIntent = await biometricAttendanceService.createS3UploadIntent(
+        req.body,
+        {
+          id: actorUserId,
+        },
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: "Biometric attendance upload intent created successfully",
+        data: uploadIntent,
+      });
+    } catch (error: any) {
+      const statusCode =
+        error instanceof EventBiometricAttendanceImportError
+          ? error.statusCode
+          : 500;
+
+      return res.status(statusCode).json({
+        success: false,
+        message:
+          error instanceof EventBiometricAttendanceImportError
+            ? error.message
+            : "Unable to create biometric attendance upload intent",
+        data:
+          error instanceof EventBiometricAttendanceImportError
+            ? null
+            : error?.message || null,
+      });
+    }
+  };
+
+  importBiometricAttendanceFromUpload = async (
+    req: Request,
+    res: Response,
+  ) => {
+    try {
+      const actorUserId = this.getActorUserId(req);
+      if (!actorUserId) {
+        return res.status(401).json({
+          success: false,
+          message: "A valid authenticated user is required",
+        });
+      }
+
+      const batch = await biometricAttendanceService.importAttendanceFromUploadedFile(
+        req.body,
+        {
+          id: actorUserId,
+        },
+      );
+      const responseData = batch.jobs.length === 1 ? batch.jobs[0] : batch.jobs;
+
+      return res.status(202).json({
+        success: true,
+        message: "Biometric attendance import jobs started from uploaded batch",
+        data: responseData,
+        batch_id: batch.id,
+      });
+    } catch (error: any) {
+      const statusCode =
+        error instanceof EventBiometricAttendanceImportError
+          ? error.statusCode
+          : 500;
+
+      return res.status(statusCode).json({
+        success: false,
+        message:
+          error instanceof EventBiometricAttendanceImportError
+            ? error.message
+            : "Unable to import biometric attendance from uploaded batch",
         data:
           error instanceof EventBiometricAttendanceImportError
             ? null
