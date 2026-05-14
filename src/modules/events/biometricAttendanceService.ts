@@ -2,6 +2,12 @@ import axios from "axios";
 import { Prisma, biometric_import_job_status } from "@prisma/client";
 import { prisma } from "../../Models/context";
 import {
+  buildS3ObjectKey,
+  createPresignedUploadUrl,
+  downloadJsonObjectFromS3,
+  getConfiguredS3BucketName,
+} from "../../utils";
+import {
   buildZtecoServiceRequestConfig,
   getZtecoServiceUrl,
 } from "../integrationUtils/ztecoServiceClient";
@@ -32,6 +38,12 @@ type ImportRequest = {
   sourceStageBatchId?: unknown;
   source_stage_batch_id?: unknown;
   punches?: unknown;
+  uploadKey?: unknown;
+  upload_key?: unknown;
+  punchCount?: unknown;
+  punch_count?: unknown;
+  payloadBytes?: unknown;
+  payload_bytes?: unknown;
 };
 
 type StagePunchInput = {
@@ -387,6 +399,95 @@ export class EventBiometricAttendanceService {
     return jobs;
   }
 
+  async createS3UploadIntent(request: ImportRequest, actor: ImportActor) {
+    const actorUser = await this.requireActorUser(actor);
+    const eventIds = this.resolveRequestedEventIds(request);
+    const devices = await this.resolveDevices(request);
+    const now = new Date();
+    const folder = [
+      "biometric-attendance",
+      "raw",
+      String(now.getUTCFullYear()),
+      String(now.getUTCMonth() + 1).padStart(2, "0"),
+      String(now.getUTCDate()).padStart(2, "0"),
+    ].join("/");
+    const punchCount = this.toNonNegativeInt(
+      request?.punchCount ?? request?.punch_count,
+    );
+    const payloadBytes = this.toNonNegativeInt(
+      request?.payloadBytes ?? request?.payload_bytes,
+    );
+    const objectKey = buildS3ObjectKey({
+      folder,
+      baseName: `attendance-${actorUser.id}-${eventIds.length}events-${Math.max(
+        punchCount,
+        1,
+      )}punches`,
+      contentType: "application/json",
+    });
+    const upload = await createPresignedUploadUrl({
+      key: objectKey,
+      contentType: "application/json",
+      expiresInSeconds: 900,
+    });
+
+    return {
+      bucket: getConfiguredS3BucketName(),
+      key: upload.key,
+      upload_url: upload.uploadUrl,
+      object_url: upload.publicUrl,
+      method: upload.method,
+      content_type: upload.contentType,
+      expires_in_seconds: upload.expiresInSeconds,
+      event_count: eventIds.length,
+      device_count: devices.length,
+      punch_count: punchCount,
+      payload_bytes: payloadBytes,
+    };
+  }
+
+  async importAttendanceFromUploadedFile(
+    request: ImportRequest,
+    actor: ImportActor,
+  ) {
+    const uploadKey = this.normalizeText(request?.uploadKey ?? request?.upload_key);
+    if (!uploadKey) {
+      throw new EventBiometricAttendanceImportError("uploadKey is required");
+    }
+
+    const uploadedPayload = await downloadJsonObjectFromS3<{
+      punches?: unknown;
+    }>(uploadKey);
+    const punches = Array.isArray((uploadedPayload as any)?.punches)
+      ? (uploadedPayload as any).punches
+      : Array.isArray(uploadedPayload)
+        ? uploadedPayload
+        : null;
+
+    if (!punches) {
+      throw new EventBiometricAttendanceImportError(
+        "Uploaded attendance payload is invalid",
+      );
+    }
+
+    const expectedPunchCount = this.toNonNegativeInt(
+      request?.punchCount ?? request?.punch_count,
+    );
+    if (expectedPunchCount > 0 && punches.length !== expectedPunchCount) {
+      throw new EventBiometricAttendanceImportError(
+        "Uploaded attendance payload does not match the expected punch count",
+      );
+    }
+
+    return this.stageAttendanceBatch(
+      {
+        ...request,
+        punches,
+      },
+      actor,
+    );
+  }
+
   async stageAttendanceBatch(request: ImportRequest, actor: ImportActor) {
     const actorUser = await this.requireActorUser(actor);
     const eventIds = this.resolveRequestedEventIds(request);
@@ -426,6 +527,7 @@ export class EventBiometricAttendanceService {
         unique: parsedPunches.punches.length,
         duplicates: parsedPunches.duplicateCount,
       },
+      upload_key: this.normalizeText(request?.uploadKey ?? request?.upload_key) || null,
     });
 
     const batch = await prisma.$transaction(async (tx) => {

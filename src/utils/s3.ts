@@ -1,8 +1,10 @@
 import {
   DeleteObjectCommand,
+  GetObjectCommand,
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { randomUUID } from "crypto";
 import fs from "fs/promises";
 import path from "path";
@@ -110,6 +112,21 @@ const buildObjectKey = (args: {
   return [folder, filename].filter(Boolean).join("/");
 };
 
+const streamToString = async (body: unknown): Promise<string> => {
+  if (!body) return "";
+
+  if (typeof (body as any).transformToString === "function") {
+    return (body as any).transformToString();
+  }
+
+  const chunks: Buffer[] = [];
+  for await (const chunk of body as AsyncIterable<Buffer | Uint8Array | string>) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+
+  return Buffer.concat(chunks).toString("utf8");
+};
+
 type UploadBufferToS3Args = {
   buffer: Buffer;
   folder?: string;
@@ -136,6 +153,65 @@ export const uploadBufferToS3 = async (args: UploadBufferToS3Args) => {
     key,
     url: buildPublicUrl(key),
   };
+};
+
+type CreatePresignedUploadArgs = {
+  key: string;
+  contentType?: string;
+  expiresInSeconds?: number;
+};
+
+export const createPresignedUploadUrl = async (
+  args: CreatePresignedUploadArgs,
+) => {
+  ensureS3Config();
+
+  const expiresInSeconds = Math.max(
+    60,
+    Math.min(3600, Math.trunc(args.expiresInSeconds || 900)),
+  );
+  const uploadUrl = await getSignedUrl(
+    s3Client,
+    new PutObjectCommand({
+      Bucket: s3BucketName,
+      Key: args.key,
+      ContentType: args.contentType || undefined,
+    }),
+    {
+      expiresIn: expiresInSeconds,
+    },
+  );
+
+  return {
+    bucket: s3BucketName,
+    key: args.key,
+    uploadUrl,
+    publicUrl: buildPublicUrl(args.key),
+    expiresInSeconds,
+    contentType: args.contentType || "application/json",
+    method: "PUT" as const,
+  };
+};
+
+export const buildS3ObjectKey = buildObjectKey;
+
+export const getConfiguredS3BucketName = () => {
+  ensureS3Config();
+  return s3BucketName;
+};
+
+export const downloadJsonObjectFromS3 = async <T = unknown>(key: string) => {
+  ensureS3Config();
+
+  const response = await s3Client.send(
+    new GetObjectCommand({
+      Bucket: s3BucketName,
+      Key: key,
+    }),
+  );
+
+  const bodyText = await streamToString(response.Body);
+  return JSON.parse(bodyText) as T;
 };
 
 type UploadLocalFileToS3Args = {
