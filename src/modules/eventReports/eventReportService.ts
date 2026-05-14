@@ -629,8 +629,10 @@ const assertReportDataAvailableTx = async (
     }),
   ]);
 
-  if (!eventAttendanceCount || !churchAttendanceCount) {
-    throw new InputValidationError("No event or church attendance data");
+  if (!eventAttendanceCount && !churchAttendanceCount) {
+    throw new InputValidationError(
+      "This event occurrence has no attendance data yet. Record event attendance or church attendance for this date, then generate the report again.",
+    );
   }
 };
 
@@ -1588,9 +1590,49 @@ export const listEligibleEventReports = async (query?: { branch_id?: unknown }) 
     }),
   ]);
 
+  const eventIds = events.map((event) => event.id);
+  const [eventAttendanceRows, churchAttendanceRows] =
+    eventIds.length > 0
+      ? await Promise.all([
+          prisma.event_attendance.findMany({
+            where: {
+              event_id: {
+                in: eventIds,
+              },
+            },
+            select: {
+              event_id: true,
+              created_at: true,
+            },
+          }),
+          prisma.event_attendance_summary.findMany({
+            where: {
+              event_mgt_id: {
+                in: eventIds,
+              },
+            },
+            select: {
+              event_mgt_id: true,
+              date: true,
+            },
+          }),
+        ])
+      : [[], []];
+
   const existingReportKeys = new Set(
     reports.map((report) => `${report.event_id}:${toYmdDateString(report.event_date)}`),
   );
+  const attendanceDataKeys = new Set<string>();
+
+  for (const row of eventAttendanceRows) {
+    attendanceDataKeys.add(`${row.event_id}:${toYmdDateString(row.created_at)}`);
+  }
+
+  for (const row of churchAttendanceRows) {
+    attendanceDataKeys.add(
+      `${row.event_mgt_id}:${toYmdDateString(row.date)}`,
+    );
+  }
 
   const data = events
     .filter((event) => event.start_date)
@@ -1602,6 +1644,7 @@ export const listEligibleEventReports = async (query?: { branch_id?: unknown }) 
         event_name: event.event?.event_name || "Unknown Event",
       };
     })
+    .filter((event) => attendanceDataKeys.has(`${event.event_id}:${event.event_date}`))
     .filter((event) => !existingReportKeys.has(`${event.event_id}:${event.event_date}`))
     .map((event) => ({
       ...event,
