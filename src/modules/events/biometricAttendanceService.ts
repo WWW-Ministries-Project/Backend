@@ -592,7 +592,7 @@ export class EventBiometricAttendanceService {
         id: createdBatch.id,
         jobs,
       };
-    });
+    }, { timeout: 120_000, maxWait: 30_000 });
 
     for (const job of batch.jobs) {
       this.startImportJob(job.id);
