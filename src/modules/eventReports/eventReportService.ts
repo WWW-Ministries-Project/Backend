@@ -31,19 +31,24 @@ import {
 } from "../events/attendanceVisitorCounts";
 import { getBranchScopedWhere } from "../branches/branchService";
 
-// Load main logo once at startup
-const _rawLogoSvg = readFileSync(join(process.cwd(), "src", "assets", "main-logo.svg"), "utf8");
-// Extract embedded raster image from SVG for DOCX (ImageRun needs PNG/JPEG buffer)
-const _logoDataUriMatch = _rawLogoSvg.match(/href="(data:image\/[^;]+;base64,[^"]+)"/);
-const _logoDataUri = _logoDataUriMatch ? _logoDataUriMatch[1] : null;
-const _logoBuffer: Buffer | null = _logoDataUri
-  ? Buffer.from(_logoDataUri.split(",")[1], "base64")
-  : null;
-const _logoMimeType: string = _logoDataUri
-  ? _logoDataUri.split(";")[0].split(":")[1]
-  : "image/png";
-// SVG data URI for use in HTML/PDF
-const _logoSvgDataUri = `data:image/svg+xml;base64,${readFileSync(join(process.cwd(), "src", "assets", "main-logo.svg")).toString("base64")}`;
+// Load main logo once at startup — gracefully degrade if asset missing on server
+let _logoBuffer: Buffer | null = null;
+let _logoMimeType = "image/png";
+let _logoSvgDataUri = "";
+
+try {
+  const _logoAssetPath = join(process.cwd(), "src", "assets", "main-logo.svg");
+  const _rawLogoSvg = readFileSync(_logoAssetPath, "utf8");
+  const _logoDataUriMatch = _rawLogoSvg.match(/href="(data:image\/[^;]+;base64,[^"]+)"/);
+  const _logoDataUri = _logoDataUriMatch ? _logoDataUriMatch[1] : null;
+  if (_logoDataUri) {
+    _logoBuffer = Buffer.from(_logoDataUri.split(",")[1], "base64");
+    _logoMimeType = _logoDataUri.split(";")[0].split(":")[1];
+  }
+  _logoSvgDataUri = `data:image/svg+xml;base64,${readFileSync(_logoAssetPath).toString("base64")}`;
+} catch {
+  // Asset not found — reports generate without logo
+}
 
 type ApprovalWorkflowTx = Prisma.TransactionClient;
 
@@ -1470,7 +1475,10 @@ const generateDocxBufferFromSummary = async (
 };
 
 const generatePdfBufferFromHtml = async (html: string): Promise<Buffer> => {
-  const browser = await puppeteer.launch({ headless: true });
+  const browser = await puppeteer.launch({
+    headless: true,
+    args: ["--no-sandbox", "--disable-setuid-sandbox"],
+  });
 
   try {
     const page = await browser.newPage();
