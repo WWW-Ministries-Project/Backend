@@ -1367,8 +1367,8 @@ const generateDocxBufferFromSummary = async (
                   data: _logoBuffer,
                   type: _logoMimeType === "image/png" ? "png" : "jpg",
                   transformation: {
-                    width: 60,
-                    height: 41, // maintain 67:46 ratio → 60 * 46/67 ≈ 41
+                    width: 110,
+                    height: 75, // maintain 67:46 ratio → 60 * 46/67 ≈ 41
                   },
                 }),
               ],
