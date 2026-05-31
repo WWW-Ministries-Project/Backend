@@ -1,9 +1,10 @@
-import { promises as fs } from "fs";
+import { promises as fs, readFileSync } from "fs";
 import { EventReportStatus, Prisma } from "@prisma/client";
 import {
   AlignmentType,
   BorderStyle,
   Document,
+  ImageRun,
   Packer,
   PageOrientation,
   Paragraph,
@@ -17,7 +18,7 @@ import {
   convertMillimetersToTwip,
 } from "docx";
 import puppeteer from "puppeteer";
-import { resolve } from "path";
+import { resolve, join } from "path";
 import {
   InputValidationError,
   NotFoundError,
@@ -29,6 +30,20 @@ import {
   getAttendanceVisitorCountsForRecord,
 } from "../events/attendanceVisitorCounts";
 import { getBranchScopedWhere } from "../branches/branchService";
+
+// Load main logo once at startup
+const _rawLogoSvg = readFileSync(join(process.cwd(), "src", "assets", "main-logo.svg"), "utf8");
+// Extract embedded raster image from SVG for DOCX (ImageRun needs PNG/JPEG buffer)
+const _logoDataUriMatch = _rawLogoSvg.match(/href="(data:image\/[^;]+;base64,[^"]+)"/);
+const _logoDataUri = _logoDataUriMatch ? _logoDataUriMatch[1] : null;
+const _logoBuffer: Buffer | null = _logoDataUri
+  ? Buffer.from(_logoDataUri.split(",")[1], "base64")
+  : null;
+const _logoMimeType: string = _logoDataUri
+  ? _logoDataUri.split(";")[0].split(":")[1]
+  : "image/png";
+// SVG data URI for use in HTML/PDF
+const _logoSvgDataUri = `data:image/svg+xml;base64,${readFileSync(join(process.cwd(), "src", "assets", "main-logo.svg")).toString("base64")}`;
 
 type ApprovalWorkflowTx = Prisma.TransactionClient;
 
@@ -1074,6 +1089,7 @@ const renderServiceSummaryHtml = async (
 ): Promise<string> => {
   const template = await readServiceSummaryTemplateHtml();
   const replacements: Record<string, string> = {
+    "{{LOGO_DATA_URI}}": _logoSvgDataUri,
     "{{REPORT_DATE}}": escapeHtml(formatDisplayDate(payload.event_date)),
     "{{EVENT_NAME}}": escapeHtml(payload.event_name),
     "{{EVENT_DATE}}": escapeHtml(formatDisplayDate(payload.event_date)),
@@ -1337,6 +1353,24 @@ const generateDocxBufferFromSummary = async (
   try {
     const halfWidth = Math.round(DOCX_CONTENT_WIDTH_TWIPS / 2);
     const children: Array<Paragraph | Table> = [
+      ...(_logoBuffer
+        ? [
+            new Paragraph({
+              alignment: AlignmentType.CENTER,
+              children: [
+                new ImageRun({
+                  data: _logoBuffer,
+                  type: _logoMimeType === "image/png" ? "png" : "jpg",
+                  transformation: {
+                    width: 60,
+                    height: 41, // maintain 67:46 ratio → 60 * 46/67 ≈ 41
+                  },
+                }),
+              ],
+              spacing: { after: 80 },
+            }),
+          ]
+        : []),
       createDocxParagraph("WORLDWIDE WORD MINISTRIES", {
         alignment: AlignmentType.CENTER,
         bold: true,
