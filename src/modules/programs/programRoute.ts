@@ -102,6 +102,7 @@ programRouter.get(
   enrollmentController.verifyCertificate,
 );
 programRouter.get("/certificate", [protect], enrollmentController.getCertificate);
+programRouter.get("/certificate/pdf", [protect], enrollmentController.getCertificatePdf);
 programRouter.post(
   "/enroll",
   [protect, permissions.can_manage_programs_or_facilitator],

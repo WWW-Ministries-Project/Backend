@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import { Prisma } from "@prisma/client";
 import { EnrollmentService } from "./enrolmentService";
 import { AppError } from "../../utils/custom-error-handlers";
+import { generateCertificatePdf } from "./certificatePdfService.js";
 
 const enrollment = new EnrollmentService();
 
@@ -301,4 +302,41 @@ export class EnrollmentController {
   //     });
   //   }
   // }
+
+  async getCertificatePdf(req: Request, res: Response) {
+    try {
+      const certificateNumber = String(req.query.certificateNumber ?? "").trim();
+      const userId = Number((req as any).user?.id);
+
+      if (!certificateNumber) {
+        return res.status(400).json({ message: "A valid certificateNumber is required" });
+      }
+
+      if (!Number.isInteger(userId) || userId <= 0) {
+        return res.status(401).json({ message: "Not authorized. Token not found" });
+      }
+
+      const certData = await enrollment.verifyCertificate(certificateNumber);
+      const pdfBuffer = await generateCertificatePdf(certData);
+
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${certData.certificateNumber}.pdf"`,
+      );
+      return res.send(pdfBuffer);
+    } catch (error: any) {
+      if (error instanceof AppError) {
+        return res.status(error.statusCode).json({
+          message: error.message,
+          error: error.message,
+        });
+      }
+
+      return res.status(500).json({
+        message: "Error generating certificate PDF",
+        error: error.message,
+      });
+    }
+  }
 }
