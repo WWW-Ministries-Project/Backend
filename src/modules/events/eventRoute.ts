@@ -22,6 +22,11 @@ eventRouter.get(
   eventContoller.listEventsLight,
 );
 eventRouter.get("/events-stats", [protect], eventContoller.eventStats);
+eventRouter.get(
+  "/list-event-years",
+  [protect],
+  eventContoller.listEventYears,
+);
 
 eventRouter.get(
   "/upcoming-events",

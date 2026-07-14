@@ -1899,6 +1899,40 @@ export class eventManagement {
     }
   };
 
+  listEventYears = async (req: Request, res: Response) => {
+    try {
+      const rows = await prisma.event_mgt.findMany({
+        where: {
+          ...(getBranchScopedWhere(req.query?.branch_id) || {}),
+        },
+        select: {
+          start_date: true,
+        },
+      });
+
+      const years = Array.from(
+        new Set(
+          rows
+            .map((row) =>
+              row.start_date ? new Date(row.start_date).getFullYear() : NaN,
+            )
+            .filter((year) => Number.isInteger(year)),
+        ),
+      ).sort((a, b) => b - a);
+
+      res.status(200).json({
+        message: "Operation successful",
+        data: years,
+      });
+    } catch (error: any) {
+      console.log(error);
+      return res.status(500).json({
+        message: "Event failed to load",
+        data: error.message,
+      });
+    }
+  };
+
   listUpcomingEvents = async (req: Request, res: Response) => {
     try {
       const date1 = new Date();
