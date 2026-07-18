@@ -2,7 +2,19 @@ FROM node:18-alpine
 
 WORKDIR /app/www_project
 
-RUN apk add --no-cache openssl
+RUN apk add --no-cache \
+    openssl \
+    chromium \
+    nss \
+    freetype \
+    harfbuzz \
+    ca-certificates \
+    ttf-freefont
+
+# Use the Alpine (musl) Chromium instead of Puppeteer's bundled glibc build,
+# which cannot launch on Alpine and makes PDF report generation 500.
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
 
 COPY package.json .
 
