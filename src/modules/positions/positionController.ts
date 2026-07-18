@@ -5,6 +5,7 @@ import { getRelationBranchScopedWhere } from "../branches/branchService";
 
 export const createPosition = async (req: Request, res: Response) => {
   const { name, department_id, description, created_by } = req.body;
+  const actorId = (req as any).user?.id ?? created_by;
   try {
     if (!name || name.trim() === "") {
       return res.status(400).json({
@@ -29,9 +30,9 @@ export const createPosition = async (req: Request, res: Response) => {
     await prisma.position.create({
       data: {
         name: toCapitalizeEachWord(name),
-        department_id,
+        department_id: department_id != null ? Number(department_id) : department_id,
         description,
-        created_by,
+        created_by: Number(actorId),
       },
       include: {
         department: {
@@ -78,18 +79,19 @@ export const createPosition = async (req: Request, res: Response) => {
 
 export const updatePosition = async (req: Request, res: Response) => {
   const { id, name, department_id, description, updated_by } = req.body;
+  const actorId = (req as any).user?.id ?? updated_by;
 
   try {
     const response = await prisma.position.update({
       where: {
-        id,
+        id: Number(id),
       },
       data: {
         name: toCapitalizeEachWord(name),
-        department_id,
+        department_id: department_id != null ? Number(department_id) : department_id,
         description,
         is_sync: false, //setting to to out of sync for cron job to sync to device
-        updated_by,
+        updated_by: actorId != null ? Number(actorId) : actorId,
         updated_at: new Date(),
       },
       select: {
