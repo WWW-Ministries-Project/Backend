@@ -37,15 +37,10 @@ let _logoMimeType = "image/png";
 let _logoSvgDataUri = "";
 
 try {
-  const _logoAssetPath = join(process.cwd(), "src", "assets", "main-logo.svg");
-  const _rawLogoSvg = readFileSync(_logoAssetPath, "utf8");
-  const _logoDataUriMatch = _rawLogoSvg.match(/href="(data:image\/[^;]+;base64,[^"]+)"/);
-  const _logoDataUri = _logoDataUriMatch ? _logoDataUriMatch[1] : null;
-  if (_logoDataUri) {
-    _logoBuffer = Buffer.from(_logoDataUri.split(",")[1], "base64");
-    _logoMimeType = _logoDataUri.split(";")[0].split(":")[1];
-  }
-  _logoSvgDataUri = `data:image/svg+xml;base64,${readFileSync(_logoAssetPath).toString("base64")}`;
+  const _logoAssetPath = join(process.cwd(), "src", "assets", "main-logo.png");
+  _logoBuffer = readFileSync(_logoAssetPath);
+  _logoMimeType = "image/png";
+  _logoSvgDataUri = `data:image/png;base64,${_logoBuffer.toString("base64")}`;
 } catch {
   // Asset not found — reports generate without logo
 }
@@ -1367,8 +1362,8 @@ const generateDocxBufferFromSummary = async (
                   data: _logoBuffer,
                   type: _logoMimeType === "image/png" ? "png" : "jpg",
                   transformation: {
-                    width: 110,
-                    height: 75, // maintain 67:46 ratio → 60 * 46/67 ≈ 41
+                    width: 150,
+                    height: 123, // maintain 552:452 png ratio → 150 * 452/552 ≈ 123
                   },
                 }),
               ],

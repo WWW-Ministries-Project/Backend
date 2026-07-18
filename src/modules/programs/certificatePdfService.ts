@@ -5,8 +5,8 @@ import { join } from "path";
 // Read and cache all logo assets at module init time (sync)
 const assetDir = join(process.cwd(), "src", "assets");
 
-const mainLogoB64 = `data:image/svg+xml;base64,${readFileSync(
-  join(assetDir, "main-logo.svg")
+const mainLogoB64 = `data:image/png;base64,${readFileSync(
+  join(assetDir, "main-logo.png")
 ).toString("base64")}`;
 
 const hillcityLogoB64 = `data:image/png;base64,${readFileSync(
