@@ -1438,6 +1438,8 @@ model department_positions {
   user_id       Int
   department_id Int
   position_id   Int?
+  start_date    DateTime?
+  end_date      DateTime?
   department    department @relation(fields: [department_id], references: [id])
   position      position?  @relation(fields: [position_id], references: [id])
   user          user       @relation(fields: [user_id], references: [id], onDelete: Cascade)

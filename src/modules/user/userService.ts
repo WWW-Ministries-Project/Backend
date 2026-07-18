@@ -21,6 +21,13 @@ import {
 } from "./workInfoUtils";
 import { resolveBranchIdOrDefault } from "../branches/branchService";
 
+// Optional department/position dates: return a valid Date or null.
+export const parseOptionalDate = (value: unknown): Date | null => {
+  if (value === undefined || value === null || value === "") return null;
+  const parsed = new Date(value as string);
+  return isNaN(parsed.getTime()) ? null : parsed;
+};
+
 type MemberStatusTransitionTarget = "CONFIRMED" | "MEMBER";
 type MemberStatusValue = "UNCONFIRMED" | "CONFIRMED" | "MEMBER" | null;
 type ResolvedMemberStatus = Exclude<MemberStatusValue, null> | "UNKNOWN";
@@ -578,21 +585,20 @@ export class UserService {
 
   private async savedDepartments(
     userId: number,
-    department_positions: { department_id: any; position_id: any }[],
+    department_positions: {
+      department_id: any;
+      position_id: any;
+      start_date?: any;
+      end_date?: any;
+    }[],
   ) {
-    console.log(
-      "Department positions to create:",
-      department_positions.map((dp: any) => ({
-        user_id: userId,
-        department_id: parseInt(dp.department_id),
-        position_id: parseInt(dp.position_id),
-      })),
-    );
     return await prisma.department_positions.createMany({
       data: department_positions.map((dp) => ({
         user_id: userId,
         department_id: Number(dp.department_id),
         position_id: Number(dp.position_id),
+        start_date: parseOptionalDate(dp.start_date),
+        end_date: parseOptionalDate(dp.end_date),
       })),
       skipDuplicates: true,
     });

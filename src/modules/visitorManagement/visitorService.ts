@@ -25,6 +25,8 @@ const MEMBERSHIP_TYPE_VALIDATION_MESSAGE =
   "Membership type must be either ONLINE or IN_HOUSE.";
 const CLERGY_VALIDATION_MESSAGE =
   "If the visitor is clergy, provide the church and church location. Role in the church is optional.";
+const FIRST_NAME_VALIDATION_MESSAGE =
+  "First name is required to register a visitor.";
 
 const normalizeOptionalEmail = (email?: string | null) => {
   const normalizedEmail = String(email || "")
@@ -729,6 +731,10 @@ export class VisitorService {
       membershipWish,
       branch_id,
     } = body;
+    if (!hasTextValue(personal_info?.first_name)) {
+      throw new InputValidationError(FIRST_NAME_VALIDATION_MESSAGE);
+    }
+
     const hasResponsibleMembers = hasOwnProperty(body, "responsibleMembers");
     const responsibleMembers = hasResponsibleMembers
       ? await this.validateResponsibleMemberIds(body.responsibleMembers)
@@ -737,18 +743,24 @@ export class VisitorService {
       defaultToFalse: true,
     });
 
-    const visitDate = new Date(visit.date);
-    const email = contact_info.email;
+    // Only the first name is required. Every other field is optional, so
+    // tolerate missing/blank values instead of failing on NOT NULL/unique
+    // columns (visitDate, lastName) or the unique email constraint.
+    const parsedVisitDate = new Date(visit?.date);
+    const visitDate =
+      visit?.date && !isNaN(parsedVisitDate.getTime())
+        ? parsedVisitDate
+        : new Date();
+    const email = normalizeOptionalEmail(contact_info?.email);
 
+    const eventIdValue = parseInt(visit?.eventId);
     const event_id =
-      isNaN(parseInt(visit.eventId)) || parseInt(visit.eventId) === 0
-        ? null
-        : parseInt(visit.eventId);
+      isNaN(eventIdValue) || eventIdValue === 0 ? null : eventIdValue;
 
-    // Check if the visitor already exists
-    const existingVisitor = await prisma.visitor.findUnique({
-      where: { email },
-    });
+    // Only dedupe by email when one was actually provided.
+    const existingVisitor = email
+      ? await prisma.visitor.findUnique({ where: { email } })
+      : null;
 
     if (existingVisitor) {
       const existingVisit = await prisma.visit.findFirst({
@@ -811,23 +823,24 @@ export class VisitorService {
       };
     }
 
-    // Prepare new visitor data
+    // Prepare new visitor data. firstName is the only required field;
+    // lastName is NOT NULL in the schema so it falls back to an empty string.
     const newVisitorData = {
-      title: personal_info.title,
-      firstName: toSentenceCase(personal_info.first_name),
-      lastName: toSentenceCase(personal_info.last_name),
-      otherName: toSentenceCase(personal_info.other_name),
-      gender: normalizeOptionalText(personal_info.gender),
-      email: contact_info.email.toLowerCase(),
-      phone: contact_info.phone?.number ?? null,
-      country: contact_info.resident_country,
-      country_code: contact_info.phone?.country_code ?? null,
-      address: contact_info.address,
-      city: contact_info.city,
-      state: contact_info.state_region,
+      title: personal_info?.title ?? null,
+      firstName: toSentenceCase(personal_info?.first_name ?? "") ?? "",
+      lastName: toSentenceCase(personal_info?.last_name ?? "") ?? "",
+      otherName: toSentenceCase(personal_info?.other_name ?? "") ?? null,
+      gender: normalizeOptionalText(personal_info?.gender),
+      email,
+      phone: contact_info?.phone?.number ?? null,
+      country: normalizeOptionalText(contact_info?.resident_country),
+      country_code: contact_info?.phone?.country_code ?? null,
+      address: normalizeOptionalText(contact_info?.address),
+      city: normalizeOptionalText(contact_info?.city),
+      state: normalizeOptionalText(contact_info?.state_region),
       zipCode: null,
       visitDate,
-      howHeard: visit.howHeard,
+      howHeard: normalizeOptionalText(visit?.howHeard),
       consentToContact:
         consentToContact === "true" || consentToContact === true,
       membershipWish: membershipWish === "true" || membershipWish === true,

@@ -8,7 +8,7 @@ import {
   hashPassword,
   toCapitalizeEachWord,
 } from "../../utils";
-import { UserService } from "./userService";
+import { UserService, parseOptionalDate } from "./userService";
 import { CourseService } from "../programs/courseService";
 import { LifeCenterService } from "../lifeCenterMangement/lifeCenterService";
 // import { forgetPasswordTemplate } from "../../utils/mail_templates/forgot-password";
@@ -1067,19 +1067,16 @@ async function updateFamilyMembers(family: any[], primaryUser: any) {
 // Helper to update department_positions
 async function updateDepartmentPositions(
   userId: number,
-  department_positions: { department_id: any; position_id: any }[],
+  department_positions: {
+    department_id: any;
+    position_id: any;
+    start_date?: any;
+    end_date?: any;
+  }[],
 ) {
   await prisma.department_positions.deleteMany({
     where: { user_id: userId },
   });
-  console.log(
-    "Department positions to create:",
-    department_positions.map((dp) => ({
-      user_id: userId,
-      department_id: parseInt(dp.department_id),
-      position_id: parseInt(dp.position_id),
-    })),
-  );
   const created = await Promise.all(
     department_positions.map((dp) =>
       prisma.department_positions.create({
@@ -1087,11 +1084,12 @@ async function updateDepartmentPositions(
           user_id: userId,
           department_id: parseInt(dp.department_id),
           position_id: parseInt(dp.position_id),
+          start_date: parseOptionalDate(dp.start_date),
+          end_date: parseOptionalDate(dp.end_date),
         },
       }),
     ),
   );
-  console.log("Inserted department positions:", created);
   return created;
 }
 
@@ -2568,6 +2566,8 @@ export const getUser = async (req: Request, res: Response) => {
         department_name: dp.department?.name ?? null,
         position_id: dp.position?.id ?? null,
         position_name: dp.position?.name ?? null,
+        start_date: dp.start_date ?? null,
+        end_date: dp.end_date ?? null,
       }));
     }
 
