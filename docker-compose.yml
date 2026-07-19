@@ -5,6 +5,9 @@ services:
       dockerfile: Dockerfile
     image: www_backend
     env_file: .env
+    # Give Chromium (PDF report rendering) real shared memory instead of the
+    # 64MB default, which starves it and hangs report generation.
+    shm_size: "1gb"
     deploy:
       restart_policy:
         condition: on-failure

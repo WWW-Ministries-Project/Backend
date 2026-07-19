@@ -1488,20 +1488,44 @@ const generateDocxBufferFromSummary = async (
   }
 };
 
+// Hard cap so a stuck Chromium fails fast with a clear error instead of hanging
+// until the reverse proxy returns a 504.
+const PDF_RENDER_TIMEOUT_MS = Number(process.env.PDF_RENDER_TIMEOUT_MS) || 45_000;
+
 const generatePdfBufferFromHtml = async (html: string): Promise<Buffer> => {
   const browser = await puppeteer.launch({
     headless: true,
     executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-    args: ["--no-sandbox", "--disable-setuid-sandbox"],
+    // --disable-dev-shm-usage: containers default /dev/shm to 64MB, which
+    //   starves Chromium and makes it hang mid-render. Write to /tmp instead.
+    // --disable-gpu / --no-zygote / --single-process: trim resource use on a
+    //   headless, single-shot render in a constrained container.
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-gpu",
+      "--no-zygote",
+      "--single-process",
+    ],
   });
 
   try {
     const page = await browser.newPage();
-    await page.setContent(html, { waitUntil: "networkidle0" });
+    page.setDefaultTimeout(PDF_RENDER_TIMEOUT_MS);
+
+    // The HTML is fully self-contained (logo is an inline data URI, no external
+    // fonts/CSS/scripts), so wait only for the DOM — "networkidle0" would add
+    // needless idle-wait and can stall on stray requests.
+    await page.setContent(html, {
+      waitUntil: "domcontentloaded",
+      timeout: PDF_RENDER_TIMEOUT_MS,
+    });
 
     const pdfBytes = await page.pdf({
       format: "A4",
       printBackground: true,
+      timeout: PDF_RENDER_TIMEOUT_MS,
       margin: {
         top: "16mm",
         right: "12mm",
