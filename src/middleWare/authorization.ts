@@ -22,6 +22,7 @@ const PERMISSION_KEY_ALIASES: Record<string, string[]> = {
   Program: ["Program"],
   School_of_ministry: ["School_of_ministry", "School of ministry", "Program"],
   Financials: ["Financials", "Access_rights", "Access rights"],
+  Pledges: ["Pledges", "Pledge"],
   Settings: ["Settings", "Access_rights", "Access rights"],
   AI: ["AI", "Settings", "Access_rights", "Access rights"],
   Marketplace: ["Marketplace", "Program"],
@@ -1667,6 +1668,25 @@ export class Permissions {
     "Financials",
     "admin",
     "Not authorized to delete financials",
+  );
+
+  // Pledges
+  can_view_pledges = this.checkPermission(
+    "Pledges",
+    "view",
+    "Not authorized to view pledges",
+  );
+
+  can_manage_pledges = this.checkPermission(
+    "Pledges",
+    "manage",
+    "Not authorized to manage pledges",
+  );
+
+  can_delete_pledges = this.checkPermission(
+    "Pledges",
+    "admin",
+    "Not authorized to delete pledges",
   );
 
   // Settings
