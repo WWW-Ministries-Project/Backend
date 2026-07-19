@@ -103,6 +103,10 @@ export const departmentRouter = Router();
  *         description:
  *           type: string
  *           example: Handles all company finances
+ *         status:
+ *           type: string
+ *           enum: [OPEN, CLOSED]
+ *           example: OPEN
  *         created_by:
  *           type: integer
  *           example: 3
@@ -124,6 +128,10 @@ export const departmentRouter = Router();
  *         description:
  *           type: string
  *           example: Oversees company operations
+ *         status:
+ *           type: string
+ *           enum: [OPEN, CLOSED]
+ *           example: CLOSED
  *         updated_by:
  *           type: integer
  *           example: 3

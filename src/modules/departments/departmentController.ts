@@ -172,7 +172,7 @@ const getDepartmentMemberCounts = async () => {
 };
 
 export const createDepartment = async (req: Request, res: Response) => {
-  const { name, department_head, description, created_by, branch_id } = req.body;
+  const { name, department_head, description, created_by, branch_id, status } = req.body;
   departmentSchema.validate(req.body);
   try {
     if (getDepartmentScope(req).mode === "assigned") {
@@ -216,6 +216,7 @@ export const createDepartment = async (req: Request, res: Response) => {
         description,
         created_by,
         branch_id: await resolveBranchIdOrDefault(branch_id),
+        ...(status ? { status } : {}),
       },
     });
 
@@ -230,6 +231,7 @@ export const createDepartment = async (req: Request, res: Response) => {
         name: true,
         description: true,
         branch_id: true,
+        status: true,
         department_head_info: {
           select: {
             id: true,
@@ -255,7 +257,7 @@ export const createDepartment = async (req: Request, res: Response) => {
 };
 
 export const updateDepartment = async (req: Request, res: Response) => {
-  const { id, name, department_head, description, updated_by, branch_id } = req.body;
+  const { id, name, department_head, description, updated_by, branch_id, status } = req.body;
 
   try {
     const departmentId = toPositiveInt(id);
@@ -311,6 +313,7 @@ export const updateDepartment = async (req: Request, res: Response) => {
         branch_id: await resolveBranchIdOrDefault(
           branch_id ?? existingDepartment?.branch_id,
         ),
+        ...(status ? { status } : {}),
         is_sync: false, //setting to to out of sync for cron job to sync to device
       },
       select: {
@@ -318,6 +321,7 @@ export const updateDepartment = async (req: Request, res: Response) => {
         name: true,
         description: true,
         branch_id: true,
+        status: true,
         department_head_info: {
           select: {
             id: true,
@@ -376,6 +380,7 @@ export const deleteDepartment = async (req: Request, res: Response) => {
         name: true,
         description: true,
         branch_id: true,
+        status: true,
         department_head_info: {
           select: {
             id: true,
@@ -422,6 +427,7 @@ export const listDepartments = async (req: Request, res: Response) => {
         description: true,
         branch_id: true,
         department_head: true,
+        status: true,
         department_head_info: {
           select: {
             id: true,
@@ -549,6 +555,7 @@ export const getDepartment = async (req: Request, res: Response) => {
         description: true,
         branch_id: true,
         department_head: true,
+        status: true,
         department_head_info: {
           select: {
             id: true,

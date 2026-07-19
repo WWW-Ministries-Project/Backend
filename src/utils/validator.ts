@@ -47,6 +47,10 @@ export const departmentSchema = Joi.object({
       "string.pattern.base": "Description must contain only alphabets",
       "string.max": "Description must not exceed 250 characters",
     }),
+
+  status: Joi.string().valid("OPEN", "CLOSED").optional().messages({
+    "any.only": "Status must be either OPEN or CLOSED",
+  }),
 });
 
 export const validateSignup = validator(signupSchema);
