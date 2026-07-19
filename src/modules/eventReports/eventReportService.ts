@@ -45,7 +45,7 @@ try {
   // Asset not found — reports generate without logo
 }
 
-type ApprovalWorkflowTx = Prisma.TransactionClient;
+type ApprovalWorkflowTx = Prisma.TransactionClient | typeof prisma;
 
 type DepartmentLinkedUser = {
   department_id: number | null;
@@ -463,7 +463,26 @@ const getDepartmentMembersByDepartmentTx = async (
   tx: ApprovalWorkflowTx,
   validDepartmentIdSet: Set<number>,
 ) => {
+  const validDepartmentIds = Array.from(validDepartmentIdSet);
+  if (!validDepartmentIds.length) {
+    return new Map<number, Map<number, DepartmentMemberInfo>>();
+  }
+
   const users = await tx.user.findMany({
+    // Only load users linked to a valid department (scalar, relation, or
+    // position). Without this filter the query scans the entire user table
+    // inside the report transaction and times out as membership grows.
+    where: {
+      OR: [
+        { department_id: { in: validDepartmentIds } },
+        { department: { department_id: { in: validDepartmentIds } } },
+        {
+          department_positions: {
+            some: { department_id: { in: validDepartmentIds } },
+          },
+        },
+      ],
+    },
     select: {
       id: true,
       name: true,
@@ -1761,12 +1780,13 @@ export const getEventReportDetail = async (
 
   const eventDate = parseEventDateString(query.event_date);
 
-  return runEventReportTransaction(async (tx) => ({
-    data: await buildEventReportDetailDataTx(tx, {
+  // Read-only — run on the shared client, not inside a transaction.
+  return {
+    data: await buildEventReportDetailDataTx(prisma, {
       eventId,
       eventDate,
     }),
-  }));
+  };
 };
 
 export const getEventReportOverview = async (query: {
@@ -1925,12 +1945,12 @@ export const generateServiceSummaryReport = async (
     throw new InputValidationError("format must be either docx or pdf");
   }
 
-  const summaryPayload = await runEventReportTransaction((tx) =>
-    getServiceSummaryPayloadTx(tx, {
-      eventId,
-      eventDate,
-    }),
-  );
+  // Read-only path — run directly on the shared client instead of inside a
+  // transaction so it does not hold a pooled connection for the whole render.
+  const summaryPayload = await getServiceSummaryPayloadTx(prisma, {
+    eventId,
+    eventDate,
+  });
 
   const fileBaseName = `${slugifyFilePart(summaryPayload.event_name)}-${eventDate}-service-summary`;
 
