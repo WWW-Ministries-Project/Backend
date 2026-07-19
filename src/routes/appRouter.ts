@@ -27,6 +27,7 @@ import bankAccountConfigRouter from "../modules/finance/BankAccountConfig/route"
 import paymentConfigRouter from "../modules/finance/PaymentConfig/route";
 import titheBreakdownConfigRouter from "../modules/finance/TitheBreakdownConfig/route";
 import financialsRouter from "../modules/finance/Financials/route";
+import { pledgesModuleRouter } from "../modules/pledges/route";
 import aiRouter from "../modules/ai/aiRoute";
 import notificationRouter from "../modules/notifications/notificationRoute";
 import settingsRouter from "../modules/settings/route";
@@ -64,6 +65,7 @@ appRouter.use("/paymentconfig", paymentConfigRouter);
 appRouter.use("/bankaccountconfig", bankAccountConfigRouter);
 appRouter.use("/tithebreakdownconfig", titheBreakdownConfigRouter);
 appRouter.use("/financials", financialsRouter);
+appRouter.use("/pledges", pledgesModuleRouter);
 appRouter.use("/ai", aiRouter);
 appRouter.use("/notifications", notificationRouter);
 appRouter.use("/settings", settingsRouter);
