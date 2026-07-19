@@ -27,6 +27,18 @@ const DATABASE_UNAVAILABLE_PATTERNS = [
   /server has closed the connection/i,
 ] as const;
 
+// True when an error represents transient database-unreachability (infra blip,
+// restart, network partition) rather than an actionable failure. Accepts either
+// a thrown error or a pre-normalized message string.
+const isDatabaseUnavailableError = (error: unknown): boolean => {
+  if (error instanceof Prisma.PrismaClientInitializationError) {
+    return true;
+  }
+  const message =
+    error instanceof Error ? error.message : String(error ?? "");
+  return DATABASE_UNAVAILABLE_PATTERNS.some((pattern) => pattern.test(message));
+};
+
 type NotificationRow = {
   id: number;
   dedupe_key: string | null;
@@ -1413,6 +1425,16 @@ const notifyAdminsJobFailed = async (args: {
   actionUrl?: string | null;
   dedupeKey?: string | null;
 }) => {
+  // A transient "can't reach database" blip is infrastructure noise, not an
+  // actionable job failure. Paging admins CRITICAL for it cries wolf (and would
+  // itself fail while the DB is down). Log and skip.
+  if (isDatabaseUnavailableError(args.errorMessage)) {
+    console.warn(
+      `[WARN] Skipping admin job failure notification for ${args.jobName}: originating error is database-unavailable: ${args.errorMessage}`,
+    );
+    return;
+  }
+
   try {
     const recipientUserIds = await listSystemFailureRecipientUserIds();
     if (!recipientUserIds.length) {
@@ -1435,12 +1457,9 @@ const notifyAdminsJobFailed = async (args: {
       })),
     );
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error || "");
-    const isDatabaseUnavailable =
-      error instanceof Prisma.PrismaClientInitializationError ||
-      DATABASE_UNAVAILABLE_PATTERNS.some((pattern) => pattern.test(message));
-
-    if (isDatabaseUnavailable) {
+    if (isDatabaseUnavailableError(error)) {
+      const message =
+        error instanceof Error ? error.message : String(error || "");
       console.warn(
         `[WARN] Skipping admin job failure notification for ${args.jobName}: database unavailable: ${message}`,
       );
