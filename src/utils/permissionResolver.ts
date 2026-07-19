@@ -1,5 +1,6 @@
 const PERMISSION_KEY_ALIASES: Record<string, string[]> = {
   Financials: ["Financials", "Finance", "Finances"],
+  Pledges: ["Pledges", "Pledge"],
 };
 
 const ACCESS_LEVEL_RANK: Record<string, number> = {

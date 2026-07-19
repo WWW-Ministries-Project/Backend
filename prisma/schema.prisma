@@ -90,6 +90,9 @@ model user {
   pastor_in_charge_branches branch[]                  @relation("branch_pastor_in_charge")
   department               user_departments?
   user_info                user_info?
+  pledges_created  pledge[]        @relation("pledge_created_by")
+  pledge_callings  pledge_caller[] @relation("pledge_caller_user")
+  pledges          pledger[]       @relation("pledger_user")
 
   @@index([access_level_id], map: "user_access_level_id_fkey")
   @@index([position_id], map: "user_position_id_fkey")
@@ -131,6 +134,7 @@ model branch {
   finance_approval_configs finance_approval_config[]
   availabilities         availability[]
   appointments           appointment[]
+  pledges                pledge[]
 
   @@index([pastor_in_charge_id], map: "branch_pastor_in_charge_id_idx")
 }
@@ -381,6 +385,7 @@ model event_mgt {
   request                   request[]
   event_reports             event_reports[]
   visit                     visit[]
+  pledges                   pledge[]
 
   @@index([event_name_id], map: "event_mgt_event_name_id_fkey")
   @@index([branch_id], map: "event_mgt_branch_id_idx")
@@ -2095,4 +2100,78 @@ enum reminder_status {
   SENT
   FAILED
   CANCELLED
+}
+
+model pledge {
+  id                  Int                 @id @default(autoincrement())
+  branch_id           Int?
+  event_id            Int
+  title               String?
+  target_amount       Decimal?            @db.Decimal(15, 2)
+  deadline            DateTime?
+  created_by_user_id  Int?
+  created_at          DateTime            @default(now())
+  updated_at          DateTime            @updatedAt
+  branch              branch?             @relation(fields: [branch_id], references: [id])
+  event              event_mgt           @relation(fields: [event_id], references: [id])
+  created_by          user?               @relation("pledge_created_by", fields: [created_by_user_id], references: [id])
+  groups              pledge_group[]
+  callers             pledge_caller[]
+
+  @@index([branch_id])
+  @@index([event_id])
+}
+
+model pledge_group {
+  id            Int        @id @default(autoincrement())
+  pledge_id     Int
+  called_amount Decimal    @db.Decimal(15, 2)
+  label         String?
+  pledge        pledge     @relation(fields: [pledge_id], references: [id], onDelete: Cascade)
+  pledgers      pledger[]
+
+  @@index([pledge_id])
+}
+
+model pledge_caller {
+  id          Int     @id @default(autoincrement())
+  pledge_id   Int
+  user_id     Int?
+  guest_name  String?
+  guest_phone String?
+  pledge      pledge  @relation(fields: [pledge_id], references: [id], onDelete: Cascade)
+  user        user?   @relation("pledge_caller_user", fields: [user_id], references: [id])
+
+  @@index([pledge_id])
+  @@index([user_id])
+}
+
+model pledger {
+  id             Int                 @id @default(autoincrement())
+  group_id       Int
+  user_id        Int?
+  guest_name     String?
+  guest_phone    String?
+  pledged_amount Decimal             @db.Decimal(15, 2)
+  group          pledge_group        @relation(fields: [group_id], references: [id], onDelete: Cascade)
+  user           user?               @relation("pledger_user", fields: [user_id], references: [id])
+  redemptions    pledge_redemption[]
+
+  @@index([group_id])
+  @@index([user_id])
+}
+
+model pledge_redemption {
+  id                  Int      @id @default(autoincrement())
+  pledger_id          Int
+  amount              Decimal  @db.Decimal(15, 2)
+  date                DateTime
+  method              String
+  note                String?  @db.Text
+  image_url           String?
+  recorded_by_user_id Int?
+  created_at          DateTime @default(now())
+  pledger             pledger  @relation(fields: [pledger_id], references: [id], onDelete: Cascade)
+
+  @@index([pledger_id])
 }
