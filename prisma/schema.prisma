@@ -89,6 +89,8 @@ model user {
   branch                   branch?                    @relation(fields: [branch_id], references: [id])
   pastor_in_charge_branches branch[]                  @relation("branch_pastor_in_charge")
   department               user_departments?
+  department_join_requests department_join_request[] @relation("JoinRequestUser")
+  decided_join_requests    department_join_request[] @relation("JoinRequestDecider")
   user_info                user_info?
   pledges_created  pledge[]        @relation("pledge_created_by")
   pledge_callings  pledge_caller[] @relation("pledge_caller_user")
@@ -245,6 +247,7 @@ model department {
   is_sync              Boolean?               @default(false)
   sync_id              Int?
   branch_id            Int?
+  status               department_status      @default(OPEN)
   assets               assets[]
   department_head_info user?                  @relation(fields: [department_head], references: [id])
   branch               branch?                @relation(fields: [branch_id], references: [id])
@@ -253,6 +256,7 @@ model department {
   request              request[]
   event_report_department_approvals event_report_department_approvals[]
   user_departments     user_departments[]
+  join_requests        department_join_request[]
 
   @@index([department_head], map: "department_department_head_fkey")
   @@index([branch_id], map: "department_branch_id_idx")
@@ -266,6 +270,28 @@ model user_departments {
   user            user        @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
   @@index([department_id], map: "user_departments_department_id_fkey")
+}
+
+model department_join_request {
+  id             Int                 @id @default(autoincrement())
+  user_id        Int
+  department_id  Int
+  status         join_request_status @default(PENDING)
+  requested_at   DateTime            @default(now())
+  position_id    Int?
+  start_date     DateTime?
+  instructions   String?
+  decline_reason String?
+  decided_by     Int?
+  decided_at     DateTime?
+  branch_id      Int?
+  user           user                @relation("JoinRequestUser", fields: [user_id], references: [id], onDelete: Cascade)
+  decider        user?               @relation("JoinRequestDecider", fields: [decided_by], references: [id])
+  department     department          @relation(fields: [department_id], references: [id])
+
+  @@index([user_id])
+  @@index([department_id])
+  @@index([status])
 }
 
 model position {
@@ -1914,6 +1940,17 @@ enum status_type {
   UNCONFIRMED
   CONFIRMED
   MEMBER
+}
+
+enum department_status {
+  OPEN
+  CLOSED
+}
+
+enum join_request_status {
+  PENDING
+  APPROVED
+  DECLINED
 }
 
 enum attendance_group {

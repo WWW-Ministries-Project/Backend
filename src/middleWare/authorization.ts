@@ -9,6 +9,7 @@ const MANAGE_PERMISSIONS = ["Can_Manage", "Super_Admin"];
 const ADMIN_PERMISSIONS = ["Super_Admin"];
 const PERMISSION_KEY_ALIASES: Record<string, string[]> = {
   Members: ["Members"],
+  Membership_Management: ["Membership_Management", "Membership Management", "Members"],
   Visitors: ["Visitors", "Members"],
   Appointments: ["Appointments", "Members"],
   Departments: ["Departments"],
