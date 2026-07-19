@@ -1,27 +1,9 @@
 import { PrismaClient, Prisma } from "@prisma/client";
-import { promises as fs } from "fs";
-import { uploadLocalFileToS3 } from "../../../utils";
 
 const prisma = new PrismaClient();
 
 export class RedemptionService {
-  async create(
-    body: any,
-    file?: { path: string; originalname?: string; mimetype?: string },
-    actorId?: number,
-  ) {
-    let image_url: string | null = null;
-    if (file?.path) {
-      const uploaded = await uploadLocalFileToS3({
-        filePath: file.path,
-        folder: "www-ministires/pledge-redemptions",
-        originalName: file.originalname,
-        contentType: file.mimetype,
-        baseName: "redemption",
-      });
-      image_url = uploaded.url;
-      await fs.unlink(file.path).catch(() => undefined);
-    }
+  async create(body: any, actorId?: number) {
     return prisma.pledge_redemption.create({
       data: {
         pledger_id: Number(body.pledger_id),
@@ -29,7 +11,7 @@ export class RedemptionService {
         date: new Date(body.date),
         method: body.method,
         note: body.note ?? null,
-        image_url,
+        image_url: body.image_url ?? null,
         recorded_by_user_id: actorId ?? null,
       },
     });

@@ -7,7 +7,7 @@ const service = new RedemptionService();
 export const createRedemption = async (req: Request, res: Response) => {
   try {
     validateRedemptionPayload(req.body);
-    const data = await service.create(req.body, (req as any).file, (req as any).user?.id);
+    const data = await service.create(req.body, (req as any).user?.id);
     return res.status(201).json({ message: "Redemption recorded", data });
   } catch (e) {
     return sendPledgeError(res, e);

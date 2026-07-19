@@ -1,5 +1,4 @@
 import { Router } from "express";
-import multer from "multer";
 import { Permissions } from "../../../middleWare/authorization";
 import {
   createRedemption,
@@ -8,14 +7,13 @@ import {
   deletePledger,
 } from "./controller";
 
-const upload = multer({ dest: "uploads/" });
 const permissions = new Permissions();
 const protect = permissions.protect;
 export const redemptionsRouter = Router();
 
 redemptionsRouter.post(
   "/create-redemption",
-  [protect, upload.single("file"), permissions.can_manage_pledges],
+  [protect, permissions.can_manage_pledges],
   createRedemption,
 );
 redemptionsRouter.delete(
