@@ -1,4 +1,4 @@
-import { promises as fs, readFileSync } from "fs";
+import { promises as fs, readFileSync, existsSync } from "fs";
 import { EventReportStatus, Prisma } from "@prisma/client";
 import {
   AlignmentType,
@@ -21,6 +21,7 @@ import puppeteer from "puppeteer";
 import { resolve, join } from "path";
 import {
   InputValidationError,
+  InternalServerError,
   NotFoundError,
   ResourceDuplicationError,
 } from "../../utils/custom-error-handlers";
@@ -1492,23 +1493,56 @@ const generateDocxBufferFromSummary = async (
 // until the reverse proxy returns a 504.
 const PDF_RENDER_TIMEOUT_MS = Number(process.env.PDF_RENDER_TIMEOUT_MS) || 45_000;
 
+// Resolve the Chromium binary. The Alpine `chromium` package name for the
+// executable has varied (`/usr/bin/chromium` vs `/usr/bin/chromium-browser`),
+// so honor the env override first, then probe known locations, and finally
+// fall back to Puppeteer's bundled binary (used locally on macOS).
+const resolveChromiumExecutablePath = (): string | undefined => {
+  const candidates = [
+    process.env.PUPPETEER_EXECUTABLE_PATH,
+    "/usr/bin/chromium-browser",
+    "/usr/bin/chromium",
+    "/usr/lib/chromium/chromium",
+  ].filter((path): path is string => Boolean(path));
+
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  // Nothing on disk — let Puppeteer use its bundled Chromium (returns undefined).
+  return undefined;
+};
+
 const generatePdfBufferFromHtml = async (html: string): Promise<Buffer> => {
-  const browser = await puppeteer.launch({
-    headless: true,
-    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-    // --disable-dev-shm-usage: containers default /dev/shm to 64MB, which
-    //   starves Chromium and makes it hang mid-render. Write to /tmp instead.
-    // --disable-gpu / --no-zygote / --single-process: trim resource use on a
-    //   headless, single-shot render in a constrained container.
-    args: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage",
-      "--disable-gpu",
-      "--no-zygote",
-      "--single-process",
-    ],
-  });
+  const executablePath = resolveChromiumExecutablePath();
+
+  let browser: Awaited<ReturnType<typeof puppeteer.launch>>;
+  try {
+    browser = await puppeteer.launch({
+      headless: true,
+      executablePath,
+      // --disable-dev-shm-usage: containers default /dev/shm to 64MB, which
+      //   starves Chromium and makes it hang mid-render. Write to /tmp instead.
+      // --disable-gpu: no GPU in a headless container.
+      // (Deliberately NOT using --single-process/--no-zygote: they crash
+      //  Chromium on start on some Alpine builds, surfacing as a 500.)
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-gpu",
+      ],
+    });
+  } catch (error) {
+    // Surface the real cause (missing/incompatible Chromium) instead of an
+    // opaque 500. Logged by the global handler and returned to the client.
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new InternalServerError(
+      `Failed to launch Chromium for PDF generation (executablePath: ${executablePath ?? "bundled"}). ${detail}`,
+    );
+  }
 
   try {
     const page = await browser.newPage();
