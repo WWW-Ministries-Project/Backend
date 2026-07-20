@@ -1,5 +1,5 @@
 import { prisma } from "../../Models/context";
-import { toCapitalizeEachWord, hashPassword, sendEmail } from "../../utils";
+import { hashPassword, sendEmail } from "../../utils";
 import axios from "axios";
 import { applicationLiveTemplate } from "../../utils/mail_templates/applicationLiveTemplate";
 import { InputValidationError } from "../../utils/custom-error-handlers";
@@ -339,9 +339,7 @@ export class UserService {
     // Create user in database
     const user = await prisma.user.create({
       data: {
-        name: toCapitalizeEachWord(
-          `${first_name} ${other_name || ""} ${last_name}`.trim(),
-        ),
+        name: `${first_name} ${other_name || ""} ${last_name}`.trim(),
         email: userEmail,
         password: hashedPassword,
         is_user: isLoginUser,
@@ -433,9 +431,7 @@ export class UserService {
       } else {
         spouseUser = await prisma.user.create({
           data: {
-            name: toCapitalizeEachWord(
-              `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
-            ),
+            name: `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
             email: this.normalizeOptionalEmail(member.email),
             is_user: false,
             is_active: true,
@@ -502,9 +498,7 @@ export class UserService {
         if (!familyUser) {
           familyUser = await prisma.user.create({
             data: {
-              name: toCapitalizeEachWord(
-                `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
-              ),
+              name: `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
               email: this.normalizeOptionalEmail(member.email),
               parent_id: primaryUser.id, // biological / primary
               is_user: false,
@@ -530,9 +524,7 @@ export class UserService {
         // Other family members
         familyUser = await prisma.user.create({
           data: {
-            name: toCapitalizeEachWord(
-              `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
-            ),
+            name: `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
             email: this.normalizeOptionalEmail(member.email),
             is_user: false,
             is_active: true,
@@ -614,9 +606,7 @@ export class UserService {
         try {
           const childUser = await prisma.user.create({
             data: {
-              name: toCapitalizeEachWord(
-                `${child.first_name} ${child.other_name || ""} ${child.last_name}`.trim(),
-              ),
+              name: `${child.first_name} ${child.other_name || ""} ${child.last_name}`.trim(),
               email: this.normalizeOptionalEmail(child.email),
               is_user: false,
               is_active: true,

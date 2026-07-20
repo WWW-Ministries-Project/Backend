@@ -1,6 +1,5 @@
 import { max, sub } from "date-fns";
 import { prisma } from "../../Models/context";
-import { toCapitalizeEachWord } from "../../utils";
 import { notificationService } from "../notifications/notificationService";
 import {
   getBranchScopedWhere,
@@ -275,7 +274,7 @@ export class ProgramService {
       }
 
       const existingProgram = await prisma.program.findFirst({
-        where: { title: toCapitalizeEachWord(data.title) },
+        where: { title: data.title },
       });
 
       // Step 2: Check for existing program with same title
@@ -286,7 +285,7 @@ export class ProgramService {
       // Step 2: Create the program
       const createdProgram = await prisma.program.create({
         data: {
-          title: toCapitalizeEachWord(data.title),
+          title: data.title,
           description: data.description,
           member_required: data.member_required,
           leader_required: data.leader_required,
