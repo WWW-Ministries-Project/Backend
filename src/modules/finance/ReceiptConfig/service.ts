@@ -9,6 +9,7 @@ type ReceiptConfigEntity = {
   id: string;
   name: string;
   description: string | null;
+  branch_id: number | null;
 };
 
 export class ReceiptConfigurationService {
@@ -16,11 +17,13 @@ export class ReceiptConfigurationService {
     id: string;
     name: string;
     description: string | null;
+    branch_id: number | null;
   }): ReceiptConfigEntity {
     return {
       id: config.id,
       name: config.name,
       description: config.description,
+      branch_id: config.branch_id,
     };
   }
 
@@ -44,6 +47,7 @@ export class ReceiptConfigurationService {
         id: true,
         name: true,
         description: true,
+        branch_id: true,
       },
     });
 
@@ -67,6 +71,7 @@ export class ReceiptConfigurationService {
           id: true,
           name: true,
           description: true,
+          branch_id: true,
         },
       }),
     ]);
@@ -114,6 +119,7 @@ export class ReceiptConfigurationService {
         id: true,
         name: true,
         description: true,
+        branch_id: true,
       },
     });
 

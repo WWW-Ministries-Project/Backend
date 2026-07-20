@@ -14,6 +14,7 @@ type BankAccountConfigEntity = {
   name: string;
   description: string | null;
   percentage: number | null;
+  branch_id: number | null;
 };
 
 export class BankAccountConfigurationService {
@@ -44,12 +45,14 @@ export class BankAccountConfigurationService {
     name: string;
     description: string | null;
     percentage: number | null;
+    branch_id: number | null;
   }): BankAccountConfigEntity {
     return {
       id: config.id,
       name: config.name,
       description: config.description,
       percentage: config.percentage,
+      branch_id: config.branch_id,
     };
   }
 
@@ -79,6 +82,7 @@ export class BankAccountConfigurationService {
         name: true,
         description: true,
         percentage: true,
+        branch_id: true,
       },
     });
 
@@ -103,6 +107,7 @@ export class BankAccountConfigurationService {
           name: true,
           description: true,
           percentage: true,
+          branch_id: true,
         },
       }),
     ]);
@@ -159,6 +164,7 @@ export class BankAccountConfigurationService {
         name: true,
         description: true,
         percentage: true,
+        branch_id: true,
       },
     });
 
