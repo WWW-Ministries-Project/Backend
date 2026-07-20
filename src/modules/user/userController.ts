@@ -6,7 +6,6 @@ import {
   sendEmail,
   comparePassword,
   hashPassword,
-  toCapitalizeEachWord,
 } from "../../utils";
 import { UserService, parseOptionalDate } from "./userService";
 import { CourseService } from "../programs/courseService";
@@ -848,9 +847,7 @@ async function updateFamilyMembers(family: any[], primaryUser: any) {
       spouseUser = await prisma.user.update({
         where: { id: Number(member.user_id) },
         data: {
-          name: toCapitalizeEachWord(
-            `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
-          ),
+          name: `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
           ...(hasEmailField
             ? { email: normalizeOptionalEmail(member.email) }
             : {}),
@@ -883,9 +880,7 @@ async function updateFamilyMembers(family: any[], primaryUser: any) {
     } else {
       spouseUser = await prisma.user.create({
         data: {
-          name: toCapitalizeEachWord(
-            `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
-          ),
+          name: `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
           email: normalizeOptionalEmail(member.email),
           is_user: false,
           is_active: true,
@@ -934,9 +929,7 @@ async function updateFamilyMembers(family: any[], primaryUser: any) {
       familyUser = await prisma.user.update({
         where: { id: Number(member.user_id) },
         data: {
-          name: toCapitalizeEachWord(
-            `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
-          ),
+          name: `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
           ...(hasEmailField
             ? { email: normalizeOptionalEmail(member.email) }
             : {}),
@@ -981,9 +974,7 @@ async function updateFamilyMembers(family: any[], primaryUser: any) {
       if (!familyUser) {
         familyUser = await prisma.user.create({
           data: {
-            name: toCapitalizeEachWord(
-              `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
-            ),
+            name: `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
             email: normalizeOptionalEmail(member.email),
             parent_id: primaryUser.id,
             is_user: false,
@@ -1016,9 +1007,7 @@ async function updateFamilyMembers(family: any[], primaryUser: any) {
     } else {
       familyUser = await prisma.user.create({
         data: {
-          name: toCapitalizeEachWord(
-            `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
-          ),
+          name: `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
           email: normalizeOptionalEmail(member.email),
           is_user: false,
           is_active: true,

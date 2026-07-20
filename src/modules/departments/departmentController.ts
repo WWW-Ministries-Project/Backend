@@ -1,6 +1,6 @@
 import { prisma } from "../../Models/context";
 import { Request, Response } from "express";
-import { departmentSchema, toCapitalizeEachWord } from "../../utils";
+import { departmentSchema } from "../../utils";
 import {
   buildRoleEligibilityFailureResponse,
   isRoleEligibilityValidationError,
@@ -199,7 +199,7 @@ export const createDepartment = async (req: Request, res: Response) => {
 
     const existing = await prisma.department.findFirst({
       where: {
-        name: toCapitalizeEachWord(name),
+        name,
       },
     });
     if (existing) {
@@ -211,7 +211,7 @@ export const createDepartment = async (req: Request, res: Response) => {
 
     await prisma.department.create({
       data: {
-        name: toCapitalizeEachWord(name),
+        name,
         department_head,
         description,
         created_by,
@@ -305,7 +305,7 @@ export const updateDepartment = async (req: Request, res: Response) => {
         id: departmentId,
       },
       data: {
-        name: toCapitalizeEachWord(name),
+        name,
         department_head,
         description,
         updated_by,

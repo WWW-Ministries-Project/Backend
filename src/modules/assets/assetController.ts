@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import { assetSchema, toCapitalizeEachWord } from "../../utils";
+import { assetSchema } from "../../utils";
 import { prisma } from "../../Models/context";
 import {
   getBranchScopedWhere,
@@ -42,7 +42,7 @@ export const createAsset = async (req: any, res: any) => {
 
     const asset = await prisma.assets.create({
       data: {
-        name: toCapitalizeEachWord(name),
+        name,
         department_assigned: departmentId,
         date_purchased: date_purchased ? new Date(date_purchased) : undefined,
         description,
@@ -105,7 +105,7 @@ export const updateAsset = async (req: any, res: Response) => {
         id,
       },
       data: {
-        name: name ? toCapitalizeEachWord(name) : existing.name,
+        name: name ? name : existing.name,
         department_assigned: department_assigned
           ? Number(department_assigned)
           : existing.department_assigned,

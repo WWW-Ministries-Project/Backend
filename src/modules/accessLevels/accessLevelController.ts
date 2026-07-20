@@ -1,6 +1,5 @@
 import { prisma } from "../../Models/context";
 import { Request, Response } from "express";
-import { toCapitalizeEachWord } from "../../utils";
 
 const ALLOWED_PERMISSION_VALUES = new Set([
   "Can_View",
@@ -430,7 +429,7 @@ export const createAccessLevel = async (req: Request, res: Response) => {
 
     const response = await prisma.access_level.create({
       data: {
-        name: toCapitalizeEachWord(name),
+        name,
         description,
         created_by,
         permissions: JSON.stringify(normalizedPermissions),
@@ -544,7 +543,7 @@ export const updateAccessLevel = async (req: Request, res: Response) => {
         id: Number(id),
       },
       data: {
-        name: name ? toCapitalizeEachWord(name) : undefined,
+        name: name ? name : undefined,
         description,
         created_by,
         permissions: permissionsForUpdate,

@@ -1,6 +1,5 @@
 import { prisma } from "../../Models/context";
 import { Request, Response } from "express";
-import { toCapitalizeEachWord } from "../../utils";
 import { getRelationBranchScopedWhere } from "../branches/branchService";
 
 export const createPosition = async (req: Request, res: Response) => {
@@ -16,7 +15,7 @@ export const createPosition = async (req: Request, res: Response) => {
     const existing = await prisma.position.findFirst({
       where: {
         AND: [
-          { name: toCapitalizeEachWord(name) },
+          { name },
           { department_id: department_id },
         ],
       },
@@ -29,7 +28,7 @@ export const createPosition = async (req: Request, res: Response) => {
     }
     await prisma.position.create({
       data: {
-        name: toCapitalizeEachWord(name),
+        name,
         department_id: department_id != null ? Number(department_id) : department_id,
         description,
         created_by: Number(actorId),
@@ -87,7 +86,7 @@ export const updatePosition = async (req: Request, res: Response) => {
         id: Number(id),
       },
       data: {
-        name: toCapitalizeEachWord(name),
+        name,
         department_id: department_id != null ? Number(department_id) : department_id,
         description,
         is_sync: false, //setting to to out of sync for cron job to sync to device
