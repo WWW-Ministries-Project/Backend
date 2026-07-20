@@ -1,9 +1,12 @@
 import { prisma } from "../../Models/context";
 import { Request, Response } from "express";
-import { getRelationBranchScopedWhere } from "../branches/branchService";
+import {
+  getBranchScopedWhere,
+  resolveBranchIdOrDefault,
+} from "../branches/branchService";
 
 export const createPosition = async (req: Request, res: Response) => {
-  const { name, department_id, description, created_by } = req.body;
+  const { name, department_id, description, created_by, branch_id } = req.body;
   const actorId = (req as any).user?.id ?? created_by;
   try {
     if (!name || name.trim() === "") {
@@ -26,11 +29,13 @@ export const createPosition = async (req: Request, res: Response) => {
         data: null,
       });
     }
+    const resolvedBranchId = await resolveBranchIdOrDefault(branch_id);
     await prisma.position.create({
       data: {
         name,
         department_id: department_id != null ? Number(department_id) : department_id,
         description,
+        branch_id: resolvedBranchId,
         created_by: Number(actorId),
       },
       include: {
@@ -47,10 +52,7 @@ export const createPosition = async (req: Request, res: Response) => {
       },
     });
     const data = await prisma.position.findMany({
-      where: getRelationBranchScopedWhere(
-        req.query?.branch_id ?? req.body?.branch_id,
-        "department",
-      ),
+      where: getBranchScopedWhere(req.query?.branch_id ?? req.body?.branch_id),
       orderBy: {
         name: "asc",
       },
@@ -58,6 +60,7 @@ export const createPosition = async (req: Request, res: Response) => {
         id: true,
         name: true,
         description: true,
+        branch_id: true,
         department: {
           select: {
             id: true,
@@ -77,7 +80,7 @@ export const createPosition = async (req: Request, res: Response) => {
 };
 
 export const updatePosition = async (req: Request, res: Response) => {
-  const { id, name, department_id, description, updated_by } = req.body;
+  const { id, name, department_id, description, updated_by, branch_id } = req.body;
   const actorId = (req as any).user?.id ?? updated_by;
 
   try {
@@ -89,6 +92,9 @@ export const updatePosition = async (req: Request, res: Response) => {
         name,
         department_id: department_id != null ? Number(department_id) : department_id,
         description,
+        ...(branch_id !== undefined
+          ? { branch_id: await resolveBranchIdOrDefault(branch_id) }
+          : {}),
         is_sync: false, //setting to to out of sync for cron job to sync to device
         updated_by: actorId != null ? Number(actorId) : actorId,
         updated_at: new Date(),
@@ -97,6 +103,7 @@ export const updatePosition = async (req: Request, res: Response) => {
         id: true,
         name: true,
         description: true,
+        branch_id: true,
         department: {
           select: {
             id: true,
@@ -131,7 +138,7 @@ export const deletePosition = async (req: Request, res: Response) => {
       },
     });
     const data = await prisma.position.findMany({
-      where: getRelationBranchScopedWhere(req.query?.branch_id, "department"),
+      where: getBranchScopedWhere(req.query?.branch_id),
       orderBy: {
         id: "desc",
       },
@@ -139,6 +146,7 @@ export const deletePosition = async (req: Request, res: Response) => {
         id: true,
         name: true,
         description: true,
+        branch_id: true,
         department: {
           select: {
             id: true,
@@ -160,7 +168,7 @@ export const deletePosition = async (req: Request, res: Response) => {
 export const listPositions = async (req: Request, res: Response) => {
   try {
     const response = await prisma.position.findMany({
-      where: getRelationBranchScopedWhere(req.query?.branch_id, "department"),
+      where: getBranchScopedWhere(req.query?.branch_id),
       orderBy: {
         name: "asc",
       },
@@ -168,6 +176,7 @@ export const listPositions = async (req: Request, res: Response) => {
         id: true,
         name: true,
         description: true,
+        branch_id: true,
         department: {
           select: {
             id: true,
@@ -190,7 +199,7 @@ export const listPositions = async (req: Request, res: Response) => {
 export const listPositionsLight = async (req: Request, res: Response) => {
   try {
     const response = await prisma.position.findMany({
-      where: getRelationBranchScopedWhere(req.query?.branch_id, "department"),
+      where: getBranchScopedWhere(req.query?.branch_id),
       orderBy: {
         name: "asc",
       },
@@ -198,6 +207,7 @@ export const listPositionsLight = async (req: Request, res: Response) => {
         id: true,
         name: true,
         description: true,
+        branch_id: true,
         department: {
           select: {
             id: true,
@@ -239,6 +249,7 @@ export const getPosition = async (req: Request, res: Response) => {
         id: true,
         name: true,
         description: true,
+        branch_id: true,
         department: {
           select: {
             id: true,

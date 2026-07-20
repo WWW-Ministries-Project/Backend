@@ -137,6 +137,7 @@ model branch {
   availabilities         availability[]
   appointments           appointment[]
   pledges                pledge[]
+  positions              position[]
 
   @@index([pastor_in_charge_id], map: "branch_pastor_in_charge_id_idx")
 }
@@ -299,6 +300,7 @@ model position {
   name                 String
   department_id        Int?
   description          String?
+  branch_id            Int?
   created_by           Int
   created_at           DateTime               @default(now())
   updated_by           Int?
@@ -307,10 +309,12 @@ model position {
   sync_id              Int?
   department_positions department_positions[]
   department           department?            @relation(fields: [department_id], references: [id])
+  branch               branch?                @relation(fields: [branch_id], references: [id])
   eligibility_rules    position_eligibility_rules[]
   user                 user[]
 
   @@index([department_id], map: "position_department_id_fkey")
+  @@index([branch_id], map: "position_branch_id_idx")
 }
 
 model access_level {
