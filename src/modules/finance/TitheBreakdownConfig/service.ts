@@ -14,6 +14,7 @@ type TitheBreakdownConfigEntity = {
   name: string;
   description: string | null;
   percentage: number | null;
+  branch_id: number | null;
 };
 
 export class TitheBreakdownConfigurationService {
@@ -44,12 +45,14 @@ export class TitheBreakdownConfigurationService {
     name: string;
     description: string | null;
     percentage: number | null;
+    branch_id: number | null;
   }): TitheBreakdownConfigEntity {
     return {
       id: config.id,
       name: config.name,
       description: config.description,
       percentage: config.percentage,
+      branch_id: config.branch_id,
     };
   }
 
@@ -82,6 +85,7 @@ export class TitheBreakdownConfigurationService {
         name: true,
         description: true,
         percentage: true,
+        branch_id: true,
       },
     });
 
@@ -106,6 +110,7 @@ export class TitheBreakdownConfigurationService {
           name: true,
           description: true,
           percentage: true,
+          branch_id: true,
         },
       }),
     ]);
@@ -165,6 +170,7 @@ export class TitheBreakdownConfigurationService {
         name: true,
         description: true,
         percentage: true,
+        branch_id: true,
       },
     });
 
