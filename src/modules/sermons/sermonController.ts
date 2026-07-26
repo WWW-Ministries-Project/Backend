@@ -70,8 +70,18 @@ export class sermonController {
       const branchId = req.query?.branch_id ?? null;
       const skip = toPositiveInt(req.query?.skip) ?? 0;
       const take = toPositiveInt(req.query?.take) ?? 20;
+      const statusParam = String(req.query?.status ?? "").toUpperCase();
+      const status =
+        statusParam === "PUBLISHED" || statusParam === "DRAFT"
+          ? (statusParam as "PUBLISHED" | "DRAFT")
+          : undefined;
 
-      const result = await sermonService.listSermonSeries(branchId, skip, take);
+      const result = await sermonService.listSermonSeries(
+        branchId,
+        skip,
+        take,
+        status,
+      );
 
       return res.status(200).json({ message: "Sermon series", ...result });
     } catch (error) {
@@ -89,7 +99,8 @@ export class sermonController {
         return res.status(400).json({ message: "Invalid id", data: null });
       }
 
-      const series = await sermonService.getSermonSeries(id);
+      const publishedOnly = String(req.query?.published_only ?? "") === "true";
+      const series = await sermonService.getSermonSeries(id, publishedOnly);
       if (!series) {
         return res
           .status(404)
