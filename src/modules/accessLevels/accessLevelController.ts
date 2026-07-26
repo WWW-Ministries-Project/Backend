@@ -30,6 +30,8 @@ const OPTIONAL_PERMISSION_KEYS = [
   "Marketplace",
   "School_of_ministry",
   "Settings",
+  "Announcements",
+  "Sermons",
 ];
 
 const ALLOWED_SCOPE_VALUES = new Set(["assigned_departments"]);
@@ -58,6 +60,10 @@ const PERMISSION_KEY_NORMALIZER: Record<string, string> = {
   School_of_ministry: "School_of_ministry",
   "School of ministry": "School_of_ministry",
   Settings: "Settings",
+  Announcements: "Announcements",
+  Announcement: "Announcements",
+  Sermons: "Sermons",
+  Sermon: "Sermons",
 };
 
 const ALLOWED_PERMISSION_KEYS = [
