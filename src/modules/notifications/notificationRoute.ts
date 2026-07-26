@@ -62,6 +62,18 @@ notificationRouter.post(
   notificationController.unsubscribePush,
 );
 
+notificationRouter.post(
+  "/device/register",
+  [permissions.protect, notificationPushRateLimiter],
+  notificationController.registerDevice,
+);
+
+notificationRouter.post(
+  "/device/unregister",
+  [permissions.protect, notificationPushRateLimiter],
+  notificationController.unregisterDevice,
+);
+
 notificationRouter.get(
   "/",
   [permissions.protect],
