@@ -29,6 +29,7 @@ const PERMISSION_KEY_ALIASES: Record<string, string[]> = {
   Marketplace: ["Marketplace", "Program"],
   "Life Center": ["Life Center"],
   Announcements: ["Announcements"],
+  Sermons: ["Sermons"],
 };
 
 const parsePermissionsObject = (permissions: any): Record<string, any> => {
@@ -1637,6 +1638,25 @@ export class Permissions {
     "Announcements",
     "admin",
     "Not authorized to delete announcements",
+  );
+
+  // Sermons
+  can_view_sermons = this.checkPermission(
+    "Sermons",
+    "view",
+    "Not authorized to view sermons",
+  );
+
+  can_manage_sermons = this.checkPermission(
+    "Sermons",
+    "manage",
+    "Not authorized to manage sermons",
+  );
+
+  can_delete_sermons = this.checkPermission(
+    "Sermons",
+    "admin",
+    "Not authorized to delete sermons",
   );
 
   // Church attendance
