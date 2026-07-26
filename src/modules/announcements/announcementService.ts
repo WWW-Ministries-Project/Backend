@@ -304,7 +304,7 @@ const publishAnnouncement = async (id: number, actorUserId?: number) => {
 const listForUser = async (userId: number, skip = 0, take = 20) => {
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { id: true, is_user: true, position_id: true },
+    select: { id: true, is_user: true, position_id: true, branch_id: true },
   });
 
   if (!user) {
@@ -353,9 +353,13 @@ const listForUser = async (userId: number, skip = 0, take = 20) => {
     });
   }
 
+  // Only show announcements from the user's branch or global (unscoped) ones.
+  const branchFilter: Prisma.announcementWhereInput = {
+    OR: [{ branch_id: user.branch_id }, { branch_id: null }],
+  };
+
   const where: Prisma.announcementWhereInput = {
-    status: "PUBLISHED",
-    OR: or,
+    AND: [{ status: "PUBLISHED" }, { OR: or }, branchFilter],
   };
 
   const [data, total] = await prisma.$transaction([
