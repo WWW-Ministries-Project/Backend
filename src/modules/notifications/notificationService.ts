@@ -15,6 +15,7 @@ import {
   type NotificationPreferenceChannelAvailability,
 } from "./notificationPreferenceCatalog";
 import { notificationPushService } from "./notificationPushService";
+import { notificationDeviceService } from "./notificationDeviceService";
 import { notificationSmsService } from "./notificationSmsService";
 
 export type NotificationPriority = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
@@ -1079,6 +1080,34 @@ const createInAppNotification = async (
       }
     } catch (error) {
       notificationDeliveryFailureCounter.labels("push", trimmedType).inc();
+    }
+  });
+
+  enqueueNotificationDelivery(async () => {
+    try {
+      const expoDelivery = await notificationDeviceService.deliverExpoPush(
+        {
+          id: payload.id,
+          type: payload.type,
+          title: payload.title,
+          body: payload.body,
+          actionUrl: payload.actionUrl,
+          entityType: payload.entityType,
+          entityId: payload.entityId,
+          priority: payload.priority,
+        },
+        Number(payload.recipientUserId),
+      );
+
+      if (expoDelivery.failed > 0) {
+        notificationDeliveryFailureCounter
+          .labels("expo_push", trimmedType)
+          .inc(expoDelivery.failed);
+      }
+    } catch (error) {
+      notificationDeliveryFailureCounter
+        .labels("expo_push", trimmedType)
+        .inc();
     }
   });
 

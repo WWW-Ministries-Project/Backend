@@ -53,6 +53,7 @@ model user {
   notification_preferences notification_preference[]
   push_subscriptions       notification_push_subscription[]
   push_delivery_jobs       notification_push_delivery_job[] @relation("notification_push_delivery_user")
+  device_tokens            notification_device_token[]
   sms_delivery_jobs        notification_sms_delivery_job[]  @relation("notification_sms_delivery_user")
   system_failure_notification_settings system_notification_settings[] @relation("system_failure_notification_recipient")
   system_failure_notification_settings_updates system_notification_settings[] @relation("system_failure_notification_updated_by")
@@ -1082,6 +1083,25 @@ model notification_push_delivery_job {
   @@index([notification_id], map: "notification_push_delivery_jobs_notification_idx")
   @@index([user_id], map: "notification_push_delivery_jobs_user_idx")
   @@map("notification_push_delivery_jobs")
+}
+
+model notification_device_token {
+  id                 String    @id @default(uuid())
+  user_id            Int
+  token              String    @unique @db.VarChar(512)
+  platform           String    @db.VarChar(32)
+  device_id          String?   @db.VarChar(191)
+  is_active          Boolean   @default(true)
+  last_seen_at       DateTime  @default(now())
+  last_error_code    String?   @db.VarChar(64)
+  last_error_message String?   @db.VarChar(1024)
+  last_error_at      DateTime?
+  created_at         DateTime  @default(now())
+  updated_at         DateTime  @default(now()) @updatedAt
+  user               user      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id, is_active], map: "notification_device_tokens_user_active_idx")
+  @@map("notification_device_tokens")
 }
 
 model notification_sms_delivery_job {
