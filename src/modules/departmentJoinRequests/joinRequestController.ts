@@ -3,6 +3,11 @@ import { prisma } from "../../Models/context";
 import { getBranchScopedWhere } from "../branches/branchService";
 import { userHasMinimumDomainAccess } from "../../utils/permissionResolver";
 import { notificationService } from "../notifications/notificationService";
+import {
+  buildRoleEligibilityFailureResponse,
+  isRoleEligibilityValidationError,
+  roleEligibilityService,
+} from "../settings/roleEligibilityService";
 
 const APPROVER_DOMAIN = "Membership_Management";
 
@@ -189,6 +194,8 @@ export const createJoinRequest = async (req: Request, res: Response) => {
       });
     }
 
+    await roleEligibilityService.assertEligible("ministry_worker", userId);
+
     const requester = await prisma.user.findUnique({
       where: { id: userId },
       select: { name: true },
@@ -233,7 +240,13 @@ export const createJoinRequest = async (req: Request, res: Response) => {
         "Your request has been submitted to the Head of Department for review.",
       data: { id: joinRequest.id },
     });
-  } catch (error) {
+  } catch (error: any) {
+    if (isRoleEligibilityValidationError(error)) {
+      return res
+        .status(error.statusCode)
+        .json(buildRoleEligibilityFailureResponse(error));
+    }
+
     return res
       .status(503)
       .json({ message: "Failed to submit join request", data: error });
