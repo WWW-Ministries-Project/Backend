@@ -291,7 +291,7 @@ const publishAnnouncement = async (id: number, actorUserId?: number) => {
           actorUserId && actorUserId > 0 ? actorUserId : published.created_by,
         entityType: "ANNOUNCEMENT",
         entityId: String(published.id),
-        actionUrl: "/announcements",
+        actionUrl: "/member/announcements",
         priority: "MEDIUM",
         dedupeKey: `announcement:${published.id}:recipient:${recipientUserId}`,
       })),
