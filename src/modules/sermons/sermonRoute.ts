@@ -10,8 +10,10 @@ dotenv.config();
 
 const router = Router();
 
-router.get("/", [protect, permissions.can_view_sermons], controller.list);
-router.get("/:id", [protect, permissions.can_view_sermons], controller.getOne);
+// Open to any authenticated member: viewing published sermons requires no
+// Sermons permission. Management routes below stay permission-gated.
+router.get("/", [protect], controller.list);
+router.get("/:id", [protect], controller.getOne);
 
 router.post("/", [protect, permissions.can_manage_sermons], controller.create);
 router.put("/:id", [protect, permissions.can_manage_sermons], controller.update);

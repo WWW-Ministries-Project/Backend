@@ -139,9 +139,15 @@ const createSermonSeries = async (input: CreateSermonSeriesInput) => {
   });
 };
 
-const listSermonSeries = async (branchId: unknown, skip = 0, take = 20) => {
+const listSermonSeries = async (
+  branchId: unknown,
+  skip = 0,
+  take = 20,
+  status?: "DRAFT" | "PUBLISHED",
+) => {
   const where: Prisma.sermon_seriesWhereInput = {
     ...(getBranchScopedWhere(branchId) ?? {}),
+    ...(status ? { status } : {}),
   };
 
   const [data, total] = await prisma.$transaction([
@@ -158,11 +164,15 @@ const listSermonSeries = async (branchId: unknown, skip = 0, take = 20) => {
   return { data, total };
 };
 
-const getSermonSeries = async (id: number) =>
-  prisma.sermon_series.findUnique({
+const getSermonSeries = async (id: number, publishedOnly = false) => {
+  const series = await prisma.sermon_series.findUnique({
     where: { id },
     include: sermonSeriesInclude,
   });
+  // Members request published-only detail; a draft is invisible to them (404).
+  if (publishedOnly && series?.status !== "PUBLISHED") return null;
+  return series;
+};
 
 const deleteSermonSeries = async (id: number) =>
   prisma.sermon_series.delete({ where: { id } });
