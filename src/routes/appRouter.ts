@@ -14,6 +14,7 @@ import {
   userRouter,
 } from "../modules";
 import programRouter from "../modules/programs/programRoute";
+import announcementRouter from "../modules/announcements/announcementRoute";
 import visitorRouter from "../modules/visitorManagement/visitorRoute";
 import lifeCenterRouter from "../modules/lifeCenterMangement/lifeCenterRoute";
 import deviceRouter from "../modules/devices/devicesRoute";
@@ -51,6 +52,7 @@ appRouter.use("/access", accessRouter);
 appRouter.use("/upload", uploadRouter);
 appRouter.use("/assets", assetRouter);
 appRouter.use("/event", eventRouter);
+appRouter.use("/announcements", announcementRouter);
 appRouter.use("/event-reports", eventReportRouter);
 appRouter.use("/requisitions", requisitionRouter);
 appRouter.use("/program", programRouter);

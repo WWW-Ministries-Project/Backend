@@ -28,6 +28,7 @@ const PERMISSION_KEY_ALIASES: Record<string, string[]> = {
   AI: ["AI", "Settings", "Access_rights", "Access rights"],
   Marketplace: ["Marketplace", "Program"],
   "Life Center": ["Life Center"],
+  Announcements: ["Announcements"],
 };
 
 const parsePermissionsObject = (permissions: any): Record<string, any> => {
@@ -1617,6 +1618,25 @@ export class Permissions {
     "Events",
     "admin",
     "Not authorized to delete events",
+  );
+
+  // Announcements
+  can_view_announcements = this.checkPermission(
+    "Announcements",
+    "view",
+    "Not authorized to view announcements",
+  );
+
+  can_manage_announcements = this.checkPermission(
+    "Announcements",
+    "manage",
+    "Not authorized to manage announcements",
+  );
+
+  can_delete_announcements = this.checkPermission(
+    "Announcements",
+    "admin",
+    "Not authorized to delete announcements",
   );
 
   // Church attendance
