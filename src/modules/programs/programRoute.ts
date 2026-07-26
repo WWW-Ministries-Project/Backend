@@ -105,12 +105,12 @@ programRouter.get("/certificate", [protect], enrollmentController.getCertificate
 programRouter.get("/certificate/pdf", [protect], enrollmentController.getCertificatePdf);
 programRouter.post(
   "/enroll",
-  [protect, permissions.can_manage_programs_or_facilitator],
+  [protect, permissions.can_enroll_self_or_manage],
   enrollmentController.enrollUser,
 );
 programRouter.post(
   "/unenroll",
-  [protect, permissions.can_manage_programs_or_facilitator],
+  [protect, permissions.can_enroll_self_or_manage],
   enrollmentController.unEnrollUser,
 );
 programRouter.get(

@@ -1375,6 +1375,43 @@ export class Permissions {
     return next();
   };
 
+  // Members may enroll/unenroll themselves without any school-of-ministry
+  // manage permission; acting on another user's enrollment still requires the
+  // manage permission (or facilitator role).
+  can_enroll_self_or_manage = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    const errorMessage = "Not authorized to manage school of ministry data";
+    const context = await this.getAccessContext(req, res, errorMessage);
+    if (!context) return;
+
+    const canManageAll =
+      context.isPrivilegedUser &&
+      (hasActionPermission(context.permissions, "School_of_ministry", "manage") ||
+        hasActionPermission(context.permissions, "Program", "manage"));
+    const isFacilitator = Boolean((req as any).user?.instructor);
+
+    if (!(req as any).body || typeof (req as any).body !== "object") {
+      (req as any).body = {};
+    }
+
+    const payloadUserId = toPositiveInt((req as any).body?.user_id);
+    if (!payloadUserId) {
+      // Default to the authenticated member enrolling themselves.
+      (req as any).body.user_id = context.userId;
+    } else if (
+      payloadUserId !== context.userId &&
+      !canManageAll &&
+      !isFacilitator
+    ) {
+      return this.unauthorized(res, errorMessage);
+    }
+
+    return next();
+  };
+
   can_create_order_scoped = async (
     req: Request,
     res: Response,
