@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import { InputValidationError } from "../../utils/custom-error-handlers";
 import { notificationService } from "./notificationService";
 import { notificationPushService } from "./notificationPushService";
+import { notificationDeviceService } from "./notificationDeviceService";
 import { issueNotificationStreamToken } from "./notificationStreamAuth";
 
 const getAuthenticatedUserId = (req: Request): number => {
@@ -156,6 +157,48 @@ export class NotificationController {
 
     res.status(200).json({
       message: "Push subscription removed",
+      data,
+    });
+  }
+
+  async registerDevice(req: Request, res: Response) {
+    const userId = getAuthenticatedUserId(req);
+    const token = String(req.body?.token || "").trim();
+    if (!token) {
+      throw new InputValidationError("token is required");
+    }
+
+    const platform = String(req.body?.platform || "").trim() || undefined;
+    const deviceId =
+      String(req.body?.deviceId ?? req.body?.device_id ?? "").trim() ||
+      undefined;
+
+    const data = await notificationDeviceService.registerDeviceToken(userId, {
+      token,
+      platform,
+      deviceId,
+    });
+
+    res.status(200).json({
+      message: "Device token registered",
+      data,
+    });
+  }
+
+  async unregisterDevice(req: Request, res: Response) {
+    const userId = getAuthenticatedUserId(req);
+    const token = String(req.body?.token || "").trim();
+    if (!token) {
+      throw new InputValidationError("token is required");
+    }
+
+    const data = await notificationDeviceService.unregisterDeviceToken(
+      userId,
+      token,
+    );
+
+    res.status(200).json({
+      message: "Device token removed",
       data,
     });
   }
