@@ -23,6 +23,17 @@ const PERMISSION_KEY_ALIASES: Record<string, string[]> = {
   Program: ["Program"],
   School_of_ministry: ["School_of_ministry", "School of ministry", "Program"],
   Financials: ["Financials", "Access_rights", "Access rights"],
+  // Giving was added after access levels were already saved, so it falls back to
+  // Financials for anyone whose stored permissions predate the domain. An access
+  // level that sets Giving explicitly always wins, since its own key comes first.
+  Giving: [
+    "Giving",
+    "Giving_Options",
+    "Giving Options",
+    "Financials",
+    "Access_rights",
+    "Access rights",
+  ],
   Pledges: ["Pledges", "Pledge"],
   Settings: ["Settings", "Access_rights", "Access rights"],
   AI: ["AI", "Settings", "Access_rights", "Access rights"],
@@ -1657,6 +1668,25 @@ export class Permissions {
     "Sermons",
     "admin",
     "Not authorized to delete sermons",
+  );
+
+  // Giving options
+  can_view_giving = this.checkPermission(
+    "Giving",
+    "view",
+    "Not authorized to view giving options",
+  );
+
+  can_manage_giving = this.checkPermission(
+    "Giving",
+    "manage",
+    "Not authorized to manage giving options",
+  );
+
+  can_delete_giving = this.checkPermission(
+    "Giving",
+    "admin",
+    "Not authorized to delete giving options",
   );
 
   // Church attendance
