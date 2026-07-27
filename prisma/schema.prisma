@@ -134,6 +134,7 @@ model branch {
   receipt_configs        receiptConfig[]
   payment_configs        paymentConfig[]
   bank_account_configs   bankAccountConfig[]
+  giving_options         givingOption[]
   tithe_breakdown_configs titheBreakdownConfig[]
   financials             financials[]
   finance_approval_configs finance_approval_config[]
@@ -1728,6 +1729,37 @@ model bankAccountConfig {
   updatedAt   DateTime @updatedAt
 
   @@index([branch_id], map: "bank_account_config_branch_id_idx")
+}
+
+model givingOption {
+  id                 String    @id @default(cuid())
+  name               String
+  description        String?   @db.Text
+  currency           String    @default("GHS")
+  // "ghipss" for bank accounts, "mobile_money" for momo wallets
+  account_type       String    @default("ghipss")
+  // Paystack bank/provider code, plus the human label kept for display
+  settlement_bank    String
+  bank_name          String
+  account_number     String
+  account_name       String
+  // Paystack subaccount that payments for this option are routed to
+  subaccount_code    String?   @unique
+  // Routing, not splitting: the subaccount receives the full amount
+  percentage_charge  Float     @default(100)
+  bearer             String    @default("subaccount")
+  is_active          Boolean   @default(true)
+  archived_at        DateTime?
+  // Null whenever local state and Paystack are known to have drifted
+  paystack_synced_at DateTime?
+  branch_id          Int?
+  branch             branch?   @relation(fields: [branch_id], references: [id])
+  created_by         Int?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@index([branch_id], map: "giving_option_branch_id_idx")
+  @@index([branch_id, name], map: "giving_option_branch_id_name_idx")
 }
 
 model titheBreakdownConfig {
