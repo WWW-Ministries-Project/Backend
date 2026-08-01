@@ -22,6 +22,18 @@ const formatChannel = (channel?: string | null): string | null => {
   return channel.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 };
 
+/**
+ * Receipts are read in Ghana, so they are rendered in Accra time regardless of
+ * where the server runs. A bare toLocaleString() would use the server's zone,
+ * which can disagree with both the donor's experience and the transaction record.
+ */
+const formatReceiptDate = (paidAt?: Date | null): string =>
+  (paidAt ?? new Date()).toLocaleString("en-GH", {
+    timeZone: "Africa/Accra",
+    dateStyle: "long",
+    timeStyle: "short",
+  });
+
 export const givingReceiptTemplate = (details: GivingReceiptDetails): string => {
   const channel = formatChannel(details.channel);
 
@@ -30,7 +42,7 @@ export const givingReceiptTemplate = (details: GivingReceiptDetails): string => 
     ["Amount", formatAmount(details.amount_minor_units, details.currency)],
     ["Reference", details.reference],
     ...(channel ? [["Payment method", channel] as [string, string]] : []),
-    ["Date", (details.paid_at ?? new Date()).toLocaleString()],
+    ["Date", formatReceiptDate(details.paid_at)],
   ];
 
   const messageHtml = `
