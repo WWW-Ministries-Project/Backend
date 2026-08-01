@@ -46,11 +46,12 @@ app.use(cors());
 app.use(
   express.json({
     limit: "25mb",
-    // Paystack signs the raw bytes of its webhook body. Keep a copy before the
-    // body is parsed - re-serialising the parsed object does not reproduce the
-    // same digest. Preferred over mounting express.raw on the webhook path
-    // because it does not depend on router mount order.
+    // Paystack signs the raw bytes of its webhook body, and a re-serialised
+    // body does not reproduce the same digest. Retain the buffer only for the
+    // webhook path - keeping it for every request across the API would pin up
+    // to 25mb per in-flight request for no benefit.
     verify: (req, _res, buf) => {
+      if (!req.url?.startsWith("/givingoption/paystack-webhook")) return;
       (req as unknown as { rawBody?: Buffer }).rawBody = buf;
     },
   }),
