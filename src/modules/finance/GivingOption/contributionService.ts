@@ -8,6 +8,7 @@ import {
 } from "../../../libs/paystack/paystackTransaction";
 import { sendEmail } from "../../../utils/emailService";
 import { givingReceiptTemplate } from "../../../utils/mail_templates/givingReceiptTemplate";
+import logger from "../../../utils/logger-config";
 import { FinanceHttpError, PaginationQuery } from "../common";
 import type {
   ContributionListFilters,
@@ -16,14 +17,14 @@ import type {
 
 /**
  * paystack_response holds the raw processor payload. It is useful for disputes
- * and useless to clients, so it never appears in an API response.
+ * and useless to clients, so it never appears in an API response. Nor does
+ * subaccount_code: it is processor plumbing with no donor-facing value.
  */
 const CONTRIBUTION_SELECT = {
   id: true,
   reference: true,
   giving_option_id: true,
   giving_option_name: true,
-  subaccount_code: true,
   user_id: true,
   donor_name: true,
   donor_email: true,
@@ -38,6 +39,23 @@ const CONTRIBUTION_SELECT = {
   createdAt: true,
   updatedAt: true,
 } as const;
+
+/**
+ * Largest page size listAll will hand back regardless of what was requested.
+ * `parsePagination` (shared, not owned by this file) accepts any positive
+ * integer for `take`, so without a local clamp `?take=1000000` becomes
+ * `LIMIT 1000000` against a financial table.
+ */
+const MAX_LIST_PAGE_SIZE = 200;
+
+/**
+ * Paystack also reports ongoing, pending, processing and queued. A mobile money
+ * charge sits in `ongoing` while the customer completes the USSD prompt, which
+ * is precisely the state a donor returning from the browser is most likely to
+ * be in. Writing `failed` there tells them their payment failed and invites a
+ * second one, so anything non-terminal is left for the webhook to resolve.
+ */
+const TERMINAL_FAILURE_STATUSES = new Set(["failed", "abandoned", "reversed"]);
 
 const buildReference = (): string =>
   `WWM-GIVE-${randomUUID().replace(/-/g, "").slice(0, 20).toUpperCase()}`;
@@ -56,6 +74,24 @@ const toFinanceError = (error: unknown, fallback: string): FinanceHttpError => {
 };
 
 /**
+ * Only what a chargeback or reconciliation dispute actually needs. The full
+ * verify response also carries customer PII, the church's own settlement bank
+ * details, and authorization.authorization_code - a reusable charge token.
+ * None of that has dispute value, so none of it is stored.
+ */
+const toStorablePayload = (transaction: PaystackTransaction): string =>
+  JSON.stringify({
+    id: transaction.id,
+    status: transaction.status,
+    reference: transaction.reference,
+    amount: transaction.amount,
+    currency: transaction.currency,
+    channel: transaction.channel,
+    paid_at: transaction.paid_at,
+    gateway_response: transaction.gateway_response,
+  });
+
+/**
  * The URL Paystack redirects the donor to after payment.
  *
  * Deliberately server-side: taking a redirect target from the client would be
@@ -67,7 +103,12 @@ const resolveCallbackUrl = (): string | undefined => {
   if (configured) return configured;
 
   const frontendUrl = process.env.Frontend_URL?.trim();
-  if (!frontendUrl) return undefined;
+  if (!frontendUrl) {
+    logger.warn(
+      "[giving] no callback URL configured (set PAYSTACK_GIVING_CALLBACK_URL or Frontend_URL); the donor will not be redirected back after paying",
+    );
+    return undefined;
+  }
 
   return `${frontendUrl.replace(/\/+$/, "")}/out/verify-payment/mobile`;
 };
@@ -99,7 +140,11 @@ type ContributionRow = {
 /**
  * A receipt that fails to send must never unwind a payment that succeeded, so
  * this swallows its errors. receipt_sent_at staying null is the signal that a
- * retry is owed.
+ * retry is owed - which only holds if it is stamped exclusively on genuine
+ * delivery. `sendEmail` does not throw on most failures (missing SMTP config,
+ * a rejected send); it resolves with `{ success: false }` instead, so that
+ * flag has to be checked explicitly. The try/catch remains as a backstop for
+ * anything that does throw.
  */
 const sendReceipt = async (contribution: ContributionRow): Promise<void> => {
   if (contribution.receipt_sent_at) {
@@ -107,7 +152,7 @@ const sendReceipt = async (contribution: ContributionRow): Promise<void> => {
   }
 
   try {
-    await sendEmail(
+    const result = await sendEmail(
       givingReceiptTemplate({
         donor_name: contribution.donor_name,
         giving_option_name: contribution.giving_option_name,
@@ -121,14 +166,22 @@ const sendReceipt = async (contribution: ContributionRow): Promise<void> => {
       "Your giving receipt",
     );
 
+    if (!result.success) {
+      logger.error(
+        `[giving] receipt email failed for ${contribution.reference}`,
+        { error: result.error },
+      );
+      return;
+    }
+
     await prisma.givingContribution.update({
       where: { id: contribution.id },
       data: { receipt_sent_at: new Date() },
     });
   } catch (error) {
-    console.error(
+    logger.error(
       `[giving] receipt email failed for ${contribution.reference}`,
-      error,
+      { error: error instanceof Error ? error.message : String(error) },
     );
   }
 };
@@ -153,11 +206,14 @@ export const settleContribution = async (
   // Unknown reference: acknowledge and move on. Returning an error would make
   // Paystack retry forever for a payment we will never recognise.
   if (!contribution) {
-    console.warn(`[giving] settlement for unknown reference ${reference}`);
+    logger.warn(`[giving] settlement for unknown reference ${reference}`);
     return;
   }
 
-  // Already settled. No second write, and no second receipt.
+  // Cheap pre-check: skips the write in the common case, but it does NOT close
+  // the race between a webhook and a verify call landing at the same moment -
+  // both can read this before either has written. The conditional update
+  // below, not this check, is what makes only one of them win.
   if (contribution.status === "success") {
     return;
   }
@@ -165,11 +221,17 @@ export const settleContribution = async (
   const paystackStatus = String(transaction.status || "").toLowerCase();
 
   if (paystackStatus !== "success") {
+    if (!TERMINAL_FAILURE_STATUSES.has(paystackStatus)) {
+      // ongoing/pending/processing/queued/... - not resolved yet. Leave the
+      // row as pending for the webhook or a later verify call to settle.
+      return;
+    }
+
     await prisma.givingContribution.update({
       where: { id: contribution.id },
       data: {
         status: paystackStatus === "abandoned" ? "abandoned" : "failed",
-        paystack_response: JSON.stringify(transaction),
+        paystack_response: toStorablePayload(transaction),
       },
     });
     return;
@@ -178,24 +240,64 @@ export const settleContribution = async (
   const collected = Number(transaction.amount);
   const amountPaid = Number.isInteger(collected) ? collected : null;
 
-  if (amountPaid !== null && amountPaid !== contribution.amount) {
-    console.warn(
-      `[giving] amount mismatch on ${reference}: quoted ${contribution.amount}, collected ${amountPaid}`,
-    );
+  if (amountPaid === null) {
+    // The documented reconciliation query is `amount_paid <> amount`, and in
+    // MySQL that never matches NULL - so a row landing here would be
+    // invisible to the query meant to find exactly this kind of problem.
+    logger.error("[giving] could not parse collected amount", {
+      reference,
+      quoted: contribution.amount,
+      collected: transaction.amount,
+    });
+  } else if (amountPaid !== contribution.amount) {
+    logger.error("[giving] amount mismatch", {
+      reference,
+      quoted: contribution.amount,
+      collected: amountPaid,
+    });
   }
 
-  const updated = await prisma.givingContribution.update({
-    where: { id: contribution.id },
+  const parsedPaidAt = transaction.paid_at ? new Date(transaction.paid_at) : null;
+  // An invalid or absent paid_at is left null rather than fabricated as "now":
+  // an invented settlement timestamp would bucket a delayed webhook into the
+  // wrong reporting period, which is worse than an absent one.
+  const paidAt =
+    parsedPaidAt && !Number.isNaN(parsedPaidAt.getTime()) ? parsedPaidAt : null;
+
+  // A single conditional update, not read-check-write: MySQL row-locks for the
+  // duration of the UPDATE, so exactly one of a racing webhook and verify call
+  // can flip status away from "success" here. The loser's updateMany matches
+  // zero rows, so it never builds a ContributionRow and can neither re-write
+  // the row nor re-send the receipt.
+  const claimed = await prisma.givingContribution.updateMany({
+    where: { reference, status: { not: "success" } },
     data: {
       status: "success",
       amount_paid: amountPaid,
       channel: transaction.channel ?? null,
-      paid_at: transaction.paid_at ? new Date(transaction.paid_at) : new Date(),
-      paystack_response: JSON.stringify(transaction),
+      paid_at: paidAt,
+      paystack_response: toStorablePayload(transaction),
     },
   });
 
-  await sendReceipt(updated);
+  if (claimed.count === 0) {
+    // Someone else settled it first. No second write, and no second receipt.
+    return;
+  }
+
+  const updated = await prisma.givingContribution.findUnique({
+    where: { reference },
+  });
+
+  if (!updated) {
+    return;
+  }
+
+  // Deliberately not awaited: this runs inside the webhook's acknowledgement
+  // path, and Paystack retries if the 200 is slow - a slow SMTP send here
+  // would manufacture the very race this function just resolved. sendReceipt
+  // owns its own errors, so nothing here needs to observe how it finishes.
+  void sendReceipt(updated);
 };
 
 export class GivingContributionService {
@@ -321,10 +423,14 @@ export class GivingContributionService {
         contribution,
       };
     } catch (error) {
-      await prisma.givingContribution.update({
-        where: { id: contribution.id },
-        data: { status: "failed" },
-      });
+      // Best effort: if this fails too, the original Paystack error above must
+      // still be what the caller sees, not a generic failure from this update.
+      await prisma.givingContribution
+        .update({
+          where: { id: contribution.id },
+          data: { status: "failed" },
+        })
+        .catch(() => undefined);
 
       throw toFinanceError(error, "Unable to start this payment");
     }
@@ -338,7 +444,7 @@ export class GivingContributionService {
 
     const existing = await prisma.givingContribution.findUnique({
       where: { reference },
-      select: { id: true, user_id: true, branch_id: true },
+      select: { id: true, user_id: true, branch_id: true, status: true },
     });
 
     if (!existing) {
@@ -348,6 +454,16 @@ export class GivingContributionService {
     // A member may only verify their own payment.
     if (existing.user_id !== userId) {
       throw new FinanceHttpError(404, "Contribution not found");
+    }
+
+    // Already settled: return it without spending a Paystack API call. Paystack
+    // rate-limits per integration, and a donor (or a flaky client) calling this
+    // repeatedly must not degrade initialization for every other donor.
+    if (existing.status === "success") {
+      return prisma.givingContribution.findUnique({
+        where: { reference },
+        select: CONTRIBUTION_SELECT,
+      });
     }
 
     try {
@@ -394,6 +510,8 @@ export class GivingContributionService {
   }
 
   async listAll(pagination: PaginationQuery, filters: ContributionListFilters) {
+    const take = Math.min(pagination.take, MAX_LIST_PAGE_SIZE);
+
     const where = {
       ...(filters.branch_id !== undefined && { branch_id: filters.branch_id }),
       ...(filters.giving_option_id !== undefined && {
@@ -414,7 +532,7 @@ export class GivingContributionService {
         select: CONTRIBUTION_SELECT,
         orderBy: { createdAt: "desc" },
         skip: pagination.skip,
-        take: pagination.take,
+        take,
       }),
       prisma.givingContribution.count({ where }),
     ]);
