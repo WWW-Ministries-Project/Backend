@@ -90,6 +90,18 @@ export const parseContributionFilters = (
   const filters: ContributionListFilters = {};
 
   if (query.branch_id !== undefined && query.branch_id !== "") {
+    // Query values arrive as strings, so branch_id is coerced rather than
+    // required to be a number - but it must still be a scalar. Express parses
+    // ?branch_id[]=1 into an array, and Number(["1"]) is 1, so without this
+    // guard an array would be silently accepted where every sibling filter
+    // rejects one.
+    if (typeof query.branch_id !== "string" && typeof query.branch_id !== "number") {
+      throw new FinanceHttpError(
+        422,
+        "branch_id must be a single value when provided",
+      );
+    }
+
     const branchId = Number(query.branch_id);
     if (!Number.isInteger(branchId) || branchId < 1) {
       throw new FinanceHttpError(422, "branch_id must be a positive integer");
