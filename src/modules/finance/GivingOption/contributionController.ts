@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import { PaystackConfigError } from "../../../libs/paystack/paystackCredentials";
 import { verifyPaystackSignature } from "../../../libs/paystack/paystackWebhook";
+import logger from "../../../utils/logger-config";
 import { FinanceHttpError, parsePagination, sendFinanceError } from "../common";
 import { GivingContributionService } from "./contributionService";
 import {
@@ -110,9 +111,13 @@ export class GivingContributionController {
    * Public route. Authenticated by HMAC signature over the raw request body,
    * not by a bearer token.
    *
-   * Once the signature checks out this always answers 200, including for
-   * references we do not recognise - anything else makes Paystack retry
-   * indefinitely for a payment we will never match.
+   * A valid signature answers 200 for every expected outcome, including an
+   * unknown reference, an already-settled contribution, or a non-success
+   * status - the service handles all of those quietly, without throwing, so
+   * they never reach the catch below. Only a genuine infrastructure failure
+   * (a dropped DB connection, a deadlock, a timeout) reaches that catch, and
+   * that answers 500 instead, so Paystack retries rather than treating the
+   * event as consumed.
    */
   async webhook(req: Request, res: Response): Promise<Response> {
     try {
@@ -129,7 +134,7 @@ export class GivingContributionController {
       // permanently rejected and it would stop retrying, losing genuine
       // payments during a misconfiguration window. A 500 makes it retry.
       if (error instanceof PaystackConfigError) {
-        console.error("[giving] webhook cannot verify: Paystack is not configured");
+        logger.error("[giving] webhook cannot verify: Paystack is not configured");
 
         return res
           .status(500)
@@ -142,7 +147,18 @@ export class GivingContributionController {
     try {
       await service.handleWebhook(req.body);
     } catch (error) {
-      console.error("[giving] webhook processing failed", error);
+      // Only infrastructure failures reach here - every expected outcome
+      // (unknown reference, already settled, non-success status) returns
+      // quietly from the settlement path without throwing. Answering 200 would
+      // consume Paystack's only retry and strand a paid contribution at
+      // pending, so let it retry instead.
+      logger.error("[giving] webhook processing failed", {
+        message: error instanceof Error ? error.message : String(error),
+      });
+
+      return res
+        .status(500)
+        .json({ message: "Webhook processing failed", data: null });
     }
 
     return res.status(200).json({ message: "Received", data: null });

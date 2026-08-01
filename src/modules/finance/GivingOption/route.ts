@@ -345,6 +345,17 @@ givingOptionRouter.post(
  *     tags: [Giving Options]
  *     security:
  *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *       - in: query
+ *         name: take
+ *         schema:
+ *           type: integer
+ *           default: 20
  *     responses:
  *       200:
  *         description: Paginated contributions
@@ -364,6 +375,16 @@ givingOptionRouter.get(
  *     security:
  *       - bearerAuth: []
  *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *       - in: query
+ *         name: take
+ *         schema:
+ *           type: integer
+ *           default: 20
  *       - in: query
  *         name: branch_id
  *         schema:
