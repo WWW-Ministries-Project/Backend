@@ -3,12 +3,21 @@ import logger from "../../utils/logger-config";
 import { resolvePaystackCredentials } from "./paystackCredentials";
 
 /**
- * The one place this path is spelled. index.ts uses it to decide whether to
- * retain the raw request body, and the router uses it to register the handler.
- * If those two ever disagree, rawBody is undefined and every genuine webhook is
- * rejected - so they must read from here rather than repeating the literal.
+ * The one place this path is spelled.
+ *
+ * index.ts matches PAYSTACK_WEBHOOK_PATH against the full request URL to decide
+ * whether to retain the raw request body. The giving option router registers the
+ * handler at PAYSTACK_WEBHOOK_ROUTE, because that router is already mounted at
+ * PAYSTACK_WEBHOOK_MOUNT - so it must NOT use the full path, or the route would
+ * end up at /givingoption/givingoption/paystack-webhook.
+ *
+ * Deriving the full path from the two halves is what stops the parser and the
+ * route drifting apart. Drift here fails silently: rawBody would be undefined,
+ * verification would return false, and every genuine webhook would be rejected.
  */
-export const PAYSTACK_WEBHOOK_PATH = "/givingoption/paystack-webhook";
+export const PAYSTACK_WEBHOOK_MOUNT = "/givingoption";
+export const PAYSTACK_WEBHOOK_ROUTE = "/paystack-webhook";
+export const PAYSTACK_WEBHOOK_PATH = `${PAYSTACK_WEBHOOK_MOUNT}${PAYSTACK_WEBHOOK_ROUTE}`;
 
 /**
  * Real Paystack webhook payloads are a few KB. This cap prevents the SHA512
