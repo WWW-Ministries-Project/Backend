@@ -3,6 +3,14 @@ import { FinanceHttpError } from "../common";
 /** GHS 1.00. Paystack rejects trivially small amounts and so do we. */
 export const MINIMUM_CONTRIBUTION_MINOR_UNITS = 100;
 
+/**
+ * The MySQL INT ceiling on givingContribution.amount - GHS 21,474,836.47. This
+ * is a hard bound set by the column, not a business rule. If a lower business
+ * cap is ever wanted, lower this constant; it must never be raised above the
+ * column's range.
+ */
+export const MAXIMUM_CONTRIBUTION_MINOR_UNITS = 2_147_483_647;
+
 export type InitializeContributionPayload = {
   giving_option_id: string;
   /** Minor units (pesewas) */
@@ -28,19 +36,29 @@ export const validateInitializePayload = (
     );
   }
 
-  const amount = Number(payload.amount);
+  if (
+    payload.amount === undefined ||
+    payload.amount === null ||
+    payload.amount === ""
+  ) {
+    throw new FinanceHttpError(422, "amount is required");
+  }
 
-  // Integer minor units only. Accepting a decimal here is how you end up
-  // charging 10.999999 pesewas.
-  if (!Number.isInteger(amount)) {
+  if (typeof payload.amount !== "number" || !Number.isInteger(payload.amount)) {
     throw new FinanceHttpError(
       422,
-      "amount is required and must be an integer in minor units (pesewas)",
+      "amount must be an integer in minor units (pesewas)",
     );
   }
 
+  const amount = payload.amount;
+
   if (amount < MINIMUM_CONTRIBUTION_MINOR_UNITS) {
     throw new FinanceHttpError(422, "The minimum contribution is GHS 1.00");
+  }
+
+  if (amount > MAXIMUM_CONTRIBUTION_MINOR_UNITS) {
+    throw new FinanceHttpError(422, "The maximum contribution is GHS 21,474,836.47");
   }
 
   return {
@@ -49,15 +67,22 @@ export const validateInitializePayload = (
   };
 };
 
+export const CONTRIBUTION_STATUSES = [
+  "pending",
+  "success",
+  "failed",
+  "abandoned",
+] as const;
+
+export type ContributionStatus = (typeof CONTRIBUTION_STATUSES)[number];
+
 export type ContributionListFilters = {
   branch_id?: number;
   giving_option_id?: string;
-  status?: string;
+  status?: ContributionStatus;
   from?: Date;
   to?: Date;
 };
-
-const VALID_STATUSES = ["pending", "success", "failed", "abandoned"];
 
 export const parseContributionFilters = (
   query: Record<string, unknown>,
@@ -72,35 +97,81 @@ export const parseContributionFilters = (
     filters.branch_id = branchId;
   }
 
-  if (typeof query.giving_option_id === "string" && query.giving_option_id.trim()) {
-    filters.giving_option_id = query.giving_option_id.trim();
-  }
-
-  if (typeof query.status === "string" && query.status.trim()) {
-    const status = query.status.trim().toLowerCase();
-    if (!VALID_STATUSES.includes(status)) {
+  if (query.giving_option_id !== undefined && query.giving_option_id !== "") {
+    if (typeof query.giving_option_id !== "string") {
       throw new FinanceHttpError(
         422,
-        `status must be one of: ${VALID_STATUSES.join(", ")}`,
+        "giving_option_id must be a string when provided",
       );
     }
-    filters.status = status;
+    const trimmed = query.giving_option_id.trim();
+    if (trimmed) {
+      filters.giving_option_id = trimmed;
+    }
   }
 
-  if (typeof query.from === "string" && query.from.trim()) {
-    const from = new Date(query.from.trim());
-    if (Number.isNaN(from.getTime())) {
-      throw new FinanceHttpError(422, "from must be a valid date");
+  if (query.status !== undefined && query.status !== "") {
+    if (typeof query.status !== "string") {
+      throw new FinanceHttpError(422, "status must be a string when provided");
     }
-    filters.from = from;
+    const status = query.status.trim().toLowerCase();
+    if (status) {
+      if (!CONTRIBUTION_STATUSES.includes(status as ContributionStatus)) {
+        throw new FinanceHttpError(
+          422,
+          `status must be one of: ${CONTRIBUTION_STATUSES.join(", ")}`,
+        );
+      }
+      filters.status = status as ContributionStatus;
+    }
   }
 
-  if (typeof query.to === "string" && query.to.trim()) {
-    const to = new Date(query.to.trim());
-    if (Number.isNaN(to.getTime())) {
-      throw new FinanceHttpError(422, "to must be a valid date");
+  if (query.from !== undefined && query.from !== "") {
+    if (typeof query.from !== "string") {
+      throw new FinanceHttpError(422, "from must be a string when provided");
     }
-    filters.to = to;
+    const fromStr = query.from.trim();
+    if (fromStr) {
+      let fromDate: Date;
+
+      // Detect bare YYYY-MM-DD and set to start of day
+      if (/^\d{4}-\d{2}-\d{2}$/.test(fromStr)) {
+        fromDate = new Date(`${fromStr}T00:00:00.000Z`);
+      } else {
+        fromDate = new Date(fromStr);
+      }
+
+      if (Number.isNaN(fromDate.getTime())) {
+        throw new FinanceHttpError(422, "from must be a valid date");
+      }
+      filters.from = fromDate;
+    }
+  }
+
+  if (query.to !== undefined && query.to !== "") {
+    if (typeof query.to !== "string") {
+      throw new FinanceHttpError(422, "to must be a string when provided");
+    }
+    const toStr = query.to.trim();
+    if (toStr) {
+      let toDate: Date;
+
+      // Detect bare YYYY-MM-DD and extend to end of day
+      if (/^\d{4}-\d{2}-\d{2}$/.test(toStr)) {
+        toDate = new Date(`${toStr}T23:59:59.999Z`);
+      } else {
+        toDate = new Date(toStr);
+      }
+
+      if (Number.isNaN(toDate.getTime())) {
+        throw new FinanceHttpError(422, "to must be a valid date");
+      }
+      filters.to = toDate;
+    }
+  }
+
+  if (filters.from && filters.to && filters.from > filters.to) {
+    throw new FinanceHttpError(422, "from must be on or before to");
   }
 
   return filters;
