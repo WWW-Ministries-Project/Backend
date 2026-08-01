@@ -43,7 +43,18 @@ const app = express();
 
 app.disable("x-powered-by");
 app.use(cors());
-app.use(express.json({ limit: "25mb" }));
+app.use(
+  express.json({
+    limit: "25mb",
+    // Paystack signs the raw bytes of its webhook body. Keep a copy before the
+    // body is parsed - re-serialising the parsed object does not reproduce the
+    // same digest. Preferred over mounting express.raw on the webhook path
+    // because it does not depend on router mount order.
+    verify: (req, _res, buf) => {
+      (req as unknown as { rawBody?: Buffer }).rawBody = buf;
+    },
+  }),
+);
 app.use(express.urlencoded({ extended: true, limit: "25mb" }));
 app.use(logRequests);
 app.use(responseMessageEnhancer);
