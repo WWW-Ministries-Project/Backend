@@ -1,9 +1,10 @@
 import "express-async-errors";
-import express from "express";
+import express, { Request as ExpressRequest } from "express";
 import * as dotenv from "dotenv";
 import cors from "cors";
 import { appRouter } from "./src/routes/appRouter";
 import logger from "./src/utils/logger-config";
+import { PAYSTACK_WEBHOOK_PATH } from "./src/libs/paystack/paystackWebhook";
 import client from "prom-client";
 import { logRequests } from "./src/middleWare/requestLogger";
 import { responseMessageEnhancer } from "./src/middleWare/responseMessageEnhancer";
@@ -51,8 +52,8 @@ app.use(
     // webhook path - keeping it for every request across the API would pin up
     // to 25mb per in-flight request for no benefit.
     verify: (req, _res, buf) => {
-      if (!req.url?.startsWith("/givingoption/paystack-webhook")) return;
-      (req as unknown as { rawBody?: Buffer }).rawBody = buf;
+      if (!req.url?.toLowerCase().startsWith(PAYSTACK_WEBHOOK_PATH)) return;
+      (req as ExpressRequest).rawBody = buf;
     },
   }),
 );

@@ -1,10 +1,21 @@
 import { createHmac, timingSafeEqual } from "crypto";
+import logger from "../../utils/logger-config";
 import { resolvePaystackCredentials } from "./paystackCredentials";
 
 /**
- * Real Paystack webhook payloads are a few KB. This route is unauthenticated by
- * necessity - the signature check IS the authentication - so without a ceiling
- * anyone could make the server run a synchronous SHA512 over a 25mb buffer.
+ * The one place this path is spelled. index.ts uses it to decide whether to
+ * retain the raw request body, and the router uses it to register the handler.
+ * If those two ever disagree, rawBody is undefined and every genuine webhook is
+ * rejected - so they must read from here rather than repeating the literal.
+ */
+export const PAYSTACK_WEBHOOK_PATH = "/givingoption/paystack-webhook";
+
+/**
+ * Real Paystack webhook payloads are a few KB. This cap prevents the SHA512
+ * operation from running over huge buffers - without it, anyone could trigger a
+ * synchronous hash of a 25mb buffer. Note: the global express.json parser still
+ * buffers and JSON-parses up to 25mb before this function is reached; this cap
+ * protects only the cryptographic operation, not the overall request handling.
  */
 const MAX_WEBHOOK_BODY_BYTES = 1_048_576;
 
@@ -28,19 +39,19 @@ export const verifyPaystackSignature = async (
   signature: unknown,
 ): Promise<boolean> => {
   if (!rawBody || rawBody.length === 0) {
-    console.warn("[paystack-webhook] Rejected: missing or empty raw body");
+    logger.warn("[paystack-webhook] Rejected: missing or empty raw body");
     return false;
   }
 
   if (rawBody.length > MAX_WEBHOOK_BODY_BYTES) {
-    console.warn(
+    logger.warn(
       `[paystack-webhook] Rejected: oversized body (${rawBody.length} > ${MAX_WEBHOOK_BODY_BYTES} bytes)`,
     );
     return false;
   }
 
   if (typeof signature !== "string" || signature.length === 0) {
-    console.warn("[paystack-webhook] Rejected: missing or non-string signature header");
+    logger.warn("[paystack-webhook] Rejected: missing or non-string signature header");
     return false;
   }
 
@@ -53,13 +64,13 @@ export const verifyPaystackSignature = async (
   // timingSafeEqual throws on length mismatch, so compare lengths first. A
   // wrong-length signature is already a failure, so this leaks nothing useful.
   if (expectedBuffer.length !== receivedBuffer.length) {
-    console.warn("[paystack-webhook] Rejected: digest mismatch");
+    logger.warn("[paystack-webhook] Rejected: signature length mismatch");
     return false;
   }
 
   const isValid = timingSafeEqual(expectedBuffer, receivedBuffer);
   if (!isValid) {
-    console.warn("[paystack-webhook] Rejected: digest mismatch");
+    logger.warn("[paystack-webhook] Rejected: digest mismatch");
   }
 
   return isValid;
