@@ -41,12 +41,26 @@ const CONTRIBUTION_SELECT = {
 } as const;
 
 /**
- * Largest page size listAll will hand back regardless of what was requested.
- * `parsePagination` (shared, not owned by this file) accepts any positive
- * integer for `take`, so without a local clamp `?take=1000000` becomes
- * `LIMIT 1000000` against a financial table.
+ * Largest page size the contribution list endpoints will hand back regardless
+ * of what was requested. `parsePagination` (shared, not owned by this file)
+ * accepts any positive integer for `take`, so without a local clamp
+ * `?take=1000000` becomes `LIMIT 1000000` against a financial table.
  */
 const MAX_LIST_PAGE_SIZE = 200;
+
+/**
+ * Clamps `take` and recomputes `skip` from the clamped value rather than
+ * trusting `parsePagination`'s. `skip` there is `(page - 1) * take` using the
+ * UNCLAMPED take, so reusing it verbatim alongside a clamped take would make
+ * `?page=2&take=1000` skip straight to row 1000 while returning only 200 -
+ * silently losing every row between what page 1 returned and that offset.
+ */
+const clampPagination = (
+  pagination: PaginationQuery,
+): { skip: number; take: number } => {
+  const take = Math.min(pagination.take, MAX_LIST_PAGE_SIZE);
+  return { skip: (pagination.page - 1) * take, take };
+};
 
 /**
  * Paystack also reports ongoing, pending, processing and queued. A mobile money
@@ -134,8 +148,28 @@ type ContributionRow = {
   status: string;
   channel: string | null;
   paid_at: Date | null;
+  // Deliberately not awaited when it is written (see settleContribution), so a
+  // null here does not mean the receipt failed - it usually just means SMTP
+  // has not finished sending yet. Only sendReceipt's own error log is
+  // authoritative about an actual failure.
   receipt_sent_at: Date | null;
 };
+
+/** Exactly the fields ContributionRow declares - nothing more, notably not the LongText paystack_response. */
+const RECEIPT_ROW_SELECT = {
+  id: true,
+  reference: true,
+  giving_option_name: true,
+  donor_name: true,
+  donor_email: true,
+  amount: true,
+  amount_paid: true,
+  currency: true,
+  status: true,
+  channel: true,
+  paid_at: true,
+  receipt_sent_at: true,
+} as const;
 
 /**
  * A receipt that fails to send must never unwind a payment that succeeded, so
@@ -151,8 +185,10 @@ const sendReceipt = async (contribution: ContributionRow): Promise<void> => {
     return;
   }
 
+  let result: Awaited<ReturnType<typeof sendEmail>>;
+
   try {
-    const result = await sendEmail(
+    result = await sendEmail(
       givingReceiptTemplate({
         donor_name: contribution.donor_name,
         giving_option_name: contribution.giving_option_name,
@@ -165,22 +201,37 @@ const sendReceipt = async (contribution: ContributionRow): Promise<void> => {
       contribution.donor_email,
       "Your giving receipt",
     );
+  } catch (error) {
+    // sendEmail does not normally throw (it resolves with { success: false }
+    // instead), but this is a backstop in case something does.
+    logger.error(
+      `[giving] receipt email failed for ${contribution.reference}`,
+      { error: error instanceof Error ? error.message : String(error) },
+    );
+    return;
+  }
 
-    if (!result.success) {
-      logger.error(
-        `[giving] receipt email failed for ${contribution.reference}`,
-        { error: result.error },
-      );
-      return;
-    }
+  if (!result.success) {
+    logger.error(
+      `[giving] receipt email failed for ${contribution.reference}`,
+      { error: result.error },
+    );
+    return;
+  }
 
+  try {
     await prisma.givingContribution.update({
       where: { id: contribution.id },
       data: { receipt_sent_at: new Date() },
     });
   } catch (error) {
+    // The email genuinely went out - only the stamp failed to save. Logging
+    // this the same as a send failure would leave receipt_sent_at null
+    // claiming a retry is owed for a receipt the donor already has, and
+    // whatever consumes that signal (e.g. a reconciliation sweep) would then
+    // send a duplicate.
     logger.error(
-      `[giving] receipt email failed for ${contribution.reference}`,
+      `[giving] receipt for ${contribution.reference} was sent but receipt_sent_at failed to save`,
       { error: error instanceof Error ? error.message : String(error) },
     );
   }
@@ -227,13 +278,24 @@ export const settleContribution = async (
       return;
     }
 
-    await prisma.givingContribution.update({
-      where: { id: contribution.id },
+    // Conditional, exactly like the success write below: Paystack lets a
+    // donor retry a failed attempt on the same reference, so failed -> success
+    // is a real transition. Without the status predicate, a slow, stale
+    // "failed" response could land after a webhook has already settled and
+    // receipted the retry, walking a collected payment back to "failed" in a
+    // financial table - and reopening the door to a duplicate receipt, since
+    // a later webhook retry would then pass the success pre-check again.
+    // count is intentionally unread beyond this: whether it is 0 (the row was
+    // already "success", so a stale failure correctly did not overwrite it)
+    // or 1 (the failure was recorded), there is nothing further to do here.
+    await prisma.givingContribution.updateMany({
+      where: { reference, status: { not: "success" } },
       data: {
         status: paystackStatus === "abandoned" ? "abandoned" : "failed",
         paystack_response: toStorablePayload(transaction),
       },
     });
+
     return;
   }
 
@@ -244,17 +306,21 @@ export const settleContribution = async (
     // The documented reconciliation query is `amount_paid <> amount`, and in
     // MySQL that never matches NULL - so a row landing here would be
     // invisible to the query meant to find exactly this kind of problem.
-    logger.error("[giving] could not parse collected amount", {
-      reference,
-      quoted: contribution.amount,
-      collected: transaction.amount,
-    });
+    // The identifying values are interpolated into the message itself (not
+    // left in the metadata object) because this repo's winston console
+    // transport (src/utils/logger-config.ts) formats only
+    // { level, message, timestamp } - a metadata-only field is silently
+    // dropped, which would make this, the most safety-critical log in the
+    // file, less actionable than the console.warn it replaced.
+    logger.error(
+      `[giving] could not parse collected amount for ${reference}: quoted ${contribution.amount}, collected ${transaction.amount}`,
+      { reference, quoted: contribution.amount, collected: transaction.amount },
+    );
   } else if (amountPaid !== contribution.amount) {
-    logger.error("[giving] amount mismatch", {
-      reference,
-      quoted: contribution.amount,
-      collected: amountPaid,
-    });
+    logger.error(
+      `[giving] amount mismatch on ${reference}: quoted ${contribution.amount}, collected ${amountPaid}`,
+      { reference, quoted: contribution.amount, collected: amountPaid },
+    );
   }
 
   const parsedPaidAt = transaction.paid_at ? new Date(transaction.paid_at) : null;
@@ -287,6 +353,7 @@ export const settleContribution = async (
 
   const updated = await prisma.givingContribution.findUnique({
     where: { reference },
+    select: RECEIPT_ROW_SELECT,
   });
 
   if (!updated) {
@@ -494,14 +561,15 @@ export class GivingContributionService {
     }
 
     const where = { user_id: userId };
+    const { skip, take } = clampPagination(pagination);
 
     const [data, total] = await Promise.all([
       prisma.givingContribution.findMany({
         where,
         select: CONTRIBUTION_SELECT,
         orderBy: { createdAt: "desc" },
-        skip: pagination.skip,
-        take: pagination.take,
+        skip,
+        take,
       }),
       prisma.givingContribution.count({ where }),
     ]);
@@ -510,7 +578,7 @@ export class GivingContributionService {
   }
 
   async listAll(pagination: PaginationQuery, filters: ContributionListFilters) {
-    const take = Math.min(pagination.take, MAX_LIST_PAGE_SIZE);
+    const { skip, take } = clampPagination(pagination);
 
     const where = {
       ...(filters.branch_id !== undefined && { branch_id: filters.branch_id }),
@@ -531,7 +599,7 @@ export class GivingContributionService {
         where,
         select: CONTRIBUTION_SELECT,
         orderBy: { createdAt: "desc" },
-        skip: pagination.skip,
+        skip,
         take,
       }),
       prisma.givingContribution.count({ where }),
