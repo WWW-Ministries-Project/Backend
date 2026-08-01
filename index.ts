@@ -22,6 +22,7 @@ const shouldRunBackgroundJobs = !["false", "0", "no"].includes(
 
 if (shouldRunBackgroundJobs) {
   require("./src/cron-jobs/hubtelPaymentReconciliationCron");
+  require("./src/cron-jobs/givingPaymentReconciliationCron");
   require("./src/cron-jobs/requisitionNotificationCron");
   require("./src/cron-jobs/followUpNotificationCron");
   require("./src/cron-jobs/notificationRetentionCron");
