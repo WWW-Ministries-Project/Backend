@@ -506,8 +506,46 @@ export class GivingContributionService {
         })
         .catch(() => undefined);
 
+      await this.markDriftedIfSubaccountRejected(option.id, option.name, error);
+
       throw toFinanceError(error, "Unable to start this payment");
     }
+  }
+
+  /**
+   * Paystack rejecting the subaccount means this option cannot receive money at
+   * all - most often because the secret key now belongs to a different Paystack
+   * account than the one the subaccount was created under, which a key rotation
+   * does silently.
+   *
+   * `paystack_synced_at` otherwise records only that OUR last write succeeded,
+   * not that the subaccount still exists, so a stale option keeps being offered
+   * and every single donor hits the same failure. Clearing it withholds the
+   * option from `/available` and surfaces it as drifted in the dashboard, where
+   * re-saving it mints a fresh subaccount.
+   */
+  private async markDriftedIfSubaccountRejected(
+    optionId: string,
+    optionName: string,
+    error: unknown,
+  ): Promise<void> {
+    const message = isPaystackFailure(error) ? error.message : "";
+
+    if (!/subaccount/i.test(message)) {
+      return;
+    }
+
+    logger.error(
+      `[giving] Paystack rejected the subaccount for "${optionName}" (${message}). Withholding it from donors until it is re-synced`,
+      { giving_option_id: optionId, message },
+    );
+
+    await prisma.givingOption
+      .update({
+        where: { id: optionId },
+        data: { paystack_synced_at: null },
+      })
+      .catch(() => undefined);
   }
 
   /** On-demand settle, for the moment the donor returns from the browser. */
