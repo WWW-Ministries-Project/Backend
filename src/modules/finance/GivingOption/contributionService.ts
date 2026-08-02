@@ -14,6 +14,7 @@ import { FinanceHttpError, PaginationQuery } from "../common";
 import type {
   ContributionListFilters,
   InitializeContributionPayload,
+  RetryContributionPayload,
 } from "./contributionValidation";
 
 /**
@@ -74,6 +75,18 @@ const clampPagination = (
  * second one, so anything non-terminal is left for the webhook to resolve.
  */
 const TERMINAL_FAILURE_STATUSES = new Set(["failed", "abandoned", "reversed"]);
+
+/**
+ * The statuses a donor may retry or delete their own attempt from: the charge
+ * is resolved and no money reached the fund, so there is nothing to unwind.
+ *
+ * "pending" is deliberately absent. A mobile money charge sits pending while
+ * the customer completes a USSD prompt, so deleting one would drop the row a
+ * later webhook needs - the money would be collected against a reference the
+ * app no longer recognises. Pending rows are verified against Paystack first
+ * (see resolveStatus) and only act on whatever that settles them to.
+ */
+const DONOR_ACTIONABLE_STATUSES = new Set(["failed", "abandoned"]);
 
 const buildReference = (): string =>
   `WWM-GIVE-${randomUUID().replace(/-/g, "").slice(0, 20).toUpperCase()}`;
@@ -190,6 +203,14 @@ export const resolveCallbackUrl = (
  */
 const branchVisibilityFilter = (branchId: number | null) =>
   branchId ? [{ branch_id: branchId }, { branch_id: null }] : [{ branch_id: null }];
+
+/** The donor fields every payment start needs, already checked for an email. */
+type Donor = {
+  id: number;
+  name: string;
+  email: string;
+  branch_id: number | null;
+};
 
 type ContributionRow = {
   id: string;
@@ -513,10 +534,11 @@ export class GivingContributionService {
     });
   }
 
-  async initialize(
-    userId: number | undefined,
-    payload: InitializeContributionPayload,
-  ) {
+  /**
+   * The donor, with the email a receipt needs already guaranteed. Shared by
+   * every member-facing entry point so the 401/404/422 wording cannot drift.
+   */
+  private async loadDonor(userId: number | undefined): Promise<Donor> {
     if (!userId) {
       throw new FinanceHttpError(401, "Not authorized");
     }
@@ -537,11 +559,191 @@ export class GivingContributionService {
       );
     }
 
+    return {
+      id: donor.id,
+      name: donor.name,
+      email: donor.email,
+      branch_id: donor.branch_id,
+    };
+  }
+
+  async initialize(
+    userId: number | undefined,
+    payload: InitializeContributionPayload,
+  ) {
+    const donor = await this.loadDonor(userId);
+
+    return this.startContribution(
+      donor,
+      payload.giving_option_id,
+      payload.amount,
+      payload.client,
+    );
+  }
+
+  /**
+   * A fresh attempt at an existing one, for a donor whose payment did not go
+   * through. A NEW reference is minted rather than reusing the old one:
+   * Paystack requires references to be unique per initialization, and keeping
+   * each attempt as its own row is what lets the failed one still be produced
+   * in a dispute. The amount and the fund are read off the original row, so a
+   * retry cannot become a different gift.
+   */
+  async retry(userId: number | undefined, payload: RetryContributionPayload) {
+    const donor = await this.loadDonor(userId);
+    const existing = await this.loadOwnContribution(donor.id, payload.reference);
+    const status = await this.resolveStatus(existing);
+
+    if (status === "success") {
+      throw new FinanceHttpError(
+        409,
+        "This payment already went through. Check your giving history.",
+      );
+    }
+
+    if (!DONOR_ACTIONABLE_STATUSES.has(status)) {
+      throw new FinanceHttpError(
+        409,
+        "This payment is still being processed. Please wait a moment before trying again.",
+      );
+    }
+
+    return this.startContribution(
+      donor,
+      existing.giving_option_id,
+      existing.amount,
+      payload.client,
+    );
+  }
+
+  /**
+   * Removes a donor's own attempt that never collected money.
+   *
+   * A hard delete, not a soft one: the row records an attempt, not a receipt,
+   * and nothing downstream (reporting, reconciliation, the receipt sweep)
+   * counts a non-success row. A successful payment can never be deleted here,
+   * and a pending one is verified against Paystack first - so the only rows
+   * that can go are ones Paystack itself has already called dead.
+   */
+  async deleteOwn(userId: number | undefined, reference: string) {
+    const donor = await this.loadDonor(userId);
+    const existing = await this.loadOwnContribution(donor.id, reference);
+    const status = await this.resolveStatus(existing);
+
+    if (status === "success") {
+      throw new FinanceHttpError(
+        409,
+        "A completed payment cannot be deleted. Contact the church office if this is wrong.",
+      );
+    }
+
+    if (!DONOR_ACTIONABLE_STATUSES.has(status)) {
+      throw new FinanceHttpError(
+        409,
+        "This payment is still being processed and cannot be removed yet. Please try again shortly.",
+      );
+    }
+
+    // Conditional, not a plain delete by id: a webhook could settle this row
+    // between resolveStatus reading it and this statement running, and deleting
+    // a settled payment would erase a collected gift. count 0 means exactly
+    // that happened, so the donor is told rather than silently succeeding.
+    const removed = await prisma.givingContribution.deleteMany({
+      where: { reference, user_id: donor.id, status: { not: "success" } },
+    });
+
+    if (removed.count === 0) {
+      throw new FinanceHttpError(
+        409,
+        "This payment completed while you were removing it. Check your giving history.",
+      );
+    }
+
+    return { reference };
+  }
+
+  /** The caller's own attempt, or a 404 that does not reveal whose it is. */
+  private async loadOwnContribution(userId: number, reference: string) {
+    const existing = await prisma.givingContribution.findUnique({
+      where: { reference },
+      select: {
+        id: true,
+        reference: true,
+        user_id: true,
+        branch_id: true,
+        status: true,
+        amount: true,
+        giving_option_id: true,
+      },
+    });
+
+    // Same 404 for "no such reference" and "not yours", so this cannot be used
+    // to probe which references exist.
+    if (!existing || existing.user_id !== userId) {
+      throw new FinanceHttpError(404, "Contribution not found");
+    }
+
+    return existing;
+  }
+
+  /**
+   * The status to act on, having given Paystack the last word on a pending row.
+   *
+   * A pending row is the dangerous case: it may be a live mobile money charge,
+   * or it may be a checkout the donor closed half an hour ago. Asking Paystack
+   * settles it through the same idempotent path as the webhook. If that call
+   * fails, "pending" is returned unchanged - which makes the caller refuse the
+   * action, the safe direction when we cannot tell whether money moved.
+   */
+  private async resolveStatus(existing: {
+    reference: string;
+    branch_id: number | null;
+    status: string;
+  }): Promise<string> {
+    if (existing.status !== "pending") {
+      return existing.status;
+    }
+
+    try {
+      const transaction = await verifyTransaction(
+        existing.reference,
+        existing.branch_id,
+      );
+      await settleContribution(transaction);
+    } catch (error) {
+      logger.warn(
+        `[giving] could not verify ${existing.reference} before a donor action: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        { reference: existing.reference },
+      );
+      return "pending";
+    }
+
+    const settled = await prisma.givingContribution.findUnique({
+      where: { reference: existing.reference },
+      select: { status: true },
+    });
+
+    return settled?.status ?? "pending";
+  }
+
+  /**
+   * Creates the attempt row and hands it to Paystack. Shared by initialize and
+   * retry so the fee gross-up, the callback URL, the failure bookkeeping and
+   * the drift marking cannot drift apart between the two entry points.
+   */
+  private async startContribution(
+    donor: Donor,
+    givingOptionId: string,
+    amount: number,
+    client: PaymentClient,
+  ) {
     // Re-check visibility here rather than trusting that the client only ever
     // shows what /available returned.
     const option = await prisma.givingOption.findFirst({
       where: {
-        id: payload.giving_option_id,
+        id: givingOptionId,
         archived_at: null,
         is_active: true,
         paystack_synced_at: { not: null },
@@ -556,9 +758,9 @@ export class GivingContributionService {
     const reference = buildReference();
 
     // The donor covers the Paystack fee, so the subaccount receives the whole
-    // donation. `payload.amount` is the donation; the card is charged the sum.
-    const fee = computeDonorBorneFee(payload.amount);
-    const amountCharged = payload.amount + fee;
+    // donation. `amount` is the donation; the card is charged the sum.
+    const fee = computeDonorBorneFee(amount);
+    const amountCharged = amount + fee;
 
     const contribution = await prisma.givingContribution.create({
       data: {
@@ -569,7 +771,7 @@ export class GivingContributionService {
         user_id: donor.id,
         donor_name: donor.name,
         donor_email: donor.email,
-        amount: payload.amount,
+        amount,
         fee,
         amount_charged: amountCharged,
         currency: option.currency,
@@ -579,7 +781,7 @@ export class GivingContributionService {
       select: CONTRIBUTION_SELECT,
     });
 
-    const callbackUrl = resolveCallbackUrl(payload.client);
+    const callbackUrl = resolveCallbackUrl(client);
 
     try {
       const result = await initializeTransaction(
@@ -602,7 +804,7 @@ export class GivingContributionService {
             giving_option_id: option.id,
             giving_option_name: option.name,
             user_id: donor.id,
-            donation_minor_units: payload.amount,
+            donation_minor_units: amount,
             fee_minor_units: fee,
           },
         },
