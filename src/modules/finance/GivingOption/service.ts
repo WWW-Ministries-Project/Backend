@@ -16,8 +16,15 @@ import type { GivingOptionPayload } from "./validation";
 
 /**
  * Payments are ROUTED, not split: the whole transaction lands in the giving
- * option's own settlement account and the subaccount bears the Paystack fee.
- * That is what percentage_charge 100 + bearer "subaccount" encodes.
+ * option's own settlement account. That is what percentage_charge 100 encodes.
+ *
+ * `bearer` here is a stored default only, and is NOT what decides who pays the
+ * Paystack fee. Paystack rejects a subaccount that receives 100% and also bears
+ * the fee — "Invalid split transaction values" — so it can never be honoured as
+ * written. `contributionService.initialize` sets `bearer: "account"` per
+ * transaction and grosses the charge up instead, so the DONOR covers the fee and
+ * the subaccount still receives the whole donation. See the "Routing, not
+ * splitting" section of the giving options contract doc.
  */
 const ROUTING_PERCENTAGE_CHARGE = 100;
 const ROUTING_BEARER = "subaccount";

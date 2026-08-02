@@ -188,3 +188,36 @@ export const parseContributionFilters = (
 
   return filters;
 };
+
+/**
+ * The donation amount for a fee preview, taken from a query string rather than
+ * a JSON body - so unlike `validateInitializePayload` a numeric string is the
+ * expected form here, not a client bug.
+ */
+export const parsePreviewAmount = (raw: unknown): number => {
+  if (typeof raw !== "string" && typeof raw !== "number") {
+    throw new FinanceHttpError(422, "amount is required");
+  }
+
+  const amount = Number(raw);
+
+  if (!Number.isInteger(amount)) {
+    throw new FinanceHttpError(
+      422,
+      "amount must be an integer in minor units (pesewas)",
+    );
+  }
+
+  if (amount < MINIMUM_CONTRIBUTION_MINOR_UNITS) {
+    throw new FinanceHttpError(422, "The minimum contribution is GHS 1.00");
+  }
+
+  if (amount > MAXIMUM_CONTRIBUTION_MINOR_UNITS) {
+    throw new FinanceHttpError(
+      422,
+      "The maximum contribution is GHS 21,474,836.47",
+    );
+  }
+
+  return amount;
+};

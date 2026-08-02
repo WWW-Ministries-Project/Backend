@@ -6,6 +6,7 @@ import { FinanceHttpError, parsePagination, sendFinanceError } from "../common";
 import { GivingContributionService } from "./contributionService";
 import {
   parseContributionFilters,
+  parsePreviewAmount,
   validateInitializePayload,
 } from "./contributionValidation";
 
@@ -37,6 +38,17 @@ export class GivingContributionController {
   async listAvailable(req: Request, res: Response): Promise<Response> {
     try {
       const data = await service.listAvailable(getActorUserId(req));
+
+      return res.status(200).json({ message: "Success", data });
+    } catch (error) {
+      return sendFinanceError(res, error);
+    }
+  }
+
+  async previewFee(req: Request, res: Response): Promise<Response> {
+    try {
+      const amount = parsePreviewAmount(req.query?.amount);
+      const data = service.previewFee(amount);
 
       return res.status(200).json({ message: "Success", data });
     } catch (error) {
