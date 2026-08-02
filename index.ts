@@ -1,9 +1,10 @@
 import "express-async-errors";
-import express from "express";
+import express, { Request as ExpressRequest } from "express";
 import * as dotenv from "dotenv";
 import cors from "cors";
 import { appRouter } from "./src/routes/appRouter";
 import logger from "./src/utils/logger-config";
+import { PAYSTACK_WEBHOOK_PATH } from "./src/libs/paystack/paystackWebhook";
 import client from "prom-client";
 import { logRequests } from "./src/middleWare/requestLogger";
 import { responseMessageEnhancer } from "./src/middleWare/responseMessageEnhancer";
@@ -21,6 +22,7 @@ const shouldRunBackgroundJobs = !["false", "0", "no"].includes(
 
 if (shouldRunBackgroundJobs) {
   require("./src/cron-jobs/hubtelPaymentReconciliationCron");
+  require("./src/cron-jobs/givingPaymentReconciliationCron");
   require("./src/cron-jobs/requisitionNotificationCron");
   require("./src/cron-jobs/followUpNotificationCron");
   require("./src/cron-jobs/notificationRetentionCron");
@@ -43,7 +45,19 @@ const app = express();
 
 app.disable("x-powered-by");
 app.use(cors());
-app.use(express.json({ limit: "25mb" }));
+app.use(
+  express.json({
+    limit: "25mb",
+    // Paystack signs the raw bytes of its webhook body, and a re-serialised
+    // body does not reproduce the same digest. Retain the buffer only for the
+    // webhook path - keeping it for every request across the API would pin up
+    // to 25mb per in-flight request for no benefit.
+    verify: (req, _res, buf) => {
+      if (!req.url?.toLowerCase().startsWith(PAYSTACK_WEBHOOK_PATH)) return;
+      (req as ExpressRequest).rawBody = buf;
+    },
+  }),
+);
 app.use(express.urlencoded({ extended: true, limit: "25mb" }));
 app.use(logRequests);
 app.use(responseMessageEnhancer);

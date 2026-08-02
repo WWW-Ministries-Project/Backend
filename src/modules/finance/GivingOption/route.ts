@@ -1,9 +1,12 @@
 import { Router } from "express";
 import { GivingOptionController } from "./controller";
 import { Permissions } from "../../../middleWare/authorization";
+import { PAYSTACK_WEBHOOK_ROUTE } from "../../../libs/paystack/paystackWebhook";
+import { GivingContributionController } from "./contributionController";
 
 const givingOptionRouter = Router();
 const controller = new GivingOptionController();
+const contributionController = new GivingContributionController();
 const permissions = new Permissions();
 const protect = permissions.protect;
 
@@ -250,6 +253,199 @@ givingOptionRouter.delete(
   "/delete-giving-option",
   [protect, permissions.can_delete_giving],
   controller.archive,
+);
+
+/**
+ * @swagger
+ * /givingoption/paystack-webhook:
+ *   post:
+ *     summary: Paystack webhook receiver
+ *     description: >
+ *       Public route, authenticated by an HMAC SHA512 signature over the raw
+ *       request body rather than by a bearer token. Answers 200 once the
+ *       signature is valid, including for unknown references, so Paystack does
+ *       not retry indefinitely. Answers 500 rather than 401 when the Paystack
+ *       key is unconfigured, so Paystack keeps retrying instead of treating the
+ *       event as permanently rejected.
+ *     tags: [Giving Options]
+ *     responses:
+ *       200:
+ *         description: Acknowledged
+ *       401:
+ *         description: Invalid or missing signature
+ *       500:
+ *         description: Paystack is not configured on the server
+ */
+givingOptionRouter.post(
+  PAYSTACK_WEBHOOK_ROUTE,
+  contributionController.webhook,
+);
+
+/**
+ * @swagger
+ * /givingoption/available:
+ *   get:
+ *     summary: Giving options the caller may give to
+ *     description: >
+ *       Active, non-archived, Paystack-synced options belonging to the caller's
+ *       branch or to no branch at all. Any authenticated member may call this.
+ *     tags: [Giving Options]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Available giving options
+ */
+givingOptionRouter.get(
+  "/available",
+  [protect],
+  contributionController.listAvailable,
+);
+
+/**
+ * @swagger
+ * /givingoption/initialize:
+ *   post:
+ *     summary: Start a giving payment
+ *     tags: [Giving Options]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [giving_option_id, amount]
+ *             properties:
+ *               giving_option_id:
+ *                 type: string
+ *               amount:
+ *                 type: integer
+ *                 description: Minor units (pesewas). Minimum 100.
+ *     responses:
+ *       201:
+ *         description: Returns checkoutUrl and reference
+ *       422:
+ *         description: Validation failure, or Paystack rejected the request
+ *       502:
+ *         description: Paystack unreachable
+ */
+givingOptionRouter.post(
+  "/initialize",
+  [protect],
+  contributionController.initialize,
+);
+
+/**
+ * @swagger
+ * /givingoption/my-contributions:
+ *   get:
+ *     summary: The caller's own giving history
+ *     tags: [Giving Options]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *       - in: query
+ *         name: take
+ *         schema:
+ *           type: integer
+ *           default: 20
+ *     responses:
+ *       200:
+ *         description: Paginated contributions
+ */
+givingOptionRouter.get(
+  "/my-contributions",
+  [protect],
+  contributionController.listMine,
+);
+
+/**
+ * @swagger
+ * /givingoption/contributions:
+ *   get:
+ *     summary: All contributions, for finance staff
+ *     tags: [Giving Options]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *       - in: query
+ *         name: take
+ *         schema:
+ *           type: integer
+ *           default: 20
+ *       - in: query
+ *         name: branch_id
+ *         schema:
+ *           type: integer
+ *       - in: query
+ *         name: giving_option_id
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *           enum: [pending, success, failed, abandoned]
+ *       - in: query
+ *         name: from
+ *         schema:
+ *           type: string
+ *           format: date
+ *       - in: query
+ *         name: to
+ *         schema:
+ *           type: string
+ *           format: date
+ *     responses:
+ *       200:
+ *         description: Paginated contributions
+ */
+givingOptionRouter.get(
+  "/contributions",
+  [protect, permissions.can_view_giving],
+  contributionController.listAll,
+);
+
+/**
+ * @swagger
+ * /givingoption/verify/{reference}:
+ *   get:
+ *     summary: Verify and settle a payment on demand
+ *     description: >
+ *       Called when the donor returns from the Paystack page, so the app can
+ *       show a result without waiting for the webhook. Settles through the same
+ *       idempotent path, so whichever arrives first wins and the other no-ops.
+ *     tags: [Giving Options]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: reference
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: The settled contribution
+ *       404:
+ *         description: Unknown reference, or it belongs to another member
+ */
+givingOptionRouter.get(
+  "/verify/:reference",
+  [protect],
+  contributionController.verify,
 );
 
 /**
