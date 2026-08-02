@@ -224,16 +224,23 @@ const sendReceipt = async (contribution: ContributionRow): Promise<void> => {
     // sendEmail does not normally throw (it resolves with { success: false }
     // instead), but this is a backstop in case something does.
     logger.error(
-      `[giving] receipt email failed for ${contribution.reference}`,
-      { error: error instanceof Error ? error.message : String(error) },
+      `[giving] receipt email threw for ${contribution.reference}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      { reference: contribution.reference },
     );
     return;
   }
 
   if (!result.success) {
     logger.error(
-      `[giving] receipt email failed for ${contribution.reference}`,
-      { error: result.error },
+      // The reason is interpolated, not left in metadata: this repo's winston
+      // console transport renders only { level, message, timestamp }, so a
+      // metadata-only error is dropped and the log says a receipt failed
+      // without ever saying why - which is what happened when an SMTP quota
+      // was exhausted and the cause had to be reproduced by hand.
+      `[giving] receipt email rejected for ${contribution.reference}: ${result.error}`,
+      { reference: contribution.reference },
     );
     return;
   }
