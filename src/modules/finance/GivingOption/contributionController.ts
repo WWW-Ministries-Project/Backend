@@ -8,7 +8,9 @@ import { GivingContributionService } from "./contributionService";
 import {
   parseContributionFilters,
   parsePreviewAmount,
+  parseReferenceQuery,
   validateInitializePayload,
+  validateRetryPayload,
 } from "./contributionValidation";
 
 const service = new GivingContributionService();
@@ -66,6 +68,31 @@ export class GivingContributionController {
         message: "Payment started",
         data: result,
       });
+    } catch (error) {
+      return sendFinanceError(res, error);
+    }
+  }
+
+  async retry(req: Request, res: Response): Promise<Response> {
+    try {
+      const payload = validateRetryPayload(req.body);
+      const result = await service.retry(getActorUserId(req), payload);
+
+      return res.status(201).json({
+        message: "Payment started",
+        data: result,
+      });
+    } catch (error) {
+      return sendFinanceError(res, error);
+    }
+  }
+
+  async remove(req: Request, res: Response): Promise<Response> {
+    try {
+      const reference = parseReferenceQuery(req.query?.reference);
+      const data = await service.deleteOwn(getActorUserId(req), reference);
+
+      return res.status(200).json({ message: "Contribution removed", data });
     } catch (error) {
       return sendFinanceError(res, error);
     }

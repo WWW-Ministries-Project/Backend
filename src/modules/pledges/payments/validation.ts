@@ -81,6 +81,52 @@ export const validateInitializePledgePayment = (
 };
 
 /**
+ * A retry names an existing attempt by its reference and nothing else. The
+ * amount and the pledge are read off that row server-side rather than resent,
+ * so "retry" cannot be used to pay a different amount against a different
+ * pledge than the row it claims to be retrying.
+ */
+export type RetryPledgePaymentPayload = {
+  reference: string;
+  client: PaymentClient;
+};
+
+export const validateRetryPledgePayment = (
+  body: unknown,
+): RetryPledgePaymentPayload => {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    throw new PledgeHttpError(400, "Invalid request payload");
+  }
+
+  const payload = body as { reference?: unknown; client?: unknown };
+
+  if (
+    typeof payload.reference !== "string" ||
+    payload.reference.trim().length === 0
+  ) {
+    throw new PledgeHttpError(400, "reference is required");
+  }
+
+  return {
+    reference: payload.reference.trim(),
+    client: parsePaymentClient(payload.client),
+  };
+};
+
+/**
+ * A reference taken from the query string, for DELETE - which has no body worth
+ * relying on across HTTP clients. Rejects anything non-scalar: Express parses
+ * `?reference[]=a` into an array, and `String(["a"])` would silently accept it.
+ */
+export const parseReferenceQuery = (raw: unknown): string => {
+  if (typeof raw !== "string" || raw.trim().length === 0) {
+    throw new PledgeHttpError(400, "reference is required");
+  }
+
+  return raw.trim();
+};
+
+/**
  * The amount for a fee preview. Comes from a query string, so a numeric string
  * is the expected form here rather than a client bug.
  */

@@ -90,6 +90,53 @@ export const validateInitializePayload = (
   };
 };
 
+/**
+ * A retry names an existing attempt by its reference and nothing else. The
+ * amount and the giving option are read off that row server-side rather than
+ * resent, so a client cannot use "retry" to give a different amount to a
+ * different fund than the row it claims to be retrying.
+ */
+export type RetryContributionPayload = {
+  reference: string;
+  client: PaymentClient;
+};
+
+export const validateRetryPayload = (
+  body: unknown,
+): RetryContributionPayload => {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    throw new FinanceHttpError(422, "Invalid request payload");
+  }
+
+  const payload = body as { reference?: unknown; client?: unknown };
+
+  if (
+    typeof payload.reference !== "string" ||
+    payload.reference.trim().length === 0
+  ) {
+    throw new FinanceHttpError(422, "reference is required");
+  }
+
+  return {
+    reference: payload.reference.trim(),
+    client: parsePaymentClient(payload.client),
+  };
+};
+
+/**
+ * A reference taken from the query string, for DELETE - which has no body worth
+ * relying on across HTTP clients. Rejects arrays: Express parses
+ * `?reference[]=a&reference[]=b` into one, and `String(["a"])` would silently
+ * accept it.
+ */
+export const parseReferenceQuery = (raw: unknown): string => {
+  if (typeof raw !== "string" || raw.trim().length === 0) {
+    throw new FinanceHttpError(422, "reference is required");
+  }
+
+  return raw.trim();
+};
+
 export const CONTRIBUTION_STATUSES = [
   "pending",
   "success",

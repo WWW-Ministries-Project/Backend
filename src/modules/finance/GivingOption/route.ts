@@ -401,6 +401,82 @@ givingOptionRouter.get(
 
 /**
  * @swagger
+ * /givingoption/my-contributions:
+ *   delete:
+ *     summary: Remove one of the caller's own unsuccessful attempts
+ *     description: >
+ *       Only the caller's own row, and only one that never collected money. A
+ *       pending row is verified against Paystack first and refused (409) if it
+ *       is still live or turns out to have succeeded, so a mobile money charge
+ *       part-way through a USSD prompt can never be deleted out from under the
+ *       webhook that will settle it.
+ *     tags: [Giving Options]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: reference
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Removed
+ *       404:
+ *         description: Unknown reference, or it belongs to another member
+ *       409:
+ *         description: The payment succeeded, or is still being processed
+ */
+givingOptionRouter.delete(
+  "/my-contributions",
+  [protect],
+  contributionController.remove,
+);
+
+/**
+ * @swagger
+ * /givingoption/retry-payment:
+ *   post:
+ *     summary: Start a fresh attempt at one of the caller's failed payments
+ *     description: >
+ *       Reads the fund and the amount off the original row - a retry cannot
+ *       become a different gift - and mints a NEW reference, because Paystack
+ *       requires references to be unique per initialization. The failed attempt
+ *       is left in place so it can still be produced in a dispute.
+ *     tags: [Giving Options]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [reference]
+ *             properties:
+ *               reference:
+ *                 type: string
+ *                 description: The reference of the attempt being retried
+ *               client:
+ *                 type: string
+ *                 enum: [web, mobile]
+ *                 default: mobile
+ *     responses:
+ *       201:
+ *         description: Returns checkoutUrl and the new reference
+ *       404:
+ *         description: Unknown reference, or the giving option is no longer available
+ *       409:
+ *         description: The payment succeeded, or is still being processed
+ */
+givingOptionRouter.post(
+  "/retry-payment",
+  [protect],
+  contributionController.retry,
+);
+
+/**
+ * @swagger
  * /givingoption/contributions:
  *   get:
  *     summary: All contributions, for finance staff
