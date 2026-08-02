@@ -1779,10 +1779,23 @@ model givingContribution {
   donor_name         String
   donor_email        String
   // Minor units (pesewas). Never a float - binary floats cannot hold decimal money.
+  //
+  // The donation itself: what the giving option's subaccount receives, and what
+  // the donor chose to give. The Paystack fee is added ON TOP of this and paid
+  // by the donor, so this is NOT what the card was charged.
   amount             Int
-  // What Paystack reported collecting. Differs from `amount` only when something
-  // went wrong; `amount_paid <> amount` is the query that finds those rows.
+  // The Paystack fee we grossed the charge up by, at the rate configured when
+  // the payment started. Kept so a later rate change cannot rewrite history.
+  fee                Int          @default(0)
+  // What the donor's card was actually charged: amount + fee. This is the figure
+  // Paystack echoes back, so it is what `amount_paid` must be compared against.
+  amount_charged     Int?
+  // What Paystack reported collecting. Compare against `amount_charged`, not
+  // `amount` - see the note on NULL handling in the contract doc.
   amount_paid        Int?
+  // The fee Paystack actually took, from the verify payload. Differs from `fee`
+  // when the configured rate no longer matches Paystack's real schedule.
+  fee_actual         Int?
   currency           String       @default("GHS")
   // pending | success | failed | abandoned
   status             String       @default("pending")
