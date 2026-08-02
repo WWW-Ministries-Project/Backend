@@ -2,7 +2,12 @@ import { Request, Response } from "express";
 import { Prisma } from "@prisma/client";
 import { EnrollmentService } from "./enrolmentService";
 import { AppError } from "../../utils/custom-error-handlers";
-import { generateCertificatePdf } from "./certificatePdfService.js";
+// Extensionless, like every other relative import in this tree. The ".js" this
+// used to carry type-checks fine (TS maps it back to the .ts source) and works
+// in dist/, where a real .js exists — but under ts-node-dev the CommonJS
+// require looks for a literal certificatePdfService.js that is never emitted,
+// so `npm run dev` died at startup on this one line.
+import { generateCertificatePdf } from "./certificatePdfService";
 
 const enrollment = new EnrollmentService();
 
