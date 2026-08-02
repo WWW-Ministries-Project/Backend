@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import { PaystackConfigError } from "../../../libs/paystack/paystackCredentials";
+import { handlePaystackChargeEvent } from "../../../libs/paystack/paystackSettlement";
 import { verifyPaystackSignature } from "../../../libs/paystack/paystackWebhook";
 import logger from "../../../utils/logger-config";
 import { FinanceHttpError, parsePagination, sendFinanceError } from "../common";
@@ -123,6 +124,12 @@ export class GivingContributionController {
    * Public route. Authenticated by HMAC signature over the raw request body,
    * not by a bearer token.
    *
+   * This is the ONLY Paystack webhook receiver in the app: index.ts retains the
+   * raw body for this path alone, so a second endpoint could not verify a
+   * signature. Events are dispatched to the right settlement path by reference
+   * prefix, which is why this calls the shared dispatcher rather than the
+   * giving service directly.
+   *
    * A valid signature answers 200 for every expected outcome, including an
    * unknown reference, an already-settled contribution, or a non-success
    * status - the service handles all of those quietly, without throwing, so
@@ -157,14 +164,14 @@ export class GivingContributionController {
     }
 
     try {
-      await service.handleWebhook(req.body);
+      await handlePaystackChargeEvent(req.body);
     } catch (error) {
       // Only infrastructure failures reach here - every expected outcome
       // (unknown reference, already settled, non-success status) returns
       // quietly from the settlement path without throwing. Answering 200 would
       // consume Paystack's only retry and strand a paid contribution at
       // pending, so let it retry instead.
-      logger.error("[giving] webhook processing failed", {
+      logger.error("[paystack] webhook processing failed", {
         message: error instanceof Error ? error.message : String(error),
       });
 
