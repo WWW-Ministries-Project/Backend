@@ -109,9 +109,16 @@ const toStorablePayload = (transaction: PaystackTransaction): string =>
  * The URL Paystack redirects the donor to after payment.
  *
  * Deliberately server-side: taking a redirect target from the client would be
- * an open redirect on a payment flow. The default matches the hosted bounce
- * page the marketplace already uses (Frontend route "verify-payment/:type").
+ * an open redirect on a payment flow.
+ *
+ * This must NOT point at the marketplace's "verify-payment/:type" page. That
+ * page reads the reference from `order_reference` (Paystack sends `reference`
+ * and `trxref`), verifies against the orders endpoint, and clears the member's
+ * shopping cart - so a donation showed "Missing payment reference" and silently
+ * emptied their basket. Giving has its own inert landing page.
  */
+const GIVING_CALLBACK_PATH = "/out/giving-complete";
+
 const resolveCallbackUrl = (): string | undefined => {
   const configured = process.env.PAYSTACK_GIVING_CALLBACK_URL?.trim();
   if (configured) return configured;
@@ -124,7 +131,7 @@ const resolveCallbackUrl = (): string | undefined => {
     return undefined;
   }
 
-  return `${frontendUrl.replace(/\/+$/, "")}/out/verify-payment/mobile`;
+  return `${frontendUrl.replace(/\/+$/, "")}${GIVING_CALLBACK_PATH}`;
 };
 
 /**
