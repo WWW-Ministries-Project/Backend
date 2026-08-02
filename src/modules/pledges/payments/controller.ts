@@ -3,7 +3,9 @@ import { PledgeHttpError, sendPledgeError } from "../common";
 import { PledgePaymentService } from "./service";
 import {
   parsePreviewAmount,
+  parseReferenceQuery,
   validateInitializePledgePayment,
+  validateRetryPledgePayment,
 } from "./validation";
 
 const service = new PledgePaymentService();
@@ -70,6 +72,26 @@ export const initializePledgePayment = async (req: Request, res: Response) => {
     const payload = validateInitializePledgePayment(req.body);
     const data = await service.initialize(getActorUserId(req), payload);
     return res.status(201).json({ message: "Payment started", data });
+  } catch (error) {
+    return sendPledgeError(res, error);
+  }
+};
+
+export const retryPledgePayment = async (req: Request, res: Response) => {
+  try {
+    const payload = validateRetryPledgePayment(req.body);
+    const data = await service.retry(getActorUserId(req), payload);
+    return res.status(201).json({ message: "Payment started", data });
+  } catch (error) {
+    return sendPledgeError(res, error);
+  }
+};
+
+export const deleteMyPledgePayment = async (req: Request, res: Response) => {
+  try {
+    const reference = parseReferenceQuery(req.query?.reference);
+    const data = await service.deleteOwn(getActorUserId(req), reference);
+    return res.status(200).json({ message: "Payment removed", data });
   } catch (error) {
     return sendPledgeError(res, error);
   }

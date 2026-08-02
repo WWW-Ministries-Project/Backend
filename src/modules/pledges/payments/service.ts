@@ -15,6 +15,7 @@ import { PledgeHttpError } from "../common";
 import type {
   InitializePledgePaymentPayload,
   PaymentClient,
+  RetryPledgePaymentPayload,
 } from "./validation";
 
 /**
@@ -58,6 +59,18 @@ const MAX_LIST_PAGE_SIZE = 200;
  * left for the webhook to resolve.
  */
 const TERMINAL_FAILURE_STATUSES = new Set(["failed", "abandoned", "reversed"]);
+
+/**
+ * The statuses a payer may retry or delete their own attempt from: the charge
+ * is resolved, no redemption was written, and there is nothing to unwind.
+ *
+ * "pending" is deliberately absent - a mobile money charge sits pending while
+ * the customer completes a USSD prompt, so deleting one would drop the row a
+ * later webhook needs and the money would land against a reference the app no
+ * longer recognises. Pending rows are verified against Paystack first (see
+ * resolveStatus) and only whatever that settles them to is acted on.
+ */
+const PAYER_ACTIONABLE_STATUSES = new Set(["failed", "abandoned"]);
 
 /** Marks a redemption as having come from the online payment path. */
 export const ONLINE_REDEMPTION_METHOD = "paystack";
@@ -128,6 +141,13 @@ const resolveCallbackUrl = (client: PaymentClient): string | undefined => {
   return `${frontendUrl.replace(/\/+$/, "")}${
     client === "web" ? PLEDGE_WEB_CALLBACK_PATH : PLEDGE_CALLBACK_PATH
   }`;
+};
+
+/** The payer fields every payment start needs, already checked for an email. */
+type Payer = {
+  id: number;
+  name: string;
+  email: string;
 };
 
 type ReceiptRow = {
@@ -508,10 +528,11 @@ export class PledgePaymentService {
     });
   }
 
-  async initialize(
-    userId: number | undefined,
-    payload: InitializePledgePaymentPayload,
-  ) {
+  /**
+   * The payer, with the email a receipt needs already guaranteed. Shared by
+   * every member-facing entry point so the 401/404/422 wording cannot drift.
+   */
+  private async loadPayer(userId: number | undefined): Promise<Payer> {
     if (!userId) throw new PledgeHttpError(401, "Not authorized");
 
     const payer = await prisma.user.findUnique({
@@ -528,8 +549,200 @@ export class PledgePaymentService {
       );
     }
 
+    return { id: payer.id, name: payer.name, email: payer.email };
+  }
+
+  async initialize(
+    userId: number | undefined,
+    payload: InitializePledgePaymentPayload,
+  ) {
+    const payer = await this.loadPayer(userId);
+
+    return this.startPayment(
+      payer,
+      payload.pledger_id,
+      payload.amount,
+      payload.client,
+    );
+  }
+
+  /**
+   * A fresh attempt at an existing one, for a payer whose payment did not go
+   * through. A NEW reference is minted rather than reusing the old one:
+   * Paystack requires references to be unique per initialization, and keeping
+   * each attempt as its own row is what lets the failed one still be produced
+   * in a dispute. The pledge and the amount are read off the original row, so a
+   * retry cannot become a payment against a different pledge.
+   *
+   * The outstanding balance is re-checked by startPayment, so a retry of an
+   * amount that has since been redeemed another way is refused with the real
+   * balance rather than overpaying the pledge.
+   */
+  async retry(userId: number | undefined, payload: RetryPledgePaymentPayload) {
+    const payer = await this.loadPayer(userId);
+    const existing = await this.loadOwnPayment(payer.id, payload.reference);
+    const status = await this.resolveStatus(existing);
+
+    if (status === "success") {
+      throw new PledgeHttpError(
+        409,
+        "This payment already went through. Check your payment history.",
+      );
+    }
+
+    if (!PAYER_ACTIONABLE_STATUSES.has(status)) {
+      throw new PledgeHttpError(
+        409,
+        "This payment is still being processed. Please wait a moment before trying again.",
+      );
+    }
+
+    // pledger_id is SetNull, so replacing a pledge's groups detaches old
+    // payments from the pledger they were made for. There is nothing left to
+    // credit a retry to, so it cannot be restarted from here.
+    if (!existing.pledger_id) {
+      throw new PledgeHttpError(
+        409,
+        "This pledge has changed since that attempt. Start the payment again from your pledges.",
+      );
+    }
+
+    return this.startPayment(
+      payer,
+      existing.pledger_id,
+      existing.amount,
+      payload.client,
+    );
+  }
+
+  /**
+   * Removes a payer's own attempt that never collected money.
+   *
+   * A hard delete, not a soft one: the row records an attempt, not a receipt,
+   * it produced no redemption, and nothing downstream counts a non-success row.
+   * A successful payment can never be deleted here, and a pending one is
+   * verified against Paystack first - so the only rows that can go are ones
+   * Paystack itself has already called dead.
+   */
+  async deleteOwn(userId: number | undefined, reference: string) {
+    const payer = await this.loadPayer(userId);
+    const existing = await this.loadOwnPayment(payer.id, reference);
+    const status = await this.resolveStatus(existing);
+
+    if (status === "success") {
+      throw new PledgeHttpError(
+        409,
+        "A completed payment cannot be deleted. Contact the church office if this is wrong.",
+      );
+    }
+
+    if (!PAYER_ACTIONABLE_STATUSES.has(status)) {
+      throw new PledgeHttpError(
+        409,
+        "This payment is still being processed and cannot be removed yet. Please try again shortly.",
+      );
+    }
+
+    // Conditional on both status AND redemption_id, not a plain delete by id: a
+    // webhook could settle this row between resolveStatus reading it and this
+    // statement running, and deleting a settled payment would erase a collected
+    // redemption. count 0 means exactly that happened.
+    const removed = await prisma.pledge_payment.deleteMany({
+      where: {
+        reference,
+        user_id: payer.id,
+        status: { not: "success" },
+        redemption_id: null,
+      },
+    });
+
+    if (removed.count === 0) {
+      throw new PledgeHttpError(
+        409,
+        "This payment completed while you were removing it. Check your payment history.",
+      );
+    }
+
+    return { reference };
+  }
+
+  /** The caller's own attempt, or a 404 that does not reveal whose it is. */
+  private async loadOwnPayment(userId: number, reference: string) {
+    const existing = await prisma.pledge_payment.findUnique({
+      where: { reference },
+      select: {
+        id: true,
+        reference: true,
+        user_id: true,
+        branch_id: true,
+        status: true,
+        amount: true,
+        pledger_id: true,
+      },
+    });
+
+    // Same 404 for "no such reference" and "not yours", so this cannot be used
+    // to probe which references exist.
+    if (!existing || existing.user_id !== userId) {
+      throw new PledgeHttpError(404, "Payment not found");
+    }
+
+    return existing;
+  }
+
+  /**
+   * The status to act on, having given Paystack the last word on a pending row.
+   *
+   * A pending row may be a live mobile money charge or a checkout the payer
+   * closed half an hour ago. Asking Paystack settles it through the same
+   * idempotent path as the webhook. If that call fails, "pending" is returned
+   * unchanged - which makes the caller refuse the action, the safe direction
+   * when we cannot tell whether money moved.
+   */
+  private async resolveStatus(existing: {
+    reference: string;
+    branch_id: number | null;
+    status: string;
+  }): Promise<string> {
+    if (existing.status !== "pending") return existing.status;
+
+    try {
+      const transaction = await verifyTransaction(
+        existing.reference,
+        existing.branch_id,
+      );
+      await settlePledgePayment(transaction);
+    } catch (error) {
+      logger.warn(
+        `[pledge] could not verify ${existing.reference} before a payer action: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        { reference: existing.reference },
+      );
+      return "pending";
+    }
+
+    const settled = await prisma.pledge_payment.findUnique({
+      where: { reference: existing.reference },
+      select: { status: true },
+    });
+
+    return settled?.status ?? "pending";
+  }
+
+  /**
+   * Creates the attempt row and hands it to Paystack. Shared by initialize and
+   * retry so the balance cap, the fee gross-up, the callback URL and the drift
+   * marking cannot drift apart between the two entry points.
+   */
+  private async startPayment(
+    payer: Payer,
+    pledgerId: number,
+    amount: number,
+    client: PaymentClient,
+  ) {
     const pledger = await prisma.pledger.findUnique({
-      where: { id: payload.pledger_id },
+      where: { id: pledgerId },
       include: {
         redemptions: { select: { amount: true } },
         group: { include: { pledge: true } },
@@ -538,7 +751,7 @@ export class PledgePaymentService {
 
     // Same 404 for "no such pledger" and "not yours", so this cannot be used to
     // probe which pledger ids exist.
-    if (!pledger || pledger.user_id !== userId) {
+    if (!pledger || pledger.user_id !== payer.id) {
       throw new PledgeHttpError(404, "Pledge not found");
     }
 
@@ -566,7 +779,7 @@ export class PledgePaymentService {
     // Capping at the outstanding balance rather than accepting anything: an
     // overpayment on a pledge has no meaning in the ledger, and refunding one
     // is manual work for the finance team.
-    if (payload.amount > remainingMinorUnits) {
+    if (amount > remainingMinorUnits) {
       throw new PledgeHttpError(
         422,
         `The outstanding balance on this pledge is ${pledge.currency} ${(
@@ -578,10 +791,10 @@ export class PledgePaymentService {
     const reference = buildReference();
 
     // The payer covers the Paystack fee, so the pledge's subaccount receives
-    // the whole redemption. `payload.amount` is the redemption; the card is
-    // charged the sum.
-    const fee = computeDonorBorneFee(payload.amount);
-    const amountCharged = payload.amount + fee;
+    // the whole redemption. `amount` is the redemption; the card is charged the
+    // sum.
+    const fee = computeDonorBorneFee(amount);
+    const amountCharged = amount + fee;
 
     const payment = await prisma.pledge_payment.create({
       data: {
@@ -593,7 +806,7 @@ export class PledgePaymentService {
         payer_email: payer.email,
         subaccount_code: pledge.subaccount_code,
         user_id: payer.id,
-        amount: payload.amount,
+        amount,
         fee,
         amount_charged: amountCharged,
         currency: pledge.currency,
@@ -603,7 +816,7 @@ export class PledgePaymentService {
       select: PAYMENT_SELECT,
     });
 
-    const callbackUrl = resolveCallbackUrl(payload.client);
+    const callbackUrl = resolveCallbackUrl(client);
 
     try {
       const result = await initializeTransaction(
@@ -626,7 +839,7 @@ export class PledgePaymentService {
             pledger_id: pledger.id,
             pledge_title: pledge.title,
             user_id: payer.id,
-            redemption_minor_units: payload.amount,
+            redemption_minor_units: amount,
             fee_minor_units: fee,
           },
         },

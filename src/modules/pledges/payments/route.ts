@@ -1,11 +1,13 @@
 import { Router } from "express";
 import { Permissions } from "../../../middleWare/authorization";
 import {
+  deleteMyPledgePayment,
   initializePledgePayment,
   listMyPledgePayments,
   listMyPledges,
   listPledgePayments,
   previewPledgeFee,
+  retryPledgePayment,
   verifyPledgePayment,
 } from "./controller";
 
@@ -133,6 +135,80 @@ pledgePaymentsRouter.post("/initialize-payment", [protect], initializePledgePaym
  *         description: Paginated payments
  */
 pledgePaymentsRouter.get("/my-pledge-payments", [protect], listMyPledgePayments);
+
+/**
+ * @swagger
+ * /pledges/my-pledge-payments:
+ *   delete:
+ *     summary: Remove one of the caller's own unsuccessful payments
+ *     description: >
+ *       Only the caller's own row, and only one that never collected money. A
+ *       pending row is verified against Paystack first and refused (409) if it
+ *       is still live or turns out to have succeeded, so a mobile money charge
+ *       part-way through a USSD prompt can never be deleted out from under the
+ *       webhook that will settle it and write its redemption.
+ *     tags: [Pledge Payments]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: reference
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Removed
+ *       404:
+ *         description: Unknown reference, or it belongs to another member
+ *       409:
+ *         description: The payment succeeded, or is still being processed
+ */
+pledgePaymentsRouter.delete(
+  "/my-pledge-payments",
+  [protect],
+  deleteMyPledgePayment,
+);
+
+/**
+ * @swagger
+ * /pledges/retry-payment:
+ *   post:
+ *     summary: Start a fresh attempt at one of the caller's failed payments
+ *     description: >
+ *       Reads the pledge and the amount off the original row - a retry cannot
+ *       become a payment against a different pledge - and mints a NEW reference,
+ *       because Paystack requires references to be unique per initialization.
+ *       The outstanding balance is re-checked, so a retry of an amount redeemed
+ *       another way in the meantime is refused rather than overpaying.
+ *     tags: [Pledge Payments]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [reference]
+ *             properties:
+ *               reference:
+ *                 type: string
+ *               client:
+ *                 type: string
+ *                 enum: [web, mobile]
+ *                 default: mobile
+ *     responses:
+ *       201:
+ *         description: Returns checkoutUrl and the new reference
+ *       404:
+ *         description: Unknown reference, or the pledge is no longer payable
+ *       409:
+ *         description: The payment succeeded, is still processing, or the pledge changed
+ *       422:
+ *         description: The amount now exceeds the outstanding balance
+ */
+pledgePaymentsRouter.post("/retry-payment", [protect], retryPledgePayment);
 
 /**
  * @swagger
