@@ -11,11 +11,29 @@ export const MINIMUM_CONTRIBUTION_MINOR_UNITS = 100;
  */
 export const MAXIMUM_CONTRIBUTION_MINOR_UNITS = 2_147_483_647;
 
+export type PaymentClient = "web" | "mobile";
+
 export type InitializeContributionPayload = {
   giving_option_id: string;
   /** Minor units (pesewas) */
   amount: number;
+  /**
+   * Which surface the donor is giving from. Only picks between two
+   * server-known callback paths - never a URL, which would be an open redirect.
+   * Defaults to "mobile" so installed apps keep the behaviour they shipped with.
+   */
+  client: PaymentClient;
 };
+
+/**
+ * Unrecognised values fall back to "mobile" rather than erroring: an old client
+ * that does not send this field, or a newer one sending a value this build does
+ * not know, must still be able to give.
+ */
+export const parsePaymentClient = (raw: unknown): PaymentClient =>
+  typeof raw === "string" && raw.trim().toLowerCase() === "web"
+    ? "web"
+    : "mobile";
 
 export const validateInitializePayload = (
   body: unknown,
@@ -24,7 +42,11 @@ export const validateInitializePayload = (
     throw new FinanceHttpError(422, "Invalid request payload");
   }
 
-  const payload = body as { giving_option_id?: unknown; amount?: unknown };
+  const payload = body as {
+    giving_option_id?: unknown;
+    amount?: unknown;
+    client?: unknown;
+  };
 
   if (
     typeof payload.giving_option_id !== "string" ||
@@ -64,6 +86,7 @@ export const validateInitializePayload = (
   return {
     giving_option_id: payload.giving_option_id.trim(),
     amount,
+    client: parsePaymentClient(payload.client),
   };
 };
 

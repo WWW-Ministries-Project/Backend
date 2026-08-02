@@ -123,19 +123,63 @@ const toStorablePayload = (transaction: PaystackTransaction): string =>
  */
 const GIVING_CALLBACK_PATH = "/out/giving-complete";
 
-const resolveCallbackUrl = (): string | undefined => {
+/**
+ * Where a donor giving from the web dashboard lands instead. The mobile page
+ * above is inert by design - it deep-links back into the app - so sending a
+ * browser there strands the donor on a page telling them to open an app they
+ * may not have. This one verifies the reference and shows the outcome inline.
+ */
+const GIVING_WEB_CALLBACK_PATH = "/member/giving/complete";
+
+export type PaymentClient = "web" | "mobile";
+
+/**
+ * The origin the web landing page lives on. PAYSTACK_GIVING_CALLBACK_URL is
+ * honoured verbatim for the mobile path (it may point somewhere bespoke), so
+ * only its origin is reusable here.
+ */
+const resolveFrontendOrigin = (): string | undefined => {
   const configured = process.env.PAYSTACK_GIVING_CALLBACK_URL?.trim();
-  if (configured) return configured;
+
+  if (configured) {
+    try {
+      return new URL(configured).origin;
+    } catch {
+      // Not an absolute URL - fall through to Frontend_URL.
+    }
+  }
 
   const frontendUrl = process.env.Frontend_URL?.trim();
-  if (!frontendUrl) {
+  return frontendUrl ? frontendUrl.replace(/\/+$/, "") : undefined;
+};
+
+/**
+ * The URL Paystack redirects the donor to after payment.
+ *
+ * Deliberately server-side, and chosen from a fixed pair by an enum the client
+ * sends: taking a redirect target from the client would be an open redirect on
+ * a payment flow.
+ */
+export const resolveCallbackUrl = (
+  client: PaymentClient = "mobile",
+): string | undefined => {
+  if (client === "mobile") {
+    const configured = process.env.PAYSTACK_GIVING_CALLBACK_URL?.trim();
+    if (configured) return configured;
+  }
+
+  const origin = resolveFrontendOrigin();
+
+  if (!origin) {
     logger.warn(
       "[giving] no callback URL configured (set PAYSTACK_GIVING_CALLBACK_URL or Frontend_URL); the donor will not be redirected back after paying",
     );
     return undefined;
   }
 
-  return `${frontendUrl.replace(/\/+$/, "")}${GIVING_CALLBACK_PATH}`;
+  return `${origin}${
+    client === "web" ? GIVING_WEB_CALLBACK_PATH : GIVING_CALLBACK_PATH
+  }`;
 };
 
 /**
@@ -535,7 +579,7 @@ export class GivingContributionService {
       select: CONTRIBUTION_SELECT,
     });
 
-    const callbackUrl = resolveCallbackUrl();
+    const callbackUrl = resolveCallbackUrl(payload.client);
 
     try {
       const result = await initializeTransaction(
@@ -665,6 +709,14 @@ export class GivingContributionService {
     });
   }
 
+  /**
+   * Giving-only settlement from a webhook payload.
+   *
+   * The mounted webhook route no longer calls this - it goes through
+   * `handlePaystackChargeEvent`, which dispatches by reference prefix so pledge
+   * payments settle on the same signed endpoint. Kept because it is the giving
+   * half of that dispatch expressed on its own terms.
+   */
   async handleWebhook(event: { event?: string; data?: PaystackTransaction }) {
     // Only charge.success moves money. Other events are acknowledged and ignored.
     if (event?.event !== "charge.success" || !event.data) {
