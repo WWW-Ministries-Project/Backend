@@ -1,4 +1,5 @@
-import { PrismaClient, Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
+import { prisma } from "../../../Models/context";
 import {
   createSubaccount,
   updateSubaccount,
@@ -8,8 +9,6 @@ import {
   resolveBranchIdOrDefault,
 } from "../../branches/branchService";
 import { PledgeHttpError, type PledgeSettlementAccount } from "../common";
-
-const prisma = new PrismaClient();
 
 const num = (d: Prisma.Decimal | null | undefined) => (d ? Number(d) : 0);
 

@@ -1,6 +1,5 @@
-import { PrismaClient, Prisma } from "@prisma/client";
-
-const prisma = new PrismaClient();
+import { Prisma } from "@prisma/client";
+import { prisma } from "../../../Models/context";
 
 export class RedemptionService {
   async create(body: any, actorId?: number) {

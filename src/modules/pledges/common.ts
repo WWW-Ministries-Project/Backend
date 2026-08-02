@@ -64,14 +64,17 @@ const nonEmpty = (value: unknown): value is string =>
 /**
  * The settlement account a pledge's online redemptions are routed to.
  *
- * Required on create - a pledge without one cannot be paid online, which is the
- * whole point of giving it a subaccount. On update it is optional, because a
- * meta-only edit (title, deadline, callers) must not force the caller to resend
- * bank details, and because pledges predating this feature have none.
+ * Optional everywhere, so a client that never sends it can still create and
+ * edit pledges - they just cannot be redeemed online, exactly like every pledge
+ * that predates this feature. Supplying one later mints the subaccount.
+ *
+ * "Optional" means absent ENTIRELY. A payload carrying some of the fields is a
+ * client bug, not an opt-out, so it is validated in full and rejected: silently
+ * dropping a half-filled account would leave the pledge quietly unpayable while
+ * the dashboard showed the details as saved.
  */
 export const validateSettlementAccount = (
   body: any,
-  opts: { required: boolean },
 ): PledgeSettlementAccount | undefined => {
   const provided =
     nonEmpty(body?.settlement_bank) ||
@@ -79,15 +82,7 @@ export const validateSettlementAccount = (
     nonEmpty(body?.account_name) ||
     nonEmpty(body?.bank_name);
 
-  if (!provided) {
-    if (opts.required) {
-      throw new PledgeHttpError(
-        400,
-        "Settlement account details are required so payments to this pledge can be routed",
-      );
-    }
-    return undefined;
-  }
+  if (!provided) return undefined;
 
   const accountType = nonEmpty(body?.account_type)
     ? body.account_type.trim()
