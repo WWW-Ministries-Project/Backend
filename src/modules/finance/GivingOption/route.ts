@@ -331,6 +331,39 @@ givingOptionRouter.get(
  *       502:
  *         description: Paystack unreachable
  */
+/**
+ * @swagger
+ * /givingoption/fee-preview:
+ *   get:
+ *     summary: What a donation will cost the donor
+ *     description: >
+ *       Returns the donation, the Paystack fee the donor covers on top, and the
+ *       total their card will be charged. Creates nothing. The app shows this
+ *       before the member commits, so the charge is never larger than they
+ *       expect. Computed server-side so a client copy of the fee formula cannot
+ *       drift from the configured rate.
+ *     tags: [Giving Options]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: amount
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: The donation in minor units (pesewas).
+ *     responses:
+ *       200:
+ *         description: amount, fee and amount_charged in minor units
+ *       422:
+ *         description: Amount missing or out of range
+ */
+givingOptionRouter.get(
+  "/fee-preview",
+  [protect],
+  contributionController.previewFee,
+);
+
 givingOptionRouter.post(
   "/initialize",
   [protect],

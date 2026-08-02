@@ -415,6 +415,25 @@ export const settleContribution = async (
 
 export class GivingContributionService {
   /** Options this member may give to right now. */
+  /**
+   * What a given donation will actually cost the donor, without creating
+   * anything. The app shows this breakdown before the member commits, so they
+   * are never surprised by a charge larger than the amount they typed.
+   *
+   * Deliberately server-side rather than letting the client re-implement the
+   * fee formula: a client-side copy would drift the moment the configured rate
+   * changed, and the donor would be quoted one figure and charged another.
+   */
+  previewFee(donationMinorUnits: number) {
+    const fee = computeDonorBorneFee(donationMinorUnits);
+
+    return {
+      amount: donationMinorUnits,
+      fee,
+      amount_charged: donationMinorUnits + fee,
+    };
+  }
+
   async listAvailable(userId: number | undefined) {
     if (!userId) {
       throw new FinanceHttpError(401, "Not authorized");
