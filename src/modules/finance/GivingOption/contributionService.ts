@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import { prisma } from "../../../Models/context";
 import { isPaystackFailure } from "../../../libs/paystack/paystackClient";
+import { computeDonorBorneFee } from "../../../libs/paystack/paystackFees";
 import {
   initializeTransaction,
   verifyTransaction,
@@ -29,7 +30,10 @@ const CONTRIBUTION_SELECT = {
   donor_name: true,
   donor_email: true,
   amount: true,
+  fee: true,
+  amount_charged: true,
   amount_paid: true,
+  fee_actual: true,
   currency: true,
   status: true,
   channel: true,
@@ -150,6 +154,8 @@ type ContributionRow = {
   donor_name: string;
   donor_email: string;
   amount: number;
+  fee: number;
+  amount_charged: number | null;
   amount_paid: number | null;
   currency: string;
   status: string;
@@ -170,7 +176,10 @@ const RECEIPT_ROW_SELECT = {
   donor_name: true,
   donor_email: true,
   amount: true,
+  fee: true,
+  amount_charged: true,
   amount_paid: true,
+  fee_actual: true,
   currency: true,
   status: true,
   channel: true,
@@ -199,7 +208,10 @@ const sendReceipt = async (contribution: ContributionRow): Promise<void> => {
       givingReceiptTemplate({
         donor_name: contribution.donor_name,
         giving_option_name: contribution.giving_option_name,
-        amount_minor_units: contribution.amount_paid ?? contribution.amount,
+        // The donation, not what was charged: `amount` is what reaches the fund,
+        // and the fee the donor covered is itemised separately below it.
+        amount_minor_units: contribution.amount,
+        fee_minor_units: contribution.fee,
         currency: contribution.currency,
         reference: contribution.reference,
         channel: contribution.channel,
@@ -309,24 +321,43 @@ export const settleContribution = async (
   const collected = Number(transaction.amount);
   const amountPaid = Number.isInteger(collected) ? collected : null;
 
+  // The donor is charged the donation PLUS the fee they are covering, so what
+  // Paystack collected must be compared against amount_charged, not against
+  // `amount` (which is the donation the subaccount receives). Rows created
+  // before the gross-up have no amount_charged, so fall back to `amount`.
+  const expectedCharge = contribution.amount_charged ?? contribution.amount;
+
   if (amountPaid === null) {
-    // The documented reconciliation query is `amount_paid <> amount`, and in
-    // MySQL that never matches NULL - so a row landing here would be
-    // invisible to the query meant to find exactly this kind of problem.
-    // The identifying values are interpolated into the message itself (not
-    // left in the metadata object) because this repo's winston console
-    // transport (src/utils/logger-config.ts) formats only
+    // The documented reconciliation query never matches NULL in MySQL - so a
+    // row landing here would be invisible to the query meant to find exactly
+    // this kind of problem. The identifying values are interpolated into the
+    // message itself (not left in the metadata object) because this repo's
+    // winston console transport (src/utils/logger-config.ts) formats only
     // { level, message, timestamp } - a metadata-only field is silently
     // dropped, which would make this, the most safety-critical log in the
     // file, less actionable than the console.warn it replaced.
     logger.error(
-      `[giving] could not parse collected amount for ${reference}: quoted ${contribution.amount}, collected ${transaction.amount}`,
-      { reference, quoted: contribution.amount, collected: transaction.amount },
+      `[giving] could not parse collected amount for ${reference}: expected charge ${expectedCharge}, collected ${transaction.amount}`,
+      { reference, expected: expectedCharge, collected: transaction.amount },
     );
-  } else if (amountPaid !== contribution.amount) {
+  } else if (amountPaid !== expectedCharge) {
     logger.error(
-      `[giving] amount mismatch on ${reference}: quoted ${contribution.amount}, collected ${amountPaid}`,
-      { reference, quoted: contribution.amount, collected: amountPaid },
+      `[giving] amount mismatch on ${reference}: expected charge ${expectedCharge}, collected ${amountPaid}`,
+      { reference, expected: expectedCharge, collected: amountPaid },
+    );
+  }
+
+  // What Paystack actually took in fees. If it differs from what we grossed the
+  // charge up by, the configured fee schedule no longer matches Paystack's real
+  // one - which means every donation since is off by that difference, and the
+  // subaccount is receiving slightly less (or more) than the donor chose.
+  const reportedFee = Number(transaction.fees);
+  const feeActual = Number.isInteger(reportedFee) ? reportedFee : null;
+
+  if (feeActual !== null && feeActual !== contribution.fee) {
+    logger.error(
+      `[giving] fee schedule drift on ${reference}: grossed up by ${contribution.fee}, Paystack charged ${feeActual}. Check PAYSTACK_FEE_PERCENT / _CAP_MINOR_UNITS / _FLAT_MINOR_UNITS`,
+      { reference, assumed: contribution.fee, actual: feeActual },
     );
   }
 
@@ -347,6 +378,7 @@ export const settleContribution = async (
     data: {
       status: "success",
       amount_paid: amountPaid,
+      fee_actual: feeActual,
       channel: transaction.channel ?? null,
       paid_at: paidAt,
       paystack_response: toStorablePayload(transaction),
@@ -453,6 +485,11 @@ export class GivingContributionService {
 
     const reference = buildReference();
 
+    // The donor covers the Paystack fee, so the subaccount receives the whole
+    // donation. `payload.amount` is the donation; the card is charged the sum.
+    const fee = computeDonorBorneFee(payload.amount);
+    const amountCharged = payload.amount + fee;
+
     const contribution = await prisma.givingContribution.create({
       data: {
         reference,
@@ -463,6 +500,8 @@ export class GivingContributionService {
         donor_name: donor.name,
         donor_email: donor.email,
         amount: payload.amount,
+        fee,
+        amount_charged: amountCharged,
         currency: option.currency,
         status: "pending",
         branch_id: option.branch_id,
@@ -476,16 +515,25 @@ export class GivingContributionService {
       const result = await initializeTransaction(
         {
           email: donor.email,
-          amount: payload.amount,
+          amount: amountCharged,
           currency: option.currency,
           reference,
           subaccount: option.subaccount_code,
-          bearer: option.bearer,
+          // The fee is routed to the main account as a flat charge, and the
+          // main account is named as bearer - so it receives exactly the fee
+          // and immediately pays it out, netting zero, while the subaccount
+          // keeps the full donation. Naming the subaccount as bearer instead is
+          // rejected by Paystack ("Invalid split transaction values") because it
+          // cannot both take the whole amount and pay the fee from it.
+          ...(fee > 0 && { transaction_charge: fee }),
+          bearer: "account",
           ...(callbackUrl && { callback_url: callbackUrl }),
           metadata: {
             giving_option_id: option.id,
             giving_option_name: option.name,
             user_id: donor.id,
+            donation_minor_units: payload.amount,
+            fee_minor_units: fee,
           },
         },
         option.branch_id,

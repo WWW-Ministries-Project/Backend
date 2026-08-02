@@ -6,8 +6,14 @@ import {
 export type GivingReceiptDetails = {
   donor_name: string;
   giving_option_name: string;
-  /** Minor units (pesewas) */
+  /** Minor units (pesewas). The donation itself - what the fund receives. */
   amount_minor_units: number;
+  /**
+   * Minor units. The Paystack fee the donor covered on top of the donation.
+   * Itemised rather than folded in, so the receipt shows both what the card was
+   * charged and what actually reached the fund.
+   */
+  fee_minor_units?: number;
   currency: string;
   reference: string;
   channel?: string | null;
@@ -37,9 +43,22 @@ const formatReceiptDate = (paidAt?: Date | null): string =>
 export const givingReceiptTemplate = (details: GivingReceiptDetails): string => {
   const channel = formatChannel(details.channel);
 
+  const fee = details.fee_minor_units ?? 0;
+
   const rows: Array<[string, string]> = [
     ["Giving option", details.giving_option_name],
-    ["Amount", formatAmount(details.amount_minor_units, details.currency)],
+    ["Your giving", formatAmount(details.amount_minor_units, details.currency)],
+    // Only itemised when the donor actually covered a fee. Receipts predating
+    // the donor-borne fee have none, and showing "GHS 0.00" would puzzle them.
+    ...(fee > 0
+      ? ([
+          ["Transaction fee", formatAmount(fee, details.currency)],
+          [
+            "Total charged",
+            formatAmount(details.amount_minor_units + fee, details.currency),
+          ],
+        ] as Array<[string, string]>)
+      : []),
     ["Reference", details.reference],
     ...(channel ? [["Payment method", channel] as [string, string]] : []),
     ["Date", formatReceiptDate(details.paid_at)],
