@@ -708,6 +708,11 @@ export class OrderService {
   private async resolveItemStock(
     items: { id: string | number; name: string; color: string; size: string; quantity: number }[],
   ): Promise<ResolvedOrderItem[]> {
+    const invalidItem = items.find((item) => !Number.isInteger(Number(item.id)));
+    if (invalidItem) {
+      throw new Error(`Invalid product id "${invalidItem.id}" for item "${invalidItem.name}"`);
+    }
+
     const productIds = [...new Set(items.map((item) => Number(item.id)))];
 
     const products = await prisma.products.findMany({
