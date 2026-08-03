@@ -98,6 +98,7 @@ model user {
   pledges          pledger[]       @relation("pledger_user")
   announcements_created announcement[] @relation("announcement_creator")
   sermon_series_created sermon_series[] @relation("sermon_series_creator")
+  stock_notification_requests stock_notification_requests[]
 
   @@index([access_level_id], map: "user_access_level_id_fkey")
   @@index([position_id], map: "user_position_id_fkey")
@@ -1570,6 +1571,7 @@ model products {
   stock_managed       String            @default("no")
   order_items         order_items[]
   product_colours     product_colour[]
+  stock_notification_requests stock_notification_requests[]
   market              markets?          @relation(fields: [market_id], references: [id])
   product_category    product_category? @relation(fields: [product_category_id], references: [id])
   product_type        product_type?     @relation(fields: [product_type_id], references: [id])
@@ -1580,23 +1582,27 @@ model products {
 }
 
 model sizes {
-  id                   Int             @id @default(autoincrement())
-  name                 String          @unique
-  sort_order           Int?
-  created_at           DateTime        @default(now())
-  updated_at           DateTime        @updatedAt
-  created_by_id        Int?
-  updated_at_id        Int?
-  product_colour_stock product_stock[]
+  id                           Int                            @id @default(autoincrement())
+  name                         String                         @unique
+  sort_order                   Int?
+  created_at                   DateTime                       @default(now())
+  updated_at                   DateTime                       @updatedAt
+  created_by_id                Int?
+  updated_at_id                Int?
+  product_colour_stock         product_stock[]
+  order_items                  order_items[]
+  stock_notification_requests  stock_notification_requests[]
 }
 
 model product_colour {
-  id         Int             @id @default(autoincrement())
-  colour     String?
-  image_url  String?
-  product_id Int
-  product    products        @relation(fields: [product_id], references: [id])
-  sizes      product_stock[]
+  id                           Int                            @id @default(autoincrement())
+  colour                       String?
+  image_url                    String?
+  product_id                   Int
+  product                      products                       @relation(fields: [product_id], references: [id])
+  sizes                        product_stock[]
+  order_items                  order_items[]
+  stock_notification_requests  stock_notification_requests[]
 
   @@index([product_id], map: "product_colour_product_id_fkey")
 }
@@ -1632,26 +1638,32 @@ model orders {
 }
 
 model order_items {
-  id               Int       @id @default(autoincrement())
-  order_id         Int
-  name             String
-  market_id        Int?
-  product_id       Int?
-  price_amount     Float
-  price_currency   String
-  quantity         Int
-  product_type     String
-  product_category String
-  image_url        String
-  color            String
-  size             String
-  market           markets?  @relation(fields: [market_id], references: [id])
-  order            orders    @relation(fields: [order_id], references: [id], onDelete: Cascade)
-  product          products? @relation(fields: [product_id], references: [id])
+  id                Int             @id @default(autoincrement())
+  order_id          Int
+  name              String
+  market_id         Int?
+  product_id        Int?
+  price_amount      Float
+  price_currency    String
+  quantity          Int
+  product_type      String
+  product_category  String
+  image_url         String
+  color             String
+  size              String
+  product_colour_id Int?
+  size_id           Int?
+  market            markets?        @relation(fields: [market_id], references: [id])
+  order             orders          @relation(fields: [order_id], references: [id], onDelete: Cascade)
+  product           products?       @relation(fields: [product_id], references: [id])
+  product_colour    product_colour? @relation(fields: [product_colour_id], references: [id])
+  size_ref          sizes?          @relation(fields: [size_id], references: [id])
 
   @@index([market_id], map: "order_items_market_id_fkey")
   @@index([order_id], map: "order_items_order_id_fkey")
   @@index([product_id], map: "order_items_product_id_fkey")
+  @@index([product_colour_id], map: "order_items_product_colour_id_fkey")
+  @@index([size_id], map: "order_items_size_id_fkey")
 }
 
 model billing_details {
@@ -2494,4 +2506,21 @@ model sermon {
   series sermon_series @relation(fields: [series_id], references: [id], onDelete: Cascade)
 
   @@index([series_id])
+}
+
+model stock_notification_requests {
+  id                Int            @id @default(autoincrement())
+  user_id           Int
+  product_id        Int
+  product_colour_id Int
+  size_id           Int
+  created_at        DateTime       @default(now())
+  user              user           @relation(fields: [user_id], references: [id])
+  product           products       @relation(fields: [product_id], references: [id])
+  product_colour    product_colour @relation(fields: [product_colour_id], references: [id])
+  size              sizes          @relation(fields: [size_id], references: [id])
+
+  @@unique([user_id, product_colour_id, size_id], name: "stock_notification_requests_unique")
+  @@index([product_colour_id, size_id], map: "stock_notification_requests_colour_size_idx")
+  @@index([user_id], map: "stock_notification_requests_user_id_fkey")
 }

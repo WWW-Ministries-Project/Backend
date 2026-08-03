@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import { OrderService } from "./orderService";
+import { OrderService, InsufficientStockError } from "./orderService";
 
 const orderService = new OrderService();
 
@@ -13,7 +13,8 @@ export class OrderController {
         data: order,
       });
     } catch (error: any) {
-      return res.status(400).json({
+      const status = error instanceof InsufficientStockError ? 409 : 400;
+      return res.status(status).json({
         success: false,
         message: error.message || "Failed to create order",
       });
