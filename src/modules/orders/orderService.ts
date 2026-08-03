@@ -3,6 +3,43 @@ import axios from "axios";
 import crypto from "crypto";
 import { toSentenceCase } from "../../utils";
 import { notificationService } from "../notifications/notificationService";
+import { stockNotificationService } from "../products/stockNotificationService";
+
+export type StockShortage = {
+  name: string;
+  color: string;
+  size: string;
+  requested: number;
+  available: number;
+};
+
+export class InsufficientStockError extends Error {
+  items: StockShortage[];
+
+  constructor(items: StockShortage[]) {
+    const summary = items
+      .map(
+        (item) =>
+          `${item.name} (${item.color}/${item.size}): requested ${item.requested}, only ${item.available} available`,
+      )
+      .join("; ");
+    super(`Insufficient stock — ${summary}`);
+    this.name = "InsufficientStockError";
+    this.items = items;
+  }
+}
+
+type ResolvedOrderItem = {
+  productId: number;
+  color: string;
+  size: string;
+  name: string;
+  quantity: number;
+  stockManaged: boolean;
+  productColourId: number | null;
+  sizeId: number | null;
+  availableStock: number;
+};
 
 export class OrderService {
   async findOrderByName(first_name?: string, last_name?: string) {
@@ -57,17 +94,88 @@ export class OrderService {
       this.validateHubtelRedirectUrls(data.return_url, data.cancellation_url);
     }
 
-    // Step 1: Create order + items + billing info
+    const resolvedItems = await this.resolveItemStock(data.items);
+    const shortages = resolvedItems.filter(
+      (item) => item.stockManaged && item.availableStock < item.quantity,
+    );
+
+    if (shortages.length) {
+      const userId = Number(data.user_id);
+      if (Number.isInteger(userId) && userId > 0) {
+        for (const shortage of shortages) {
+          if (shortage.productColourId != null && shortage.sizeId != null) {
+            await stockNotificationService.recordRequest(
+              userId,
+              shortage.productId,
+              shortage.productColourId,
+              shortage.sizeId,
+            );
+          }
+        }
+      }
+
+      throw new InsufficientStockError(
+        shortages.map((item) => ({
+          name: item.name,
+          color: item.color,
+          size: item.size,
+          requested: item.quantity,
+          available: item.availableStock,
+        })),
+      );
+    }
+
+    // Step 1: Create order + items + billing info, and reserve stock for
+    // every stock-managed item — all inside one transaction so a lost race
+    // against a concurrent order rolls the whole order back too.
     const clientReference = this.generateReference();
-    const order = await prisma.orders.create({
-      data: {
-        user_id: Number(data.user_id) ?? null,
-        total_amount: parseFloat(data.total_amount.toString()),
-        reference: clientReference,
-        items: { create: this.buildItems(data.items) },
-        billing_details: { create: this.buildBilling(data.billing) },
-      },
-      include: { items: true, billing_details: true },
+    const order = await prisma.$transaction(async (tx) => {
+      const created = await tx.orders.create({
+        data: {
+          user_id: Number(data.user_id) ?? null,
+          total_amount: parseFloat(data.total_amount.toString()),
+          reference: clientReference,
+          items: { create: this.buildItems(data.items, resolvedItems) },
+          billing_details: { create: this.buildBilling(data.billing) },
+        },
+        include: { items: true, billing_details: true },
+      });
+
+      for (const item of resolvedItems) {
+        if (!item.stockManaged) continue;
+        if (item.productColourId == null || item.sizeId == null) {
+          throw new InsufficientStockError([
+            {
+              name: item.name,
+              color: item.color,
+              size: item.size,
+              requested: item.quantity,
+              available: 0,
+            },
+          ]);
+        }
+        const decremented = await tx.product_stock.updateMany({
+          where: {
+            product_colour_id: item.productColourId,
+            size_id: item.sizeId,
+            stock: { gte: item.quantity },
+          },
+          data: { stock: { decrement: item.quantity } },
+        });
+        if (decremented.count === 0) {
+          throw new InsufficientStockError([
+            {
+              name: item.name,
+              color: item.color,
+              size: item.size,
+              requested: item.quantity,
+              available: 0,
+            },
+          ]);
+        }
+      }
+
+      return created;
     });
 
     if (!order) throw new Error("Order creation failed");
@@ -548,20 +656,102 @@ export class OrderService {
     };
   }
 
-  private buildItems(items: any[]) {
-    return items.map((item) => ({
-      name: item.name,
-      product_id: Number(item.id),
-      price_amount: item.price_amount,
-      market_id: Number(item.market_id),
-      price_currency: item.price_currency,
-      quantity: item.quantity,
-      product_type: item.product_type,
-      product_category: item.product_category,
-      image_url: item.image_url,
-      color: item.color,
-      size: item.size,
-    }));
+  private async resolveItemStock(
+    items: { id: string | number; name: string; color: string; size: string; quantity: number }[],
+  ): Promise<ResolvedOrderItem[]> {
+    const productIds = [...new Set(items.map((item) => Number(item.id)))];
+
+    const products = await prisma.products.findMany({
+      where: { id: { in: productIds } },
+      select: { id: true, stock_managed: true },
+    });
+    const productById = new Map(products.map((p) => [p.id, p]));
+
+    const colours = await prisma.product_colour.findMany({
+      where: { product_id: { in: productIds } },
+      select: { id: true, colour: true, product_id: true },
+    });
+    const colourIdByProductAndName = new Map(
+      colours.map((c) => [`${c.product_id}:${c.colour}`, c.id]),
+    );
+
+    const sizeNames = [...new Set(items.map((item) => item.size))];
+    const sizes = await prisma.sizes.findMany({
+      where: { name: { in: sizeNames } },
+      select: { id: true, name: true },
+    });
+    const sizeIdByName = new Map(sizes.map((s) => [s.name, s.id]));
+
+    const stockRows = await prisma.product_stock.findMany({
+      where: {
+        product_colour_id: { in: colours.map((c) => c.id) },
+        size_id: { in: sizes.map((s) => s.id) },
+      },
+    });
+    const stockByColourAndSize = new Map(
+      stockRows.map((row) => [`${row.product_colour_id}:${row.size_id}`, row.stock]),
+    );
+
+    return items.map((item) => {
+      const productId = Number(item.id);
+      const product = productById.get(productId);
+      const stockManaged = product?.stock_managed === "yes";
+      const quantity = Number(item.quantity);
+
+      if (!stockManaged) {
+        return {
+          productId,
+          color: item.color,
+          size: item.size,
+          name: item.name,
+          quantity,
+          stockManaged,
+          productColourId: null,
+          sizeId: null,
+          availableStock: Infinity,
+        };
+      }
+
+      const productColourId = colourIdByProductAndName.get(`${productId}:${item.color}`) ?? null;
+      const sizeId = sizeIdByName.get(item.size) ?? null;
+      const availableStock =
+        productColourId != null && sizeId != null
+          ? stockByColourAndSize.get(`${productColourId}:${sizeId}`) ?? 0
+          : 0;
+
+      return {
+        productId,
+        color: item.color,
+        size: item.size,
+        name: item.name,
+        quantity,
+        stockManaged,
+        productColourId,
+        sizeId,
+        availableStock,
+      };
+    });
+  }
+
+  private buildItems(items: any[], resolved: ResolvedOrderItem[]) {
+    return items.map((item, index) => {
+      const match = resolved[index];
+      return {
+        name: item.name,
+        product_id: Number(item.id),
+        price_amount: item.price_amount,
+        market_id: Number(item.market_id),
+        price_currency: item.price_currency,
+        quantity: item.quantity,
+        product_type: item.product_type,
+        product_category: item.product_category,
+        image_url: item.image_url,
+        color: item.color,
+        size: item.size,
+        product_colour_id: match?.stockManaged ? match.productColourId ?? undefined : undefined,
+        size_id: match?.stockManaged ? match.sizeId ?? undefined : undefined,
+      };
+    });
   }
 
   private buildBilling(billing: any) {
