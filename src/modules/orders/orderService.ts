@@ -656,17 +656,27 @@ export class OrderService {
   }
 
   async reconcilePendingHubtelPayments(limit = 100) {
+    const STALE_PENDING_MS = 48 * 60 * 60 * 1000;
+    const now = Date.now();
+
     const pendingOrders = await prisma.orders.findMany({
       where: { payment_status: "pending" },
       orderBy: { id: "desc" },
       take: limit,
-      select: { id: true, reference: true, payment_status: true },
+      select: { id: true, reference: true, payment_status: true, created_at: true },
     });
 
     const results = await Promise.allSettled(
-      pendingOrders.map((order) =>
-        this.checkHubtelTransactionStatus(order.reference),
-      ),
+      pendingOrders.map(async (order) => {
+        const result = await this.checkHubtelTransactionStatus(order.reference);
+        const stillPending = result?.order?.payment_status === "pending";
+        const isStale = now - order.created_at.getTime() > STALE_PENDING_MS;
+
+        if (stillPending && isStale) {
+          return this.updateOrderStatusByHubtel(order.reference, "failed");
+        }
+        return result;
+      }),
     );
 
     let successUpdates = 0;
