@@ -6,6 +6,7 @@ import {
   ProductFilters,
   UpdateProductInput,
 } from "./productInterface";
+import { stockNotificationService } from "./stockNotificationService";
 
 export class ProductService {
   private readonly _include = {
@@ -124,6 +125,20 @@ export class ProductService {
       },
     });
 
+    // Snapshot prior stock, keyed by colour label + size name (not ID —
+    // STEP 1/2 below delete and recreate every colour/stock row, so IDs
+    // don't survive an edit; labels are the only stable key across it).
+    const priorStock = await prisma.product_stock.findMany({
+      where: { product_colour: { product_id: input.id } },
+      include: {
+        product_colour: { select: { colour: true } },
+        size: { select: { name: true } },
+      },
+    });
+    const priorStockByKey = new Map(
+      priorStock.map((row) => [`${row.product_colour.colour}:${row.size.name}`, row.stock]),
+    );
+
     // STEP 1 — delete product stocks first (since they depend on product_colour)
     await prisma.product_stock.deleteMany({
       where: {
@@ -202,14 +217,21 @@ export class ProductService {
           },
         });
 
-        // Create stock records using the comprehensive size map
-        await prisma.product_stock.createMany({
-          data: colourItem.stock.map((s: any) => ({
-            product_colour_id: productColour.id,
-            size_id: sizeMap.get(s.size)!,
-            stock: Number(s.stock),
-          })),
-        });
+        const stockRows = colourItem.stock.map((s: any) => ({
+          product_colour_id: productColour.id,
+          size_id: sizeMap.get(s.size)!,
+          stock: Number(s.stock),
+        }));
+
+        await prisma.product_stock.createMany({ data: stockRows });
+
+        for (const s of colourItem.stock) {
+          const priorValue = priorStockByKey.get(`${colourItem.colour}:${s.size}`) ?? 0;
+          const newValue = Number(s.stock);
+          if (priorValue <= 0 && newValue > 0) {
+            await stockNotificationService.notifyBackInStock(productColour.id, sizeMap.get(s.size)!);
+          }
+        }
       }
     }
 
