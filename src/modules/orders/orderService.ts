@@ -442,16 +442,55 @@ export class OrderService {
     };
   }
 
+  private async restockOrderItems(orderId: number) {
+    const items = await prisma.order_items.findMany({
+      where: {
+        order_id: orderId,
+        product_colour_id: { not: null },
+        size_id: { not: null },
+      },
+    });
+
+    for (const item of items) {
+      const colourId = item.product_colour_id!;
+      const sizeId = item.size_id!;
+
+      const before = await prisma.product_stock.findUnique({
+        where: { size_id_product_colour_id: { size_id: sizeId, product_colour_id: colourId } },
+      });
+      const beforeStock = before?.stock ?? 0;
+
+      await prisma.product_stock.update({
+        where: { size_id_product_colour_id: { size_id: sizeId, product_colour_id: colourId } },
+        data: { stock: { increment: item.quantity } },
+      });
+
+      const afterStock = beforeStock + item.quantity;
+      if (beforeStock <= 0 && afterStock > 0) {
+        await stockNotificationService.notifyBackInStock(colourId, sizeId);
+      }
+    }
+  }
+
   private async updateOrderPayment(
     orderId: number,
     status: "success" | "failed" | "pending",
     orderNumber?: string,
   ) {
+    const previous = await prisma.orders.findUnique({
+      where: { id: orderId },
+      select: { payment_status: true },
+    });
+
     const updatedOrder = await prisma.orders.update({
       where: { id: orderId },
       data: { payment_status: status, order_number: orderNumber },
       include: { items: true, billing_details: true },
     });
+
+    if (status === "failed" && previous?.payment_status !== "failed") {
+      await this.restockOrderItems(orderId);
+    }
 
     const recipientUserId = Number(updatedOrder.user_id);
     if (
