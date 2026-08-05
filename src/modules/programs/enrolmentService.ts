@@ -21,6 +21,11 @@ type CompletedProgramContext = {
   completionDate: Date;
 };
 
+type NextProgramSuggestion = {
+  id: number;
+  title: string;
+};
+
 type ProgramCertificatePayload = {
   recipientFullName: string;
   programTitle: string;
@@ -29,6 +34,7 @@ type ProgramCertificatePayload = {
   certificateNumber: string;
   verificationUrl: string;
   qrCodeDataUrl: string;
+  nextPrograms: NextProgramSuggestion[];
 };
 
 const CERTIFICATE_NUMBER_PREFIX = "WWMHCSM";
@@ -576,6 +582,21 @@ export class EnrollmentService {
     throw new Error("Unable to generate a unique certificate number");
   }
 
+  private async resolveNextPrograms(
+    programId: number,
+  ): Promise<NextProgramSuggestion[]> {
+    const requiredForRows = await prisma.program_prerequisites.findMany({
+      where: { prerequisiteId: programId },
+      select: {
+        program: {
+          select: { id: true, title: true },
+        },
+      },
+    });
+
+    return requiredForRows.map((row) => row.program);
+  }
+
   private async buildCertificatePayload(
     context: CompletedProgramContext,
     certificate: {
@@ -586,7 +607,10 @@ export class EnrollmentService {
     const verificationUrl = this.buildCertificateVerificationUrl(
       certificate.certificateNumber,
     );
-    const qrCodeDataUrl = await generateQRDataUrl(verificationUrl);
+    const [qrCodeDataUrl, nextPrograms] = await Promise.all([
+      generateQRDataUrl(verificationUrl),
+      this.resolveNextPrograms(context.program.id),
+    ]);
 
     return {
       recipientFullName: context.user.name,
@@ -596,6 +620,7 @@ export class EnrollmentService {
       certificateNumber: certificate.certificateNumber,
       verificationUrl,
       qrCodeDataUrl,
+      nextPrograms,
     };
   }
 

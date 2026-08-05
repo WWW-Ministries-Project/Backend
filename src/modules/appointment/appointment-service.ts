@@ -14,6 +14,7 @@ const availabilityInclude = {
       position: {
         select: {
           name: true,
+          category: true,
         },
       },
     },
@@ -816,8 +817,13 @@ export const AppointmentService = {
     return existing;
   },
 
-  // FETCH AVAILABILITY WITH SLOT/SESSION STATUS TAGS (ALL DAYS)
-  async getAvailabilityWithSessionStatus(scope?: AppointmentScope, branchId?: unknown) {
+  // FETCH AVAILABILITY WITH SLOT/SESSION STATUS TAGS (ALL DAYS, OR A SINGLE
+  // CALLER-SUPPLIED DATE WHEN filters.date IS GIVEN)
+  async getAvailabilityWithSessionStatus(
+    scope?: AppointmentScope,
+    branchId?: unknown,
+    filters?: { date?: string; category?: string },
+  ) {
     const excludedAttendeeIds =
       scope?.mode === "all" ? scope?.excludedAttendeeIds || [] : [];
     const availabilityWhere: any = {
@@ -827,6 +833,20 @@ export const AppointmentService = {
       availabilityWhere.userId = scope.userId;
     } else if (excludedAttendeeIds.length > 0) {
       availabilityWhere.userId = { notIn: excludedAttendeeIds };
+    }
+
+    const category = firstValidString(filters?.category);
+    if (category) {
+      availabilityWhere.user = { position: { category } };
+    }
+
+    // A caller-supplied date pins every slot's status to that exact day
+    // instead of each slot's own next matching weekday.
+    const requestedDateWindow = filters?.date
+      ? parseDateInput(filters.date)
+      : undefined;
+    if (requestedDateWindow) {
+      availabilityWhere.day = requestedDateWindow.dayName;
     }
 
     const allAvailabilities = await prisma.availability.findMany({
@@ -856,7 +876,7 @@ export const AppointmentService = {
     let rangeEnd: Date | undefined;
 
     for (const day of availabilityDays) {
-      const dayWindow = getNextDateWindowForDay(day);
+      const dayWindow = requestedDateWindow ?? getNextDateWindowForDay(day);
       dayWindows.set(day, dayWindow);
       if (!rangeStart || dayWindow.dayStart < rangeStart) {
         rangeStart = dayWindow.dayStart;
@@ -928,6 +948,8 @@ export const AppointmentService = {
       {
         userId: string;
         fullName: string | null;
+        position: string | null;
+        category: string | null;
         slotLimits: number[];
         bookedSessions: Array<{
           date: string;
@@ -959,6 +981,8 @@ export const AppointmentService = {
         grouped.set(availability.userId, {
           userId: String(availability.userId),
           fullName: availability.user?.name ?? null,
+          position: availability.user?.position?.name ?? null,
+          category: availability.user?.position?.category ?? null,
           slotLimits: [],
           bookedSessions: userBookedSessions,
           timeSlots: [],
@@ -1013,6 +1037,8 @@ export const AppointmentService = {
       return {
         userId: entry.userId,
         fullName: entry.fullName,
+        position: entry.position,
+        category: entry.category,
         maxBookingsPerSlot: resolvedMaxBookingsPerSlot,
         bookedSessions: entry.bookedSessions,
         timeSlots: entry.timeSlots.sort((a, b) => {
