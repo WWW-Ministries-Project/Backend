@@ -155,6 +155,43 @@ export class AppointmentController {
   }
 
   /**
+   * @route   GET /appointment/availability/booking-options?date=YYYY-MM-DD&category=Something
+   * @desc    Same payload as `getAvailabilityStatus` (staff name/position/category,
+   *          their time slots, and per-slot AVAILABLE/BOOKED status — no requester
+   *          identity, no other members' appointment details), but unscoped: any
+   *          authenticated member needs the *full* staff list to pick who to book
+   *          with, not just their own ("own"-scoped) availability, which is what
+   *          `can_view_appointments_scoped` narrows non-privileged callers to.
+   *          Deliberately `protect`-only (no `can_view_appointments_scoped`) in the
+   *          route — safe because the returned fields carry nothing scoped access
+   *          was guarding in the first place.
+   */
+  async getBookingOptions(req: Request, res: Response) {
+    try {
+      const date =
+        typeof req.query.date === "string" ? req.query.date : undefined;
+      const category =
+        typeof req.query.category === "string" ? req.query.category : undefined;
+      const data =
+        await AppointmentService.getAvailabilityWithSessionStatus(
+          { mode: "all" },
+          req.query?.branch_id,
+          { date, category },
+        );
+
+      res.status(200).json({
+        message: "Booking options fetched successfully",
+        data,
+      });
+    } catch (error: any) {
+      const statusCode = error?.message?.includes("date") ? 400 : 500;
+      res.status(statusCode).json({
+        error: error.message || "Error fetching booking options",
+      });
+    }
+  }
+
+  /**
    * @route   POST /api/appointments/book
    * @desc    Member/Client books a specific time slot
    */
