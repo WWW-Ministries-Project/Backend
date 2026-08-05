@@ -3,6 +3,7 @@ import { Router } from "express";
 import { Permissions } from "../../middleWare/authorization";
 import { LifeCenterRoleController } from "./lifeCenterRoleController";
 import { LifeCenterController } from "./lifeCenterController";
+import { LifeCenterMeetingController } from "./lifeCenterMeetingController";
 
 const permissions = new Permissions();
 const protect = permissions.protect;
@@ -10,6 +11,7 @@ const protect = permissions.protect;
 const lifeCenterRouter = Router();
 const roleController = new LifeCenterRoleController();
 const lifeCenterController = new LifeCenterController();
+const lifeCenterMeetingController = new LifeCenterMeetingController();
 
 //life center roles
 lifeCenterRouter.post(
@@ -131,5 +133,37 @@ lifeCenterRouter.get(
 
 //mylifecenter
 lifeCenterRouter.get("/my-lifecenter", [protect], lifeCenterController.mylifecenter);
+
+//life center meetings
+lifeCenterRouter.post(
+  "/meeting",
+  [protect, permissions.can_manage_life_center_scoped],
+  lifeCenterMeetingController.createMeeting,
+);
+lifeCenterRouter.put(
+  "/meeting",
+  [protect, permissions.can_manage_life_center_scoped],
+  lifeCenterMeetingController.updateMeeting,
+);
+lifeCenterRouter.delete(
+  "/meeting",
+  [protect, permissions.can_delete_life_center],
+  lifeCenterMeetingController.deleteMeeting,
+);
+lifeCenterRouter.get(
+  "/meeting",
+  [protect, permissions.can_view_life_center_scoped],
+  lifeCenterMeetingController.getMeeting,
+);
+lifeCenterRouter.get(
+  "/meetings",
+  [protect, permissions.can_view_life_center_scoped],
+  lifeCenterMeetingController.getMeetings,
+);
+lifeCenterRouter.get(
+  "/soulswon-eligible-first-timers",
+  [protect, permissions.can_view_life_center_scoped],
+  lifeCenterMeetingController.getEligibleFirstTimers,
+);
 
 export default lifeCenterRouter;
