@@ -69,6 +69,7 @@ appointmentRouter.get(
 );
 
 // 9. Fetch users with daily sessions and booking status tags
+// (supports optional ?date=YYYY-MM-DD and ?category=)
 // URL: GET /appointment/availability/status
 appointmentRouter.get(
   "/availability/status",
