@@ -77,6 +77,18 @@ appointmentRouter.get(
   appointmentController.getAvailabilityStatus,
 );
 
+// 9b. Fetch the full booking-options staff list (same payload as #9, but
+// `protect`-only — no `can_view_appointments_scoped` — so any authenticated
+// member sees every staff member's slots, not just their own "own"-scoped
+// availability, when picking who to book with). Payload carries no other
+// member's identity or appointment details, so opening it is safe.
+// URL: GET /appointment/availability/booking-options
+appointmentRouter.get(
+  "/availability/booking-options",
+  [protect],
+  appointmentController.getBookingOptions,
+);
+
 // 10. Update one availability slot by id
 // URL: PUT /appointment/availability/:id
 appointmentRouter.put(
