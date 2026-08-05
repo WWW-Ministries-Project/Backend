@@ -79,6 +79,7 @@ model user {
   ps_user                  request_approvals[]        @relation("ps_user")
   user_request_comments    request_comments[]
   soul_won                 soul_won[]                 @relation("user_soul_winner")
+  life_center_meetings_created life_center_meeting[]   @relation("life_center_meeting_created_by")
   soul_won_membership      soul_won?                  @relation("soul_won_member")
   access                   access_level?              @relation(fields: [access_level_id], references: [id])
   parent                   user?                      @relation("UserParent", fields: [parent_id], references: [id])
@@ -1451,6 +1452,7 @@ model life_center {
   branch             branch?              @relation(fields: [branch_id], references: [id])
   life_center_member life_center_member[]
   soul_won           soul_won[]           @relation("life_center_soul_won")
+  life_center_meeting life_center_meeting[]
 
   @@index([branch_id], map: "life_center_branch_id_idx")
 }
@@ -1487,9 +1489,42 @@ model soul_won {
   lifeCenter     life_center @relation("life_center_soul_won", fields: [lifeCenterId], references: [id], map: "soulwon_lifecenter_fkey")
   wonBy          user        @relation("user_soul_winner", fields: [wonById], references: [id], map: "soulwon_wonby_fkey")
   member         user?       @relation("soul_won_member", fields: [memberId], references: [id], map: "soulwon_member_fkey")
+  life_center_meeting_attendee life_center_meeting_attendee[]
 
   @@index([lifeCenterId], map: "soulwon_lifecenter_fkey")
   @@index([wonById], map: "soulwon_wonby_fkey")
+}
+
+model life_center_meeting {
+  id             Int      @id @default(autoincrement())
+  lifeCenterId   Int
+  date           DateTime
+  offeringAmount Decimal  @db.Decimal(10, 2)
+  currency       String   @default("GHS")
+  note           String?  @db.Text
+  createdById    Int
+  createdAt      DateTime @default(now())
+
+  lifeCenter life_center                    @relation(fields: [lifeCenterId], references: [id])
+  createdBy  user                           @relation("life_center_meeting_created_by", fields: [createdById], references: [id])
+  attendees  life_center_meeting_attendee[]
+
+  @@index([lifeCenterId], map: "life_center_meeting_lifeCenterId_idx")
+  @@index([createdById], map: "life_center_meeting_createdById_idx")
+}
+
+model life_center_meeting_attendee {
+  id           Int     @id @default(autoincrement())
+  meetingId    Int
+  soulWonId    Int
+  isFirstTimer Boolean @default(false)
+
+  meeting life_center_meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  soulWon soul_won            @relation(fields: [soulWonId], references: [id])
+
+  @@unique([meetingId, soulWonId])
+  @@index([meetingId], map: "life_center_meeting_attendee_meetingId_idx")
+  @@index([soulWonId], map: "life_center_meeting_attendee_soulWonId_idx")
 }
 
 model devices {
