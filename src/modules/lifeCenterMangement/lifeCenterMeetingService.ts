@@ -38,7 +38,30 @@ const ATTENDEE_INCLUDE = {
   },
 } as const;
 
+const NO_ATTENDEES_ERROR =
+  "A meeting must have at least one attendee or first-timer";
+
 export class LifeCenterMeetingService {
+  /**
+   * Dedupes attendeeSoulWonIds/firstTimerSoulWonIds (an id present in both
+   * lists is treated as a first-timer) and returns the resulting distinct
+   * attendee count, computed purely from the input arrays — no DB
+   * round-trip. This lets callers reject an empty meeting BEFORE any
+   * database write happens.
+   */
+  private countDistinctAttendees(
+    attendeeSoulWonIds: number[],
+    firstTimerSoulWonIds: number[],
+    newFirstTimersCount: number,
+  ): number {
+    const firstTimerIds = new Set<number>(firstTimerSoulWonIds);
+    const attendeeOnlyIds = new Set<number>(attendeeSoulWonIds);
+    for (const id of firstTimerIds) {
+      attendeeOnlyIds.delete(id);
+    }
+    return attendeeOnlyIds.size + firstTimerIds.size + newFirstTimersCount;
+  }
+
   private async replaceAttendees(
     meetingId: number,
     attendeeSoulWonIds: number[],
@@ -68,14 +91,17 @@ export class LifeCenterMeetingService {
       ),
     );
 
-    // A soul id present in both lists is treated as a first-timer.
+    // A soul id present in both lists is treated as a first-timer. Both
+    // input lists are deduped via Set so repeated ids in the request never
+    // reach createMany (which would otherwise violate the
+    // @@unique([meetingId, soulWonId]) constraint and surface a raw P2002).
     const firstTimerIds = new Set<number>([
       ...firstTimerSoulWonIds,
       ...createdFirstTimers.map((s) => s.id),
     ]);
-    const attendeeOnlyIds = attendeeSoulWonIds.filter(
-      (id) => !firstTimerIds.has(id),
-    );
+    const attendeeOnlyIds = Array.from(
+      new Set<number>(attendeeSoulWonIds),
+    ).filter((id) => !firstTimerIds.has(id));
 
     await prisma.life_center_meeting_attendee.deleteMany({
       where: { meetingId },
@@ -97,11 +123,20 @@ export class LifeCenterMeetingService {
     if (rows.length) {
       await prisma.life_center_meeting_attendee.createMany({ data: rows });
     }
-
-    return rows.length;
   }
 
   async createMeeting(data: CreateMeetingInput) {
+    // Validate BEFORE any write: computed purely from the input arrays, so
+    // a request that would result in zero attendees never touches the DB.
+    const attendeeCount = this.countDistinctAttendees(
+      data.attendeeSoulWonIds,
+      data.firstTimerSoulWonIds,
+      data.newFirstTimers.length,
+    );
+    if (attendeeCount === 0) {
+      throw new Error(NO_ATTENDEES_ERROR);
+    }
+
     const meeting = await prisma.life_center_meeting.create({
       data: {
         lifeCenterId: data.lifeCenterId,
@@ -113,7 +148,7 @@ export class LifeCenterMeetingService {
       },
     });
 
-    const attendeeCount = await this.replaceAttendees(
+    await this.replaceAttendees(
       meeting.id,
       data.attendeeSoulWonIds,
       data.firstTimerSoulWonIds,
@@ -121,11 +156,6 @@ export class LifeCenterMeetingService {
       data.lifeCenterId,
       data.createdById,
     );
-
-    if (attendeeCount === 0) {
-      await prisma.life_center_meeting.delete({ where: { id: meeting.id } });
-      throw new Error("A meeting must have at least one attendee or first-timer");
-    }
 
     return this.getMeetingById(meeting.id);
   }
@@ -136,6 +166,17 @@ export class LifeCenterMeetingService {
     });
     if (!existing) {
       throw new Error("Meeting not found");
+    }
+
+    // Validate BEFORE any write: computed purely from the input arrays, so
+    // a rejected update never mutates the meeting or its attendee rows.
+    const attendeeCount = this.countDistinctAttendees(
+      data.attendeeSoulWonIds,
+      data.firstTimerSoulWonIds,
+      data.newFirstTimers.length,
+    );
+    if (attendeeCount === 0) {
+      throw new Error(NO_ATTENDEES_ERROR);
     }
 
     await prisma.life_center_meeting.update({
@@ -149,7 +190,7 @@ export class LifeCenterMeetingService {
       },
     });
 
-    const attendeeCount = await this.replaceAttendees(
+    await this.replaceAttendees(
       id,
       data.attendeeSoulWonIds,
       data.firstTimerSoulWonIds,
@@ -157,10 +198,6 @@ export class LifeCenterMeetingService {
       data.lifeCenterId,
       actorId,
     );
-
-    if (attendeeCount === 0) {
-      throw new Error("A meeting must have at least one attendee or first-timer");
-    }
 
     return this.getMeetingById(id);
   }

@@ -34,7 +34,9 @@ creator (or a privileged user) may update. `401` otherwise.
 
 ### 2.3 Delete — `DELETE /lifecenter/meeting?id=`
 
-Only the creator (or a privileged user) may delete. `401` otherwise.
+Requires Life Center admin-tier permission; the ownership check is a
+defensive second gate but in practice only privileged/admin users can reach
+this endpoint at all, same as every other delete route in this module.
 
 ### 2.4 Get one — `GET /lifecenter/meeting?id=`
 

@@ -9,6 +9,29 @@ const toPositiveInt = (value: unknown): number | undefined => {
   return Number.isInteger(n) && n > 0 ? n : undefined;
 };
 
+const ALLOWED_CURRENCIES = ["GHS", "USD", "GBP"];
+
+// Shared, plain validation for the create/update payload — mirrors the
+// rules documented in LIFE_CENTER_MEETING_FRONTEND_IMPLEMENTATION_GUIDE.md.
+const validateMeetingPayload = (body: any): string | null => {
+  const currency = body?.currency || "GHS";
+  if (!ALLOWED_CURRENCIES.includes(currency)) {
+    return `currency must be one of ${ALLOWED_CURRENCIES.join(", ")}`;
+  }
+
+  const offeringAmount = Number(body?.offeringAmount ?? 0);
+  if (!Number.isFinite(offeringAmount) || offeringAmount < 0) {
+    return "offeringAmount must be a non-negative number";
+  }
+
+  const date = new Date(body?.date);
+  if (Number.isNaN(date.getTime()) || date.getTime() > Date.now()) {
+    return "date must be a valid date that is not in the future";
+  }
+
+  return null;
+};
+
 const mapAttendee = (row: any) => ({
   soulWonId: row.soulWonId,
   name: [row.soulWon?.first_name, row.soulWon?.last_name]
@@ -53,6 +76,12 @@ export class LifeCenterMeetingController {
       if (!lifeCenterId) {
         return res.status(400).json({ message: "lifeCenterId is required" });
       }
+
+      const validationError = validateMeetingPayload(req.body);
+      if (validationError) {
+        return res.status(400).json({ message: validationError });
+      }
+
       const createdById = Number((req as any).user?.id);
 
       const meeting = await lifeCenterMeetingService.createMeeting({
@@ -71,7 +100,9 @@ export class LifeCenterMeetingController {
         .status(201)
         .json({ message: "Meeting created", data: mapMeeting(meeting) });
     } catch (error: any) {
-      return res.status(400).json({ message: error.message });
+      return res
+        .status(400)
+        .json({ message: "Unable to create meeting", error: error.message });
     }
   }
 
@@ -83,6 +114,11 @@ export class LifeCenterMeetingController {
         return res
           .status(400)
           .json({ message: "id and lifeCenterId are required" });
+      }
+
+      const validationError = validateMeetingPayload(req.body);
+      if (validationError) {
+        return res.status(400).json({ message: validationError });
       }
 
       const existing = await lifeCenterMeetingService.getMeetingById(id);
@@ -119,7 +155,9 @@ export class LifeCenterMeetingController {
         .status(200)
         .json({ message: "Meeting updated", data: mapMeeting(meeting) });
     } catch (error: any) {
-      return res.status(400).json({ message: error.message });
+      return res
+        .status(400)
+        .json({ message: "Unable to update meeting", error: error.message });
     }
   }
 
@@ -146,7 +184,9 @@ export class LifeCenterMeetingController {
       await lifeCenterMeetingService.deleteMeeting(id);
       return res.status(200).json({ message: "Meeting deleted" });
     } catch (error: any) {
-      return res.status(400).json({ message: error.message });
+      return res
+        .status(400)
+        .json({ message: "Unable to delete meeting", error: error.message });
     }
   }
 
@@ -172,7 +212,9 @@ export class LifeCenterMeetingController {
 
       return res.status(200).json({ message: "OK", data: mapMeeting(meeting) });
     } catch (error: any) {
-      return res.status(500).json({ message: error.message });
+      return res
+        .status(500)
+        .json({ message: "Error fetching meeting", error: error.message });
     }
   }
 
@@ -199,7 +241,9 @@ export class LifeCenterMeetingController {
         data: meetings.map(mapMeeting),
       });
     } catch (error: any) {
-      return res.status(500).json({ message: error.message });
+      return res
+        .status(500)
+        .json({ message: "Error fetching meetings", error: error.message });
     }
   }
 
@@ -209,12 +253,27 @@ export class LifeCenterMeetingController {
       if (!lifeCenterId) {
         return res.status(400).json({ message: "lifeCenterId is required" });
       }
+
+      const lifeCenterScope = (req as any).lifeCenterScope;
+      if (
+        lifeCenterScope?.mode === "member" &&
+        Array.isArray(lifeCenterScope?.lifeCenterIds) &&
+        !lifeCenterScope.lifeCenterIds.includes(lifeCenterId)
+      ) {
+        return res
+          .status(401)
+          .json({ message: "Not authorized to view this life center's data" });
+      }
+
       const souls = await lifeCenterMeetingService.getEligibleFirstTimers(
         lifeCenterId,
       );
       return res.status(200).json({ message: "OK", data: souls });
     } catch (error: any) {
-      return res.status(500).json({ message: error.message });
+      return res.status(500).json({
+        message: "Error fetching eligible first-timers",
+        error: error.message,
+      });
     }
   }
 }
