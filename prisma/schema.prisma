@@ -97,6 +97,7 @@ model user {
   pledge_callings  pledge_caller[] @relation("pledge_caller_user")
   pledges          pledger[]       @relation("pledger_user")
   announcements_created announcement[] @relation("announcement_creator")
+  announcement_read_receipts announcement_read_receipt[]
   sermon_series_created sermon_series[] @relation("sermon_series_creator")
   stock_notification_requests stock_notification_requests[]
 
@@ -308,6 +309,7 @@ model department_join_request {
 model position {
   id                   Int                    @id @default(autoincrement())
   name                 String
+  category             String?
   department_id        Int?
   description          String?
   branch_id            Int?
@@ -2459,15 +2461,31 @@ model announcement {
   created_at    DateTime              @default(now())
   updated_at    DateTime              @updatedAt
 
-  branch     branch?     @relation(fields: [branch_id], references: [id])
-  department department? @relation(fields: [department_id], references: [id])
-  position   position?   @relation(fields: [position_id], references: [id])
-  creator    user        @relation("announcement_creator", fields: [created_by], references: [id])
+  branch        branch?                     @relation(fields: [branch_id], references: [id])
+  department    department?                 @relation(fields: [department_id], references: [id])
+  position      position?                   @relation(fields: [position_id], references: [id])
+  creator       user                        @relation("announcement_creator", fields: [created_by], references: [id])
+  read_receipts announcement_read_receipt[]
 
   @@index([branch_id])
   @@index([department_id])
   @@index([position_id])
   @@index([created_by])
+}
+
+model announcement_read_receipt {
+  id              Int      @id @default(autoincrement())
+  announcement_id Int
+  user_id         Int
+  read_at         DateTime @default(now())
+  created_at      DateTime @default(now())
+
+  announcement announcement @relation(fields: [announcement_id], references: [id], onDelete: Cascade)
+  user         user         @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@unique([announcement_id, user_id], map: "announcement_read_receipt_announcement_user_key")
+  @@index([announcement_id], map: "announcement_read_receipt_announcement_id_idx")
+  @@index([user_id], map: "announcement_read_receipt_user_id_idx")
 }
 
 enum sermon_status {

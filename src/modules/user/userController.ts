@@ -3066,6 +3066,57 @@ export const currentuser = async (req: Request, res: Response) => {
   }
 };
 
+const getWholeYearsSince = (date?: Date | null): number => {
+  if (!date) return 0;
+  const now = new Date();
+  let years = now.getFullYear() - date.getFullYear();
+  const hasHadAnniversaryThisYear =
+    now.getMonth() > date.getMonth() ||
+    (now.getMonth() === date.getMonth() && now.getDate() >= date.getDate());
+  if (!hasHadAnniversaryThisYear) years--;
+  return Math.max(0, years);
+};
+
+export const getMemberProfileStats = async (req: Request, res: Response) => {
+  try {
+    const authenticatedUserId = Number((req as any).user?.id);
+    if (!Number.isInteger(authenticatedUserId) || authenticatedUserId <= 0) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
+    const [userInfo, servicesAttended, soulsWon] = await Promise.all([
+      prisma.user_info.findUnique({
+        where: { user_id: authenticatedUserId },
+        select: { member_since: true },
+      }),
+      prisma.event_attendance.count({
+        where: {
+          user_id: authenticatedUserId,
+          event: { event_type: "SERVICE" },
+        },
+      }),
+      prisma.soul_won.count({
+        where: { wonById: authenticatedUserId },
+      }),
+    ]);
+
+    return res.status(200).json({
+      message: "Operation successful",
+      data: {
+        yearsServing: getWholeYearsSince(userInfo?.member_since),
+        servicesAttended,
+        soulsWon,
+      },
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({
+      message: "Something Went Wrong",
+      error: error instanceof Error ? error.message : error,
+    });
+  }
+};
+
 export const updateUserPasswordToDefault = async (
   req: Request,
   res: Response,

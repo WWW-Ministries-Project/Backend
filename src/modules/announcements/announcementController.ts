@@ -223,4 +223,62 @@ export class announcementController {
       });
     }
   };
+
+  unreadCount = async (req: Request, res: Response) => {
+    try {
+      const actorUserId = getActorUserId(req);
+      if (!actorUserId) {
+        return res.status(401).json({
+          message: "A valid authenticated user is required",
+          data: null,
+        });
+      }
+
+      const unreadCount = await announcementService.getUnreadCountForUser(
+        actorUserId,
+      );
+
+      return res.status(200).json({
+        message: "Unread count retrieved successfully",
+        data: { unreadCount },
+      });
+    } catch (error) {
+      return res.status(500).json({
+        message: (error as Error).message || "Failed to get unread count",
+        data: null,
+      });
+    }
+  };
+
+  markAsRead = async (req: Request, res: Response) => {
+    try {
+      const actorUserId = getActorUserId(req);
+      if (!actorUserId) {
+        return res.status(401).json({
+          message: "A valid authenticated user is required",
+          data: null,
+        });
+      }
+
+      const id = toPositiveInt(req.params?.id);
+      if (!id) {
+        return res.status(400).json({ message: "Invalid id", data: null });
+      }
+
+      const receipt = await announcementService.markAnnouncementAsRead(
+        actorUserId,
+        id,
+      );
+
+      return res
+        .status(200)
+        .json({ message: "Announcement marked as read", data: receipt });
+    } catch (error) {
+      const statusCode = getStatusCode(error) ?? 500;
+      return res.status(statusCode).json({
+        message: (error as Error).message || "Failed to mark announcement as read",
+        data: null,
+      });
+    }
+  };
 }

@@ -22,6 +22,7 @@ import {
   getUserFamily,
   linkChildren,
   currentuser,
+  getMemberProfileStats,
   ListUsersLight,
   activateAccount,
   updateUserPasswordToDefault,
@@ -132,6 +133,8 @@ userRouter.put(
 );
 
 userRouter.get("/current-user", [protect], currentuser);
+
+userRouter.get("/profile-stats", [protect], getMemberProfileStats);
 
 userRouter.get(
   "/set-default-passwords",

@@ -122,16 +122,24 @@ export class AppointmentController {
   }
 
   /**
-   * @route   GET /appointment/availability/status
-   * @desc    Fetch availability in payload structure with slot/session status tags
+   * @route   GET /appointment/availability/status?date=YYYY-MM-DD&category=Something
+   * @desc    Fetch availability in payload structure with slot/session status tags.
+   *          ?date= pins every slot's status to that exact calendar date instead of
+   *          each slot's own next matching weekday; ?category= filters to staff whose
+   *          position category matches.
    */
   async getAvailabilityStatus(req: Request, res: Response) {
     try {
       const appointmentScope = (req as any).appointmentScope;
+      const date =
+        typeof req.query.date === "string" ? req.query.date : undefined;
+      const category =
+        typeof req.query.category === "string" ? req.query.category : undefined;
       const data =
         await AppointmentService.getAvailabilityWithSessionStatus(
           appointmentScope,
           req.query?.branch_id,
+          { date, category },
         );
 
       res.status(200).json({
@@ -139,7 +147,8 @@ export class AppointmentController {
         data,
       });
     } catch (error: any) {
-      res.status(500).json({
+      const statusCode = error?.message?.includes("date") ? 400 : 500;
+      res.status(statusCode).json({
         error: error.message || "Error fetching availability status",
       });
     }

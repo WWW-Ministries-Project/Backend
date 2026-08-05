@@ -301,14 +301,18 @@ const publishAnnouncement = async (id: number, actorUserId?: number) => {
   return { announcement: published, recipientCount: recipientIds.length };
 };
 
-const listForUser = async (userId: number, skip = 0, take = 20) => {
+// Shared by listForUser and getUnreadCountForUser so the audience-targeting
+// rules only live in one place. Returns null when the user doesn't exist.
+const buildVisibleAnnouncementsWhere = async (
+  userId: number,
+): Promise<Prisma.announcementWhereInput | null> => {
   const user = await prisma.user.findUnique({
     where: { id: userId },
     select: { id: true, is_user: true, position_id: true, branch_id: true },
   });
 
   if (!user) {
-    return { data: [], total: 0 };
+    return null;
   }
 
   const [headedDepartments, positionRows, membershipRows] = await Promise.all([
@@ -358,14 +362,22 @@ const listForUser = async (userId: number, skip = 0, take = 20) => {
     OR: [{ branch_id: user.branch_id }, { branch_id: null }],
   };
 
-  const where: Prisma.announcementWhereInput = {
-    AND: [{ status: "PUBLISHED" }, { OR: or }, branchFilter],
-  };
+  return { AND: [{ status: "PUBLISHED" }, { OR: or }, branchFilter] };
+};
 
-  const [data, total] = await prisma.$transaction([
+const listForUser = async (userId: number, skip = 0, take = 20) => {
+  const where = await buildVisibleAnnouncementsWhere(userId);
+  if (!where) {
+    return { data: [], total: 0 };
+  }
+
+  const [rows, total] = await prisma.$transaction([
     prisma.announcement.findMany({
       where,
-      include: announcementInclude,
+      include: {
+        ...announcementInclude,
+        read_receipts: { where: { user_id: userId }, select: { id: true } },
+      },
       orderBy: { published_at: "desc" },
       skip,
       take,
@@ -373,7 +385,44 @@ const listForUser = async (userId: number, skip = 0, take = 20) => {
     prisma.announcement.count({ where }),
   ]);
 
+  const data = rows.map(({ read_receipts, ...announcement }) => ({
+    ...announcement,
+    isRead: read_receipts.length > 0,
+  }));
+
   return { data, total };
+};
+
+const getUnreadCountForUser = async (userId: number): Promise<number> => {
+  const where = await buildVisibleAnnouncementsWhere(userId);
+  if (!where) {
+    return 0;
+  }
+
+  return prisma.announcement.count({
+    where: { ...where, read_receipts: { none: { user_id: userId } } },
+  });
+};
+
+const markAnnouncementAsRead = async (userId: number, announcementId: number) => {
+  const existing = await prisma.announcement.findUnique({
+    where: { id: announcementId },
+    select: { id: true },
+  });
+  if (!existing) {
+    throw httpError("Announcement not found", 404);
+  }
+
+  return prisma.announcement_read_receipt.upsert({
+    where: {
+      announcement_id_user_id: {
+        announcement_id: announcementId,
+        user_id: userId,
+      },
+    },
+    update: { read_at: new Date() },
+    create: { announcement_id: announcementId, user_id: userId },
+  });
 };
 
 export const announcementService = {
@@ -385,4 +434,6 @@ export const announcementService = {
   publishAnnouncement,
   resolveRecipients,
   listForUser,
+  getUnreadCountForUser,
+  markAnnouncementAsRead,
 };

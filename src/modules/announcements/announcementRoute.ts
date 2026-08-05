@@ -10,8 +10,10 @@ dotenv.config();
 
 const router = Router();
 
-// `/mine` must be registered before `/:id` so it is not captured as an id.
+// `/mine` and `/unread-count` must be registered before `/:id` so they are
+// not captured as an id.
 router.get("/mine", [protect], controller.mine);
+router.get("/unread-count", [protect], controller.unreadCount);
 
 router.get("/", [protect, permissions.can_view_announcements], controller.list);
 router.get(
@@ -35,6 +37,7 @@ router.post(
   [protect, permissions.can_manage_announcements],
   controller.publish,
 );
+router.patch("/:id/read", [protect], controller.markAsRead);
 
 router.delete(
   "/:id",
