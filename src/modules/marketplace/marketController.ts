@@ -26,6 +26,41 @@ export class MarketController {
     }
   }
 
+  async duplicateMarket(req: Request, res: Response) {
+    try {
+      const {
+        source_market_id,
+        name,
+        description,
+        event_id,
+        start_date,
+        end_date,
+        branch_id,
+      } = req.body;
+      if (!source_market_id) {
+        return res
+          .status(400)
+          .json({ message: "source_market_id is required" });
+      }
+      const result = await marketService.duplicateMarket({
+        source_market_id: Number(source_market_id),
+        name,
+        description,
+        event_id,
+        start_date,
+        end_date,
+        branch_id,
+      });
+      return res
+        .status(200)
+        .json({ message: "Market Duplicated Successfully", data: result });
+    } catch (error: any) {
+      return res
+        .status(500)
+        .json({ message: "Failed to duplicate market: " + error.message });
+    }
+  }
+
   async updateMarket(req: Request, res: Response) {
     try {
       const { id, name, description, event_id, start_date, end_date, branch_id } =

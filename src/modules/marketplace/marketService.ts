@@ -1,10 +1,13 @@
 import { prisma } from "../../Models/context";
+import { copyS3ObjectByUrl } from "../../utils/s3";
 import {
   getBranchScopedWhere,
   resolveBranchIdOrDefault,
 } from "../branches/branchService";
+import { ProductService } from "../products/productService";
 import {
   CreateMarketDto,
+  DuplicateMarketDto,
   MarketDto,
   MarketFilters,
   MarketWithEvent,
@@ -31,6 +34,120 @@ export class MarketService {
       return this.convertToDto(market);
     } catch (error: any) {
       throw new Error(`Failed to create market: ${error.message}`);
+    }
+  }
+
+  /**
+   * Duplicate a market: clones the market row plus all its non-deleted
+   * products (with colours/stock/images). Orders/order_items are never
+   * touched or copied.
+   */
+  async duplicateMarket(data: DuplicateMarketDto) {
+    try {
+      const sourceMarket = await prisma.markets.findFirst({
+        where: { id: data.source_market_id, deleted: false },
+      });
+      if (!sourceMarket) {
+        throw new Error(`Market with ID ${data.source_market_id} not found`);
+      }
+
+      // 1. Create the new market (mirrors createMarket)
+      const newMarket = await prisma.markets.create({
+        data: {
+          name: data.name.trim(),
+          description: data.description?.trim() || undefined,
+          start_date: data.start_date ? new Date(data.start_date) : undefined,
+          end_date: data.end_date ? new Date(data.end_date) : undefined,
+          branch_id: await resolveBranchIdOrDefault(data.branch_id),
+          event_mgt_id: data.event_id,
+        },
+        include: { event: true },
+      });
+
+      // 2. Fetch source market's products (with colours/stock already shaped by listProductsByMarketId)
+      const productService = new ProductService();
+      const sourceProducts = await productService.listProductsByMarketId(
+        data.source_market_id,
+      );
+
+      // 3. Recreate each product on the new market, copying S3 images and preserving stock quantities
+      let productsCount = 0;
+      for (const sourceProduct of sourceProducts) {
+        const copiedColours = await Promise.all(
+          (sourceProduct.product_colours || []).map(async (c: any) => ({
+            colour: c.colour,
+            image_url: await this.copyProductImage(c.image_url),
+            stock: c.stock, // [{ size, stock }] — copied as-is, quantities preserved
+          })),
+        );
+
+        const { product } = await productService.createProduct({
+          name: sourceProduct.name,
+          description: sourceProduct.description ?? undefined,
+          status: sourceProduct.status ?? undefined,
+          stock_managed: sourceProduct.stock_managed,
+          product_type_id:
+            sourceProduct.product_type_id != null
+              ? String(sourceProduct.product_type_id)
+              : undefined,
+          product_category_id:
+            sourceProduct.product_category_id != null
+              ? String(sourceProduct.product_category_id)
+              : undefined,
+          price_currency: sourceProduct.price_currency ?? undefined,
+          price_amount:
+            sourceProduct.price_amount != null
+              ? String(sourceProduct.price_amount)
+              : undefined,
+          product_colours: copiedColours as any,
+          market_id: String(newMarket.id),
+        });
+
+        // Top-level image_url/colours aren't set by constructProductData/createProduct (pre-existing
+        // gap in that code path — only per-colour images are wired on create). Patch them in directly
+        // so a duplicate is a faithful clone of whatever the source product actually has.
+        if (sourceProduct.image_url || sourceProduct.colours) {
+          await prisma.products.update({
+            where: { id: product.id },
+            data: {
+              ...(sourceProduct.image_url
+                ? { image_url: await this.copyProductImage(sourceProduct.image_url) }
+                : {}),
+              ...(sourceProduct.colours ? { colours: sourceProduct.colours } : {}),
+            },
+          });
+        }
+
+        productsCount++;
+      }
+
+      return {
+        market: await this.convertToDto(newMarket),
+        products_count: productsCount,
+      };
+    } catch (error: any) {
+      throw new Error(`Failed to duplicate market: ${error.message}`);
+    }
+  }
+
+  /**
+   * Best-effort S3 duplicate of a product/colour image. Falls back to reusing the
+   * original URL if it isn't hosted in our bucket, or if the copy call fails for
+   * any reason (missing S3 config, transient AWS error, etc.) — a failed image
+   * copy should never block the rest of the market duplication.
+   */
+  private async copyProductImage(
+    imageUrl?: string | null,
+  ): Promise<string | undefined> {
+    if (!imageUrl) return imageUrl ?? undefined;
+    try {
+      return await copyS3ObjectByUrl(imageUrl, "products");
+    } catch (error) {
+      console.warn(
+        `Failed to duplicate S3 image for ${imageUrl}, reusing original URL:`,
+        error,
+      );
+      return imageUrl;
     }
   }
 
