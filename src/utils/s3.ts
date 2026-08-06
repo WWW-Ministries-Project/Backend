@@ -1,4 +1,5 @@
 import {
+  CopyObjectCommand,
   DeleteObjectCommand,
   GetObjectCommand,
   PutObjectCommand,
@@ -299,6 +300,36 @@ export const getS3ObjectKeyFromUrl = (objectUrl: string): string | null => {
   } catch (error) {
     return null;
   }
+};
+
+export const copyS3ObjectByUrl = async (
+  sourceUrl: string,
+  folder?: string,
+): Promise<string> => {
+  const sourceKey = getS3ObjectKeyFromUrl(sourceUrl);
+  if (!sourceKey) {
+    // Not one of our own S3 objects (e.g. external URL) — nothing we can duplicate; reuse as-is.
+    return sourceUrl;
+  }
+
+  ensureS3Config();
+
+  const sourceDir = path.dirname(sourceKey);
+  const newKey = buildObjectKey({
+    folder: folder ?? (sourceDir === "." ? undefined : sourceDir),
+    originalName: path.basename(sourceKey),
+    baseName: "copy",
+  });
+
+  await s3Client.send(
+    new CopyObjectCommand({
+      Bucket: s3BucketName,
+      CopySource: `${s3BucketName}/${sourceKey.split("/").map(encodeURIComponent).join("/")}`,
+      Key: newKey,
+    }),
+  );
+
+  return buildPublicUrl(newKey);
 };
 
 export const deleteS3ObjectByUrl = async (objectUrl: string) => {

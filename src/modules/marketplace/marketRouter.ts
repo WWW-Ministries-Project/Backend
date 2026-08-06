@@ -12,6 +12,11 @@ marketRouter.post(
   [protect, permissions.can_manage_marketplace],
   marketController.createMarket,
 );
+marketRouter.post(
+  "/duplicate-market",
+  [protect, permissions.can_manage_marketplace],
+  marketController.duplicateMarket,
+);
 marketRouter.put(
   "/update-market",
   [protect, permissions.can_manage_marketplace],

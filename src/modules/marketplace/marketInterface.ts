@@ -10,6 +10,10 @@ export interface CreateMarketDto {
   created_by_id?: number;
 }
 
+export interface DuplicateMarketDto extends CreateMarketDto {
+  source_market_id: number;
+}
+
 export interface UpdateMarketDto {
   name?: string;
   description?: string;
