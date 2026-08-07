@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import { OrderService, InsufficientStockError } from "./orderService";
+import { isPaystackFailure } from "../../libs/paystack/paystackClient";
 
 const orderService = new OrderService();
 
@@ -13,7 +14,11 @@ export class OrderController {
         data: order,
       });
     } catch (error: any) {
-      const status = error instanceof InsufficientStockError ? 409 : 400;
+      const status = error instanceof InsufficientStockError
+        ? 409
+        : isPaystackFailure(error)
+        ? error.statusCode
+        : 400;
       return res.status(status).json({
         success: false,
         message: error.message || "Failed to create order",
