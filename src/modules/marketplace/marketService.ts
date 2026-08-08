@@ -1,4 +1,6 @@
+import { Prisma } from "@prisma/client";
 import { prisma } from "../../Models/context";
+import { ResourceDuplicationError } from "../../utils/custom-error-handlers";
 import { copyS3ObjectByUrl } from "../../utils/s3";
 import {
   getBranchScopedWhere,
@@ -33,6 +35,11 @@ export class MarketService {
       });
       return this.convertToDto(market);
     } catch (error: any) {
+      if (this.isDuplicateNameError(error)) {
+        throw new ResourceDuplicationError(
+          `A market named "${input.name.trim()}" already exists`,
+        );
+      }
       throw new Error(`Failed to create market: ${error.message}`);
     }
   }
@@ -126,6 +133,11 @@ export class MarketService {
         products_count: productsCount,
       };
     } catch (error: any) {
+      if (this.isDuplicateNameError(error)) {
+        throw new ResourceDuplicationError(
+          `A market named "${data.name.trim()}" already exists`,
+        );
+      }
       throw new Error(`Failed to duplicate market: ${error.message}`);
     }
   }
@@ -232,6 +244,11 @@ export class MarketService {
 
       return this.convertToDto(market);
     } catch (error: any) {
+      if (this.isDuplicateNameError(error)) {
+        throw new ResourceDuplicationError(
+          `A market named "${data.name?.trim()}" already exists`,
+        );
+      }
       throw new Error(`Failed to update market: ${error.message}`);
     }
   }
@@ -343,6 +360,20 @@ export class MarketService {
     } catch (error: any) {
       throw new Error(`Failed to count markets: ${error.message}`);
     }
+  }
+
+  /**
+   * True when the error is a `markets.name` unique-constraint violation (P2002).
+   * `name` is globally unique (schema.prisma) and MySQL has no partial unique
+   * index, so soft-deleted markets still hold their name — collisions are
+   * expected, not exceptional, and deserve a clean 409 instead of a raw
+   * Prisma message.
+   */
+  private isDuplicateNameError(error: any): boolean {
+    return (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    );
   }
 
   /**
