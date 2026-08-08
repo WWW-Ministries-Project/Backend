@@ -11,7 +11,8 @@ export type PaystackInitializeInput = {
   amount: number;
   currency: string;
   reference: string;
-  subaccount: string;
+  /** Omit for a plain charge to the main account (no split payment). */
+  subaccount?: string;
   /**
    * Flat amount, in minor units, routed to the main account rather than the
    * subaccount. Set to the fee, so the subaccount receives exactly the donation

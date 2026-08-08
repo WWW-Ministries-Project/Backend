@@ -4,6 +4,10 @@ import crypto from "crypto";
 import { toSentenceCase } from "../../utils";
 import { notificationService } from "../notifications/notificationService";
 import { stockNotificationService } from "../products/stockNotificationService";
+import {
+  initializeTransaction,
+  verifyTransaction,
+} from "../../libs/paystack/paystackTransaction";
 
 export type StockShortage = {
   name: string;
@@ -79,7 +83,10 @@ export class OrderService {
     items: {
       market_id?: number | string;
       name: string;
-      id: string;
+      // Web checkout sends `product_id`; mobile sends `id` (falling back to
+      // `product_id`). Accept either — see resolveItemStock/buildItems.
+      id?: number | string;
+      product_id?: number | string;
       price_amount: number;
       price_currency: string;
       quantity: number;
@@ -183,13 +190,22 @@ export class OrderService {
     const orderNumber = this.generateOrderNumber(order.id);
 
     if (data.payment_type === "paystack") {
-      const response = await this.verifyPayment(clientReference);
-      const status =
-        response.status === 200 && response.data.data.status === "success"
-          ? "success"
-          : "failed";
+      const updated_order = await this.updateOrderPayment(
+        order.id,
+        "pending",
+        orderNumber,
+      );
+      const paystackResponse = await this.initializePaystackTransaction(
+        order,
+        data.return_url,
+      );
 
-      return this.updateOrderPayment(order.id, status, orderNumber);
+      return {
+        message: "Paystack payment initiated",
+        checkoutUrl: paystackResponse.authorization_url,
+        clientReference: paystackResponse.reference,
+        updated_order,
+      };
     } else {
       const updated_order = await this.updateOrderPayment(
         order.id,
@@ -402,18 +418,6 @@ export class OrderService {
     };
   }
 
-  private async verifyPayment(reference: string) {
-    return axios.get(
-      `https://api.paystack.co/transaction/verify/${reference}`,
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
-          "Content-Type": "application/json",
-        },
-      },
-    );
-  }
-
   async verifyPaymentStatus(order_number: string) {
     const order = await prisma.orders.findFirst({
       where: { order_number },
@@ -426,9 +430,8 @@ export class OrderService {
     if (order.payment_status === "success")
       return { message: "Payment already verified", order: null };
 
-    const response = await this.verifyPayment(order.reference);
-    const status =
-      response.data.data.status === "success" ? "success" : "failed";
+    const transaction = await verifyTransaction(order.reference);
+    const status = transaction.status === "success" ? "success" : "failed";
 
     const updatedOrder = await this.updateOrderPayment(
       order.id,
@@ -611,6 +614,27 @@ export class OrderService {
     return response.data.data;
   }
 
+  /**
+   * Starts a Paystack transaction for an order and returns the checkout
+   * (authorization) URL to redirect the buyer to. Verification after the
+   * buyer returns is handled separately by verifyPaymentStatus.
+   */
+  async initializePaystackTransaction(order: any, return_url: string | null) {
+    return initializeTransaction({
+      email: order.billing_details.email,
+      // Paystack takes minor units (pesewas/cents); order.total_amount is
+      // stored in major units.
+      amount: Math.round(order.total_amount * 100),
+      currency: order.items[0]?.price_currency || "GHS",
+      reference: order.reference,
+      ...(return_url && { callback_url: return_url }),
+      metadata: {
+        order_id: order.id,
+        order_number: order.order_number,
+      },
+    });
+  }
+
   async checkHubtelTransactionStatus(clientReference: string) {
     try {
       const posId = process.env.HUBTEL_POS_ID;
@@ -706,14 +730,29 @@ export class OrderService {
   }
 
   private async resolveItemStock(
-    items: { id: string | number; name: string; color: string; size: string; quantity: number }[],
+    items: {
+      id?: string | number;
+      product_id?: string | number;
+      name: string;
+      color: string;
+      size: string;
+      quantity: number;
+    }[],
   ): Promise<ResolvedOrderItem[]> {
-    const invalidItem = items.find((item) => !Number.isInteger(Number(item.id)));
+    // Web checkout items carry `product_id`, not `id` — fall back so both
+    // client shapes resolve to the same product id.
+    const invalidItem = items.find(
+      (item) => !Number.isInteger(Number(item.id ?? item.product_id)),
+    );
     if (invalidItem) {
-      throw new Error(`Invalid product id "${invalidItem.id}" for item "${invalidItem.name}"`);
+      throw new Error(
+        `Invalid product id "${invalidItem.id ?? invalidItem.product_id}" for item "${invalidItem.name}"`,
+      );
     }
 
-    const productIds = [...new Set(items.map((item) => Number(item.id)))];
+    const productIds = [
+      ...new Set(items.map((item) => Number(item.id ?? item.product_id))),
+    ];
 
     const products = await prisma.products.findMany({
       where: { id: { in: productIds } },
@@ -747,7 +786,7 @@ export class OrderService {
     );
 
     return items.map((item) => {
-      const productId = Number(item.id);
+      const productId = Number(item.id ?? item.product_id);
       const product = productById.get(productId);
       const stockManaged = product?.stock_managed === "yes";
       const quantity = Number(item.quantity);
@@ -792,7 +831,7 @@ export class OrderService {
       const match = resolved[index];
       return {
         name: item.name,
-        product_id: Number(item.id),
+        product_id: Number(item.id ?? item.product_id),
         price_amount: item.price_amount,
         market_id: Number(item.market_id),
         price_currency: item.price_currency,
