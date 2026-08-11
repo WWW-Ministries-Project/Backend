@@ -101,6 +101,18 @@ export class OrderService {
       this.validateHubtelRedirectUrls(data.return_url, data.cancellation_url);
     }
 
+    // Idempotency guard: retrying a failed/abandoned checkout (network
+    // error, gateway init failure, closed tab) previously created a brand
+    // new order + re-reserved stock every single time, since nothing
+    // checked for an already-open attempt first. Reuse an existing pending
+    // order for the identical cart instead of stacking duplicates. Guest
+    // checkouts (no reliable user_id) aren't deduped — no stable identity
+    // to match against.
+    const existingPending = await this.findMatchingPendingOrder(data);
+    if (existingPending) {
+      return this.reuseExistingPendingOrder(existingPending, data);
+    }
+
     const resolvedItems = await this.resolveItemStock(data.items);
     const shortages = resolvedItems.filter(
       (item) => item.stockManaged && item.availableStock < item.quantity,
@@ -686,23 +698,39 @@ export class OrderService {
     const STALE_PENDING_MS = 48 * 60 * 60 * 1000;
     const now = Date.now();
 
+    // Oldest-first: scanning the newest N pending orders every run meant a
+    // backlog bigger than the limit could NEVER drain — the same fresh
+    // batch always won the slot and the tail rotted indefinitely. Oldest
+    // (most overdue) orders get serviced first instead.
     const pendingOrders = await prisma.orders.findMany({
       where: { payment_status: "pending" },
-      orderBy: { id: "desc" },
+      orderBy: { created_at: "asc" },
       take: limit,
       select: { id: true, reference: true, payment_status: true, created_at: true },
     });
 
     const results = await Promise.allSettled(
       pendingOrders.map(async (order) => {
-        const result = await this.checkHubtelTransactionStatus(order.reference);
-        const stillPending = result?.order?.payment_status === "pending";
         const isStale = now - order.created_at.getTime() > STALE_PENDING_MS;
 
-        if (stillPending && isStale) {
-          return this.updateOrderStatusByHubtel(order.reference, "failed");
+        try {
+          const result = await this.checkHubtelTransactionStatus(order.reference);
+          const stillPending = result?.order?.payment_status === "pending";
+
+          if (stillPending && isStale) {
+            return this.updateOrderStatusByHubtel(order.reference, "failed");
+          }
+          return result;
+        } catch (error) {
+          // Force-fail on staleness even when the live Hubtel status check
+          // itself errors (bad creds, IP block, unrecognized/expired
+          // reference) — otherwise this safety net never fires for
+          // exactly the orders that need it most.
+          if (isStale) {
+            return this.updateOrderStatusByHubtel(order.reference, "failed");
+          }
+          throw error;
         }
-        return result;
       }),
     );
 
@@ -729,6 +757,122 @@ export class OrderService {
       failed_updates: failedUpdates,
       still_pending: stillPending,
       errors,
+    };
+  }
+
+  /**
+   * Finds an open (payment_status "pending") order for this user whose
+   * items exactly match the incoming cart — same product/color/size/qty,
+   * any order. Scoped to identified users only; guest checkouts have no
+   * stable identity to dedupe against.
+   */
+  private async findMatchingPendingOrder(data: {
+    user_id?: number | string | null;
+    items: {
+      id?: number | string;
+      product_id?: number | string;
+      color: string;
+      size: string;
+      quantity: number;
+    }[];
+  }) {
+    const userId = Number(data.user_id);
+    if (!Number.isInteger(userId) || userId <= 0) return null;
+
+    const incomingSignature = this.buildIncomingItemSignature(data.items);
+
+    const candidates = await prisma.orders.findMany({
+      where: { user_id: userId, payment_status: "pending" },
+      orderBy: { id: "desc" },
+      take: 20,
+      include: { items: true },
+    });
+
+    return (
+      candidates.find(
+        (order) => this.buildStoredItemSignature(order.items) === incomingSignature,
+      ) ?? null
+    );
+  }
+
+  private buildIncomingItemSignature(
+    items: {
+      id?: number | string;
+      product_id?: number | string;
+      color: string;
+      size: string;
+      quantity: number;
+    }[],
+  ): string {
+    return items
+      .map((item) => {
+        const productId = Number(item.id ?? item.product_id);
+        return `${productId}:${item.color}:${item.size}:${Number(item.quantity)}`;
+      })
+      .sort()
+      .join("|");
+  }
+
+  private buildStoredItemSignature(
+    items: {
+      product_id: number | null;
+      color: string;
+      size: string;
+      quantity: number;
+    }[],
+  ): string {
+    return items
+      .map((item) => `${item.product_id}:${item.color}:${item.size}:${item.quantity}`)
+      .sort()
+      .join("|");
+  }
+
+  /**
+   * Reuses an existing pending order for a retried checkout instead of
+   * creating a new one — no new order row, no second stock reservation.
+   * Just rolls the payment reference and re-initiates with whichever
+   * gateway the client asked for this time.
+   */
+  private async reuseExistingPendingOrder(
+    order: { id: number },
+    data: {
+      payment_type: "paystack" | "hubtel" | null;
+      return_url: string | null;
+      cancellation_url: string | null;
+    },
+  ) {
+    const clientReference = this.generateReference();
+    const updatedOrder = await prisma.orders.update({
+      where: { id: order.id },
+      data: { reference: clientReference },
+      include: { items: true, billing_details: true },
+    });
+
+    if (data.payment_type === "paystack") {
+      const paystackResponse = await this.initializePaystackTransaction(
+        updatedOrder,
+        data.return_url,
+      );
+      return {
+        message: "Paystack payment initiated",
+        checkoutUrl: paystackResponse.authorization_url,
+        clientReference: paystackResponse.reference,
+        updated_order: updatedOrder,
+      };
+    }
+
+    const hubtelResponse = await this.initializeHubtelTransaction(
+      updatedOrder,
+      data.return_url,
+      data.cancellation_url,
+    );
+    return {
+      message: "Hubtel payment initiated",
+      checkoutUrl: hubtelResponse.checkoutUrl,
+      checkoutDirectUrl: hubtelResponse.checkoutDirectUrl,
+      clientReference: hubtelResponse.clientReference,
+      checkoutId: hubtelResponse.checkoutId,
+      updated_order: updatedOrder,
     };
   }
 
