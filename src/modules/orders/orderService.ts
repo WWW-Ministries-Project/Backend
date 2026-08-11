@@ -379,8 +379,11 @@ export class OrderService {
       },
     });
 
-    const flattenedOrders = await this.flattenOrders(orders);
-    return this.deduplicateByOrderId(flattenedOrders);
+    // flattenOrders yields one row per item, by design (columns are
+    // item-level: size/color/qty). Do NOT dedupe by order_id afterwards —
+    // a multi-item order legitimately produces multiple rows sharing an
+    // order_id; collapsing them silently drops every item but the first.
+    return await this.flattenOrders(orders);
   }
 
   async updateOrderStatusByHubtel(
@@ -1036,17 +1039,5 @@ export class OrderService {
           })
       );
     });
-  }
-
-  private deduplicateByOrderId(orders: any[]) {
-    const uniqueOrdersById = new Map<number, any>();
-
-    for (const order of orders) {
-      if (!uniqueOrdersById.has(order.order_id)) {
-        uniqueOrdersById.set(order.order_id, order);
-      }
-    }
-
-    return Array.from(uniqueOrdersById.values());
   }
 }
