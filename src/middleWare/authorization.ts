@@ -1431,6 +1431,20 @@ export class Permissions {
     next: NextFunction,
   ) => {
     const errorMessage = "Not authorized to create order for this user";
+
+    // Guest checkout: no token supplied at all — let the storefront visitor
+    // through with no user scoping. orderService already treats user_id as
+    // nullable for this case. A token that IS present but invalid/expired
+    // still falls through to getAccessContext below and gets rejected as usual.
+    if (!this.extractToken(req)) {
+      if (!(req as any).body || typeof (req as any).body !== "object") {
+        (req as any).body = {};
+      }
+      (req as any).body.user_id = null;
+      (req as any).orderScope = { mode: "guest", userId: null };
+      return next();
+    }
+
     const context = await this.getAccessContext(req, res, errorMessage);
     if (!context) return;
 
