@@ -151,7 +151,10 @@ export class OrderService {
     const order = await prisma.$transaction(async (tx) => {
       const created = await tx.orders.create({
         data: {
-          user_id: Number(data.user_id) ?? null,
+          // `Number(data.user_id) ?? null` was wrong for guests: Number(undefined)
+          // is NaN, and NaN is not nullish, so `?? null` never caught it — Prisma
+          // would reject the NaN for this Int? column. Guard explicitly instead.
+          user_id: data.user_id != null ? Number(data.user_id) : null,
           total_amount: parseFloat(data.total_amount.toString()),
           reference: clientReference,
           items: { create: this.buildItems(data.items, resolvedItems) },

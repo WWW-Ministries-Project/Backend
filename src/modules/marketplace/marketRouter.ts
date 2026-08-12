@@ -32,7 +32,10 @@ marketRouter.put(
   [protect, permissions.can_manage_marketplace],
   marketController.restoreMarket,
 );
-marketRouter.get("/list-markets", [protect], marketController.listMarkets);
+// Public storefront read: guests browsing /out/products fetch markets for the
+// filter bar with no token. Scoping comes from an explicit branch_id query
+// param, not req.user — see marketService.getAllMarkets.
+marketRouter.get("/list-markets", marketController.listMarkets);
 marketRouter.get(
   "/list-markets-by-event",
   [protect],

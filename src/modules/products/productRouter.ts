@@ -1006,13 +1006,13 @@ productRouter.put(
   [protect, permissions.can_manage_marketplace],
   productController.restoreProduct,
 );
-productRouter.get("/list-products", [protect], productController.listProducts);
+// Public storefront reads: guests browsing /out/products must not be forced to sign in.
+productRouter.get("/list-products", productController.listProducts);
 productRouter.get(
   "/list-products-by-market",
-  [protect],
   productController.listProductsByMarketId,
 );
-productRouter.get("/get-product-by-id", [protect], productController.getProductById);
+productRouter.get("/get-product-by-id", productController.getProductById);
 //product type
 productRouter.post(
   "/create-product-type",
@@ -1058,7 +1058,6 @@ productRouter.put(
 );
 productRouter.get(
   "/list-product-category",
-  [protect],
   productController.listProductCategories,
 );
 

@@ -72,9 +72,11 @@ const protect = permissions.protect;
  *       400:
  *         description: Failed to create order
  */
+// No `protect` here: guest storefront checkout has no token. can_create_order_scoped
+// handles both the authenticated-member path and the anonymous-guest path itself.
 orderRouter.post(
   "/create-order",
-  [protect, permissions.can_create_order_scoped],
+  [permissions.can_create_order_scoped],
   orderController.create,
 );
 
