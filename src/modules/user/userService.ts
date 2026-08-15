@@ -56,6 +56,26 @@ type BulkMemberStatusResult =
   | BulkMemberStatusSuccessResult
   | BulkMemberStatusFailureResult;
 
+type BulkUserStatusResult = {
+  user_id: string | number;
+  success: boolean;
+  noop?: boolean;
+  code?: string;
+  message?: string;
+  previous?: boolean;
+  current?: boolean;
+};
+
+type BulkUserStatusResponse = {
+  results: BulkUserStatusResult[];
+  summary: {
+    total: number;
+    succeeded: number;
+    skipped: number;
+    failed: number;
+  };
+};
+
 export class UserService {
   private hasValue(value: unknown) {
     return value !== undefined && value !== null && String(value).trim() !== "";
@@ -883,6 +903,102 @@ export class UserService {
       failure_count: results.length - successCount,
       results,
     };
+  }
+
+  async bulkUpdateUserStatus(
+    userIds: (string | number)[],
+    isActive: boolean,
+  ): Promise<BulkUserStatusResponse> {
+    const parsedIds = userIds
+      .map((id) => Number(id))
+      .filter((id) => Number.isInteger(id) && id > 0);
+
+    const existingUsers = await prisma.user.findMany({
+      where: { id: { in: parsedIds } },
+      select: { id: true, is_active: true },
+    });
+    const existingById = new Map(existingUsers.map((u) => [u.id, u]));
+
+    const results: BulkUserStatusResult[] = [];
+
+    for (const rawId of userIds) {
+      const parsedId = Number(rawId);
+
+      if (!Number.isInteger(parsedId) || parsedId <= 0) {
+        results.push({
+          user_id: rawId,
+          success: false,
+          code: "INVALID_USER_ID",
+          message: "User ID must be a positive integer.",
+        });
+        continue;
+      }
+
+      const user = existingById.get(parsedId);
+
+      if (!user) {
+        results.push({
+          user_id: rawId,
+          success: false,
+          code: "NOT_FOUND",
+          message: "User not found.",
+        });
+        continue;
+      }
+
+      const previousActive = Boolean(user.is_active);
+
+      if (previousActive === isActive) {
+        results.push({
+          user_id: rawId,
+          success: true,
+          noop: true,
+          previous: previousActive,
+          current: previousActive,
+        });
+        continue;
+      }
+
+      try {
+        const updated = await prisma.user.update({
+          where: { id: parsedId },
+          data: { is_active: isActive },
+          select: { is_active: true },
+        });
+
+        results.push({
+          user_id: rawId,
+          success: true,
+          previous: previousActive,
+          current: Boolean(updated.is_active),
+        });
+      } catch (error) {
+        console.error("Failed to bulk update user status", {
+          userId: rawId,
+          isActive,
+          error,
+        });
+        results.push({
+          user_id: rawId,
+          success: false,
+          code: "INTERNAL_ERROR",
+          message: "Failed to update user status.",
+        });
+      }
+    }
+
+    const summary = results.reduce(
+      (acc, r) => {
+        acc.total += 1;
+        if (!r.success) acc.failed += 1;
+        else if (r.noop) acc.skipped += 1;
+        else acc.succeeded += 1;
+        return acc;
+      },
+      { total: 0, succeeded: 0, skipped: 0, failed: 0 },
+    );
+
+    return { results, summary };
   }
 
   private normalizeRequestedMemberStatus(
