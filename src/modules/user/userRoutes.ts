@@ -18,6 +18,7 @@ import {
   getUserByEmailPhone,
   convertMemeberToConfirmedMember,
   bulkUpdateMemberStatus,
+  bulkUpdateUserStatus,
   linkSpouses,
   getUserFamily,
   linkChildren,
@@ -112,6 +113,12 @@ userRouter.post(
   "/update-member-status/bulk",
   [protect, permissions.can_manage_member_details],
   bulkUpdateMemberStatus,
+);
+
+userRouter.post(
+  "/update-user-status/bulk",
+  [protect, permissions.can_manage_member_details],
+  bulkUpdateUserStatus,
 );
 
 userRouter.put(
