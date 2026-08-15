@@ -2901,6 +2901,55 @@ export const bulkUpdateMemberStatus = async (req: Request, res: Response) => {
   }
 };
 
+export const bulkUpdateUserStatus = async (req: Request, res: Response) => {
+  const { user_ids, is_active } = req.body ?? {};
+
+  if (typeof is_active !== "boolean") {
+    return res.status(400).json({
+      message: "Operation failed",
+      data: {
+        message: "",
+        error: "is_active must be a boolean.",
+      },
+    });
+  }
+
+  if (!Array.isArray(user_ids) || user_ids.length === 0) {
+    return res.status(400).json({
+      message: "Operation failed",
+      data: {
+        message: "",
+        error: "user_ids must be a non-empty array.",
+      },
+    });
+  }
+
+  const actingUserId = (req as any).user?.id;
+  if (
+    is_active === false &&
+    actingUserId != null &&
+    user_ids.some((id: string | number) => Number(id) === Number(actingUserId))
+  ) {
+    return res.status(400).json({
+      message: "Operation failed",
+      data: {
+        message: "",
+        error: "You cannot deactivate your own account.",
+      },
+    });
+  }
+
+  try {
+    const result = await userService.bulkUpdateUserStatus(user_ids, is_active);
+    return res.status(200).json({ data: result });
+  } catch (error: any) {
+    return res.status(500).json({
+      message: "Operation failed",
+      data: error,
+    });
+  }
+};
+
 export const linkSpouses = async (req: Request, res: Response) => {
   try {
     const { husband, wife } = req.body;
