@@ -1532,6 +1532,58 @@ export class Permissions {
     return next();
   };
 
+  // Retrying/paying for an order is a self-service action: the order's owner
+  // can always retry their own payment. Staff with Marketplace "manage" can
+  // still retry on a member's behalf. No one else gets through. Mirrors
+  // can_view_orders_scoped's owner-lookup pattern above.
+  can_retry_order_payment_scoped = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    const errorMessage = "Not authorized to retry payment for this order";
+    const context = await this.getAccessContext(req, res, errorMessage);
+    if (!context) return;
+
+    const canManageAll =
+      context.isPrivilegedUser &&
+      hasActionPermission(context.permissions, "Marketplace", "manage");
+
+    if (canManageAll) {
+      return next();
+    }
+
+    const rawId = (req as any).body?.id;
+    const token =
+      typeof rawId === "string" || typeof rawId === "number"
+        ? String(rawId).trim()
+        : "";
+
+    if (token) {
+      let order: { user_id: number | null } | null = null;
+      if (/^\d+$/.test(token)) {
+        order = await prisma.orders.findUnique({
+          where: { id: Number(token) },
+          select: { user_id: true },
+        });
+      }
+      if (!order) {
+        order = await prisma.orders.findFirst({
+          where: { OR: [{ reference: token }, { order_number: token }] },
+          select: { user_id: true },
+        });
+      }
+
+      // Order not found: let the controller's own lookup surface "Order not
+      // found" — this guard only blocks a confirmed cross-owner access.
+      if (order && order.user_id !== context.userId) {
+        return this.unauthorized(res, errorMessage);
+      }
+    }
+
+    return next();
+  };
+
   // Users/members
   can_view_users = this.checkPermission(
     "Members",
