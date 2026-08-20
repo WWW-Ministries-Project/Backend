@@ -1234,6 +1234,7 @@ export class OrderService {
               // Order fields
               order_number: order.order_number,
               payment_status: order.payment_status,
+              delivery_status: order.delivery_status,
               reference: order.reference,
               created_at: order.created_at,
 
