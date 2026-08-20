@@ -645,7 +645,7 @@ orderRouter.get(
  */
 orderRouter.post(
   "/retry-payment",
-  [protect, permissions.can_manage_marketplace],
+  [protect, permissions.can_retry_order_payment_scoped],
   orderController.retryPayment,
 );
 
