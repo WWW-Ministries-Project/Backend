@@ -341,7 +341,7 @@ export class OrderService {
   async findOne(id: number) {
     const order = await prisma.orders.findUnique({
       where: { id },
-      include: { items: true },
+      include: { items: true, billing_details: true },
     });
 
     if (!order) throw new Error("Order not found");
@@ -591,6 +591,69 @@ export class OrderService {
     return updatedOrder;
   }
 
+  async cancelOrder(orderId: number, actorUserId?: number | null) {
+    // Atomic guard against the TOCTOU race between checking payment_status
+    // and writing delivery_status: a webhook could flip payment_status to
+    // "success" between a separate findUnique + update, leaving a
+    // contradictory success/cancelled order with no refund path. Same
+    // updateMany + count===0 idiom as the stock reservation guard in
+    // create(). Also excludes already-cancelled orders: cancelOrder doesn't
+    // move payment_status off "pending", so without this a duplicate/retried
+    // call would match again and double-restock below.
+    const cancelled = await prisma.orders.updateMany({
+      where: {
+        id: orderId,
+        payment_status: "pending",
+        delivery_status: { not: "cancelled" },
+      },
+      data: { delivery_status: "cancelled" },
+    });
+
+    if (cancelled.count === 0) {
+      const existing = await prisma.orders.findUnique({
+        where: { id: orderId },
+        select: { id: true },
+      });
+      if (!existing) throw new Error("Order not found");
+      throw new Error("Only orders awaiting payment can be cancelled");
+    }
+
+    // Cancelling never released the stock reserved at order-creation time,
+    // permanently locking it (or, for Hubtel, locking it for up to 48h
+    // until the reconciliation cron force-fails it). Release it the same
+    // way a failed payment does.
+    await this.restockOrderItems(orderId);
+
+    // updateMany doesn't return the updated row, so re-read the full order
+    // (with items/billing_details) for the return value and notification.
+    const updatedOrder = await prisma.orders.findUnique({
+      where: { id: orderId },
+      include: { items: true, billing_details: true },
+    });
+    if (!updatedOrder) throw new Error("Order not found");
+
+    const recipientUserId = Number(updatedOrder.user_id);
+    if (Number.isInteger(recipientUserId) && recipientUserId > 0) {
+      await notificationService.createInAppNotification({
+        type: "order.cancelled",
+        title: "Order cancelled",
+        body: `Order ${updatedOrder.order_number || `#${updatedOrder.id}`} was cancelled.`,
+        recipientUserId,
+        actorUserId:
+          Number.isInteger(Number(actorUserId)) && Number(actorUserId) > 0
+            ? Number(actorUserId)
+            : null,
+        entityType: "ORDER",
+        entityId: String(updatedOrder.id),
+        actionUrl: "/member/market/orders",
+        priority: "MEDIUM",
+        dedupeKey: `order:${updatedOrder.id}:cancelled`,
+      });
+    }
+
+    return updatedOrder;
+  }
+
   async initializeHubtelTransaction(
     order: any,
     return_url: string | null,
@@ -706,7 +769,13 @@ export class OrderService {
     // batch always won the slot and the tail rotted indefinitely. Oldest
     // (most overdue) orders get serviced first instead.
     const pendingOrders = await prisma.orders.findMany({
-      where: { payment_status: "pending" },
+      // Exclude orders the member already cancelled — cancelOrder() leaves
+      // payment_status "pending" by design (only delivery_status moves to
+      // "cancelled"), so without this filter a cancelled order stays visible
+      // to this sweep. Once it goes stale, force-failing it would call
+      // updateOrderPayment(id, "failed"), which restocks again on top of the
+      // restock cancelOrder() already did — a double stock credit.
+      where: { payment_status: "pending", delivery_status: { not: "cancelled" } },
       orderBy: { created_at: "asc" },
       take: limit,
       select: { id: true, reference: true, payment_status: true, created_at: true },
@@ -1084,6 +1153,11 @@ export class OrderService {
     const pendingOrders = await prisma.orders.findMany({
       where: {
         payment_status: "pending",
+        // Same cancelled-order exclusion as reconcilePendingHubtelPayments:
+        // this scan also drives updateOrderStatusByHubtel -> updateOrderPayment,
+        // which would restock an already-cancelled (and already-restocked)
+        // order a second time if Hubtel reports it failed/cancelled upstream.
+        delivery_status: { not: "cancelled" },
         items: {
           some: {
             market_id: marketplaceId,
