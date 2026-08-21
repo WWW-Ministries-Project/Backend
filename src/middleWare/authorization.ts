@@ -1584,6 +1584,46 @@ export class Permissions {
     return next();
   };
 
+  // Member-initiated order cancellation. Mirrors
+  // can_retry_order_payment_scoped's owner-or-admin pattern: a privileged
+  // Marketplace-manage user may cancel any order; otherwise the caller must
+  // own the order being cancelled.
+  can_cancel_order_scoped = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    const errorMessage = "Not authorized to cancel this order";
+    const context = await this.getAccessContext(req, res, errorMessage);
+    if (!context) return;
+
+    const canManageAll =
+      context.isPrivilegedUser &&
+      hasActionPermission(context.permissions, "Marketplace", "manage");
+
+    if (canManageAll) {
+      return next();
+    }
+
+    const rawId = (req as any).body?.id;
+    const orderId = toPositiveInt(rawId);
+
+    if (orderId) {
+      const order = await prisma.orders.findUnique({
+        where: { id: orderId },
+        select: { user_id: true },
+      });
+
+      // Order not found: let the controller's own lookup surface "Order not
+      // found" — this guard only blocks a confirmed cross-owner access.
+      if (order && order.user_id !== context.userId) {
+        return this.unauthorized(res, errorMessage);
+      }
+    }
+
+    return next();
+  };
+
   // Users/members
   can_view_users = this.checkPermission(
     "Members",
