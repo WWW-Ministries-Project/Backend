@@ -14,6 +14,13 @@ export type CreateAnnouncementInput = {
   position_id?: number | null;
   branch_id?: number | null;
   created_by: number;
+  image_url?: string | null;
+  cta_label?: string | null;
+  deep_link?: string | null;
+  sort_order?: number | null;
+  is_promoted?: boolean;
+  start_date?: Date | null;
+  end_date?: Date | null;
 };
 
 export type UpdateAnnouncementInput = {
@@ -22,6 +29,13 @@ export type UpdateAnnouncementInput = {
   audience_type?: announcement_audience;
   department_id?: number | null;
   position_id?: number | null;
+  image_url?: string | null;
+  cta_label?: string | null;
+  deep_link?: string | null;
+  sort_order?: number | null;
+  is_promoted?: boolean;
+  start_date?: Date | null;
+  end_date?: Date | null;
 };
 
 type RecipientAnnouncement = {
@@ -95,6 +109,13 @@ const createAnnouncement = async (input: CreateAnnouncementInput) => {
       status: "DRAFT",
       branch_id: branchId,
       created_by: input.created_by,
+      image_url: input.image_url ?? null,
+      cta_label: input.cta_label ?? null,
+      deep_link: input.deep_link ?? null,
+      sort_order: input.sort_order ?? null,
+      is_promoted: input.is_promoted ?? false,
+      start_date: input.start_date ?? null,
+      end_date: input.end_date ?? null,
     },
     include: announcementInclude,
   });
@@ -138,13 +159,27 @@ const updateAnnouncement = async (id: number, input: UpdateAnnouncementInput) =>
     throw httpError("Announcement not found", 404);
   }
 
-  // Once published the audience is frozen; only the copy may be edited.
+  // Promotion metadata (image/CTA/deep-link/order/window) is display-only —
+  // it stays editable after publish. Only audience/department/position stay
+  // frozen once real recipients have already been resolved against them.
+  const promoFields = {
+    image_url: input.image_url !== undefined ? input.image_url : existing.image_url,
+    cta_label: input.cta_label !== undefined ? input.cta_label : existing.cta_label,
+    deep_link: input.deep_link !== undefined ? input.deep_link : existing.deep_link,
+    sort_order: input.sort_order !== undefined ? input.sort_order : existing.sort_order,
+    is_promoted: input.is_promoted !== undefined ? input.is_promoted : existing.is_promoted,
+    start_date: input.start_date !== undefined ? input.start_date : existing.start_date,
+    end_date: input.end_date !== undefined ? input.end_date : existing.end_date,
+  };
+
+  // Once published the audience is frozen; only the copy (and promo fields) may be edited.
   if (existing.status === "PUBLISHED") {
     return prisma.announcement.update({
       where: { id },
       data: {
         title: input.title ?? existing.title,
         content: input.content ?? existing.content,
+        ...promoFields,
       },
       include: announcementInclude,
     });
@@ -168,6 +203,7 @@ const updateAnnouncement = async (id: number, input: UpdateAnnouncementInput) =>
         audienceType === "SPECIFIC_DEPARTMENT" ? departmentId ?? null : null,
       position_id:
         audienceType === "SPECIFIC_POSITION" ? positionId ?? null : null,
+      ...promoFields,
     },
     include: announcementInclude,
   });

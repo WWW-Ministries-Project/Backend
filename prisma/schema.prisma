@@ -2495,6 +2495,13 @@ model announcement {
   published_at  DateTime?
   created_at    DateTime              @default(now())
   updated_at    DateTime              @updatedAt
+  image_url     String?
+  cta_label     String?
+  deep_link     String?
+  sort_order    Int?
+  is_promoted   Boolean               @default(false)
+  start_date    DateTime?
+  end_date      DateTime?
 
   branch        branch?                     @relation(fields: [branch_id], references: [id])
   department    department?                 @relation(fields: [department_id], references: [id])
