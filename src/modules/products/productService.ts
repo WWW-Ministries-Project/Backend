@@ -146,6 +146,18 @@ export class ProductService {
       },
     });
 
+    // STEP 1b — delete pending back-in-stock subscriptions too: they also
+    // FK to product_colour (ON DELETE RESTRICT), so STEP 2 fails with a
+    // constraint violation for any product a customer has subscribed to.
+    // Safe to drop unconditionally — colours/sizes get new ids below, so a
+    // stale request could never fire correctly against the recreated rows
+    // anyway; a customer who still wants notifying can re-request it.
+    await prisma.stock_notification_requests.deleteMany({
+      where: {
+        product_colour: { product_id: input.id },
+      },
+    });
+
     // STEP 2 — delete product colours
     await prisma.product_colour.deleteMany({
       where: { product_id: input.id },
