@@ -141,6 +141,13 @@ export const NOTIFICATION_PREFERENCE_OPTIONS: NotificationPreferenceOption[] = [
     availableChannels: ALL_CHANNELS,
   },
   {
+    type: "order.cancelled",
+    title: "Order cancelled",
+    description: "Notify buyers when their marketplace order is cancelled.",
+    category: "Marketplace",
+    availableChannels: ALL_CHANNELS,
+  },
+  {
     type: "order.payment_failed",
     title: "Order payment failed",
     description: "Notify buyers when a marketplace payment attempt fails.",

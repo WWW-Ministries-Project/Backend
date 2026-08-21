@@ -278,4 +278,29 @@ export class OrderController {
       });
     }
   }
+
+  async cancelOrder(req: Request, res: Response) {
+    try {
+      const { id } = req.body as { id?: number | string };
+      const orderId = Number(id);
+      if (!Number.isInteger(orderId) || orderId <= 0) {
+        return res.status(400).json({ message: "A valid order id is required" });
+      }
+
+      const actorUserId = Number((req as any)?.user?.id);
+      const updatedOrder = await orderService.cancelOrder(
+        orderId,
+        Number.isInteger(actorUserId) && actorUserId > 0 ? actorUserId : null,
+      );
+
+      return res.status(200).json({
+        message: "Order cancelled successfully",
+        data: updatedOrder,
+      });
+    } catch (error: any) {
+      return res.status(400).json({
+        message: error.message || "Failed to cancel order",
+      });
+    }
+  }
 }

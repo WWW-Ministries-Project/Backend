@@ -659,6 +659,36 @@ orderRouter.post(
   [protect, permissions.can_manage_marketplace],
   orderController.reconcilePendingHubtelPayments,
 );
+/**
+ * @swagger
+ * /orders/cancel-order:
+ *   put:
+ *     summary: Cancel an order that is still awaiting payment
+ *     tags: [Orders]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - id
+ *             properties:
+ *               id:
+ *                 type: integer
+ *                 example: 42
+ *     responses:
+ *       200:
+ *         description: Order cancelled successfully
+ *       400:
+ *         description: Failed to cancel order
+ */
+orderRouter.put(
+  "/cancel-order",
+  [protect, permissions.can_cancel_order_scoped],
+  orderController.cancelOrder,
+);
+
 orderRouter.put(
   "/update-delivery-status",
   [protect, permissions.can_manage_marketplace],
