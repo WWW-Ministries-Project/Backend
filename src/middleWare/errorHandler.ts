@@ -10,7 +10,7 @@ import logger from "../utils/logger-config";
 const isDevelopment =
   process.env.NODE_ENV === "development" || process.env.NODE_ENV === "test";
 
-const buildPrismaError = (error: Prisma.PrismaClientKnownRequestError) => {
+export const buildPrismaError = (error: Prisma.PrismaClientKnownRequestError) => {
   if (error.code === "P2003") {
     const fieldName = String(error.meta?.field_name || "");
     const isRequisitionEventConstraint =
