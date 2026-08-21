@@ -37,6 +37,8 @@ import {
   roleEligibilityService,
 } from "../settings/roleEligibilityService";
 import { InputValidationError } from "../../utils/custom-error-handlers";
+import { Prisma } from "@prisma/client";
+import { buildPrismaError } from "../../middleWare/errorHandler";
 import {
   getBranchScopedWhere,
   resolveBranchIdOrDefault,
@@ -818,6 +820,14 @@ export const updateUser = async (req: Request, res: Response) => {
       });
     }
 
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      const prismaError = buildPrismaError(error);
+      return res.status(prismaError.statusCode).json({
+        message: prismaError.message,
+        data: null,
+      });
+    }
+
     return res
       .status(500)
       .json({ message: "Internal Server Error", data: error?.message });
@@ -1063,6 +1073,17 @@ async function updateDepartmentPositions(
     end_date?: any;
   }[],
 ) {
+  const seenDepartmentIds = new Set<number>();
+  for (const dp of department_positions) {
+    const departmentId = parseInt(dp.department_id);
+    if (seenDepartmentIds.has(departmentId)) {
+      throw new InputValidationError(
+        `Duplicate department assignment: department_id ${dp.department_id} appears more than once in department_positions.`,
+      );
+    }
+    seenDepartmentIds.add(departmentId);
+  }
+
   await prisma.department_positions.deleteMany({
     where: { user_id: userId },
   });
