@@ -46,6 +46,32 @@ type ResolvedOrderItem = {
   availableStock: number;
 };
 
+export type OrderItemEdit = {
+  /** order_items.id of the line being changed. */
+  id: number;
+  quantity: number;
+  color: string;
+  size: string;
+  price_amount: number;
+  /** true = delete this line entirely (stock, if managed, is restocked in full). */
+  removed?: boolean;
+};
+
+export type UpdateOrderInput = {
+  id: number;
+  billing?: Partial<{
+    first_name: string;
+    last_name: string;
+    email: string;
+    phone_number: string;
+    country: string;
+    country_code: string;
+  }>;
+  payment_status?: "pending" | "success" | "failed";
+  delivery_status?: "pending" | "shipped" | "delivered" | "cancelled";
+  items?: OrderItemEdit[];
+};
+
 export class OrderService {
   async findOrderByName(first_name?: string, last_name?: string) {
     const orders = await prisma.orders.findMany({
@@ -351,6 +377,320 @@ export class OrderService {
     return order;
   }
 
+  async updateOrder(data: UpdateOrderInput) {
+    const order = await prisma.orders.findFirst({
+      where: { id: data.id, deleted_at: null },
+      include: { items: true, billing_details: true },
+    });
+    if (!order) throw new Error("Order not found");
+
+    const editingItems = Array.isArray(data.items) && data.items.length > 0;
+    if (
+      editingItems &&
+      (["delivered", "cancelled"].includes(order.delivery_status) ||
+        order.payment_status === "failed")
+    ) {
+      throw new Error(
+        "Cannot edit items once delivery is delivered/cancelled or payment has failed",
+      );
+    }
+
+    if (
+      order.delivery_status === "cancelled" &&
+      data.delivery_status &&
+      data.delivery_status !== "cancelled"
+    ) {
+      throw new Error(
+        "Cannot move a cancelled order back to an active delivery status",
+      );
+    }
+
+    let restockedVariants: { productColourId: number; sizeId: number }[] = [];
+
+    await prisma.$transaction(async (tx) => {
+      if (editingItems) {
+        restockedVariants = await this.applyItemEdits(tx, order.items, data.items!);
+
+        const remainingItems = await tx.order_items.findMany({
+          where: { order_id: order.id },
+          select: { price_amount: true, quantity: true },
+        });
+
+        if (remainingItems.length === 0) {
+          throw new Error(
+            "Cannot remove every item from an order — cancel or delete the order instead",
+          );
+        }
+
+        const newTotal = remainingItems.reduce(
+          (sum, item) => sum + item.price_amount * item.quantity,
+          0,
+        );
+        await tx.orders.update({
+          where: { id: order.id },
+          data: { total_amount: newTotal },
+        });
+      }
+
+      if (data.billing) {
+        await tx.billing_details.update({
+          where: { order_id: order.id },
+          data: {
+            ...(data.billing.first_name && {
+              first_name: toSentenceCase(data.billing.first_name),
+            }),
+            ...(data.billing.last_name && {
+              last_name: toSentenceCase(data.billing.last_name),
+            }),
+            ...(data.billing.email && { email: data.billing.email }),
+            ...(data.billing.phone_number && {
+              phone_number: data.billing.phone_number,
+            }),
+            ...(data.billing.country && { country: data.billing.country }),
+            ...(data.billing.country_code && {
+              country_code: data.billing.country_code,
+            }),
+          },
+        });
+      }
+
+      const movingToCancelled =
+        data.delivery_status === "cancelled" && order.delivery_status !== "cancelled";
+      const movingToFailed =
+        data.payment_status === "failed" && order.payment_status !== "failed";
+      // Stock was already released via the OTHER status field — don't
+      // restock a second time (same double-restock class cancelOrder
+      // already guards against on its own endpoint).
+      const stockAlreadyReleased =
+        order.payment_status === "failed" || order.delivery_status === "cancelled";
+
+      if ((movingToCancelled || movingToFailed) && !stockAlreadyReleased) {
+        const additionallyRestocked = await this.restockAllItems(tx, order.id);
+        restockedVariants.push(...additionallyRestocked);
+      }
+
+      if (data.payment_status || data.delivery_status) {
+        await tx.orders.update({
+          where: { id: order.id },
+          data: {
+            ...(data.payment_status && { payment_status: data.payment_status }),
+            ...(data.delivery_status && {
+              delivery_status: data.delivery_status,
+            }),
+          },
+        });
+      }
+    });
+
+    // Fire back-in-stock notifications only after the transaction has
+    // actually committed — restockVariant deliberately doesn't do this
+    // itself (see its docstring).
+    for (const variant of restockedVariants) {
+      await stockNotificationService.notifyBackInStock(
+        variant.productColourId,
+        variant.sizeId,
+      );
+    }
+
+    const refreshed = await prisma.orders.findFirst({
+      where: { id: order.id },
+      include: { items: true, billing_details: true },
+    });
+    if (!refreshed) throw new Error("Order not found after update");
+    return refreshed;
+  }
+
+  /**
+   * Applies per-line edits inside the caller's transaction: qty deltas
+   * reserve/restock the difference, a color/size change restocks the old
+   * variant in full and reserves the new one, `removed` restocks in full
+   * and deletes the line. Only stock-managed lines (product_colour_id +
+   * size_id both set) touch product_stock at all. Returns the variants
+   * that crossed from 0 to positive stock, for the caller to notify about
+   * once its transaction commits.
+   */
+  private async applyItemEdits(
+    tx: Prisma.TransactionClient,
+    existingItems: { id: number; product_id: number | null; product_colour_id: number | null; size_id: number | null; color: string; size: string; quantity: number; name: string }[],
+    edits: OrderItemEdit[],
+  ): Promise<{ productColourId: number; sizeId: number }[]> {
+    const seenIds = new Set<number>();
+    for (const edit of edits) {
+      if (seenIds.has(edit.id)) {
+        throw new Error(`Duplicate edit for order item ${edit.id}`);
+      }
+      seenIds.add(edit.id);
+
+      if (!edit.removed) {
+        if (!Number.isInteger(edit.quantity) || edit.quantity <= 0) {
+          throw new Error(
+            `Quantity for order item ${edit.id} must be a positive integer`,
+          );
+        }
+        if (typeof edit.price_amount !== "number" || edit.price_amount < 0) {
+          throw new Error(
+            `Price for order item ${edit.id} must be zero or greater`,
+          );
+        }
+      }
+    }
+
+    const existingById = new Map(existingItems.map((item) => [item.id, item]));
+    const restockedVariants: { productColourId: number; sizeId: number }[] = [];
+
+    for (const edit of edits) {
+      const existing = existingById.get(edit.id);
+      if (!existing) {
+        throw new Error(`Order item ${edit.id} does not belong to this order`);
+      }
+
+      const stockManaged =
+        existing.product_colour_id != null && existing.size_id != null;
+      const variantChanged =
+        existing.color !== edit.color || existing.size !== edit.size;
+
+      if (edit.removed) {
+        if (stockManaged) {
+          const crossed = await this.restockVariant(
+            tx,
+            existing.product_colour_id!,
+            existing.size_id!,
+            existing.quantity,
+          );
+          if (crossed) {
+            restockedVariants.push({
+              productColourId: existing.product_colour_id!,
+              sizeId: existing.size_id!,
+            });
+          }
+        }
+        await tx.order_items.delete({ where: { id: edit.id } });
+        continue;
+      }
+
+      if (stockManaged && variantChanged) {
+        if (existing.product_id == null) {
+          throw new Error(
+            `Order item ${edit.id} has no associated product; cannot change variant`,
+          );
+        }
+        const resolved = await this.resolveSingleVariant(
+          tx,
+          existing.product_id,
+          edit.color,
+          edit.size,
+        );
+        const crossed = await this.restockVariant(
+          tx,
+          existing.product_colour_id!,
+          existing.size_id!,
+          existing.quantity,
+        );
+        if (crossed) {
+          restockedVariants.push({
+            productColourId: existing.product_colour_id!,
+            sizeId: existing.size_id!,
+          });
+        }
+        await this.reserveVariant(
+          tx,
+          resolved.productColourId,
+          resolved.sizeId,
+          edit.quantity,
+          existing.name,
+          edit.color,
+          edit.size,
+        );
+        await tx.order_items.update({
+          where: { id: edit.id },
+          data: {
+            color: edit.color,
+            size: edit.size,
+            quantity: edit.quantity,
+            price_amount: edit.price_amount,
+            product_colour_id: resolved.productColourId,
+            size_id: resolved.sizeId,
+          },
+        });
+        continue;
+      }
+
+      if (stockManaged) {
+        const delta = edit.quantity - existing.quantity;
+        if (delta > 0) {
+          await this.reserveVariant(
+            tx,
+            existing.product_colour_id!,
+            existing.size_id!,
+            delta,
+            existing.name,
+            existing.color,
+            existing.size,
+          );
+        } else if (delta < 0) {
+          const crossed = await this.restockVariant(
+            tx,
+            existing.product_colour_id!,
+            existing.size_id!,
+            -delta,
+          );
+          if (crossed) {
+            restockedVariants.push({
+              productColourId: existing.product_colour_id!,
+              sizeId: existing.size_id!,
+            });
+          }
+        }
+      }
+
+      await tx.order_items.update({
+        where: { id: edit.id },
+        data: {
+          quantity: edit.quantity,
+          price_amount: edit.price_amount,
+          color: edit.color,
+          size: edit.size,
+        },
+      });
+    }
+
+    return restockedVariants;
+  }
+
+  /** Restocks every stock-managed line still on an order — used when a
+   * transition into "failed"/"cancelled" needs to release everything that
+   * remains reserved, mirroring what cancelOrder/updateOrderPayment do for
+   * their own endpoints. Runs inside the caller's transaction. */
+  private async restockAllItems(
+    tx: Prisma.TransactionClient,
+    orderId: number,
+  ): Promise<{ productColourId: number; sizeId: number }[]> {
+    const items = await tx.order_items.findMany({
+      where: {
+        order_id: orderId,
+        product_colour_id: { not: null },
+        size_id: { not: null },
+      },
+    });
+
+    const restocked: { productColourId: number; sizeId: number }[] = [];
+    for (const item of items) {
+      const crossed = await this.restockVariant(
+        tx,
+        item.product_colour_id!,
+        item.size_id!,
+        item.quantity,
+      );
+      if (crossed) {
+        restocked.push({
+          productColourId: item.product_colour_id!,
+          sizeId: item.size_id!,
+        });
+      }
+    }
+    return restocked;
+  }
+
   async findByUserId(userId: number) {
     const orders = prisma.orders.findMany({
       orderBy: {
@@ -503,11 +843,12 @@ export class OrderService {
    * resolveItemStock resolves a whole cart, this resolves one variant.
    */
   private async resolveSingleVariant(
+    tx: Prisma.TransactionClient,
     productId: number,
     colour: string,
     size: string,
   ): Promise<{ productColourId: number; sizeId: number }> {
-    const product = await prisma.products.findUnique({
+    const product = await tx.products.findUnique({
       where: { id: productId },
       select: { stock_managed: true },
     });
@@ -515,11 +856,11 @@ export class OrderService {
       throw new Error(`Product ${productId} is not stock-managed`);
     }
 
-    const colourRow = await prisma.product_colour.findFirst({
+    const colourRow = await tx.product_colour.findFirst({
       where: { product_id: productId, colour },
       select: { id: true },
     });
-    const sizeRow = await prisma.sizes.findUnique({
+    const sizeRow = await tx.sizes.findUnique({
       where: { name: size },
       select: { id: true },
     });
@@ -530,7 +871,7 @@ export class OrderService {
       );
     }
 
-    const stockRow = await prisma.product_stock.findUnique({
+    const stockRow = await tx.product_stock.findUnique({
       where: {
         size_id_product_colour_id: {
           size_id: sizeRow.id,
