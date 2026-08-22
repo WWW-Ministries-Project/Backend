@@ -376,7 +376,7 @@ orderRouter.post("/hubtel-payment-webhook", orderController.hubtelWebhook);
 
 orderRouter.get(
   "/confirm-transaction-status",
-  [protect, permissions.can_manage_marketplace],
+  [protect, permissions.can_confirm_transaction_scoped],
   orderController.confirmTransaction,
 );
 /**
@@ -693,6 +693,30 @@ orderRouter.put(
   "/update-delivery-status",
   [protect, permissions.can_manage_marketplace],
   orderController.updateDeliveryStatus,
+);
+
+orderRouter.put(
+  "/update-order",
+  [protect, permissions.can_manage_marketplace],
+  orderController.updateOrder,
+);
+
+orderRouter.delete(
+  "/delete-order",
+  [protect, permissions.can_delete_marketplace],
+  orderController.deleteOrder,
+);
+
+orderRouter.delete(
+  "/bulk-delete-orders",
+  [protect, permissions.can_delete_marketplace],
+  orderController.bulkDeleteOrders,
+);
+
+orderRouter.post(
+  "/create-for-member",
+  [protect, permissions.can_manage_marketplace],
+  orderController.createForMember,
 );
 
 export default orderRouter;

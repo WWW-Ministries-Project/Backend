@@ -1,4 +1,12 @@
-import puppeteer from "puppeteer";
+// puppeteer ships ESM-only as of v25 — this file compiles to CommonJS, so a
+// static import (even `import type`) produces a `require()` call under
+// NodeNext module resolution. Reference the type via an explicit
+// resolution-mode assertion and import the module itself dynamically at
+// the call site instead.
+type PuppeteerModule = import(
+  "puppeteer",
+  { with: { "resolution-mode": "import" } }
+).PuppeteerNode;
 import { readFileSync } from "fs";
 import { join } from "path";
 
@@ -201,6 +209,7 @@ export async function generateCertificatePdf(
 ): Promise<Buffer> {
   const html = buildHtml(data);
 
+  const puppeteer: PuppeteerModule = (await import("puppeteer")).default;
   const browser = await puppeteer.launch({
     headless: true,
     args: ["--no-sandbox", "--disable-setuid-sandbox"],
@@ -209,7 +218,10 @@ export async function generateCertificatePdf(
   try {
     const page = await browser.newPage();
     await page.setViewport({ width: 1200, height: 850 });
-    await page.setContent(html, { waitUntil: "networkidle0" });
+    // v25 dropped "networkidle0" from setContent's waitUntil type — wait for
+    // load, then explicitly wait for the network to go idle (same behavior).
+    await page.setContent(html, { waitUntil: "load" });
+    await page.waitForNetworkIdle();
     // Wait for all fonts to finish loading
     await page.evaluateHandle("document.fonts.ready");
 
