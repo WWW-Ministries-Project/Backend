@@ -49,6 +49,7 @@ export class OrderService {
   async findOrderByName(first_name?: string, last_name?: string) {
     const orders = await prisma.orders.findMany({
       where: {
+        deleted_at: null,
         billing_details: {
           is: {
             ...(first_name ? { first_name: { contains: first_name } } : {}),
@@ -321,6 +322,7 @@ export class OrderService {
 
   async findAll() {
     const orders = await prisma.orders.findMany({
+      where: { deleted_at: null },
       orderBy: {
         id: "desc",
       },
@@ -339,8 +341,8 @@ export class OrderService {
   }
 
   async findOne(id: number) {
-    const order = await prisma.orders.findUnique({
-      where: { id },
+    const order = await prisma.orders.findFirst({
+      where: { id, deleted_at: null },
       include: { items: true, billing_details: true },
     });
 
@@ -353,7 +355,7 @@ export class OrderService {
       orderBy: {
         id: "desc",
       },
-      where: { user_id: userId },
+      where: { user_id: userId, deleted_at: null },
       include: {
         items: {
           include: { product: true, market: true },
@@ -379,6 +381,7 @@ export class OrderService {
         id: "desc",
       },
       where: {
+        deleted_at: null,
         items: {
           some: {
             market_id: marketplaceId,
@@ -854,7 +857,7 @@ export class OrderService {
     const incomingSignature = this.buildIncomingItemSignature(data.items);
 
     const candidates = await prisma.orders.findMany({
-      where: { user_id: userId, payment_status: "pending" },
+      where: { user_id: userId, payment_status: "pending", deleted_at: null },
       orderBy: { id: "desc" },
       take: 20,
       include: { items: true },
