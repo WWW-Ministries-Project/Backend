@@ -695,4 +695,28 @@ orderRouter.put(
   orderController.updateDeliveryStatus,
 );
 
+orderRouter.put(
+  "/update-order",
+  [protect, permissions.can_manage_marketplace],
+  orderController.updateOrder,
+);
+
+orderRouter.delete(
+  "/delete-order",
+  [protect, permissions.can_delete_marketplace],
+  orderController.deleteOrder,
+);
+
+orderRouter.delete(
+  "/bulk-delete-orders",
+  [protect, permissions.can_delete_marketplace],
+  orderController.bulkDeleteOrders,
+);
+
+orderRouter.post(
+  "/create-for-member",
+  [protect, permissions.can_manage_marketplace],
+  orderController.createForMember,
+);
+
 export default orderRouter;
