@@ -1584,6 +1584,48 @@ export class Permissions {
     return next();
   };
 
+  // Confirming/verifying a payment after returning from the payment gateway
+  // is a self-service action: no Marketplace permission should ever be
+  // required to check the status of your own order. Mirrors
+  // can_retry_order_payment_scoped's owner-lookup pattern, but reads the
+  // reference from the query string (this guard sits on a GET route).
+  can_confirm_transaction_scoped = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    const errorMessage = "Not authorized to verify payment for this order";
+    const context = await this.getAccessContext(req, res, errorMessage);
+    if (!context) return;
+
+    const canManageAll =
+      context.isPrivilegedUser &&
+      hasActionPermission(context.permissions, "Marketplace", "manage");
+
+    if (canManageAll) {
+      return next();
+    }
+
+    const rawReference = (req as any).query?.reference;
+    const token =
+      typeof rawReference === "string" ? rawReference.trim() : "";
+
+    if (token) {
+      const order = await prisma.orders.findFirst({
+        where: { OR: [{ reference: token }, { order_number: token }] },
+        select: { user_id: true },
+      });
+
+      // Order not found: let the controller's own lookup surface that —
+      // this guard only blocks a confirmed cross-owner access.
+      if (order && order.user_id !== context.userId) {
+        return this.unauthorized(res, errorMessage);
+      }
+    }
+
+    return next();
+  };
+
   // Member-initiated order cancellation. Mirrors
   // can_retry_order_payment_scoped's owner-or-admin pattern: a privileged
   // Marketplace-manage user may cancel any order; otherwise the caller must

@@ -376,7 +376,7 @@ orderRouter.post("/hubtel-payment-webhook", orderController.hubtelWebhook);
 
 orderRouter.get(
   "/confirm-transaction-status",
-  [protect, permissions.can_manage_marketplace],
+  [protect, permissions.can_confirm_transaction_scoped],
   orderController.confirmTransaction,
 );
 /**
