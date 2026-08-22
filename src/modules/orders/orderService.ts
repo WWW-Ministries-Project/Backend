@@ -1,4 +1,5 @@
 import { prisma } from "../../Models/context";
+import { Prisma } from "@prisma/client";
 import axios from "axios";
 import crypto from "crypto";
 import { toSentenceCase } from "../../utils";
@@ -45,10 +46,71 @@ type ResolvedOrderItem = {
   availableStock: number;
 };
 
+export type OrderItemEdit = {
+  /** order_items.id of the line being changed. */
+  id: number;
+  quantity: number;
+  color: string;
+  size: string;
+  price_amount: number;
+  /** true = delete this line entirely (stock, if managed, is restocked in full). */
+  removed?: boolean;
+};
+
+export type UpdateOrderInput = {
+  id: number;
+  billing?: Partial<{
+    first_name: string;
+    last_name: string;
+    email: string;
+    phone_number: string;
+    country: string;
+    country_code: string;
+  }>;
+  payment_status?: "pending" | "success" | "failed";
+  delivery_status?: "pending" | "shipped" | "delivered" | "cancelled";
+  items?: OrderItemEdit[];
+};
+
+export type CreateOrderForMemberInput = {
+  user_id: number;
+  billing: {
+    first_name: string;
+    last_name: string;
+    email: string;
+    phone_number: string;
+    country: string;
+    country_code: string;
+  };
+  items: {
+    market_id?: number | string;
+    id?: number | string;
+    product_id?: number | string;
+    name: string;
+    price_amount: number;
+    price_currency: string;
+    quantity: number;
+    product_type: string;
+    product_category: string;
+    image_url: string;
+    color: string;
+    size: string;
+  }[];
+  payment_mode: "manual" | "gateway";
+  /** Only used when payment_mode is "manual". Defaults to "success". */
+  manual_status?: "success" | "pending";
+  /** Only used when payment_mode is "gateway". */
+  payment_type?: "paystack" | "hubtel";
+  return_url?: string | null;
+  cancellation_url?: string | null;
+  placed_by_staff_id: number;
+};
+
 export class OrderService {
   async findOrderByName(first_name?: string, last_name?: string) {
     const orders = await prisma.orders.findMany({
       where: {
+        deleted_at: null,
         billing_details: {
           is: {
             ...(first_name ? { first_name: { contains: first_name } } : {}),
@@ -66,7 +128,8 @@ export class OrderService {
     return this.flattenOrders(orders);
   }
   // Create a new order
-  async create(data: {
+  async create(
+    data: {
     user_id?: number | null | string;
     total_amount: number | string;
     payment_type: "paystack" | "hubtel" | null;
@@ -96,7 +159,9 @@ export class OrderService {
       color: string;
       size: string;
     }[];
-  }) {
+    },
+    options: { reuseExistingPending?: boolean } = {},
+  ) {
     if (data.payment_type === "hubtel") {
       this.validateHubtelRedirectUrls(data.return_url, data.cancellation_url);
     }
@@ -108,7 +173,10 @@ export class OrderService {
     // order for the identical cart instead of stacking duplicates. Guest
     // checkouts (no reliable user_id) aren't deduped — no stable identity
     // to match against.
-    const existingPending = await this.findMatchingPendingOrder(data);
+    const existingPending =
+      options.reuseExistingPending !== false
+        ? await this.findMatchingPendingOrder(data)
+        : null;
     if (existingPending) {
       return this.reuseExistingPendingOrder(existingPending, data);
     }
@@ -244,6 +312,134 @@ export class OrderService {
     }
   }
 
+  /**
+   * Admin-initiated order on behalf of a member. "gateway" mode delegates
+   * to the normal create() flow (same idempotency-dedup against an
+   * existing matching pending order, same Paystack/Hubtel init) and just
+   * stamps placed_by_staff_id afterward. "manual" mode skips the gateway
+   * entirely — the transaction, stock-shortage check, and stock
+   * reservation mirror create()'s, using the shared reserveVariant helper
+   * instead of create()'s inline decrement.
+   */
+  async createForMember(data: CreateOrderForMemberInput) {
+    if (!Number.isInteger(data.user_id) || data.user_id <= 0) {
+      throw new Error("A valid member user_id is required");
+    }
+    if (!Array.isArray(data.items) || data.items.length === 0) {
+      throw new Error("At least one item is required");
+    }
+    for (const item of data.items) {
+      if (!Number.isInteger(item.quantity) || item.quantity <= 0) {
+        throw new Error(
+          `Quantity for "${item.name}" must be a positive integer`,
+        );
+      }
+      if (typeof item.price_amount !== "number" || item.price_amount < 0) {
+        throw new Error(`Price for "${item.name}" must be zero or greater`);
+      }
+    }
+    if (data.payment_mode !== "manual" && data.payment_mode !== "gateway") {
+      throw new Error('payment_mode must be "manual" or "gateway"');
+    }
+
+    // Deliberately no member notification here (unlike updateOrderPayment/
+    // updateDeliveryStatus/cancelOrder) — a manually-placed order implies
+    // staff already spoke to the member out-of-band. Revisit if that
+    // assumption turns out wrong.
+    if (data.payment_mode === "gateway") {
+      const total_amount = data.items.reduce(
+        (sum, item) => sum + item.price_amount * item.quantity,
+        0,
+      );
+      const created = await this.create(
+        {
+          user_id: data.user_id,
+          total_amount,
+          payment_type: data.payment_type ?? "paystack",
+          return_url: data.return_url ?? null,
+          cancellation_url: data.cancellation_url ?? null,
+          billing: data.billing,
+          items: data.items,
+        },
+        { reuseExistingPending: false },
+      );
+      const stampedOrder = await prisma.orders.update({
+        where: { id: created.updated_order.id },
+        data: { placed_by_staff_id: data.placed_by_staff_id },
+        include: { items: true, billing_details: true },
+      });
+      return { ...created, updated_order: stampedOrder };
+    }
+
+    const resolvedItems = await this.resolveItemStock(data.items);
+    const shortages = resolvedItems.filter(
+      (item) => item.stockManaged && item.availableStock < item.quantity,
+    );
+    if (shortages.length) {
+      throw new InsufficientStockError(
+        shortages.map((item) => ({
+          name: item.name,
+          color: item.color,
+          size: item.size,
+          requested: item.quantity,
+          available: item.availableStock,
+        })),
+      );
+    }
+
+    const total_amount = data.items.reduce(
+      (sum, item) => sum + item.price_amount * item.quantity,
+      0,
+    );
+    // Prefixed so the Hubtel reconciliation sweeps (which force-fail and
+    // restock any pending order older than 48h) can recognize and skip
+    // this — there's no real Hubtel transaction behind a manual order, so
+    // "Hubtel doesn't recognize this reference" would otherwise look
+    // identical to a genuinely abandoned gateway checkout.
+    const clientReference = `MANUAL-${this.generateReference()}`;
+    const manualStatus = data.manual_status ?? "success";
+    if (manualStatus !== "success" && manualStatus !== "pending") {
+      throw new Error('manual_status must be "success" or "pending"');
+    }
+
+    const order = await prisma.$transaction(async (tx) => {
+      const created = await tx.orders.create({
+        data: {
+          user_id: data.user_id,
+          total_amount,
+          reference: clientReference,
+          payment_status: manualStatus,
+          placed_by_staff_id: data.placed_by_staff_id,
+          items: { create: this.buildItems(data.items, resolvedItems) },
+          billing_details: { create: this.buildBilling(data.billing) },
+        },
+        include: { items: true, billing_details: true },
+      });
+
+      for (const item of resolvedItems) {
+        if (!item.stockManaged) continue;
+        await this.reserveVariant(
+          tx,
+          item.productColourId!,
+          item.sizeId!,
+          item.quantity,
+          item.name,
+          item.color,
+          item.size,
+        );
+      }
+
+      return created;
+    });
+
+    const orderNumber = this.generateOrderNumber(order.id);
+    return prisma.orders.update({
+      where: { id: order.id },
+      data: { order_number: orderNumber },
+      include: { items: true, billing_details: true },
+    });
+  }
+
   async retryHubtelPayment(
     orderToken: string | null | undefined,
     return_url: string | null,
@@ -273,8 +469,8 @@ export class OrderService {
     this.validateHubtelRedirectUrls(return_url, cancellation_url);
     const clientReference = this.generateReference();
 
-    const order = await prisma.orders.findUnique({
-      where: { id },
+    const order = await prisma.orders.findFirst({
+      where: { id, deleted_at: null },
       include: {
         billing_details: true,
         items: true,
@@ -321,6 +517,7 @@ export class OrderService {
 
   async findAll() {
     const orders = await prisma.orders.findMany({
+      where: { deleted_at: null },
       orderBy: {
         id: "desc",
       },
@@ -339,8 +536,8 @@ export class OrderService {
   }
 
   async findOne(id: number) {
-    const order = await prisma.orders.findUnique({
-      where: { id },
+    const order = await prisma.orders.findFirst({
+      where: { id, deleted_at: null },
       include: { items: true, billing_details: true },
     });
 
@@ -348,12 +545,336 @@ export class OrderService {
     return order;
   }
 
+  async updateOrder(data: UpdateOrderInput) {
+    const order = await prisma.orders.findFirst({
+      where: { id: data.id, deleted_at: null },
+      include: { items: true, billing_details: true },
+    });
+    if (!order) throw new Error("Order not found");
+
+    const editingItems = Array.isArray(data.items) && data.items.length > 0;
+    if (
+      editingItems &&
+      (["delivered", "cancelled"].includes(order.delivery_status) ||
+        order.payment_status === "failed")
+    ) {
+      throw new Error(
+        "Cannot edit items once delivery is delivered/cancelled or payment has failed",
+      );
+    }
+
+    if (
+      order.delivery_status === "cancelled" &&
+      data.delivery_status &&
+      data.delivery_status !== "cancelled"
+    ) {
+      throw new Error(
+        "Cannot move a cancelled order back to an active delivery status",
+      );
+    }
+
+    if (
+      order.payment_status === "failed" &&
+      data.payment_status &&
+      data.payment_status !== "failed"
+    ) {
+      throw new Error(
+        "Cannot move a failed order back to pending or success — its stock has already been released",
+      );
+    }
+
+    let restockedVariants: { productColourId: number; sizeId: number }[] = [];
+
+    await prisma.$transaction(async (tx) => {
+      if (editingItems) {
+        restockedVariants = await this.applyItemEdits(tx, order.items, data.items!);
+
+        const remainingItems = await tx.order_items.findMany({
+          where: { order_id: order.id },
+          select: { price_amount: true, quantity: true },
+        });
+
+        if (remainingItems.length === 0) {
+          throw new Error(
+            "Cannot remove every item from an order — cancel or delete the order instead",
+          );
+        }
+
+        const newTotal = remainingItems.reduce(
+          (sum, item) => sum + item.price_amount * item.quantity,
+          0,
+        );
+        await tx.orders.update({
+          where: { id: order.id },
+          data: { total_amount: newTotal },
+        });
+      }
+
+      if (data.billing) {
+        await tx.billing_details.update({
+          where: { order_id: order.id },
+          data: {
+            ...(data.billing.first_name && {
+              first_name: toSentenceCase(data.billing.first_name),
+            }),
+            ...(data.billing.last_name && {
+              last_name: toSentenceCase(data.billing.last_name),
+            }),
+            ...(data.billing.email && { email: data.billing.email }),
+            ...(data.billing.phone_number && {
+              phone_number: data.billing.phone_number,
+            }),
+            ...(data.billing.country && { country: data.billing.country }),
+            ...(data.billing.country_code && {
+              country_code: data.billing.country_code,
+            }),
+          },
+        });
+      }
+
+      const movingToCancelled =
+        data.delivery_status === "cancelled" && order.delivery_status !== "cancelled";
+      const movingToFailed =
+        data.payment_status === "failed" && order.payment_status !== "failed";
+      // Stock was already released via the OTHER status field — don't
+      // restock a second time (same double-restock class cancelOrder
+      // already guards against on its own endpoint).
+      const stockAlreadyReleased =
+        order.payment_status === "failed" || order.delivery_status === "cancelled";
+
+      if ((movingToCancelled || movingToFailed) && !stockAlreadyReleased) {
+        const additionallyRestocked = await this.restockAllItems(tx, order.id);
+        restockedVariants.push(...additionallyRestocked);
+      }
+
+      if (data.payment_status || data.delivery_status) {
+        await tx.orders.update({
+          where: { id: order.id },
+          data: {
+            ...(data.payment_status && { payment_status: data.payment_status }),
+            ...(data.delivery_status && {
+              delivery_status: data.delivery_status,
+            }),
+          },
+        });
+      }
+    });
+
+    // Fire back-in-stock notifications only after the transaction has
+    // actually committed — restockVariant deliberately doesn't do this
+    // itself (see its docstring).
+    for (const variant of restockedVariants) {
+      await stockNotificationService.notifyBackInStock(
+        variant.productColourId,
+        variant.sizeId,
+      );
+    }
+
+    const refreshed = await prisma.orders.findFirst({
+      where: { id: order.id },
+      include: { items: true, billing_details: true },
+    });
+    if (!refreshed) throw new Error("Order not found after update");
+    return refreshed;
+  }
+
+  /**
+   * Applies per-line edits inside the caller's transaction: qty deltas
+   * reserve/restock the difference, a color/size change restocks the old
+   * variant in full and reserves the new one, `removed` restocks in full
+   * and deletes the line. Only stock-managed lines (product_colour_id +
+   * size_id both set) touch product_stock at all. Returns the variants
+   * that crossed from 0 to positive stock, for the caller to notify about
+   * once its transaction commits.
+   */
+  private async applyItemEdits(
+    tx: Prisma.TransactionClient,
+    existingItems: { id: number; product_id: number | null; product_colour_id: number | null; size_id: number | null; color: string; size: string; quantity: number; name: string }[],
+    edits: OrderItemEdit[],
+  ): Promise<{ productColourId: number; sizeId: number }[]> {
+    const seenIds = new Set<number>();
+    for (const edit of edits) {
+      if (seenIds.has(edit.id)) {
+        throw new Error(`Duplicate edit for order item ${edit.id}`);
+      }
+      seenIds.add(edit.id);
+
+      if (!edit.removed) {
+        if (!Number.isInteger(edit.quantity) || edit.quantity <= 0) {
+          throw new Error(
+            `Quantity for order item ${edit.id} must be a positive integer`,
+          );
+        }
+        if (typeof edit.price_amount !== "number" || edit.price_amount < 0) {
+          throw new Error(
+            `Price for order item ${edit.id} must be zero or greater`,
+          );
+        }
+      }
+    }
+
+    const existingById = new Map(existingItems.map((item) => [item.id, item]));
+    const restockedVariants: { productColourId: number; sizeId: number }[] = [];
+
+    for (const edit of edits) {
+      const existing = existingById.get(edit.id);
+      if (!existing) {
+        throw new Error(`Order item ${edit.id} does not belong to this order`);
+      }
+
+      const stockManaged =
+        existing.product_colour_id != null && existing.size_id != null;
+      const variantChanged =
+        existing.color !== edit.color || existing.size !== edit.size;
+
+      if (edit.removed) {
+        if (stockManaged) {
+          const crossed = await this.restockVariant(
+            tx,
+            existing.product_colour_id!,
+            existing.size_id!,
+            existing.quantity,
+          );
+          if (crossed) {
+            restockedVariants.push({
+              productColourId: existing.product_colour_id!,
+              sizeId: existing.size_id!,
+            });
+          }
+        }
+        await tx.order_items.delete({ where: { id: edit.id } });
+        continue;
+      }
+
+      if (stockManaged && variantChanged) {
+        if (existing.product_id == null) {
+          throw new Error(
+            `Order item ${edit.id} has no associated product; cannot change variant`,
+          );
+        }
+        const resolved = await this.resolveSingleVariant(
+          tx,
+          existing.product_id,
+          edit.color,
+          edit.size,
+        );
+        const crossed = await this.restockVariant(
+          tx,
+          existing.product_colour_id!,
+          existing.size_id!,
+          existing.quantity,
+        );
+        if (crossed) {
+          restockedVariants.push({
+            productColourId: existing.product_colour_id!,
+            sizeId: existing.size_id!,
+          });
+        }
+        await this.reserveVariant(
+          tx,
+          resolved.productColourId,
+          resolved.sizeId,
+          edit.quantity,
+          existing.name,
+          edit.color,
+          edit.size,
+        );
+        await tx.order_items.update({
+          where: { id: edit.id },
+          data: {
+            color: edit.color,
+            size: edit.size,
+            quantity: edit.quantity,
+            price_amount: edit.price_amount,
+            product_colour_id: resolved.productColourId,
+            size_id: resolved.sizeId,
+          },
+        });
+        continue;
+      }
+
+      if (stockManaged) {
+        const delta = edit.quantity - existing.quantity;
+        if (delta > 0) {
+          await this.reserveVariant(
+            tx,
+            existing.product_colour_id!,
+            existing.size_id!,
+            delta,
+            existing.name,
+            existing.color,
+            existing.size,
+          );
+        } else if (delta < 0) {
+          const crossed = await this.restockVariant(
+            tx,
+            existing.product_colour_id!,
+            existing.size_id!,
+            -delta,
+          );
+          if (crossed) {
+            restockedVariants.push({
+              productColourId: existing.product_colour_id!,
+              sizeId: existing.size_id!,
+            });
+          }
+        }
+      }
+
+      await tx.order_items.update({
+        where: { id: edit.id },
+        data: {
+          quantity: edit.quantity,
+          price_amount: edit.price_amount,
+          color: edit.color,
+          size: edit.size,
+        },
+      });
+    }
+
+    return restockedVariants;
+  }
+
+  /** Restocks every stock-managed line still on an order — used when a
+   * transition into "failed"/"cancelled" needs to release everything that
+   * remains reserved, mirroring what cancelOrder/updateOrderPayment do for
+   * their own endpoints. Runs inside the caller's transaction. */
+  private async restockAllItems(
+    tx: Prisma.TransactionClient,
+    orderId: number,
+  ): Promise<{ productColourId: number; sizeId: number }[]> {
+    const items = await tx.order_items.findMany({
+      where: {
+        order_id: orderId,
+        product_colour_id: { not: null },
+        size_id: { not: null },
+      },
+    });
+
+    const restocked: { productColourId: number; sizeId: number }[] = [];
+    for (const item of items) {
+      const crossed = await this.restockVariant(
+        tx,
+        item.product_colour_id!,
+        item.size_id!,
+        item.quantity,
+      );
+      if (crossed) {
+        restocked.push({
+          productColourId: item.product_colour_id!,
+          sizeId: item.size_id!,
+        });
+      }
+    }
+    return restocked;
+  }
+
   async findByUserId(userId: number) {
     const orders = prisma.orders.findMany({
       orderBy: {
         id: "desc",
       },
-      where: { user_id: userId },
+      where: { user_id: userId, deleted_at: null },
       include: {
         items: {
           include: { product: true, market: true },
@@ -379,6 +900,7 @@ export class OrderService {
         id: "desc",
       },
       where: {
+        deleted_at: null,
         items: {
           some: {
             market_id: marketplaceId,
@@ -438,7 +960,7 @@ export class OrderService {
 
   async verifyPaymentStatus(order_number: string) {
     const order = await prisma.orders.findFirst({
-      where: { order_number },
+      where: { order_number, deleted_at: null },
       select: { reference: true, id: true, payment_status: true },
     });
 
@@ -447,6 +969,13 @@ export class OrderService {
       return { message: "No payment reference found", order: null };
     if (order.payment_status === "success")
       return { message: "Payment already verified", order: null };
+    if (order.reference.startsWith("MANUAL-")) {
+      // No real Paystack/Hubtel transaction behind a manually-placed
+      // order — nothing to verify, and calling verifyTransaction with this
+      // reference would just get a false "failed" back from Paystack,
+      // force-failing (and restocking) a still-valid manual order.
+      return { message: "This order was placed manually and has no payment to verify", order: null };
+    }
 
     const transaction = await verifyTransaction(order.reference);
     const status = transaction.status === "success" ? "success" : "failed";
@@ -490,6 +1019,142 @@ export class OrderService {
       if (beforeStock <= 0 && afterStock > 0) {
         await stockNotificationService.notifyBackInStock(colourId, sizeId);
       }
+    }
+  }
+
+  /**
+   * Returns a stock-managed product's variant ids for a given color/size
+   * name pair. Used when an edit changes an existing line's color/size —
+   * resolveItemStock resolves a whole cart, this resolves one variant.
+   */
+  private async resolveSingleVariant(
+    tx: Prisma.TransactionClient,
+    productId: number,
+    colour: string,
+    size: string,
+  ): Promise<{ productColourId: number; sizeId: number }> {
+    const product = await tx.products.findUnique({
+      where: { id: productId },
+      select: { stock_managed: true },
+    });
+    if (product?.stock_managed !== "yes") {
+      throw new Error(`Product ${productId} is not stock-managed`);
+    }
+
+    const colourRow = await tx.product_colour.findFirst({
+      where: { product_id: productId, colour },
+      select: { id: true },
+    });
+    const sizeRow = await tx.sizes.findUnique({
+      where: { name: size },
+      select: { id: true },
+    });
+
+    if (!colourRow || !sizeRow) {
+      throw new Error(
+        `Unknown color/size combination "${colour}/${size}" for this product`,
+      );
+    }
+
+    const stockRow = await tx.product_stock.findUnique({
+      where: {
+        size_id_product_colour_id: {
+          size_id: sizeRow.id,
+          product_colour_id: colourRow.id,
+        },
+      },
+      select: { product_colour_id: true },
+    });
+    if (!stockRow) {
+      throw new Error(
+        `Unknown color/size combination "${colour}/${size}" for this product`,
+      );
+    }
+
+    return { productColourId: colourRow.id, sizeId: sizeRow.id };
+  }
+
+  /**
+   * Releases reserved stock back to a variant. No availability guard needed —
+   * restocking can't fail. Does NOT fire the back-in-stock notification
+   * itself — that does an SMS send + a delete on the plain (non-tx) prisma
+   * client, so firing it inside this transaction would survive a rollback.
+   * Returns true when this restock crossed stock from 0 to positive, so
+   * the caller can notify once its transaction has actually committed.
+   */
+  private async restockVariant(
+    tx: Prisma.TransactionClient,
+    productColourId: number,
+    sizeId: number,
+    quantity: number,
+  ): Promise<boolean> {
+    if (quantity <= 0) return false;
+    const before = await tx.product_stock.findUnique({
+      where: {
+        size_id_product_colour_id: {
+          size_id: sizeId,
+          product_colour_id: productColourId,
+        },
+      },
+    });
+    const beforeStock = before?.stock ?? 0;
+
+    await tx.product_stock.update({
+      where: {
+        size_id_product_colour_id: {
+          size_id: sizeId,
+          product_colour_id: productColourId,
+        },
+      },
+      data: { stock: { increment: quantity } },
+    });
+
+    const afterStock = beforeStock + quantity;
+    return beforeStock <= 0 && afterStock > 0;
+  }
+
+  /**
+   * Reserves stock for a variant, same race-safe updateMany + count guard as
+   * create()'s stock reservation. Throws InsufficientStockError if unavailable.
+   */
+  private async reserveVariant(
+    tx: Prisma.TransactionClient,
+    productColourId: number,
+    sizeId: number,
+    quantity: number,
+    itemName: string,
+    colour: string,
+    size: string,
+  ) {
+    if (quantity <= 0) return;
+    const decremented = await tx.product_stock.updateMany({
+      where: {
+        product_colour_id: productColourId,
+        size_id: sizeId,
+        stock: { gte: quantity },
+      },
+      data: { stock: { decrement: quantity } },
+    });
+
+    if (decremented.count === 0) {
+      const current = await tx.product_stock.findUnique({
+        where: {
+          size_id_product_colour_id: {
+            size_id: sizeId,
+            product_colour_id: productColourId,
+          },
+        },
+        select: { stock: true },
+      });
+      throw new InsufficientStockError([
+        {
+          name: itemName,
+          color: colour,
+          size,
+          requested: quantity,
+          available: current?.stock ?? 0,
+        },
+      ]);
     }
   }
 
@@ -605,6 +1270,7 @@ export class OrderService {
         id: orderId,
         payment_status: "pending",
         delivery_status: { not: "cancelled" },
+        deleted_at: null,
       },
       data: { delivery_status: "cancelled" },
     });
@@ -652,6 +1318,90 @@ export class OrderService {
     }
 
     return updatedOrder;
+  }
+
+  /**
+   * Soft-deletes an order. A pending order that hasn't already been
+   * cancelled releases its reserved stock and has its payment reference
+   * marked "failed" (so the reconciliation sweep or a stale checkout link
+   * can no longer settle or re-scan it) — atomically claimed with the same
+   * updateMany + count guard cancelOrder uses, closing the same
+   * webhook-race / duplicate-delete window cancelOrder's own comments
+   * document. An order that's already paid, already failed, or already
+   * cancelled (stock already settled one way or the other) is soft-deleted
+   * without touching stock or payment_status.
+   *
+   * Residual gap, accepted: an in-flight Hubtel/Paystack webhook that
+   * confirms "success" for a reference this just marked "failed" will
+   * still flip it to "success" (checkHubtelTransactionStatus /
+   * updateOrderStatusByHubtel are deliberately unfiltered by deleted_at —
+   * a real payment landing needs to be recorded, not dropped). That's the
+   * same class of residual risk cancelOrder already carries.
+   */
+  async deleteOrder(orderId: number, actorUserId?: number | null) {
+    // Threaded through for a future customer-notification decision on
+    // delete (deliberately not acted on yet — matches cancelOrder/
+    // updateDeliveryStatus's actorUserId param shape for when that's added).
+    void actorUserId;
+
+    const restockClaim = await prisma.orders.updateMany({
+      where: {
+        id: orderId,
+        deleted_at: null,
+        payment_status: "pending",
+        delivery_status: { not: "cancelled" },
+      },
+      data: { deleted_at: new Date(), payment_status: "failed" },
+    });
+
+    if (restockClaim.count > 0) {
+      await this.restockOrderItems(orderId);
+      return { id: orderId };
+    }
+
+    const claim = await prisma.orders.updateMany({
+      where: { id: orderId, deleted_at: null },
+      data: { deleted_at: new Date() },
+    });
+
+    if (claim.count === 0) {
+      const existing = await prisma.orders.findFirst({
+        where: { id: orderId },
+        select: { id: true },
+      });
+      if (!existing) throw new Error("Order not found");
+      // else: already soft-deleted by a concurrent call — idempotent no-op.
+    }
+
+    return { id: orderId };
+  }
+
+  /** Soft-deletes many orders independently — one bad id doesn't block the rest. */
+  async bulkDeleteOrders(orderIds: number[], actorUserId?: number | null) {
+    const uniqueIds = Array.from(new Set(orderIds));
+    const BATCH_SIZE = 20;
+    const deleted: number[] = [];
+    const skipped: number[] = [];
+
+    for (let i = 0; i < uniqueIds.length; i += BATCH_SIZE) {
+      const batch = uniqueIds.slice(i, i + BATCH_SIZE);
+      const results = await Promise.allSettled(
+        batch.map((id) => this.deleteOrder(id, actorUserId)),
+      );
+      results.forEach((result, index) => {
+        if (result.status === "fulfilled") {
+          deleted.push(batch[index]);
+        } else {
+          skipped.push(batch[index]);
+          console.error(
+            `bulkDeleteOrders: failed to delete order ${batch[index]}:`,
+            result.reason?.message || result.reason,
+          );
+        }
+      });
+    }
+
+    return { deleted: deleted.length, skipped };
   }
 
   async initializeHubtelTransaction(
@@ -745,19 +1495,28 @@ export class OrderService {
   }
 
   async checkHubtelTransactionStatusById(id: number) {
-    const order = await prisma.orders.findUnique({
-      where: { id },
+    const order = await prisma.orders.findFirst({
+      where: { id, deleted_at: null },
       select: {
         reference: true,
         payment_status: true,
       },
     });
 
-    if (order?.payment_status === "success") {
-      return { success: true };
-    } else {
-      return await this.checkHubtelTransactionStatus(String(order?.reference));
+    if (!order) {
+      throw new Error("Order not found");
     }
+    if (order.payment_status === "success") {
+      return { success: true };
+    }
+    if (order.reference.startsWith("MANUAL-")) {
+      // No real Hubtel transaction behind a manually-placed order — same
+      // guard as verifyPaymentStatus.
+      return {
+        message: "This order was placed manually and has no payment to verify",
+      };
+    }
+    return await this.checkHubtelTransactionStatus(order.reference);
   }
 
   async reconcilePendingHubtelPayments(limit = 100) {
@@ -775,7 +1534,16 @@ export class OrderService {
       // to this sweep. Once it goes stale, force-failing it would call
       // updateOrderPayment(id, "failed"), which restocks again on top of the
       // restock cancelOrder() already did — a double stock credit.
-      where: { payment_status: "pending", delivery_status: { not: "cancelled" } },
+      // Manual orders (created via createForMember with no real gateway
+      // transaction) are prefixed "MANUAL-" and excluded — there's nothing
+      // for Hubtel to confirm, so this sweep would otherwise force-fail
+      // them as unrecognized references after 48h.
+      where: {
+        payment_status: "pending",
+        delivery_status: { not: "cancelled" },
+        deleted_at: null,
+        NOT: { reference: { startsWith: "MANUAL-" } },
+      },
       orderBy: { created_at: "asc" },
       take: limit,
       select: { id: true, reference: true, payment_status: true, created_at: true },
@@ -854,7 +1622,7 @@ export class OrderService {
     const incomingSignature = this.buildIncomingItemSignature(data.items);
 
     const candidates = await prisma.orders.findMany({
-      where: { user_id: userId, payment_status: "pending" },
+      where: { user_id: userId, payment_status: "pending", deleted_at: null },
       orderBy: { id: "desc" },
       take: 20,
       include: { items: true },
@@ -1107,8 +1875,8 @@ export class OrderService {
     const cleanedToken = token.trim();
 
     if (/^\d+$/.test(cleanedToken)) {
-      const orderById = await prisma.orders.findUnique({
-        where: { id: Number(cleanedToken) },
+      const orderById = await prisma.orders.findFirst({
+        where: { id: Number(cleanedToken), deleted_at: null },
         include: { items: true, billing_details: true },
       });
       if (orderById) return orderById;
@@ -1116,6 +1884,7 @@ export class OrderService {
 
     return prisma.orders.findFirst({
       where: {
+        deleted_at: null,
         OR: [{ reference: cleanedToken }, { order_number: cleanedToken }],
       },
       include: { items: true, billing_details: true },
@@ -1157,7 +1926,12 @@ export class OrderService {
         // this scan also drives updateOrderStatusByHubtel -> updateOrderPayment,
         // which would restock an already-cancelled (and already-restocked)
         // order a second time if Hubtel reports it failed/cancelled upstream.
+        // Same reasoning applies to a soft-deleted order, and to a manual
+        // order (createForMember) that has no real Hubtel transaction
+        // behind it at all.
         delivery_status: { not: "cancelled" },
+        deleted_at: null,
+        NOT: { reference: { startsWith: "MANUAL-" } },
         items: {
           some: {
             market_id: marketplaceId,

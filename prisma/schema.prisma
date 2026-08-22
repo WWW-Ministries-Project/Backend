@@ -1656,22 +1656,25 @@ model product_stock {
 }
 
 model orders {
-  id              Int              @id @default(autoincrement())
-  order_number    String?
-  total_amount    Float
-  user_id         Int?
-  payment_status  payment_status   @default(pending)
-  delivery_status delivery_status  @default(pending)
-  created_at      DateTime         @default(now())
-  updated_at      DateTime         @updatedAt
-  reference       String
-  billing_details billing_details?
-  items           order_items[]
-  user            user?            @relation(fields: [user_id], references: [id])
+  id                 Int              @id @default(autoincrement())
+  order_number       String?
+  total_amount       Float
+  user_id            Int?
+  payment_status     payment_status   @default(pending)
+  delivery_status    delivery_status  @default(pending)
+  created_at         DateTime         @default(now())
+  updated_at         DateTime         @updatedAt
+  reference          String
+  deleted_at         DateTime?
+  placed_by_staff_id Int?
+  billing_details    billing_details?
+  items              order_items[]
+  user               user?            @relation(fields: [user_id], references: [id])
 
   @@index([user_id], map: "orders_user_id_fkey")
   @@index([reference], map: "orders_reference_idx")
   @@index([payment_status], map: "orders_payment_status_idx")
+  @@index([placed_by_staff_id], map: "orders_placed_by_staff_id_idx")
 }
 
 model order_items {
