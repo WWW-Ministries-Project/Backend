@@ -72,6 +72,40 @@ export type UpdateOrderInput = {
   items?: OrderItemEdit[];
 };
 
+export type CreateOrderForMemberInput = {
+  user_id: number;
+  billing: {
+    first_name: string;
+    last_name: string;
+    email: string;
+    phone_number: string;
+    country: string;
+    country_code: string;
+  };
+  items: {
+    market_id?: number | string;
+    id?: number | string;
+    product_id?: number | string;
+    name: string;
+    price_amount: number;
+    price_currency: string;
+    quantity: number;
+    product_type: string;
+    product_category: string;
+    image_url: string;
+    color: string;
+    size: string;
+  }[];
+  payment_mode: "manual" | "gateway";
+  /** Only used when payment_mode is "manual". Defaults to "success". */
+  manual_status?: "success" | "pending";
+  /** Only used when payment_mode is "gateway". */
+  payment_type?: "paystack" | "hubtel";
+  return_url?: string | null;
+  cancellation_url?: string | null;
+  placed_by_staff_id: number;
+};
+
 export class OrderService {
   async findOrderByName(first_name?: string, last_name?: string) {
     const orders = await prisma.orders.findMany({
@@ -94,7 +128,8 @@ export class OrderService {
     return this.flattenOrders(orders);
   }
   // Create a new order
-  async create(data: {
+  async create(
+    data: {
     user_id?: number | null | string;
     total_amount: number | string;
     payment_type: "paystack" | "hubtel" | null;
@@ -124,7 +159,9 @@ export class OrderService {
       color: string;
       size: string;
     }[];
-  }) {
+    },
+    options: { reuseExistingPending?: boolean } = {},
+  ) {
     if (data.payment_type === "hubtel") {
       this.validateHubtelRedirectUrls(data.return_url, data.cancellation_url);
     }
@@ -136,7 +173,10 @@ export class OrderService {
     // order for the identical cart instead of stacking duplicates. Guest
     // checkouts (no reliable user_id) aren't deduped — no stable identity
     // to match against.
-    const existingPending = await this.findMatchingPendingOrder(data);
+    const existingPending =
+      options.reuseExistingPending !== false
+        ? await this.findMatchingPendingOrder(data)
+        : null;
     if (existingPending) {
       return this.reuseExistingPendingOrder(existingPending, data);
     }
@@ -270,6 +310,134 @@ export class OrderService {
         updated_order,
       };
     }
+  }
+
+  /**
+   * Admin-initiated order on behalf of a member. "gateway" mode delegates
+   * to the normal create() flow (same idempotency-dedup against an
+   * existing matching pending order, same Paystack/Hubtel init) and just
+   * stamps placed_by_staff_id afterward. "manual" mode skips the gateway
+   * entirely — the transaction, stock-shortage check, and stock
+   * reservation mirror create()'s, using the shared reserveVariant helper
+   * instead of create()'s inline decrement.
+   */
+  async createForMember(data: CreateOrderForMemberInput) {
+    if (!Number.isInteger(data.user_id) || data.user_id <= 0) {
+      throw new Error("A valid member user_id is required");
+    }
+    if (!Array.isArray(data.items) || data.items.length === 0) {
+      throw new Error("At least one item is required");
+    }
+    for (const item of data.items) {
+      if (!Number.isInteger(item.quantity) || item.quantity <= 0) {
+        throw new Error(
+          `Quantity for "${item.name}" must be a positive integer`,
+        );
+      }
+      if (typeof item.price_amount !== "number" || item.price_amount < 0) {
+        throw new Error(`Price for "${item.name}" must be zero or greater`);
+      }
+    }
+    if (data.payment_mode !== "manual" && data.payment_mode !== "gateway") {
+      throw new Error('payment_mode must be "manual" or "gateway"');
+    }
+
+    // Deliberately no member notification here (unlike updateOrderPayment/
+    // updateDeliveryStatus/cancelOrder) — a manually-placed order implies
+    // staff already spoke to the member out-of-band. Revisit if that
+    // assumption turns out wrong.
+    if (data.payment_mode === "gateway") {
+      const total_amount = data.items.reduce(
+        (sum, item) => sum + item.price_amount * item.quantity,
+        0,
+      );
+      const created = await this.create(
+        {
+          user_id: data.user_id,
+          total_amount,
+          payment_type: data.payment_type ?? "paystack",
+          return_url: data.return_url ?? null,
+          cancellation_url: data.cancellation_url ?? null,
+          billing: data.billing,
+          items: data.items,
+        },
+        { reuseExistingPending: false },
+      );
+      const stampedOrder = await prisma.orders.update({
+        where: { id: created.updated_order.id },
+        data: { placed_by_staff_id: data.placed_by_staff_id },
+        include: { items: true, billing_details: true },
+      });
+      return { ...created, updated_order: stampedOrder };
+    }
+
+    const resolvedItems = await this.resolveItemStock(data.items);
+    const shortages = resolvedItems.filter(
+      (item) => item.stockManaged && item.availableStock < item.quantity,
+    );
+    if (shortages.length) {
+      throw new InsufficientStockError(
+        shortages.map((item) => ({
+          name: item.name,
+          color: item.color,
+          size: item.size,
+          requested: item.quantity,
+          available: item.availableStock,
+        })),
+      );
+    }
+
+    const total_amount = data.items.reduce(
+      (sum, item) => sum + item.price_amount * item.quantity,
+      0,
+    );
+    // Prefixed so the Hubtel reconciliation sweeps (which force-fail and
+    // restock any pending order older than 48h) can recognize and skip
+    // this — there's no real Hubtel transaction behind a manual order, so
+    // "Hubtel doesn't recognize this reference" would otherwise look
+    // identical to a genuinely abandoned gateway checkout.
+    const clientReference = `MANUAL-${this.generateReference()}`;
+    const manualStatus = data.manual_status ?? "success";
+    if (manualStatus !== "success" && manualStatus !== "pending") {
+      throw new Error('manual_status must be "success" or "pending"');
+    }
+
+    const order = await prisma.$transaction(async (tx) => {
+      const created = await tx.orders.create({
+        data: {
+          user_id: data.user_id,
+          total_amount,
+          reference: clientReference,
+          payment_status: manualStatus,
+          placed_by_staff_id: data.placed_by_staff_id,
+          items: { create: this.buildItems(data.items, resolvedItems) },
+          billing_details: { create: this.buildBilling(data.billing) },
+        },
+        include: { items: true, billing_details: true },
+      });
+
+      for (const item of resolvedItems) {
+        if (!item.stockManaged) continue;
+        await this.reserveVariant(
+          tx,
+          item.productColourId!,
+          item.sizeId!,
+          item.quantity,
+          item.name,
+          item.color,
+          item.size,
+        );
+      }
+
+      return created;
+    });
+
+    const orderNumber = this.generateOrderNumber(order.id);
+    return prisma.orders.update({
+      where: { id: order.id },
+      data: { order_number: orderNumber },
+      include: { items: true, billing_details: true },
+    });
   }
 
   async retryHubtelPayment(
@@ -791,6 +959,13 @@ export class OrderService {
       return { message: "No payment reference found", order: null };
     if (order.payment_status === "success")
       return { message: "Payment already verified", order: null };
+    if (order.reference.startsWith("MANUAL-")) {
+      // No real Paystack/Hubtel transaction behind a manually-placed
+      // order — nothing to verify, and calling verifyTransaction with this
+      // reference would just get a false "failed" back from Paystack,
+      // force-failing (and restocking) a still-valid manual order.
+      return { message: "This order was placed manually and has no payment to verify", order: null };
+    }
 
     const transaction = await verifyTransaction(order.reference);
     const status = transaction.status === "success" ? "success" : "failed";
@@ -1336,7 +1511,16 @@ export class OrderService {
       // to this sweep. Once it goes stale, force-failing it would call
       // updateOrderPayment(id, "failed"), which restocks again on top of the
       // restock cancelOrder() already did — a double stock credit.
-      where: { payment_status: "pending", delivery_status: { not: "cancelled" }, deleted_at: null },
+      // Manual orders (created via createForMember with no real gateway
+      // transaction) are prefixed "MANUAL-" and excluded — there's nothing
+      // for Hubtel to confirm, so this sweep would otherwise force-fail
+      // them as unrecognized references after 48h.
+      where: {
+        payment_status: "pending",
+        delivery_status: { not: "cancelled" },
+        deleted_at: null,
+        NOT: { reference: { startsWith: "MANUAL-" } },
+      },
       orderBy: { created_at: "asc" },
       take: limit,
       select: { id: true, reference: true, payment_status: true, created_at: true },
@@ -1719,9 +1903,12 @@ export class OrderService {
         // this scan also drives updateOrderStatusByHubtel -> updateOrderPayment,
         // which would restock an already-cancelled (and already-restocked)
         // order a second time if Hubtel reports it failed/cancelled upstream.
-        // Same reasoning applies to a soft-deleted order.
+        // Same reasoning applies to a soft-deleted order, and to a manual
+        // order (createForMember) that has no real Hubtel transaction
+        // behind it at all.
         delivery_status: { not: "cancelled" },
         deleted_at: null,
+        NOT: { reference: { startsWith: "MANUAL-" } },
         items: {
           some: {
             market_id: marketplaceId,
