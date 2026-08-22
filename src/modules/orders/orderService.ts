@@ -301,8 +301,8 @@ export class OrderService {
     this.validateHubtelRedirectUrls(return_url, cancellation_url);
     const clientReference = this.generateReference();
 
-    const order = await prisma.orders.findUnique({
-      where: { id },
+    const order = await prisma.orders.findFirst({
+      where: { id, deleted_at: null },
       include: {
         billing_details: true,
         items: true,
@@ -1085,6 +1085,7 @@ export class OrderService {
         id: orderId,
         payment_status: "pending",
         delivery_status: { not: "cancelled" },
+        deleted_at: null,
       },
       data: { delivery_status: "cancelled" },
     });
@@ -1132,6 +1133,86 @@ export class OrderService {
     }
 
     return updatedOrder;
+  }
+
+  /**
+   * Soft-deletes an order. A pending order that hasn't already been
+   * cancelled releases its reserved stock and has its payment reference
+   * marked "failed" (so the reconciliation sweep or a stale checkout link
+   * can no longer settle or re-scan it) — atomically claimed with the same
+   * updateMany + count guard cancelOrder uses, closing the same
+   * webhook-race / duplicate-delete window cancelOrder's own comments
+   * document. An order that's already paid, already failed, or already
+   * cancelled (stock already settled one way or the other) is soft-deleted
+   * without touching stock or payment_status.
+   *
+   * Residual gap, accepted: an in-flight Hubtel/Paystack webhook that
+   * confirms "success" for a reference this just marked "failed" will
+   * still flip it to "success" (checkHubtelTransactionStatus /
+   * updateOrderStatusByHubtel are deliberately unfiltered by deleted_at —
+   * a real payment landing needs to be recorded, not dropped). That's the
+   * same class of residual risk cancelOrder already carries.
+   */
+  async deleteOrder(orderId: number, actorUserId?: number | null) {
+    // Threaded through for a future customer-notification decision on
+    // delete (deliberately not acted on yet — matches cancelOrder/
+    // updateDeliveryStatus's actorUserId param shape for when that's added).
+    void actorUserId;
+
+    const restockClaim = await prisma.orders.updateMany({
+      where: {
+        id: orderId,
+        deleted_at: null,
+        payment_status: "pending",
+        delivery_status: { not: "cancelled" },
+      },
+      data: { deleted_at: new Date(), payment_status: "failed" },
+    });
+
+    if (restockClaim.count > 0) {
+      await this.restockOrderItems(orderId);
+      return { id: orderId };
+    }
+
+    const claim = await prisma.orders.updateMany({
+      where: { id: orderId, deleted_at: null },
+      data: { deleted_at: new Date() },
+    });
+
+    if (claim.count === 0) {
+      const existing = await prisma.orders.findFirst({
+        where: { id: orderId },
+        select: { id: true },
+      });
+      if (!existing) throw new Error("Order not found");
+      // else: already soft-deleted by a concurrent call — idempotent no-op.
+    }
+
+    return { id: orderId };
+  }
+
+  /** Soft-deletes many orders independently — one bad id doesn't block the rest. */
+  async bulkDeleteOrders(orderIds: number[], actorUserId?: number | null) {
+    const uniqueIds = Array.from(new Set(orderIds));
+    const results = await Promise.allSettled(
+      uniqueIds.map((id) => this.deleteOrder(id, actorUserId)),
+    );
+
+    const deleted: number[] = [];
+    const skipped: number[] = [];
+    results.forEach((result, index) => {
+      if (result.status === "fulfilled") {
+        deleted.push(uniqueIds[index]);
+      } else {
+        skipped.push(uniqueIds[index]);
+        console.error(
+          `bulkDeleteOrders: failed to delete order ${uniqueIds[index]}:`,
+          result.reason?.message || result.reason,
+        );
+      }
+    });
+
+    return { deleted: deleted.length, skipped };
   }
 
   async initializeHubtelTransaction(
@@ -1255,7 +1336,7 @@ export class OrderService {
       // to this sweep. Once it goes stale, force-failing it would call
       // updateOrderPayment(id, "failed"), which restocks again on top of the
       // restock cancelOrder() already did — a double stock credit.
-      where: { payment_status: "pending", delivery_status: { not: "cancelled" } },
+      where: { payment_status: "pending", delivery_status: { not: "cancelled" }, deleted_at: null },
       orderBy: { created_at: "asc" },
       take: limit,
       select: { id: true, reference: true, payment_status: true, created_at: true },
@@ -1587,8 +1668,8 @@ export class OrderService {
     const cleanedToken = token.trim();
 
     if (/^\d+$/.test(cleanedToken)) {
-      const orderById = await prisma.orders.findUnique({
-        where: { id: Number(cleanedToken) },
+      const orderById = await prisma.orders.findFirst({
+        where: { id: Number(cleanedToken), deleted_at: null },
         include: { items: true, billing_details: true },
       });
       if (orderById) return orderById;
@@ -1596,6 +1677,7 @@ export class OrderService {
 
     return prisma.orders.findFirst({
       where: {
+        deleted_at: null,
         OR: [{ reference: cleanedToken }, { order_number: cleanedToken }],
       },
       include: { items: true, billing_details: true },
@@ -1637,7 +1719,9 @@ export class OrderService {
         // this scan also drives updateOrderStatusByHubtel -> updateOrderPayment,
         // which would restock an already-cancelled (and already-restocked)
         // order a second time if Hubtel reports it failed/cancelled upstream.
+        // Same reasoning applies to a soft-deleted order.
         delivery_status: { not: "cancelled" },
+        deleted_at: null,
         items: {
           some: {
             market_id: marketplaceId,
