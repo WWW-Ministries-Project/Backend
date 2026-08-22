@@ -1,4 +1,5 @@
 import { prisma } from "../../Models/context";
+import { Prisma } from "@prisma/client";
 import axios from "axios";
 import crypto from "crypto";
 import { toSentenceCase } from "../../utils";
@@ -493,6 +494,141 @@ export class OrderService {
       if (beforeStock <= 0 && afterStock > 0) {
         await stockNotificationService.notifyBackInStock(colourId, sizeId);
       }
+    }
+  }
+
+  /**
+   * Returns a stock-managed product's variant ids for a given color/size
+   * name pair. Used when an edit changes an existing line's color/size —
+   * resolveItemStock resolves a whole cart, this resolves one variant.
+   */
+  private async resolveSingleVariant(
+    productId: number,
+    colour: string,
+    size: string,
+  ): Promise<{ productColourId: number; sizeId: number }> {
+    const product = await prisma.products.findUnique({
+      where: { id: productId },
+      select: { stock_managed: true },
+    });
+    if (product?.stock_managed !== "yes") {
+      throw new Error(`Product ${productId} is not stock-managed`);
+    }
+
+    const colourRow = await prisma.product_colour.findFirst({
+      where: { product_id: productId, colour },
+      select: { id: true },
+    });
+    const sizeRow = await prisma.sizes.findUnique({
+      where: { name: size },
+      select: { id: true },
+    });
+
+    if (!colourRow || !sizeRow) {
+      throw new Error(
+        `Unknown color/size combination "${colour}/${size}" for this product`,
+      );
+    }
+
+    const stockRow = await prisma.product_stock.findUnique({
+      where: {
+        size_id_product_colour_id: {
+          size_id: sizeRow.id,
+          product_colour_id: colourRow.id,
+        },
+      },
+      select: { product_colour_id: true },
+    });
+    if (!stockRow) {
+      throw new Error(
+        `Unknown color/size combination "${colour}/${size}" for this product`,
+      );
+    }
+
+    return { productColourId: colourRow.id, sizeId: sizeRow.id };
+  }
+
+  /**
+   * Releases reserved stock back to a variant. No availability guard needed —
+   * restocking can't fail. Does NOT fire the back-in-stock notification
+   * itself — that does an SMS send + a delete on the plain (non-tx) prisma
+   * client, so firing it inside this transaction would survive a rollback.
+   * Returns true when this restock crossed stock from 0 to positive, so
+   * the caller can notify once its transaction has actually committed.
+   */
+  private async restockVariant(
+    tx: Prisma.TransactionClient,
+    productColourId: number,
+    sizeId: number,
+    quantity: number,
+  ): Promise<boolean> {
+    if (quantity <= 0) return false;
+    const before = await tx.product_stock.findUnique({
+      where: {
+        size_id_product_colour_id: {
+          size_id: sizeId,
+          product_colour_id: productColourId,
+        },
+      },
+    });
+    const beforeStock = before?.stock ?? 0;
+
+    await tx.product_stock.update({
+      where: {
+        size_id_product_colour_id: {
+          size_id: sizeId,
+          product_colour_id: productColourId,
+        },
+      },
+      data: { stock: { increment: quantity } },
+    });
+
+    const afterStock = beforeStock + quantity;
+    return beforeStock <= 0 && afterStock > 0;
+  }
+
+  /**
+   * Reserves stock for a variant, same race-safe updateMany + count guard as
+   * create()'s stock reservation. Throws InsufficientStockError if unavailable.
+   */
+  private async reserveVariant(
+    tx: Prisma.TransactionClient,
+    productColourId: number,
+    sizeId: number,
+    quantity: number,
+    itemName: string,
+    colour: string,
+    size: string,
+  ) {
+    if (quantity <= 0) return;
+    const decremented = await tx.product_stock.updateMany({
+      where: {
+        product_colour_id: productColourId,
+        size_id: sizeId,
+        stock: { gte: quantity },
+      },
+      data: { stock: { decrement: quantity } },
+    });
+
+    if (decremented.count === 0) {
+      const current = await tx.product_stock.findUnique({
+        where: {
+          size_id_product_colour_id: {
+            size_id: sizeId,
+            product_colour_id: productColourId,
+          },
+        },
+        select: { stock: true },
+      });
+      throw new InsufficientStockError([
+        {
+          name: itemName,
+          color: colour,
+          size,
+          requested: quantity,
+          available: current?.stock ?? 0,
+        },
+      ]);
     }
   }
 
