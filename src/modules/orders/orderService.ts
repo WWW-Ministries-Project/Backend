@@ -573,6 +573,16 @@ export class OrderService {
       );
     }
 
+    if (
+      order.payment_status === "failed" &&
+      data.payment_status &&
+      data.payment_status !== "failed"
+    ) {
+      throw new Error(
+        "Cannot move a failed order back to pending or success — its stock has already been released",
+      );
+    }
+
     let restockedVariants: { productColourId: number; sizeId: number }[] = [];
 
     await prisma.$transaction(async (tx) => {
@@ -950,7 +960,7 @@ export class OrderService {
 
   async verifyPaymentStatus(order_number: string) {
     const order = await prisma.orders.findFirst({
-      where: { order_number },
+      where: { order_number, deleted_at: null },
       select: { reference: true, id: true, payment_status: true },
     });
 
@@ -1369,23 +1379,27 @@ export class OrderService {
   /** Soft-deletes many orders independently — one bad id doesn't block the rest. */
   async bulkDeleteOrders(orderIds: number[], actorUserId?: number | null) {
     const uniqueIds = Array.from(new Set(orderIds));
-    const results = await Promise.allSettled(
-      uniqueIds.map((id) => this.deleteOrder(id, actorUserId)),
-    );
-
+    const BATCH_SIZE = 20;
     const deleted: number[] = [];
     const skipped: number[] = [];
-    results.forEach((result, index) => {
-      if (result.status === "fulfilled") {
-        deleted.push(uniqueIds[index]);
-      } else {
-        skipped.push(uniqueIds[index]);
-        console.error(
-          `bulkDeleteOrders: failed to delete order ${uniqueIds[index]}:`,
-          result.reason?.message || result.reason,
-        );
-      }
-    });
+
+    for (let i = 0; i < uniqueIds.length; i += BATCH_SIZE) {
+      const batch = uniqueIds.slice(i, i + BATCH_SIZE);
+      const results = await Promise.allSettled(
+        batch.map((id) => this.deleteOrder(id, actorUserId)),
+      );
+      results.forEach((result, index) => {
+        if (result.status === "fulfilled") {
+          deleted.push(batch[index]);
+        } else {
+          skipped.push(batch[index]);
+          console.error(
+            `bulkDeleteOrders: failed to delete order ${batch[index]}:`,
+            result.reason?.message || result.reason,
+          );
+        }
+      });
+    }
 
     return { deleted: deleted.length, skipped };
   }
@@ -1481,19 +1495,28 @@ export class OrderService {
   }
 
   async checkHubtelTransactionStatusById(id: number) {
-    const order = await prisma.orders.findUnique({
-      where: { id },
+    const order = await prisma.orders.findFirst({
+      where: { id, deleted_at: null },
       select: {
         reference: true,
         payment_status: true,
       },
     });
 
-    if (order?.payment_status === "success") {
-      return { success: true };
-    } else {
-      return await this.checkHubtelTransactionStatus(String(order?.reference));
+    if (!order) {
+      throw new Error("Order not found");
     }
+    if (order.payment_status === "success") {
+      return { success: true };
+    }
+    if (order.reference.startsWith("MANUAL-")) {
+      // No real Hubtel transaction behind a manually-placed order — same
+      // guard as verifyPaymentStatus.
+      return {
+        message: "This order was placed manually and has no payment to verify",
+      };
+    }
+    return await this.checkHubtelTransactionStatus(order.reference);
   }
 
   async reconcilePendingHubtelPayments(limit = 100) {
