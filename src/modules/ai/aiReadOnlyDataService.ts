@@ -2709,7 +2709,7 @@ export class AiReadOnlyDataService {
     limit: number,
   ) {
     const dateRange = this.parseDateRange(input);
-    const dateWhere = this.appendDateRangeWhere({}, "created_at", dateRange);
+    const dateWhere = this.appendDateRangeWhere({ deleted_at: null }, "created_at", dateRange);
 
     if (operation === "summary") {
       const [totalOrders, aggregate, pendingPayments] = await Promise.all([
@@ -2767,6 +2767,7 @@ export class AiReadOnlyDataService {
       const rows = await prisma.orders.findMany({
         where: this.appendDateRangeWhere(
           {
+            deleted_at: null,
             OR: [{ order_number: { contains: q } }, { reference: { contains: q } }],
           },
           "created_at",

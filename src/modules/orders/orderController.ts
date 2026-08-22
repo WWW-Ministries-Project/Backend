@@ -303,4 +303,134 @@ export class OrderController {
       });
     }
   }
+
+  async updateOrder(req: Request, res: Response) {
+    try {
+      const { id, billing, payment_status, delivery_status, items } = req.body;
+      const orderId = Number(id);
+      if (!Number.isInteger(orderId) || orderId <= 0) {
+        return res.status(400).json({ message: "A valid order id is required" });
+      }
+
+      if (
+        payment_status !== undefined &&
+        !["pending", "success", "failed"].includes(payment_status)
+      ) {
+        return res.status(400).json({
+          message: "payment_status must be pending, success, or failed",
+        });
+      }
+      if (
+        delivery_status !== undefined &&
+        !["pending", "shipped", "delivered", "cancelled"].includes(delivery_status)
+      ) {
+        return res.status(400).json({
+          message: "delivery_status must be pending, shipped, delivered, or cancelled",
+        });
+      }
+
+      const updatedOrder = await orderService.updateOrder({
+        id: orderId,
+        billing,
+        payment_status,
+        delivery_status,
+        items,
+      });
+
+      return res.status(200).json({
+        message: "Order updated successfully",
+        data: updatedOrder,
+      });
+    } catch (error: any) {
+      const status = error instanceof InsufficientStockError ? 409 : 400;
+      return res.status(status).json({
+        message: error.message || "Failed to update order",
+      });
+    }
+  }
+
+  async deleteOrder(req: Request, res: Response) {
+    try {
+      const orderId = Number(req.query.id ?? req.body?.id);
+      if (!Number.isInteger(orderId) || orderId <= 0) {
+        return res.status(400).json({ message: "A valid order id is required" });
+      }
+
+      const actorUserId = Number((req as any)?.user?.id);
+      await orderService.deleteOrder(
+        orderId,
+        Number.isInteger(actorUserId) && actorUserId > 0 ? actorUserId : null,
+      );
+      return res.status(200).json({ message: "Order deleted successfully" });
+    } catch (error: any) {
+      return res.status(400).json({
+        message: error.message || "Failed to delete order",
+      });
+    }
+  }
+
+  async bulkDeleteOrders(req: Request, res: Response) {
+    try {
+      const rawIds = String(req.query.ids ?? "");
+      const orderIds = rawIds
+        .split(",")
+        .map((value) => Number(value.trim()))
+        .filter((value) => Number.isInteger(value) && value > 0);
+
+      if (orderIds.length === 0) {
+        return res
+          .status(400)
+          .json({ message: "At least one valid order id is required" });
+      }
+      if (orderIds.length > 500) {
+        return res
+          .status(400)
+          .json({ message: "Cannot delete more than 500 orders at once" });
+      }
+
+      const actorUserId = Number((req as any)?.user?.id);
+      const result = await orderService.bulkDeleteOrders(
+        orderIds,
+        Number.isInteger(actorUserId) && actorUserId > 0 ? actorUserId : null,
+      );
+      return res.status(200).json({
+        message: "Orders deleted successfully",
+        data: result,
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        message: error.message || "Failed to delete orders",
+      });
+    }
+  }
+
+  async createForMember(req: Request, res: Response) {
+    try {
+      const actorUserId = Number((req as any)?.user?.id);
+      if (!Number.isInteger(actorUserId) || actorUserId <= 0) {
+        return res
+          .status(400)
+          .json({ message: "Unable to identify the staff placing this order" });
+      }
+
+      const order = await orderService.createForMember({
+        ...req.body,
+        placed_by_staff_id: actorUserId,
+      });
+
+      return res.status(201).json({
+        message: "Order placed successfully",
+        data: order,
+      });
+    } catch (error: any) {
+      const status = error instanceof InsufficientStockError
+        ? 409
+        : isPaystackFailure(error)
+        ? error.statusCode
+        : 400;
+      return res.status(status).json({
+        message: error.message || "Failed to place order",
+      });
+    }
+  }
 }
