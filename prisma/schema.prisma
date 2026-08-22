@@ -1634,6 +1634,7 @@ model sizes {
 model product_colour {
   id                           Int                            @id @default(autoincrement())
   colour                       String?
+  colour_name                  String?
   image_url                    String?
   product_id                   Int
   product                      products                       @relation(fields: [product_id], references: [id])
