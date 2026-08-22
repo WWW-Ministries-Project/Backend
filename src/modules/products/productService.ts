@@ -17,6 +17,7 @@ export class ProductService {
       select: {
         id: true,
         colour: true,
+        colour_name: true,
         image_url: true,
         sizes: {
           include: {
@@ -224,6 +225,7 @@ export class ProductService {
         const productColour = await prisma.product_colour.create({
           data: {
             colour: colourItem.colour,
+            colour_name: colourItem.colour_name,
             image_url: colourItem.image_url,
             product_id: input.id,
           },
@@ -312,11 +314,12 @@ export class ProductService {
 
     const colourStocks = [];
     for (let input of colourInputs) {
-      const { colour, image_url } = input;
+      const { colour, colour_name, image_url } = input;
 
       const colourStock = await prisma.product_colour.create({
         data: {
           colour,
+          colour_name,
           image_url,
           product: { connect: { id: product_id } },
           sizes: {
@@ -356,6 +359,7 @@ export class ProductService {
       ...product,
       product_colours: product.product_colours.map((colour: any) => ({
         colour: colour.colour,
+        colour_name: colour.colour_name,
         image_url: colour.image_url,
         stock: colour.sizes.map((s: any) => ({
           size: s.size.name,
@@ -430,6 +434,7 @@ export class ProductService {
         ...product,
         product_colours: product.product_colours.map((colour) => ({
           colour: colour.colour,
+          colour_name: colour.colour_name,
           image_url: colour.image_url,
           stock: colour.sizes.map((s) => ({
             size: s.size.name,
@@ -470,6 +475,7 @@ export class ProductService {
         ...product,
         product_colours: product.product_colours.map((colour) => ({
           colour: colour.colour,
+          colour_name: colour.colour_name,
           image_url: colour.image_url,
           stock: colour.sizes.map((s) => ({
             size: s.size.name,

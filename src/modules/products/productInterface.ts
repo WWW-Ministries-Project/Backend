@@ -15,6 +15,7 @@ export interface CreateProductInput {
 
 export interface ProductColourInput {
   colour: string;
+  colour_name?: string;
   image_url: string;
   stock: SizeStock[];
 }
@@ -42,6 +43,7 @@ export interface ProductColourStockInput {
   id: number;
   product_id: number;
   colour: string;
+  colour_name?: string;
   image_url: string;
   stock: SizeStock[];
 }
