@@ -17,7 +17,15 @@ import {
   WidthType,
   convertMillimetersToTwip,
 } from "docx";
-import puppeteer from "puppeteer";
+// puppeteer ships ESM-only as of v25 — this file compiles to CommonJS, so a
+// static import (even `import type`) produces a `require()` call under
+// NodeNext module resolution. Reference the type via an explicit
+// resolution-mode assertion and import the module itself dynamically at
+// the call site instead.
+type PuppeteerModule = import(
+  "puppeteer",
+  { with: { "resolution-mode": "import" } }
+).PuppeteerNode;
 import { resolve, join } from "path";
 import {
   InputValidationError,
@@ -1517,6 +1525,7 @@ const resolveChromiumExecutablePath = (): string | undefined => {
 
 const generatePdfBufferFromHtml = async (html: string): Promise<Buffer> => {
   const executablePath = resolveChromiumExecutablePath();
+  const puppeteer: PuppeteerModule = (await import("puppeteer")).default;
 
   let browser: Awaited<ReturnType<typeof puppeteer.launch>>;
   try {
