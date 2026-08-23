@@ -32,7 +32,14 @@ const ATTENDEE_INCLUDE = {
   attendees: {
     include: {
       soulWon: {
-        select: { id: true, first_name: true, last_name: true },
+        select: {
+          id: true,
+          first_name: true,
+          last_name: true,
+          contact_number: true,
+          country_code: true,
+          gender: true,
+        },
       },
     },
   },
