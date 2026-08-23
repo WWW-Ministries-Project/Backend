@@ -1344,33 +1344,52 @@ export class OrderService {
     // updateDeliveryStatus's actorUserId param shape for when that's added).
     void actorUserId;
 
-    const restockClaim = await prisma.orders.updateMany({
-      where: {
-        id: orderId,
-        deleted_at: null,
-        payment_status: "pending",
-        delivery_status: { not: "cancelled" },
-      },
-      data: { deleted_at: new Date(), payment_status: "failed" },
-    });
+    // deleted_at + the restock it can trigger must commit together — doing
+    // them as two separate top-level statements let a restockAllItems
+    // failure reject deleteOrder (surfacing as "skipped" to bulkDeleteOrders'
+    // Promise.allSettled) even though the soft-delete had already persisted,
+    // silently lying about what actually happened.
+    let restockedVariants: { productColourId: number; sizeId: number }[] = [];
 
-    if (restockClaim.count > 0) {
-      await this.restockOrderItems(orderId);
-      return { id: orderId };
-    }
-
-    const claim = await prisma.orders.updateMany({
-      where: { id: orderId, deleted_at: null },
-      data: { deleted_at: new Date() },
-    });
-
-    if (claim.count === 0) {
-      const existing = await prisma.orders.findFirst({
-        where: { id: orderId },
-        select: { id: true },
+    await prisma.$transaction(async (tx) => {
+      const restockClaim = await tx.orders.updateMany({
+        where: {
+          id: orderId,
+          deleted_at: null,
+          payment_status: "pending",
+          delivery_status: { not: "cancelled" },
+        },
+        data: { deleted_at: new Date(), payment_status: "failed" },
       });
-      if (!existing) throw new Error("Order not found");
-      // else: already soft-deleted by a concurrent call — idempotent no-op.
+
+      if (restockClaim.count > 0) {
+        restockedVariants = await this.restockAllItems(tx, orderId);
+        return;
+      }
+
+      const claim = await tx.orders.updateMany({
+        where: { id: orderId, deleted_at: null },
+        data: { deleted_at: new Date() },
+      });
+
+      if (claim.count === 0) {
+        const existing = await tx.orders.findFirst({
+          where: { id: orderId },
+          select: { id: true },
+        });
+        if (!existing) throw new Error("Order not found");
+        // else: already soft-deleted by a concurrent call — idempotent no-op.
+      }
+    });
+
+    // Fire back-in-stock notifications only after the transaction has
+    // actually committed — restockVariant deliberately doesn't do this
+    // itself (see its docstring).
+    for (const variant of restockedVariants) {
+      await stockNotificationService.notifyBackInStock(
+        variant.productColourId,
+        variant.sizeId,
+      );
     }
 
     return { id: orderId };
