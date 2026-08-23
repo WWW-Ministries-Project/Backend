@@ -360,6 +360,7 @@ export class LifeCenterService {
     first_name: string;
     last_name: string;
     other_name?: string;
+    gender?: string;
     contact_number: string;
     country_code: string;
     contact_email?: string;
@@ -381,6 +382,7 @@ export class LifeCenterService {
       first_name?: string;
       last_name?: string;
       other_name?: string;
+      gender?: string;
       contact_number?: string;
       country_code?: string;
       contact_email?: string;
@@ -398,6 +400,7 @@ export class LifeCenterService {
         first_name: data.first_name,
         last_name: data.last_name,
         other_name: data.other_name,
+        gender: data.gender,
         contact_number: data.contact_number,
         country_code: data.country_code,
         contact_email: data.contact_email,
