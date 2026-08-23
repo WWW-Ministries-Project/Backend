@@ -154,8 +154,9 @@ export async function processEventRemindersJob() {
   }
 }
 
-// Fire every minute.
-cron.schedule("* * * * *", async () => {
+// Fire every minute, offset 40s past the minute so this doesn't collide with
+// the push-retry / sms-retry crons and pile onto the Prisma connection pool.
+cron.schedule("40 * * * * *", async () => {
   await processEventRemindersJob();
 });
 

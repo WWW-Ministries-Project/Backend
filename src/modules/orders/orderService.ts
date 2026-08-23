@@ -120,7 +120,7 @@ export class OrderService {
       },
       include: {
         items: {
-          include: { product: true, market: true },
+          include: { product: true, market: true, product_colour: true },
         },
         billing_details: true,
       },
@@ -538,7 +538,10 @@ export class OrderService {
   async findOne(id: number) {
     const order = await prisma.orders.findFirst({
       where: { id, deleted_at: null },
-      include: { items: true, billing_details: true },
+      include: {
+        items: { include: { product_colour: true } },
+        billing_details: true,
+      },
     });
 
     if (!order) throw new Error("Order not found");
@@ -877,7 +880,7 @@ export class OrderService {
       where: { user_id: userId, deleted_at: null },
       include: {
         items: {
-          include: { product: true, market: true },
+          include: { product: true, market: true, product_colour: true },
         },
         billing_details: true,
       },
@@ -910,7 +913,7 @@ export class OrderService {
       include: {
         items: {
           where: { market_id: marketplaceId },
-          include: { product: true, market: true },
+          include: { product: true, market: true, product_colour: true },
         },
         billing_details: true,
       },
@@ -2022,6 +2025,7 @@ export class OrderService {
               product_category: item.product_category,
               image_url: item.image_url,
               color: item.color,
+              colour_name: item.product_colour?.colour_name ?? null,
               size: item.size,
 
               // Order fields
