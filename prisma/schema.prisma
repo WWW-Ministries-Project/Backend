@@ -1477,6 +1477,7 @@ model soul_won {
   first_name     String
   last_name      String
   other_name     String?
+  gender         String?
   contact_number String
   contact_email  String?
   country_code   String?

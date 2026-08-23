@@ -38,6 +38,11 @@ const mapAttendee = (row: any) => ({
     .filter(Boolean)
     .join(" "),
   isFirstTimer: row.isFirstTimer,
+  phone: {
+    number: row.soulWon?.contact_number ?? null,
+    country_code: row.soulWon?.country_code ?? null,
+  },
+  gender: row.soulWon?.gender ?? null,
 });
 
 const mapMeeting = (meeting: any) => ({
