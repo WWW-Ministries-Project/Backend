@@ -524,7 +524,11 @@ export class OrderService {
       include: {
         items: {
           include: {
-            product: true,
+            // `product: { include: { product_colours: true } }` (not bare
+            // `product: true`) — flattenOrders needs the product's full
+            // colour catalog to recover a name for old order_items that
+            // predate `product_colour_id` (matched by hex against `color`).
+            product: { include: { product_colours: true } },
             market: true,
             product_colour: true,
           },
@@ -2026,7 +2030,19 @@ export class OrderService {
               product_category: item.product_category,
               image_url: item.image_url,
               color: item.color,
-              colour_name: item.product_colour?.colour_name ?? null,
+              // Prefer the direct FK join (set at checkout for every order
+              // since product_colour_id/size_id were added). Older
+              // order_items predate that column and are always NULL there,
+              // so fall back to matching this item's snapshotted hex
+              // (`color`) against the product's current colour catalog —
+              // recovers the name for old orders as long as the product
+              // still carries that swatch.
+              colour_name:
+                item.product_colour?.colour_name ??
+                item.product?.product_colours?.find(
+                  (c: any) => c.colour === item.color,
+                )?.colour_name ??
+                null,
               size: item.size,
 
               // Order fields
@@ -2039,7 +2055,13 @@ export class OrderService {
               // Flattened product fields
               product_name: item.product?.name,
               product_description: item.product?.description,
-              product_colours: item.product?.colours,
+              // `products.colours` is a dead legacy scalar (superseded by
+              // the product_colour relation) — this used to point at it by
+              // mistake, silently defeating the Frontend's own colour_name
+              // fallback for every order. `product_colours` (plural) is the
+              // real relation and matches what IOrders.product_colours
+              // (Frontend) expects: ProductColour[] with colour/colour_name.
+              product_colours: item.product?.product_colours,
               product_status: item.product?.status,
               product_price_amount: item.product?.price_amount,
               product_price_currency: item.product?.price_currency,
