@@ -559,11 +559,23 @@ const parsePermissionsObject = (permissions: unknown): Record<string, unknown> =
   return {};
 };
 
-const hasSuperAdminPermission = (permissions: unknown): boolean => {
+// Automatic system/infra failure alerts (raw Prisma errors, pool exhaustion,
+// etc.) must go only to platform admins — the same audience that can already
+// manage the manual override at Settings > System Notifications
+// (`Permissions.can_manage_settings` in src/middleWare/authorization.ts).
+// This used to check for "Super_Admin" on ANY single domain, which also
+// matches a business-domain admin (e.g. Super_Admin scoped only to
+// Financials or Marketplace) — a department head, not a platform admin —
+// and had been paging those staff with unreadable backend error text.
+const SETTINGS_PERMISSION_KEYS = ["Settings", "Access_rights", "Access rights"];
+const SETTINGS_MANAGE_VALUES = new Set(["Can_Manage", "Super_Admin"]);
+
+const canManageSystemSettings = (permissions: unknown): boolean => {
   const permissionObject = parsePermissionsObject(permissions);
-  return Object.values(permissionObject).some(
-    (value) => typeof value === "string" && value === "Super_Admin",
-  );
+  return SETTINGS_PERMISSION_KEYS.some((key) => {
+    const value = permissionObject[key];
+    return typeof value === "string" && SETTINGS_MANAGE_VALUES.has(value);
+  });
 };
 
 const normalizeNotificationType = (value: unknown): string => {
@@ -1433,7 +1445,7 @@ const listAdminUserIds = async (): Promise<number[]> => {
   });
 
   return users
-    .filter((user) => hasSuperAdminPermission(user.access?.permissions))
+    .filter((user) => canManageSystemSettings(user.access?.permissions))
     .map((user) => user.id);
 };
 
@@ -1470,7 +1482,12 @@ const notifyAdminsJobFailed = async (args: {
       return;
     }
 
-    const body = `${args.jobName} failed: ${args.errorMessage}`;
+    // Recipients here are org admins (Settings-manage), not necessarily
+    // engineers — the caller already logs `args.errorMessage` in full via
+    // console.error/console.warn for whoever is on call. Don't also mail raw
+    // Prisma/DB error text (stack-shaped strings, pool config, table names)
+    // to an admin who can't act on it and shouldn't see backend internals.
+    const body = `${args.jobName} failed and needs attention. Check the server logs for details.`;
 
     await createManyInAppNotifications(
       recipientUserIds.map((recipientUserId) => ({

@@ -9,8 +9,10 @@ import {
 
 let isNotificationSmsRetryJobRunning = false;
 const LOG_EMPTY_RETRY_RUNS = process.env.NOTIFICATION_SMS_RETRY_LOG_EMPTY === "true";
+// Offset 20s past the minute so this doesn't fire in the same tick as the
+// push-retry / event-reminder crons and pile onto the Prisma connection pool.
 const NOTIFICATION_SMS_RETRY_CRON =
-  process.env.NOTIFICATION_SMS_RETRY_CRON || "* * * * *";
+  process.env.NOTIFICATION_SMS_RETRY_CRON || "20 * * * * *";
 
 export async function processNotificationSmsRetriesJob() {
   if (!notificationSmsService.isSmsEnabled()) {

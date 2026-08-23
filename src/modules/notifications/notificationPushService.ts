@@ -1013,6 +1013,19 @@ const processPendingPushDeliveryJobs = async (args?: {
       next_attempt_at: "asc",
     },
     take: batchSize,
+    include: {
+      subscription: {
+        select: {
+          id: true,
+          user_id: true,
+          endpoint: true,
+          p256dh: true,
+          auth: true,
+          expiration_time: true,
+          is_active: true,
+        },
+      },
+    },
   });
 
   let processed = 0;
@@ -1036,28 +1049,7 @@ const processPendingPushDeliveryJobs = async (args?: {
         continue;
       }
 
-      const job = await prisma.notification_push_delivery_job.findUnique({
-        where: {
-          id: dueJob.id,
-        },
-        include: {
-          subscription: {
-            select: {
-              id: true,
-              user_id: true,
-              endpoint: true,
-              p256dh: true,
-              auth: true,
-              expiration_time: true,
-              is_active: true,
-            },
-          },
-        },
-      });
-
-      if (!job) {
-        continue;
-      }
+      const job = dueJob;
 
       processed += 1;
 
