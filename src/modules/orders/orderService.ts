@@ -526,6 +526,7 @@ export class OrderService {
           include: {
             product: true,
             market: true,
+            product_colour: true,
           },
         },
         billing_details: true,
