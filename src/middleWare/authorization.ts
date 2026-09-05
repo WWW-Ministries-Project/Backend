@@ -1799,6 +1799,25 @@ export class Permissions {
     "Not authorized to delete announcements",
   );
 
+  // Promotions
+  can_view_promotions = this.checkPermission(
+    "Promotions",
+    "view",
+    "Not authorized to view promotions",
+  );
+
+  can_manage_promotions = this.checkPermission(
+    "Promotions",
+    "manage",
+    "Not authorized to manage promotions",
+  );
+
+  can_delete_promotions = this.checkPermission(
+    "Promotions",
+    "admin",
+    "Not authorized to delete promotions",
+  );
+
   // Sermons
   can_view_sermons = this.checkPermission(
     "Sermons",

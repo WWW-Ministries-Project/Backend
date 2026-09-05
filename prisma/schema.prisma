@@ -99,6 +99,7 @@ model user {
   pledges          pledger[]       @relation("pledger_user")
   announcements_created announcement[] @relation("announcement_creator")
   announcement_read_receipts announcement_read_receipt[]
+  promotions_created    promotion[] @relation("promotion_creator")
   sermon_series_created sermon_series[] @relation("sermon_series_creator")
   stock_notification_requests stock_notification_requests[]
 
@@ -148,6 +149,7 @@ model branch {
   pledge_payments        pledge_payment[]
   positions              position[]
   announcements          announcement[]
+  promotions             promotion[]
   sermon_series          sermon_series[]
 
   @@index([pastor_in_charge_id], map: "branch_pastor_in_charge_id_idx")
@@ -2500,13 +2502,6 @@ model announcement {
   published_at  DateTime?
   created_at    DateTime              @default(now())
   updated_at    DateTime              @updatedAt
-  image_url     String?
-  cta_label     String?
-  deep_link     String?
-  sort_order    Int?
-  is_promoted   Boolean               @default(false)
-  start_date    DateTime?
-  end_date      DateTime?
 
   branch        branch?                     @relation(fields: [branch_id], references: [id])
   department    department?                 @relation(fields: [department_id], references: [id])
@@ -2533,6 +2528,41 @@ model announcement_read_receipt {
   @@unique([announcement_id, user_id], map: "announcement_read_receipt_announcement_user_key")
   @@index([announcement_id], map: "announcement_read_receipt_announcement_id_idx")
   @@index([user_id], map: "announcement_read_receipt_user_id_idx")
+}
+
+enum promotion_status {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+/// Home-screen promotional banner for the mobile app. Deliberately has no
+/// relation to `announcement`: publishing a promotion is silent (no inbox
+/// row, no push), while publishing an announcement fans out to recipients.
+/// A banner that should open an announcement sets `deep_link` instead.
+model promotion {
+  id           Int              @id @default(autoincrement())
+  title        String
+  subtitle     String?          @db.Text
+  image_url    String?
+  cta_label    String?
+  deep_link    String?
+  sort_order   Int?
+  status       promotion_status @default(DRAFT)
+  start_date   DateTime?
+  end_date     DateTime?
+  branch_id    Int?
+  created_by   Int
+  published_at DateTime?
+  created_at   DateTime         @default(now())
+  updated_at   DateTime         @updatedAt
+
+  branch  branch? @relation(fields: [branch_id], references: [id])
+  creator user    @relation("promotion_creator", fields: [created_by], references: [id])
+
+  @@index([branch_id])
+  @@index([status, start_date, end_date])
+  @@index([created_by])
 }
 
 enum sermon_status {

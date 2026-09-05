@@ -13,7 +13,7 @@ Node version: **18.18.0** (`.nvmrc` / `.node-version`).
 - `npm run migrate` — `prisma migrate deploy && prisma generate`. Use this after pulling; the Dockerfile also runs it on container start.
 - `npm run migrate:2` — Regenerate Prisma client only (no DB writes).
 
-Requires `.env` with `DATABASE_URL`, `SHADOW_DATABASE_URL` (MySQL), `JWT_SECRET`, `PORT`. Optional: `RUN_BACKGROUND_JOBS=false` disables cron registration (see below), `PRISMA_TX_MAX_WAIT_MS`, `PRISMA_TX_TIMEOUT_MS`.
+Requires `.env` with `DATABASE_URL`, `SHADOW_DATABASE_URL` (MySQL), `JWT_SECRET`, `PORT`. Optional: `RUN_BACKGROUND_JOBS=false` disables cron registration (see below), `PRISMA_TX_MAX_WAIT_MS`, `PRISMA_TX_TIMEOUT_MS`, `PRISMA_CONNECTION_LIMIT` (default 10), `PRISMA_POOL_TIMEOUT_S` (default 20). The pool settings exist because Prisma otherwise sizes its connection pool from the host's detected CPU count — on a small/CPU-constrained host this silently shrinks to a pool too small for real traffic and surfaces as `P2024` ("Timed out fetching a new connection from the pool").
 
 Paystack (giving **and** pledge redemptions) reads `PAYSTACK_SECRET_KEY`, optionally `PAYSTACK_BASE_URL`, the shared donor-borne fee schedule `PAYSTACK_FEE_PERCENT` / `PAYSTACK_FEE_CAP_MINOR_UNITS` / `PAYSTACK_FEE_FLAT_MINOR_UNITS`, and two optional post-payment landing pages: `PAYSTACK_GIVING_CALLBACK_URL` and `PAYSTACK_PLEDGE_CALLBACK_URL`. Both fall back to `Frontend_URL` (`/out/giving-complete`, `/out/pledge-complete`). Callback URLs are always resolved server-side from a fixed set — clients send `client: "web" | "mobile"`, never a URL, because accepting one would be an open redirect on a payment flow. Full shapes: `Frontend/docs/GIVING_OPTIONS_BACKEND_CONTRACT.md` and `Frontend/docs/PLEDGE_PAYMENTS_BACKEND_CONTRACT.md`.
 
@@ -31,7 +31,7 @@ Note the capitalization quirks preserved throughout the tree: `src/middleWare/` 
 
 ### Prisma
 
-Single shared client at `src/Models/context.ts` — `export const prisma`. Always import from there; do not instantiate `new PrismaClient()` elsewhere. Transaction defaults come from env (`PRISMA_TX_MAX_WAIT_MS`, `PRISMA_TX_TIMEOUT_MS`).
+Single shared client at `src/Models/context.ts` — `export const prisma`. Always import from there; do not instantiate `new PrismaClient()` elsewhere. Transaction defaults come from env (`PRISMA_TX_MAX_WAIT_MS`, `PRISMA_TX_TIMEOUT_MS`); connection pool size/timeout are pinned explicitly via `PRISMA_CONNECTION_LIMIT`/`PRISMA_POOL_TIMEOUT_S` rather than left to Prisma's CPU-based autodetect.
 
 Schema (`prisma/schema.prisma`, ~2100 lines, MySQL) is the canonical data model — 130+ models covering members, events, requisitions, notifications, finance, marketplace, biometric attendance, etc. Prefer reading the schema over guessing field names; relations are heavily aliased (see `user` model's `@relation("...")` blocks).
 

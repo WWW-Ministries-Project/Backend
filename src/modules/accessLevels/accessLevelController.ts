@@ -33,6 +33,7 @@ const OPTIONAL_PERMISSION_KEYS = [
   "Settings",
   "Announcements",
   "Sermons",
+  "Promotions",
 ];
 
 const ALLOWED_SCOPE_VALUES = new Set(["assigned_departments"]);
@@ -68,6 +69,8 @@ const PERMISSION_KEY_NORMALIZER: Record<string, string> = {
   Announcement: "Announcements",
   Sermons: "Sermons",
   Sermon: "Sermons",
+  Promotions: "Promotions",
+  Promotion: "Promotions",
 };
 
 const ALLOWED_PERMISSION_KEYS = [
