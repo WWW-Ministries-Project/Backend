@@ -3,6 +3,11 @@ import {
   lifeCenterMeetingService,
   NewFirstTimerInput,
 } from "./lifeCenterMeetingService";
+import {
+  exportMeetings,
+  parseExportFormat,
+  parseRangeBoundary,
+} from "./lifeCenterMeetingExportService";
 
 const toPositiveInt = (value: unknown): number | undefined => {
   const n = Number(value);
@@ -249,6 +254,49 @@ export class LifeCenterMeetingController {
       return res
         .status(500)
         .json({ message: "Error fetching meetings", error: error.message });
+    }
+  }
+
+  async exportMeetings(req: Request, res: Response) {
+    try {
+      const lifeCenterId = toPositiveInt(req.query?.lifeCenterId);
+      if (!lifeCenterId) {
+        return res.status(400).json({ message: "lifeCenterId is required" });
+      }
+
+      const lifeCenterScope = (req as any).lifeCenterScope;
+      if (
+        lifeCenterScope?.mode === "member" &&
+        Array.isArray(lifeCenterScope?.lifeCenterIds) &&
+        !lifeCenterScope.lifeCenterIds.includes(lifeCenterId)
+      ) {
+        return res
+          .status(401)
+          .json({ message: "Not authorized to view this life center's data" });
+      }
+
+      const file = await exportMeetings({
+        lifeCenterId,
+        createdById: Number((req as any).user?.id),
+        from: parseRangeBoundary(req.query?.from, "from"),
+        to: parseRangeBoundary(req.query?.to, "to"),
+        format: parseExportFormat(req.query?.format),
+      });
+
+      res.setHeader("Content-Type", file.contentType);
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${file.fileName}"`,
+      );
+      // Without this the browser's XHR layer hides the header, so the client
+      // cannot read the filename the server chose.
+      res.setHeader("Access-Control-Expose-Headers", "Content-Disposition");
+      return res.status(200).send(file.buffer);
+    } catch (error: any) {
+      const status = error?.statusCode ?? error?.status ?? 400;
+      return res.status(status).json({
+        message: error?.message || "Unable to export meetings",
+      });
     }
   }
 
