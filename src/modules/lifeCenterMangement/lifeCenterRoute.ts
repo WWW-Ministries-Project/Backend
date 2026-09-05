@@ -161,6 +161,11 @@ lifeCenterRouter.get(
   lifeCenterMeetingController.getMeetings,
 );
 lifeCenterRouter.get(
+  "/meetings/export",
+  [protect, permissions.can_view_life_center_scoped],
+  lifeCenterMeetingController.exportMeetings,
+);
+lifeCenterRouter.get(
   "/soulswon-eligible-first-timers",
   [protect, permissions.can_view_life_center_scoped],
   lifeCenterMeetingController.getEligibleFirstTimers,
