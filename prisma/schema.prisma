@@ -466,7 +466,6 @@ model event_online_link {
   event      event_mgt @relation(fields: [event_id], references: [id], onDelete: Cascade)
 
   @@unique([event_id, platform], map: "event_online_link_event_id_platform_key")
-  @@index([event_id], map: "event_online_link_event_id_idx")
 }
 
 model event_attendance_summary {
