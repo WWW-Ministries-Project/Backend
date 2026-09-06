@@ -61,6 +61,15 @@ eventRouter.put(
   eventContoller.updateEvent,
 );
 
+// PUT /event/online-links?id=<event_id>
+// body: { links: [ { platform: "zoom", url: "https://..." }, ... ] }
+// An entry with an empty url removes that platform's link.
+eventRouter.put(
+  "/online-links",
+  [protect, permissions.can_manage_events],
+  eventContoller.updateOnlineLinks,
+);
+
 eventRouter.delete(
   "/delete-event",
   [protect, permissions.can_delete_events],

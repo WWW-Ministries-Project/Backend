@@ -25,6 +25,7 @@ import {
   applyOnlineLinks,
   onlineLinkSelect,
   parseOnlineLinksInput,
+  readOnlineLinks,
   serializeOnlineLinks,
 } from "./onlineLinks";
 import {
@@ -1287,6 +1288,71 @@ export class eventManagement {
     } catch (error: any) {
       return res.status(500).json({
         message: "Event failed to update",
+        data: error.message,
+      });
+    }
+  };
+
+  /**
+   * Sets an event's online join links.
+   *
+   * Deliberately separate from `updateEvent`: that handler notifies and SMSes
+   * every registrant on any change, and its `value ? value : existing` merge
+   * cannot clear a field. Pasting a Zoom URL must do neither.
+   */
+  updateOnlineLinks = async (req: Request, res: Response) => {
+    try {
+      const eventId = Number(req.query?.id);
+
+      if (!Number.isInteger(eventId) || eventId <= 0) {
+        return res.status(400).json({
+          message: "A valid event id is required",
+          data: null,
+        });
+      }
+
+      const actorUserId = this.getActorUserId(req);
+
+      if (!actorUserId) {
+        return res.status(401).json({
+          message: "Unauthorized",
+          data: null,
+        });
+      }
+
+      const existing = await prisma.event_mgt.findUnique({
+        where: { id: eventId },
+        select: { id: true },
+      });
+
+      if (!existing) {
+        return res.status(404).json({
+          message: "Event not found",
+          data: null,
+        });
+      }
+
+      const parsedLinks = parseOnlineLinksInput(req.body?.links);
+
+      if ("error" in parsedLinks) {
+        return res.status(400).json({
+          message: parsedLinks.error,
+          data: null,
+        });
+      }
+
+      await applyOnlineLinks(eventId, parsedLinks.links, actorUserId);
+
+      return res.status(200).json({
+        message: "Online links updated successfully",
+        data: {
+          event_id: eventId,
+          online_links: await readOnlineLinks(eventId),
+        },
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        message: "Online links failed to update",
         data: error.message,
       });
     }
