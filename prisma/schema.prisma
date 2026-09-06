@@ -427,6 +427,7 @@ model event_mgt {
   branch                    branch?                     @relation(fields: [branch_id], references: [id])
   event_registers           event_registers[]
   event_reminders           event_reminder[]
+  online_links              event_online_link[]
   markets                   markets[]
   request                   request[]
   event_reports             event_reports[]
@@ -452,6 +453,19 @@ model event_reminder {
 
   @@index([remind_at, status], map: "event_reminder_remind_at_status_idx")
   @@index([event_id], map: "event_reminder_event_id_idx")
+}
+
+model event_online_link {
+  id         Int       @id @default(autoincrement())
+  event_id   Int
+  platform   String    @db.VarChar(32)
+  url        String    @db.VarChar(2048)
+  created_at DateTime  @default(now())
+  updated_by Int?
+  updated_at DateTime?
+  event      event_mgt @relation(fields: [event_id], references: [id], onDelete: Cascade)
+
+  @@unique([event_id, platform], map: "event_online_link_event_id_platform_key")
 }
 
 model event_attendance_summary {

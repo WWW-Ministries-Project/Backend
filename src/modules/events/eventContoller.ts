@@ -22,6 +22,13 @@ import {
   getAttendanceVisitorCountsForRecord,
 } from "./attendanceVisitorCounts";
 import {
+  applyOnlineLinks,
+  onlineLinkSelect,
+  parseOnlineLinksInput,
+  readOnlineLinks,
+  serializeOnlineLinks,
+} from "./onlineLinks";
+import {
   getBranchScopedWhere,
   getRelationBranchScopedWhere,
   resolveBranchIdOrDefault,
@@ -160,6 +167,9 @@ const eventBaseSelect = {
       id: true,
     },
   },
+  online_links: {
+    select: onlineLinkSelect,
+  },
   event_attendance: {
     select: eventAttendanceSelect,
   },
@@ -205,6 +215,9 @@ const eventMutationSelect = {
     select: {
       event_name: true,
     },
+  },
+  online_links: {
+    select: onlineLinkSelect,
   },
 };
 
@@ -669,6 +682,10 @@ export class eventManagement {
             this.mapEventRegistrationRow(registration),
           )
         : undefined,
+      // Always an array, never undefined: events selected via `publicEventSelect`
+      // have no `online_links` relation, and the unauthenticated endpoint must
+      // receive `[]` rather than real link data. Do not "fix" this to undefined.
+      online_links: serializeOnlineLinks(event?.online_links),
       event: null,
     };
 
@@ -930,9 +947,12 @@ export class eventManagement {
   }
 
   createEvent = async (req: Request, res: Response) => {
+    // Hoisted above the try so the catch block can report how many
+    // occurrences were committed before a mid-loop failure — the loop below
+    // commits each occurrence's row independently (see class-level note).
+    const createdEventIds: number[] = [];
     try {
       const data = req.body;
-      const createdEventIds: number[] = [];
       const actorUserId = this.getActorUserId(req);
 
       if (!actorUserId) {
@@ -968,6 +988,15 @@ export class eventManagement {
       const reminders = this.parseReminderOffsets(data?.reminders);
       const branch_id = await resolveBranchIdOrDefault(data?.branch_id);
 
+      const parsedLinks = parseOnlineLinksInput(data?.links);
+      if ("error" in parsedLinks) {
+        return res.status(400).json({
+          message: parsedLinks.error,
+          data: null,
+        });
+      }
+      const onlineLinks = parsedLinks.links.filter((link) => link.url);
+
       for (const occurrenceStartDate of schedulePayload.occurrenceDates) {
         const eventId = await this.createEventController({
           ...data,
@@ -984,6 +1013,12 @@ export class eventManagement {
           timezone,
         });
         createdEventIds.push(eventId);
+
+        if (onlineLinks.length) {
+          // Links entered once while creating a series apply to every
+          // occurrence that call creates. Editing them later is per-occurrence.
+          await applyOnlineLinks(eventId, onlineLinks, actorUserId);
+        }
 
         if (reminders.length && data?.start_time) {
           await this.createEventReminders(eventId, occurrenceStartDate, data.start_time, reminders);
@@ -1008,8 +1043,14 @@ export class eventManagement {
       });
     } catch (error: any) {
       return res.status(500).json({
-        message: "Event failed to create",
+        message: createdEventIds.length
+          ? "Event partially created — some occurrences were saved before the failure"
+          : "Event failed to create",
         data: error.message,
+        meta: {
+          created_count: createdEventIds.length,
+          created_event_ids: createdEventIds,
+        },
       });
     }
   };
@@ -1256,6 +1297,71 @@ export class eventManagement {
     } catch (error: any) {
       return res.status(500).json({
         message: "Event failed to update",
+        data: error.message,
+      });
+    }
+  };
+
+  /**
+   * Sets an event's online join links.
+   *
+   * Deliberately separate from `updateEvent`: that handler notifies and SMSes
+   * every registrant on any change, and its `value ? value : existing` merge
+   * cannot clear a field. Pasting a Zoom URL must do neither.
+   */
+  updateOnlineLinks = async (req: Request, res: Response) => {
+    try {
+      const eventId = Number(req.query?.id);
+
+      if (!Number.isInteger(eventId) || eventId <= 0) {
+        return res.status(400).json({
+          message: "A valid event id is required",
+          data: null,
+        });
+      }
+
+      const actorUserId = this.getActorUserId(req);
+
+      if (!actorUserId) {
+        return res.status(401).json({
+          message: "Unauthorized",
+          data: null,
+        });
+      }
+
+      const existing = await prisma.event_mgt.findUnique({
+        where: { id: eventId },
+        select: { id: true },
+      });
+
+      if (!existing) {
+        return res.status(404).json({
+          message: "Event not found",
+          data: null,
+        });
+      }
+
+      const parsedLinks = parseOnlineLinksInput(req.body?.links);
+
+      if ("error" in parsedLinks) {
+        return res.status(400).json({
+          message: parsedLinks.error,
+          data: null,
+        });
+      }
+
+      await applyOnlineLinks(eventId, parsedLinks.links, actorUserId);
+
+      return res.status(200).json({
+        message: "Online links updated successfully",
+        data: {
+          event_id: eventId,
+          online_links: await readOnlineLinks(eventId),
+        },
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        message: "Online links failed to update",
         data: error.message,
       });
     }
