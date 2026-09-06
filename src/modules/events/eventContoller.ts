@@ -21,6 +21,7 @@ import {
   createEmptyAttendanceVisitorCounts,
   getAttendanceVisitorCountsForRecord,
 } from "./attendanceVisitorCounts";
+import { onlineLinkSelect, serializeOnlineLinks } from "./onlineLinks";
 import {
   getBranchScopedWhere,
   getRelationBranchScopedWhere,
@@ -160,6 +161,9 @@ const eventBaseSelect = {
       id: true,
     },
   },
+  online_links: {
+    select: onlineLinkSelect,
+  },
   event_attendance: {
     select: eventAttendanceSelect,
   },
@@ -205,6 +209,9 @@ const eventMutationSelect = {
     select: {
       event_name: true,
     },
+  },
+  online_links: {
+    select: onlineLinkSelect,
   },
 };
 
@@ -669,6 +676,7 @@ export class eventManagement {
             this.mapEventRegistrationRow(registration),
           )
         : undefined,
+      online_links: serializeOnlineLinks(event?.online_links),
       event: null,
     };
 
