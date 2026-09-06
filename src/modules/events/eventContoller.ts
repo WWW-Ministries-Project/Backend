@@ -947,9 +947,12 @@ export class eventManagement {
   }
 
   createEvent = async (req: Request, res: Response) => {
+    // Hoisted above the try so the catch block can report how many
+    // occurrences were committed before a mid-loop failure — the loop below
+    // commits each occurrence's row independently (see class-level note).
+    const createdEventIds: number[] = [];
     try {
       const data = req.body;
-      const createdEventIds: number[] = [];
       const actorUserId = this.getActorUserId(req);
 
       if (!actorUserId) {
@@ -1040,8 +1043,14 @@ export class eventManagement {
       });
     } catch (error: any) {
       return res.status(500).json({
-        message: "Event failed to create",
+        message: createdEventIds.length
+          ? "Event partially created — some occurrences were saved before the failure"
+          : "Event failed to create",
         data: error.message,
+        meta: {
+          created_count: createdEventIds.length,
+          created_event_ids: createdEventIds,
+        },
       });
     }
   };
