@@ -41,6 +41,12 @@ const PERMISSION_KEY_ALIASES: Record<string, string[]> = {
   "Life Center": ["Life Center"],
   Announcements: ["Announcements"],
   Sermons: ["Sermons"],
+  // Promotions were split out of Announcements, so they fall back to it for
+  // anyone whose stored permissions predate the domain. An access level that
+  // sets Promotions explicitly always wins, since its own key comes first.
+  // Mirrors DOMAIN_FALLBACKS in the Frontend's src/utils/accessControl.ts —
+  // the two tables must agree or the UI shows a page the API then refuses.
+  Promotions: ["Promotions", "Announcements"],
 };
 
 const parsePermissionsObject = (permissions: any): Record<string, any> => {
@@ -1797,6 +1803,25 @@ export class Permissions {
     "Announcements",
     "admin",
     "Not authorized to delete announcements",
+  );
+
+  // Promotions
+  can_view_promotions = this.checkPermission(
+    "Promotions",
+    "view",
+    "Not authorized to view promotions",
+  );
+
+  can_manage_promotions = this.checkPermission(
+    "Promotions",
+    "manage",
+    "Not authorized to manage promotions",
+  );
+
+  can_delete_promotions = this.checkPermission(
+    "Promotions",
+    "admin",
+    "Not authorized to delete promotions",
   );
 
   // Sermons

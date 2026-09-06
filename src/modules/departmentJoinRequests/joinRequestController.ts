@@ -96,6 +96,8 @@ const getHeadedDepartmentIds = async (userId: number): Promise<number[]> => {
 
 /** List OPEN departments a member can request to join. */
 export const listOpenDepartments = async (req: Request, res: Response) => {
+  const userId = getRequestUserId(req);
+
   try {
     const branchWhere = getBranchScopedWhere(req.query?.branch_id);
     const departments = await prisma.department.findMany({
@@ -117,7 +119,43 @@ export const listOpenDepartments = async (req: Request, res: Response) => {
       },
     });
 
-    return res.status(200).json({ message: "Success", data: departments });
+    // The two rejections createJoinRequest can raise (already a member, request
+    // already pending) are only discoverable by submitting. Resolve them here so
+    // a client can label the action before the member taps it.
+    const departmentIds = departments.map((department) => department.id);
+    const [memberships, requests] = userId && departmentIds.length
+      ? await Promise.all([
+          prisma.department_positions.findMany({
+            where: { user_id: userId, department_id: { in: departmentIds } },
+            select: { department_id: true },
+          }),
+          prisma.department_join_request.findMany({
+            where: { user_id: userId, department_id: { in: departmentIds } },
+            orderBy: { requested_at: "desc" },
+            select: { department_id: true, status: true },
+          }),
+        ])
+      : [[], []];
+
+    const memberDepartmentIds = new Set(
+      memberships.map((membership) => membership.department_id),
+    );
+    // Ordered newest-first, so the first entry per department is the current one.
+    const requestStatusByDepartment = new Map<number, string>();
+    for (const request of requests) {
+      if (!requestStatusByDepartment.has(request.department_id)) {
+        requestStatusByDepartment.set(request.department_id, request.status);
+      }
+    }
+
+    const data = departments.map((department) => ({
+      ...department,
+      is_member: memberDepartmentIds.has(department.id),
+      join_request_status:
+        requestStatusByDepartment.get(department.id) ?? null,
+    }));
+
+    return res.status(200).json({ message: "Success", data });
   } catch (error) {
     return res
       .status(503)

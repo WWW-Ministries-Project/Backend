@@ -1,4 +1,4 @@
-import { promises as fs, readFileSync, existsSync } from "fs";
+import { promises as fs } from "fs";
 import { EventReportStatus, Prisma } from "@prisma/client";
 import {
   AlignmentType,
@@ -17,19 +17,9 @@ import {
   WidthType,
   convertMillimetersToTwip,
 } from "docx";
-// puppeteer ships ESM-only as of v25 — this file compiles to CommonJS, so a
-// static import (even `import type`) produces a `require()` call under
-// NodeNext module resolution. Reference the type via an explicit
-// resolution-mode assertion and import the module itself dynamically at
-// the call site instead.
-type PuppeteerModule = import(
-  "puppeteer",
-  { with: { "resolution-mode": "import" } }
-).PuppeteerNode;
-import { resolve, join } from "path";
+import { resolve } from "path";
 import {
   InputValidationError,
-  InternalServerError,
   NotFoundError,
   ResourceDuplicationError,
 } from "../../utils/custom-error-handlers";
@@ -39,20 +29,15 @@ import {
   getAttendanceVisitorCountsForRecord,
 } from "../events/attendanceVisitorCounts";
 import { getBranchScopedWhere } from "../branches/branchService";
+import {
+  escapeHtml,
+  generatePdfBufferFromHtml,
+  getChurchLogoBuffer,
+  getChurchLogoDataUri,
+  getChurchLogoMimeType,
+  slugifyFilePart,
+} from "../../utils/documentRenderer";
 
-// Load main logo once at startup — gracefully degrade if asset missing on server
-let _logoBuffer: Buffer | null = null;
-let _logoMimeType = "image/png";
-let _logoSvgDataUri = "";
-
-try {
-  const _logoAssetPath = join(process.cwd(), "src", "assets", "main-logo.png");
-  _logoBuffer = readFileSync(_logoAssetPath);
-  _logoMimeType = "image/png";
-  _logoSvgDataUri = `data:image/png;base64,${_logoBuffer.toString("base64")}`;
-} catch {
-  // Asset not found — reports generate without logo
-}
 
 type ApprovalWorkflowTx = Prisma.TransactionClient | typeof prisma;
 
@@ -313,20 +298,6 @@ const formatDisplayDate = (dateString: string): string => {
 
 const getTodayDateString = (): string => toYmdDateString(new Date());
 
-const escapeHtml = (value: unknown): string =>
-  String(value ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-
-const slugifyFilePart = (value: string): string =>
-  value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "") || "report";
 
 const parseOptionalDate = (value: unknown): string | null => {
   if (value === undefined || value === null || value === "") {
@@ -1117,7 +1088,7 @@ const renderServiceSummaryHtml = async (
 ): Promise<string> => {
   const template = await readServiceSummaryTemplateHtml();
   const replacements: Record<string, string> = {
-    "{{LOGO_DATA_URI}}": _logoSvgDataUri,
+    "{{LOGO_DATA_URI}}": getChurchLogoDataUri(),
     "{{REPORT_DATE}}": escapeHtml(formatDisplayDate(payload.event_date)),
     "{{EVENT_NAME}}": escapeHtml(payload.event_name),
     "{{EVENT_DATE}}": escapeHtml(formatDisplayDate(payload.event_date)),
@@ -1381,14 +1352,15 @@ const generateDocxBufferFromSummary = async (
   try {
     const halfWidth = Math.round(DOCX_CONTENT_WIDTH_TWIPS / 2);
     const children: Array<Paragraph | Table> = [
-      ...(_logoBuffer
+      ...(getChurchLogoBuffer()
         ? [
             new Paragraph({
               alignment: AlignmentType.CENTER,
               children: [
                 new ImageRun({
-                  data: _logoBuffer,
-                  type: _logoMimeType === "image/png" ? "png" : "jpg",
+                  data: getChurchLogoBuffer() as Buffer,
+                  type:
+                    getChurchLogoMimeType() === "image/png" ? "png" : "jpg",
                   transformation: {
                     width: 150,
                     height: 123, // maintain 552:452 png ratio → 150 * 452/552 ≈ 123
@@ -1494,92 +1466,6 @@ const generateDocxBufferFromSummary = async (
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new InputValidationError(`Unable to generate DOCX report: ${message}`);
-  }
-};
-
-// Hard cap so a stuck Chromium fails fast with a clear error instead of hanging
-// until the reverse proxy returns a 504.
-const PDF_RENDER_TIMEOUT_MS = Number(process.env.PDF_RENDER_TIMEOUT_MS) || 45_000;
-
-// Resolve the Chromium binary. The Alpine `chromium` package name for the
-// executable has varied (`/usr/bin/chromium` vs `/usr/bin/chromium-browser`),
-// so honor the env override first, then probe known locations, and finally
-// fall back to Puppeteer's bundled binary (used locally on macOS).
-const resolveChromiumExecutablePath = (): string | undefined => {
-  const candidates = [
-    process.env.PUPPETEER_EXECUTABLE_PATH,
-    "/usr/bin/chromium-browser",
-    "/usr/bin/chromium",
-    "/usr/lib/chromium/chromium",
-  ].filter((path): path is string => Boolean(path));
-
-  for (const candidate of candidates) {
-    if (existsSync(candidate)) {
-      return candidate;
-    }
-  }
-
-  // Nothing on disk — let Puppeteer use its bundled Chromium (returns undefined).
-  return undefined;
-};
-
-const generatePdfBufferFromHtml = async (html: string): Promise<Buffer> => {
-  const executablePath = resolveChromiumExecutablePath();
-  const puppeteer: PuppeteerModule = (await import("puppeteer")).default;
-
-  let browser: Awaited<ReturnType<typeof puppeteer.launch>>;
-  try {
-    browser = await puppeteer.launch({
-      headless: true,
-      executablePath,
-      // --disable-dev-shm-usage: containers default /dev/shm to 64MB, which
-      //   starves Chromium and makes it hang mid-render. Write to /tmp instead.
-      // --disable-gpu: no GPU in a headless container.
-      // (Deliberately NOT using --single-process/--no-zygote: they crash
-      //  Chromium on start on some Alpine builds, surfacing as a 500.)
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
-        "--disable-gpu",
-      ],
-    });
-  } catch (error) {
-    // Surface the real cause (missing/incompatible Chromium) instead of an
-    // opaque 500. Logged by the global handler and returned to the client.
-    const detail = error instanceof Error ? error.message : String(error);
-    throw new InternalServerError(
-      `Failed to launch Chromium for PDF generation (executablePath: ${executablePath ?? "bundled"}). ${detail}`,
-    );
-  }
-
-  try {
-    const page = await browser.newPage();
-    page.setDefaultTimeout(PDF_RENDER_TIMEOUT_MS);
-
-    // The HTML is fully self-contained (logo is an inline data URI, no external
-    // fonts/CSS/scripts), so wait only for the DOM — "networkidle0" would add
-    // needless idle-wait and can stall on stray requests.
-    await page.setContent(html, {
-      waitUntil: "domcontentloaded",
-      timeout: PDF_RENDER_TIMEOUT_MS,
-    });
-
-    const pdfBytes = await page.pdf({
-      format: "A4",
-      printBackground: true,
-      timeout: PDF_RENDER_TIMEOUT_MS,
-      margin: {
-        top: "16mm",
-        right: "12mm",
-        bottom: "16mm",
-        left: "12mm",
-      },
-    });
-
-    return Buffer.from(pdfBytes);
-  } finally {
-    await browser.close();
   }
 };
 

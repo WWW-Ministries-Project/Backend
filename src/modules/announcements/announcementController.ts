@@ -9,35 +9,6 @@ const toPositiveInt = (value: unknown): number | null => {
   return parsed;
 };
 
-/** `undefined` = field not sent (leave existing value alone on update).
- *  `null` = field explicitly cleared. Otherwise the coerced value. */
-const toOptionalString = (value: unknown): string | null | undefined => {
-  if (value === undefined) return undefined;
-  if (value === null || value === "") return null;
-  return typeof value === "string" ? value : undefined;
-};
-
-const toOptionalInt = (value: unknown): number | null | undefined => {
-  if (value === undefined) return undefined;
-  if (value === null || value === "") return null;
-  const parsed = Number(value);
-  return Number.isInteger(parsed) ? parsed : undefined;
-};
-
-const toOptionalBool = (value: unknown): boolean | undefined => {
-  if (value === undefined) return undefined;
-  if (typeof value === "boolean") return value;
-  if (typeof value === "string") return ["1", "true", "yes"].includes(value.trim().toLowerCase());
-  return Boolean(value);
-};
-
-const toOptionalDate = (value: unknown): Date | null | undefined => {
-  if (value === undefined) return undefined;
-  if (value === null || value === "") return null;
-  const date = new Date(value as string);
-  return Number.isNaN(date.getTime()) ? undefined : date;
-};
-
 const getActorUserId = (req: Request) => toPositiveInt((req as any)?.user?.id);
 
 const getStatusCode = (error: unknown): number | null => {
@@ -82,13 +53,6 @@ export class announcementController {
         position_id: toPositiveInt(body.position_id),
         branch_id: branchId,
         created_by: actorUserId,
-        image_url: toOptionalString(body.image_url),
-        cta_label: toOptionalString(body.cta_label),
-        deep_link: toOptionalString(body.deep_link),
-        sort_order: toOptionalInt(body.sort_order),
-        is_promoted: toOptionalBool(body.is_promoted),
-        start_date: toOptionalDate(body.start_date),
-        end_date: toOptionalDate(body.end_date),
       });
 
       return res
@@ -167,13 +131,6 @@ export class announcementController {
           body.position_id === undefined
             ? undefined
             : toPositiveInt(body.position_id),
-        image_url: toOptionalString(body.image_url),
-        cta_label: toOptionalString(body.cta_label),
-        deep_link: toOptionalString(body.deep_link),
-        sort_order: toOptionalInt(body.sort_order),
-        is_promoted: toOptionalBool(body.is_promoted),
-        start_date: toOptionalDate(body.start_date),
-        end_date: toOptionalDate(body.end_date),
       });
 
       return res
