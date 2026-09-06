@@ -21,7 +21,12 @@ import {
   createEmptyAttendanceVisitorCounts,
   getAttendanceVisitorCountsForRecord,
 } from "./attendanceVisitorCounts";
-import { onlineLinkSelect, serializeOnlineLinks } from "./onlineLinks";
+import {
+  applyOnlineLinks,
+  onlineLinkSelect,
+  parseOnlineLinksInput,
+  serializeOnlineLinks,
+} from "./onlineLinks";
 import {
   getBranchScopedWhere,
   getRelationBranchScopedWhere,
@@ -676,6 +681,9 @@ export class eventManagement {
             this.mapEventRegistrationRow(registration),
           )
         : undefined,
+      // Always an array, never undefined: events selected via `publicEventSelect`
+      // have no `online_links` relation, and the unauthenticated endpoint must
+      // receive `[]` rather than real link data. Do not "fix" this to undefined.
       online_links: serializeOnlineLinks(event?.online_links),
       event: null,
     };
@@ -976,6 +984,15 @@ export class eventManagement {
       const reminders = this.parseReminderOffsets(data?.reminders);
       const branch_id = await resolveBranchIdOrDefault(data?.branch_id);
 
+      const parsedLinks = parseOnlineLinksInput(data?.links);
+      if ("error" in parsedLinks) {
+        return res.status(400).json({
+          message: parsedLinks.error,
+          data: null,
+        });
+      }
+      const onlineLinks = parsedLinks.links.filter((link) => link.url);
+
       for (const occurrenceStartDate of schedulePayload.occurrenceDates) {
         const eventId = await this.createEventController({
           ...data,
@@ -992,6 +1009,12 @@ export class eventManagement {
           timezone,
         });
         createdEventIds.push(eventId);
+
+        if (onlineLinks.length) {
+          // Links entered once while creating a series apply to every
+          // occurrence that call creates. Editing them later is per-occurrence.
+          await applyOnlineLinks(eventId, onlineLinks, actorUserId);
+        }
 
         if (reminders.length && data?.start_time) {
           await this.createEventReminders(eventId, occurrenceStartDate, data.start_time, reminders);
