@@ -9,21 +9,25 @@ import { prisma } from "../../Models/context";
  */
 export const ONLINE_PLATFORMS: Record<
   string,
-  { label: string; join_label: string; host_hints: string[] }
+  { label: string; join_label: string }
 > = {
   zoom: {
     label: "Zoom",
     join_label: "Join on Zoom",
-    host_hints: ["zoom.us", "zoom.com"],
   },
   youtube: {
     label: "YouTube",
     join_label: "Watch on YouTube",
-    host_hints: ["youtube.com", "youtu.be"],
   },
 };
 
 export type OnlineLinkInput = { platform: string; url: string };
+
+/** Must match `event_online_link.url @db.VarChar(2048)` in prisma/schema.prisma. */
+const MAX_URL_LENGTH = 2048;
+
+/** Must match `event_online_link.platform @db.VarChar(32)` in prisma/schema.prisma. */
+const MAX_PLATFORM_LENGTH = 32;
 
 const normalizePlatform = (value: unknown) =>
   String(value ?? "").trim().toLowerCase();
@@ -36,6 +40,16 @@ const isValidHttpUrl = (value: string) => {
     return false;
   }
 };
+
+/**
+ * Registry lookup that ignores inherited properties. A plain `ONLINE_PLATFORMS[platform]`
+ * truthiness test accepts "constructor", "toString" and every other Object.prototype
+ * member, which would let an unsupported platform through the allowlist and into the table.
+ */
+const platformMeta = (platform: string) =>
+  Object.prototype.hasOwnProperty.call(ONLINE_PLATFORMS, platform)
+    ? ONLINE_PLATFORMS[platform]
+    : undefined;
 
 /** Prisma select for the relation — kept next to the serializer that reads it. */
 export const onlineLinkSelect = {
@@ -52,7 +66,7 @@ export const serializeOnlineLinks = (rows: unknown) => {
   return rows
     .map((row: any) => {
       const platform = normalizePlatform(row?.platform);
-      const meta = ONLINE_PLATFORMS[platform];
+      const meta = platformMeta(platform);
       const url = String(row?.url ?? "").trim();
       if (!meta || !url) return null;
       return {
@@ -98,7 +112,13 @@ export const parseOnlineLinksInput = (
       return { error: "Each online link needs a platform" };
     }
 
-    if (!ONLINE_PLATFORMS[platform]) {
+    if (platform.length > MAX_PLATFORM_LENGTH) {
+      return { error: "Online platform name is too long" };
+    }
+
+    const meta = platformMeta(platform);
+
+    if (!meta) {
       return { error: `Unsupported online platform: ${platform}` };
     }
 
@@ -111,13 +131,13 @@ export const parseOnlineLinksInput = (
 
     if (url && !isValidHttpUrl(url)) {
       return {
-        error: `The ${ONLINE_PLATFORMS[platform].label} link must be a valid http or https URL`,
+        error: `The ${meta.label} link must be a valid http or https URL`,
       };
     }
 
-    if (url.length > 2048) {
+    if (url.length > MAX_URL_LENGTH) {
       return {
-        error: `The ${ONLINE_PLATFORMS[platform].label} link is too long`,
+        error: `The ${meta.label} link is too long`,
       };
     }
 
@@ -137,32 +157,33 @@ export const applyOnlineLinks = async (
   links: OnlineLinkInput[],
   actorUserId: number | null,
 ) => {
-  for (const link of links) {
-    if (!link.url) {
-      await prisma.event_online_link.deleteMany({
-        where: { event_id: eventId, platform: link.platform },
-      });
-      continue;
-    }
+  if (links.length === 0) return;
 
-    await prisma.event_online_link.upsert({
-      where: {
-        event_id_platform: { event_id: eventId, platform: link.platform },
-      },
-      create: {
-        event_id: eventId,
-        platform: link.platform,
-        url: link.url,
-        updated_by: actorUserId,
-        updated_at: new Date(),
-      },
-      update: {
-        url: link.url,
-        updated_by: actorUserId,
-        updated_at: new Date(),
-      },
-    });
-  }
+  const operations = links.map((link) =>
+    link.url
+      ? prisma.event_online_link.upsert({
+          where: {
+            event_id_platform: { event_id: eventId, platform: link.platform },
+          },
+          create: {
+            event_id: eventId,
+            platform: link.platform,
+            url: link.url,
+            updated_by: actorUserId,
+            updated_at: new Date(),
+          },
+          update: {
+            url: link.url,
+            updated_by: actorUserId,
+            updated_at: new Date(),
+          },
+        })
+      : prisma.event_online_link.deleteMany({
+          where: { event_id: eventId, platform: link.platform },
+        }),
+  );
+
+  await prisma.$transaction(operations);
 };
 
 /** Reads back an event's links in the serialized client shape. */
