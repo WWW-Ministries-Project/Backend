@@ -101,6 +101,7 @@ model user {
   announcement_read_receipts                   announcement_read_receipt[]
   promotions_created                           promotion[]                             @relation("promotion_creator")
   sermon_series_created                        sermon_series[]                         @relation("sermon_series_creator")
+  sermons_created                              sermon[]                                @relation("sermon_creator")
   stock_notification_requests                  stock_notification_requests[]
 
   @@index([access_level_id], map: "user_access_level_id_fkey")
@@ -151,6 +152,7 @@ model branch {
   announcements            announcement[]
   promotions               promotion[]
   sermon_series            sermon_series[]
+  sermons                  sermon[]
 
   @@index([pastor_in_charge_id], map: "branch_pastor_in_charge_id_idx")
 }
@@ -2613,17 +2615,50 @@ model sermon_series {
 }
 
 model sermon {
-  id          Int      @id @default(autoincrement())
-  series_id   Int
-  youtube_url String
-  title       String
-  video_id    String?
-  position    Int      @default(0)
-  created_at  DateTime @default(now())
+  id            Int           @id @default(autoincrement())
+  series_id     Int?
+  title         String
+  description   String?       @db.Text
+  youtube_url   String
+  video_id      String?
+  thumbnail_url String?
+  status        sermon_status @default(DRAFT)
+  branch_id     Int?
+  created_by    Int
+  published_at  DateTime?
+  position      Int           @default(0)
+  created_at    DateTime      @default(now())
+  updated_at    DateTime      @updatedAt
 
-  series sermon_series @relation(fields: [series_id], references: [id], onDelete: Cascade)
+  series  sermon_series? @relation(fields: [series_id], references: [id], onDelete: SetNull)
+  branch  branch?        @relation(fields: [branch_id], references: [id])
+  creator user           @relation("sermon_creator", fields: [created_by], references: [id])
+  tags    sermon_tag_on_sermon[]
 
   @@index([series_id])
+  @@index([branch_id])
+  @@index([created_by])
+  @@index([status])
+}
+
+model sermon_tag {
+  id         Int      @id @default(autoincrement())
+  name       String
+  slug       String   @unique
+  created_at DateTime @default(now())
+
+  sermons sermon_tag_on_sermon[]
+}
+
+model sermon_tag_on_sermon {
+  sermon_id Int
+  tag_id    Int
+
+  sermon sermon     @relation(fields: [sermon_id], references: [id], onDelete: Cascade)
+  tag    sermon_tag @relation(fields: [tag_id], references: [id], onDelete: Cascade)
+
+  @@id([sermon_id, tag_id])
+  @@index([tag_id])
 }
 
 model stock_notification_requests {
