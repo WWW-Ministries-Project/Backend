@@ -4,16 +4,11 @@ import {
   getBranchScopedWhere,
   resolveBranchIdOrDefault,
 } from "../branches/branchService";
-
-export type SermonInput = {
-  id?: number;
-  youtube_url: string;
-};
+import { resolveTagIds } from "./sermonTagService";
 
 export type CreateSermonSeriesInput = {
   title: string;
   description?: string | null;
-  sermons: SermonInput[];
   branch_id?: number | null;
   created_by: number;
 };
@@ -21,7 +16,24 @@ export type CreateSermonSeriesInput = {
 export type UpdateSermonSeriesInput = {
   title?: string;
   description?: string | null;
-  sermons?: SermonInput[];
+};
+
+export type CreateSermonInput = {
+  title: string;
+  description?: string | null;
+  youtube_url: string;
+  series_id?: number | null;
+  tags?: string[];
+  branch_id?: number | null;
+  created_by: number;
+};
+
+export type UpdateSermonInput = {
+  title?: string;
+  description?: string | null;
+  youtube_url?: string;
+  series_id?: number | null;
+  tags?: string[];
 };
 
 const sermonSeriesInclude: Prisma.sermon_seriesInclude = {
@@ -95,36 +107,25 @@ const resolveYoutube = async (url: string): Promise<ResolvedVideo> => {
   }
 };
 
-const resolveSermonRows = async (sermons: SermonInput[]) => {
-  const resolved = await Promise.all(
-    sermons.map((sermon) => resolveYoutube(sermon.youtube_url)),
-  );
-  return resolved.map((video, index) => ({
-    youtube_url: sermons[index].youtube_url,
-    title: video.title,
-    video_id: video.video_id,
-    position: index,
-  }));
-};
+const thumbnailForVideoId = (videoId: string | null): string | null =>
+  videoId ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` : null;
 
-const validateSermons = (sermons: unknown): SermonInput[] => {
-  if (!Array.isArray(sermons) || sermons.length === 0) {
-    throw httpError("A series requires at least one sermon link", 400);
-  }
-  return sermons.map((sermon) => {
-    const url = (sermon as SermonInput)?.youtube_url;
-    if (!url || typeof url !== "string" || !url.trim()) {
-      throw httpError("Each sermon requires a youtube_url", 400);
-    }
-    const id = (sermon as SermonInput)?.id;
-    return { id: typeof id === "number" ? id : undefined, youtube_url: url.trim() };
-  });
-};
+const sermonInclude = {
+  series: { select: { id: true, title: true } },
+  tags: { include: { tag: { select: { id: true, name: true, slug: true } } } },
+} satisfies Prisma.sermonInclude;
+
+// Flattens the join rows so clients receive tags: [{id, name, slug}] rather
+// than tags: [{tag: {...}}].
+const shapeSermon = <T extends { tags: { tag: TagShape }[] }>(sermon: T) => ({
+  ...sermon,
+  tags: sermon.tags.map((row) => row.tag),
+});
+
+type TagShape = { id: number; name: string; slug: string };
 
 const createSermonSeries = async (input: CreateSermonSeriesInput) => {
-  const sermons = validateSermons(input.sermons);
   const branchId = await resolveBranchIdOrDefault(input.branch_id);
-  const rows = await resolveSermonRows(sermons);
 
   return prisma.sermon_series.create({
     data: {
@@ -133,7 +134,6 @@ const createSermonSeries = async (input: CreateSermonSeriesInput) => {
       status: "DRAFT",
       branch_id: branchId,
       created_by: input.created_by,
-      sermons: { create: rows },
     },
     include: sermonSeriesInclude,
   });
@@ -189,42 +189,6 @@ const updateSermonSeries = async (
     throw httpError("Sermon series not found", 404);
   }
 
-  // When sermons are supplied, replace the set: keep unchanged URLs (reuse their
-  // stored title), re-resolve new/changed URLs, drop the rest.
-  let sermonsWrite: Prisma.sermonUpdateManyWithoutSeriesNestedInput | undefined;
-  if (input.sermons !== undefined) {
-    const incoming = validateSermons(input.sermons);
-    const existingByUrl = new Map(
-      existing.sermons.map((sermon) => [sermon.youtube_url, sermon]),
-    );
-
-    const rows = await Promise.all(
-      incoming.map(async (sermon, index) => {
-        const prior = existingByUrl.get(sermon.youtube_url);
-        if (prior) {
-          return {
-            youtube_url: prior.youtube_url,
-            title: prior.title,
-            video_id: prior.video_id,
-            position: index,
-          };
-        }
-        const video = await resolveYoutube(sermon.youtube_url);
-        return {
-          youtube_url: sermon.youtube_url,
-          title: video.title,
-          video_id: video.video_id,
-          position: index,
-        };
-      }),
-    );
-
-    sermonsWrite = {
-      deleteMany: {},
-      create: rows,
-    };
-  }
-
   return prisma.sermon_series.update({
     where: { id },
     data: {
@@ -233,7 +197,6 @@ const updateSermonSeries = async (
         input.description === undefined
           ? existing.description
           : input.description,
-      ...(sermonsWrite ? { sermons: sermonsWrite } : {}),
     },
     include: sermonSeriesInclude,
   });
@@ -268,6 +231,164 @@ const unpublishSermonSeries = async (id: number) => {
   });
 };
 
+const createSermon = async (input: CreateSermonInput) => {
+  const title = input.title?.trim();
+  if (!title) throw httpError("A sermon title is required", 400);
+
+  const url = input.youtube_url?.trim();
+  if (!url) throw httpError("A YouTube link is required", 400);
+
+  const video = await resolveYoutube(url);
+  const branchId = await resolveBranchIdOrDefault(input.branch_id);
+  const tagIds = await resolveTagIds(input.tags);
+
+  if (input.series_id) {
+    const series = await prisma.sermon_series.findUnique({
+      where: { id: input.series_id },
+      select: { id: true },
+    });
+    if (!series) throw httpError("Sermon series not found", 404);
+  }
+
+  const sermon = await prisma.sermon.create({
+    data: {
+      title,
+      description: input.description?.trim() || null,
+      youtube_url: url,
+      video_id: video.video_id,
+      thumbnail_url: thumbnailForVideoId(video.video_id),
+      series_id: input.series_id ?? null,
+      branch_id: branchId,
+      created_by: input.created_by,
+      status: "DRAFT",
+      tags: { create: tagIds.map((tag_id) => ({ tag_id })) },
+    },
+    include: sermonInclude,
+  });
+
+  return shapeSermon(sermon);
+};
+
+const listSermons = async (params: {
+  branchId?: unknown;
+  seriesId?: number | null;
+  tag?: string | null;
+  status?: "DRAFT" | "PUBLISHED";
+  search?: string | null;
+  skip?: number;
+  take?: number;
+}) => {
+  const where: Prisma.sermonWhereInput = {
+    ...(getBranchScopedWhere(params.branchId) ?? {}),
+    ...(params.seriesId ? { series_id: params.seriesId } : {}),
+    ...(params.status ? { status: params.status } : {}),
+    ...(params.tag ? { tags: { some: { tag: { slug: params.tag } } } } : {}),
+    ...(params.search
+      ? {
+          OR: [
+            { title: { contains: params.search } },
+            { description: { contains: params.search } },
+          ],
+        }
+      : {}),
+  };
+
+  const [rows, total] = await prisma.$transaction([
+    prisma.sermon.findMany({
+      where,
+      include: sermonInclude,
+      orderBy: { created_at: "desc" },
+      skip: params.skip ?? 0,
+      take: params.take ?? 50,
+    }),
+    prisma.sermon.count({ where }),
+  ]);
+
+  return { data: rows.map(shapeSermon), total };
+};
+
+const getSermon = async (id: number, publishedOnly = false) => {
+  const sermon = await prisma.sermon.findUnique({
+    where: { id },
+    include: sermonInclude,
+  });
+  if (!sermon) return null;
+  if (publishedOnly && sermon.status !== "PUBLISHED") return null;
+  return shapeSermon(sermon);
+};
+
+const updateSermon = async (id: number, input: UpdateSermonInput) => {
+  const existing = await prisma.sermon.findUnique({ where: { id } });
+  if (!existing) throw httpError("Sermon not found", 404);
+
+  const data: Prisma.sermonUpdateInput = {};
+
+  if (input.title !== undefined) {
+    const title = input.title.trim();
+    if (!title) throw httpError("A sermon title is required", 400);
+    data.title = title;
+  }
+
+  if (input.description !== undefined) {
+    data.description = input.description?.trim() || null;
+  }
+
+  // Only re-hit YouTube when the URL actually changed.
+  if (input.youtube_url !== undefined) {
+    const url = input.youtube_url.trim();
+    if (!url) throw httpError("A YouTube link is required", 400);
+    if (url !== existing.youtube_url) {
+      const video = await resolveYoutube(url);
+      data.youtube_url = url;
+      data.video_id = video.video_id;
+      data.thumbnail_url = thumbnailForVideoId(video.video_id);
+    }
+  }
+
+  if (input.series_id !== undefined) {
+    data.series = input.series_id
+      ? { connect: { id: input.series_id } }
+      : { disconnect: true };
+  }
+
+  if (input.tags !== undefined) {
+    const tagIds = await resolveTagIds(input.tags);
+    data.tags = {
+      deleteMany: {},
+      create: tagIds.map((tag_id) => ({ tag_id })),
+    };
+  }
+
+  const sermon = await prisma.sermon.update({
+    where: { id },
+    data,
+    include: sermonInclude,
+  });
+
+  return shapeSermon(sermon);
+};
+
+const deleteSermon = async (id: number) =>
+  prisma.sermon.delete({ where: { id } });
+
+const setSermonStatus = async (id: number, publish: boolean) => {
+  const existing = await prisma.sermon.findUnique({ where: { id } });
+  if (!existing) throw httpError("Sermon not found", 404);
+  if (publish && existing.status === "PUBLISHED") {
+    throw httpError("Sermon is already published", 409);
+  }
+
+  const sermon = await prisma.sermon.update({
+    where: { id },
+    data: publish
+      ? { status: "PUBLISHED", published_at: new Date() }
+      : { status: "DRAFT", published_at: null },
+    include: sermonInclude,
+  });
+
+  return shapeSermon(sermon);
+};
+
 export const sermonService = {
   createSermonSeries,
   listSermonSeries,
@@ -276,4 +397,10 @@ export const sermonService = {
   deleteSermonSeries,
   publishSermonSeries,
   unpublishSermonSeries,
+  createSermon,
+  listSermons,
+  getSermon,
+  updateSermon,
+  deleteSermon,
+  setSermonStatus,
 };
