@@ -187,14 +187,12 @@ const listSermonSeries = async (
   branchId: unknown,
   skip = 0,
   take = 20,
-  status?: "DRAFT" | "PUBLISHED",
   // Narrows the sermons nested in each series, never the series rows
   // themselves: a series is a grouping, not something that gets published.
   publishedOnly = false,
 ) => {
   const where: Prisma.sermon_seriesWhereInput = {
     ...(getBranchScopedWhere(branchId) ?? {}),
-    ...(status ? { status } : {}),
   };
 
   const [data, total] = await prisma.$transaction([

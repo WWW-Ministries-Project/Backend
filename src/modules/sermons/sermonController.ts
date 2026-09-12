@@ -80,17 +80,12 @@ export class sermonController {
       const branchId = req.query?.branch_id ?? null;
       const skip = toPositiveInt(req.query?.skip) ?? 0;
       const take = toPositiveInt(req.query?.take) ?? 20;
-      const statusParam = String(req.query?.status ?? "").toUpperCase();
-      const status =
-        statusParam === "PUBLISHED" || statusParam === "DRAFT"
-          ? (statusParam as "PUBLISHED" | "DRAFT")
-          : undefined;
 
+      // No status filter: a series has no publish state to filter on.
       const result = await sermonService.listSermonSeries(
         branchId,
         skip,
         take,
-        status,
         isPublishedOnly(req),
       );
 
