@@ -33,10 +33,80 @@ import {
   getRelationBranchScopedWhere,
   resolveBranchIdOrDefault,
 } from "../branches/branchService";
+import type { event_category } from "@prisma/client";
 
 dotenv.config();
 
 const biometricAttendanceService = new EventBiometricAttendanceService();
+
+const EVENT_CATEGORIES: readonly event_category[] = ["WEEKLY", "SPECIAL"];
+
+/**
+ * Event types may be created without a category, so an absent/empty value is
+ * stored as null rather than rejected. Anything else must be a known enum
+ * member — Prisma would otherwise fail with an opaque error at write time.
+ */
+const normalizeEventCategory = (value: unknown): event_category | null => {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+
+  const candidate = String(value).trim().toUpperCase();
+  if (!EVENT_CATEGORIES.includes(candidate as event_category)) {
+    throw new Error(
+      `Field event_category must be one of ${EVENT_CATEGORIES.join(", ")}`,
+    );
+  }
+
+  return candidate as event_category;
+};
+
+/**
+ * Weekday the event runs on, 0-6 with 0 = Sunday — the same convention as JS
+ * getDay() and the recurrence weekday picker in the events UI.
+ */
+const normalizeScheduleDay = (value: unknown): number | null => {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+
+  const day = Number(value);
+  if (!Number.isInteger(day) || day < 0 || day > 6) {
+    throw new Error("Field schedule_day must be an integer from 0 (Sunday) to 6");
+  }
+
+  return day;
+};
+
+/** Accepts "HH:mm" or "HH:mm:ss" and stores "HH:mm", as event_mgt does. */
+const normalizeScheduleTime = (value: unknown, field: string): string | null => {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+
+  const time = String(value).trim();
+  if (!/^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/.test(time)) {
+    throw new Error(`Field ${field} must be a 24-hour time in HH:mm format`);
+  }
+
+  return time.slice(0, 5);
+};
+
+/**
+ * Validates the three schedule fields together so a single try/catch in the
+ * handler can turn any of them into one 400.
+ */
+const normalizeSchedule = (body: Record<string, unknown>) => ({
+  schedule_day: normalizeScheduleDay(body.schedule_day),
+  schedule_start_time: normalizeScheduleTime(
+    body.schedule_start_time,
+    "schedule_start_time",
+  ),
+  schedule_end_time: normalizeScheduleTime(
+    body.schedule_end_time,
+    "schedule_end_time",
+  ),
+});
 
 const eventAttendanceSelect = {
   created_at: true,
@@ -2763,12 +2833,22 @@ export class eventManagement {
 
   createEventType = async (req: Request, res: Response) => {
     try {
-      const { event_name, event_type, event_description } = req.body;
+      const { event_name, event_type, event_description, event_category } =
+        req.body;
 
       if (!event_name || !event_type) {
         return res.status(400).json({
           message: "Fields event_name, event_type are required",
         });
+      }
+
+      let normalizedCategory: event_category | null;
+      let normalizedSchedule: ReturnType<typeof normalizeSchedule>;
+      try {
+        normalizedCategory = normalizeEventCategory(event_category);
+        normalizedSchedule = normalizeSchedule(req.body);
+      } catch (validationError: any) {
+        return res.status(400).json({ message: validationError.message });
       }
 
       const response = await prisma.event_act.create({
@@ -2777,6 +2857,8 @@ export class eventManagement {
           event_status: "TENTATIVE",
           event_type: event_type,
           event_description: event_description,
+          event_category: normalizedCategory,
+          ...normalizedSchedule,
         },
       });
 
@@ -2795,7 +2877,8 @@ export class eventManagement {
   updateEventType = async (req: Request, res: Response) => {
     try {
       const { id } = req.query;
-      const { event_name, event_type, event_description } = req.body;
+      const { event_name, event_type, event_description, event_category } =
+        req.body;
 
       if (!event_name || !event_type || !event_description) {
         return res.status(400).json({
@@ -2811,12 +2894,35 @@ export class eventManagement {
         return res.status(404).json({ message: "Event Type not found" });
       }
 
+      let normalizedCategory: event_category | null;
+      let normalizedSchedule: ReturnType<typeof normalizeSchedule>;
+      try {
+        normalizedCategory = normalizeEventCategory(event_category);
+        normalizedSchedule = normalizeSchedule(req.body);
+      } catch (validationError: any) {
+        return res.status(400).json({ message: validationError.message });
+      }
+
+      // Category and schedule are optional: a field omitted from the payload
+      // leaves the stored value untouched, sending null/"" clears it.
+      const optionalUpdates = Object.fromEntries(
+        (
+          [
+            ["event_category", normalizedCategory],
+            ["schedule_day", normalizedSchedule.schedule_day],
+            ["schedule_start_time", normalizedSchedule.schedule_start_time],
+            ["schedule_end_time", normalizedSchedule.schedule_end_time],
+          ] as const
+        ).filter(([field]) => req.body[field] !== undefined),
+      );
+
       const response = await prisma.event_act.update({
         where: { id: Number(id) },
         data: {
           event_name: event_name,
           event_type: event_type,
           event_description: event_description,
+          ...optionalUpdates,
         },
       });
 
