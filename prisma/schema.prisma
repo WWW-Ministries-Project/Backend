@@ -9,99 +9,99 @@ datasource db {
 }
 
 model user {
-  id                       Int                        @id @default(autoincrement())
-  name                     String
-  email                    String?                    @unique
-  is_active                Boolean?                   @default(true)
-  partner                  Boolean?                   @default(false)
-  is_user                  Boolean?                   @default(false)
-  password                 String?
-  member_id                String?
-  position_id              Int?
-  department_id            Int?
-  created_at               DateTime                   @default(now())
-  updated_at               DateTime?
-  access_level_id          Int?
-  membership_type          membership_type?
-  parent_id                Int?
-  status                   status_type?
-  is_sync                  Boolean?                   @default(false)
-  sync_id                  Int?
-  mode                     classFormat?
-  spouse_id                Int?                       @unique
-  appointments             appointment[]
-  asset_history            asset_history[]
-  assignment_submission    assignment_submission[]
-  timeSlots                availability[]
-  certificate              certificate[]
-  course                   course[]
-  department_head          department[]
-  department_positions     department_positions[]
-  enrollments              enrollment[]
-  event_attendance         event_attendance[]
-  event_attendance_summary event_attendance_summary[]
-  event_registers          event_registers[]
-  family_of_links          family_relation[]          @relation("FamilyUser")
-  family_links             family_relation[]          @relation("UserFamily")
-  followUps                follow_up[]
-  life_center_member       life_center_member[]
-  notes                    note[]
-  orders                   orders[]
-  prayerRequests           prayer_request[]
-  received_notifications   in_app_notification[]       @relation("notification_recipient")
-  acted_notifications      in_app_notification[]       @relation("notification_actor")
-  notification_preferences notification_preference[]
-  push_subscriptions       notification_push_subscription[]
-  device_tokens            notification_device_token[]
-  push_delivery_jobs       notification_push_delivery_job[] @relation("notification_push_delivery_user")
-  sms_delivery_jobs        notification_sms_delivery_job[]  @relation("notification_sms_delivery_user")
-  system_failure_notification_settings system_notification_settings[] @relation("system_failure_notification_recipient")
-  system_failure_notification_settings_updates system_notification_settings[] @relation("system_failure_notification_updated_by")
-  attendance_timing_settings_updates attendance_timing_settings[] @relation("attendance_timing_settings_updated_by")
-  matched_biometric_punches event_biometric_punch[] @relation("event_biometric_punch_matched_user")
-  imported_biometric_punches event_biometric_punch[] @relation("event_biometric_punch_imported_by_user")
-  created_biometric_import_jobs event_biometric_import_job[] @relation("event_biometric_import_job_created_by_user")
-  created_biometric_stage_batches event_biometric_stage_batch[] @relation("event_biometric_stage_batch_created_by_user")
-  event_reports_created    event_reports[]                 @relation("event_report_created_by")
-  event_reports_updated    event_reports[]                 @relation("event_report_updated_by")
-  event_reports_final_acted event_reports[]                @relation("event_report_final_acted_by")
-  event_report_department_approvals event_report_department_approvals[] @relation("event_report_department_approved_by")
-  event_report_attendance_approvals event_report_attendance_approval[] @relation("event_report_attendance_approved_by")
-  event_report_finance_updates event_report_finance[]      @relation("event_report_finance_updated_by")
-  event_report_finance_approvals event_report_finance_approvals[] @relation("event_report_finance_approved_by")
-  event_report_finance_role_owner event_report_finance_approvals[] @relation("event_report_finance_role_owner")
-  event_report_final_approvals event_report_final_approval_instances[] @relation("event_report_final_acted_by")
-  event_report_final_assigned event_report_final_approval_instances[] @relation("event_report_final_assigned_to")
-  event_report_viewership   event_report_viewers[]
-  event_report_notification_events_actor event_report_notification_events[] @relation("event_report_notification_actor")
-  request                  request[]
-  hod_user                 request_approvals[]        @relation("hod_user")
-  ps_user                  request_approvals[]        @relation("ps_user")
-  user_request_comments    request_comments[]
-  soul_won                 soul_won[]                 @relation("user_soul_winner")
-  life_center_meetings_created life_center_meeting[]   @relation("life_center_meeting_created_by")
-  soul_won_membership      soul_won?                  @relation("soul_won_member")
-  access                   access_level?              @relation(fields: [access_level_id], references: [id])
-  parent                   user?                      @relation("UserParent", fields: [parent_id], references: [id])
-  children                 user[]                     @relation("UserParent")
-  position                 position?                  @relation(fields: [position_id], references: [id])
-  spouse                   user?                      @relation("SpouseRelation", fields: [spouse_id], references: [id])
-  spouse_of                user?                      @relation("SpouseRelation")
-  branch_id                Int?
-  branch                   branch?                    @relation(fields: [branch_id], references: [id])
-  pastor_in_charge_branches branch[]                  @relation("branch_pastor_in_charge")
-  department               user_departments?
-  department_join_requests department_join_request[] @relation("JoinRequestUser")
-  decided_join_requests    department_join_request[] @relation("JoinRequestDecider")
-  user_info                user_info?
-  pledges_created  pledge[]        @relation("pledge_created_by")
-  pledge_callings  pledge_caller[] @relation("pledge_caller_user")
-  pledges          pledger[]       @relation("pledger_user")
-  announcements_created announcement[] @relation("announcement_creator")
-  announcement_read_receipts announcement_read_receipt[]
-  promotions_created    promotion[] @relation("promotion_creator")
-  sermon_series_created sermon_series[] @relation("sermon_series_creator")
-  stock_notification_requests stock_notification_requests[]
+  id                                           Int                                     @id @default(autoincrement())
+  name                                         String
+  email                                        String?                                 @unique
+  is_active                                    Boolean?                                @default(true)
+  partner                                      Boolean?                                @default(false)
+  is_user                                      Boolean?                                @default(false)
+  password                                     String?
+  member_id                                    String?
+  position_id                                  Int?
+  department_id                                Int?
+  created_at                                   DateTime                                @default(now())
+  updated_at                                   DateTime?
+  access_level_id                              Int?
+  membership_type                              membership_type?
+  parent_id                                    Int?
+  status                                       status_type?
+  is_sync                                      Boolean?                                @default(false)
+  sync_id                                      Int?
+  mode                                         classFormat?
+  spouse_id                                    Int?                                    @unique
+  appointments                                 appointment[]
+  asset_history                                asset_history[]
+  assignment_submission                        assignment_submission[]
+  timeSlots                                    availability[]
+  certificate                                  certificate[]
+  course                                       course[]
+  department_head                              department[]
+  department_positions                         department_positions[]
+  enrollments                                  enrollment[]
+  event_attendance                             event_attendance[]
+  event_attendance_summary                     event_attendance_summary[]
+  event_registers                              event_registers[]
+  family_of_links                              family_relation[]                       @relation("FamilyUser")
+  family_links                                 family_relation[]                       @relation("UserFamily")
+  followUps                                    follow_up[]
+  life_center_member                           life_center_member[]
+  notes                                        note[]
+  orders                                       orders[]
+  prayerRequests                               prayer_request[]
+  received_notifications                       in_app_notification[]                   @relation("notification_recipient")
+  acted_notifications                          in_app_notification[]                   @relation("notification_actor")
+  notification_preferences                     notification_preference[]
+  push_subscriptions                           notification_push_subscription[]
+  device_tokens                                notification_device_token[]
+  push_delivery_jobs                           notification_push_delivery_job[]        @relation("notification_push_delivery_user")
+  sms_delivery_jobs                            notification_sms_delivery_job[]         @relation("notification_sms_delivery_user")
+  system_failure_notification_settings         system_notification_settings[]          @relation("system_failure_notification_recipient")
+  system_failure_notification_settings_updates system_notification_settings[]          @relation("system_failure_notification_updated_by")
+  attendance_timing_settings_updates           attendance_timing_settings[]            @relation("attendance_timing_settings_updated_by")
+  matched_biometric_punches                    event_biometric_punch[]                 @relation("event_biometric_punch_matched_user")
+  imported_biometric_punches                   event_biometric_punch[]                 @relation("event_biometric_punch_imported_by_user")
+  created_biometric_import_jobs                event_biometric_import_job[]            @relation("event_biometric_import_job_created_by_user")
+  created_biometric_stage_batches              event_biometric_stage_batch[]           @relation("event_biometric_stage_batch_created_by_user")
+  event_reports_created                        event_reports[]                         @relation("event_report_created_by")
+  event_reports_updated                        event_reports[]                         @relation("event_report_updated_by")
+  event_reports_final_acted                    event_reports[]                         @relation("event_report_final_acted_by")
+  event_report_department_approvals            event_report_department_approvals[]     @relation("event_report_department_approved_by")
+  event_report_attendance_approvals            event_report_attendance_approval[]      @relation("event_report_attendance_approved_by")
+  event_report_finance_updates                 event_report_finance[]                  @relation("event_report_finance_updated_by")
+  event_report_finance_approvals               event_report_finance_approvals[]        @relation("event_report_finance_approved_by")
+  event_report_finance_role_owner              event_report_finance_approvals[]        @relation("event_report_finance_role_owner")
+  event_report_final_approvals                 event_report_final_approval_instances[] @relation("event_report_final_acted_by")
+  event_report_final_assigned                  event_report_final_approval_instances[] @relation("event_report_final_assigned_to")
+  event_report_viewership                      event_report_viewers[]
+  event_report_notification_events_actor       event_report_notification_events[]      @relation("event_report_notification_actor")
+  request                                      request[]
+  hod_user                                     request_approvals[]                     @relation("hod_user")
+  ps_user                                      request_approvals[]                     @relation("ps_user")
+  user_request_comments                        request_comments[]
+  soul_won                                     soul_won[]                              @relation("user_soul_winner")
+  life_center_meetings_created                 life_center_meeting[]                   @relation("life_center_meeting_created_by")
+  soul_won_membership                          soul_won?                               @relation("soul_won_member")
+  access                                       access_level?                           @relation(fields: [access_level_id], references: [id])
+  parent                                       user?                                   @relation("UserParent", fields: [parent_id], references: [id])
+  children                                     user[]                                  @relation("UserParent")
+  position                                     position?                               @relation(fields: [position_id], references: [id])
+  spouse                                       user?                                   @relation("SpouseRelation", fields: [spouse_id], references: [id])
+  spouse_of                                    user?                                   @relation("SpouseRelation")
+  branch_id                                    Int?
+  branch                                       branch?                                 @relation(fields: [branch_id], references: [id])
+  pastor_in_charge_branches                    branch[]                                @relation("branch_pastor_in_charge")
+  department                                   user_departments?
+  department_join_requests                     department_join_request[]               @relation("JoinRequestUser")
+  decided_join_requests                        department_join_request[]               @relation("JoinRequestDecider")
+  user_info                                    user_info?
+  pledges_created                              pledge[]                                @relation("pledge_created_by")
+  pledge_callings                              pledge_caller[]                         @relation("pledge_caller_user")
+  pledges                                      pledger[]                               @relation("pledger_user")
+  announcements_created                        announcement[]                          @relation("announcement_creator")
+  announcement_read_receipts                   announcement_read_receipt[]
+  promotions_created                           promotion[]                             @relation("promotion_creator")
+  sermon_series_created                        sermon_series[]                         @relation("sermon_series_creator")
+  stock_notification_requests                  stock_notification_requests[]
 
   @@index([access_level_id], map: "user_access_level_id_fkey")
   @@index([position_id], map: "user_position_id_fkey")
@@ -115,71 +115,71 @@ model user {
 }
 
 model branch {
-  id                     Int                     @id @default(autoincrement())
-  name                   String                  @unique
-  description            String?
-  location               String?
-  pastor_in_charge_id    Int?
-  is_default             Boolean                 @default(false)
-  created_at             DateTime                @default(now())
-  updated_at             DateTime                @updatedAt
-  pastor_in_charge       user?                   @relation("branch_pastor_in_charge", fields: [pastor_in_charge_id], references: [id], onDelete: SetNull)
-  users                  user[]
-  departments            department[]
-  assets                 assets[]
-  events                 event_mgt[]
-  requests               request[]
-  event_reports          event_reports[]
-  programs               program[]
-  visitors               visitor[]
-  life_centers           life_center[]
-  markets                markets[]
-  annual_themes          AnnualTheme[]
-  receipt_configs        receiptConfig[]
-  payment_configs        paymentConfig[]
-  bank_account_configs   bankAccountConfig[]
-  giving_options         givingOption[]
-  giving_contributions   givingContribution[]
-  tithe_breakdown_configs titheBreakdownConfig[]
-  financials             financials[]
+  id                       Int                       @id @default(autoincrement())
+  name                     String                    @unique
+  description              String?
+  location                 String?
+  pastor_in_charge_id      Int?
+  is_default               Boolean                   @default(false)
+  created_at               DateTime                  @default(now())
+  updated_at               DateTime                  @updatedAt
+  pastor_in_charge         user?                     @relation("branch_pastor_in_charge", fields: [pastor_in_charge_id], references: [id], onDelete: SetNull)
+  users                    user[]
+  departments              department[]
+  assets                   assets[]
+  events                   event_mgt[]
+  requests                 request[]
+  event_reports            event_reports[]
+  programs                 program[]
+  visitors                 visitor[]
+  life_centers             life_center[]
+  markets                  markets[]
+  annual_themes            AnnualTheme[]
+  receipt_configs          receiptConfig[]
+  payment_configs          paymentConfig[]
+  bank_account_configs     bankAccountConfig[]
+  giving_options           givingOption[]
+  giving_contributions     givingContribution[]
+  tithe_breakdown_configs  titheBreakdownConfig[]
+  financials               financials[]
   finance_approval_configs finance_approval_config[]
-  availabilities         availability[]
-  appointments           appointment[]
-  pledges                pledge[]
-  pledge_payments        pledge_payment[]
-  positions              position[]
-  announcements          announcement[]
-  promotions             promotion[]
-  sermon_series          sermon_series[]
+  availabilities           availability[]
+  appointments             appointment[]
+  pledges                  pledge[]
+  pledge_payments          pledge_payment[]
+  positions                position[]
+  announcements            announcement[]
+  promotions               promotion[]
+  sermon_series            sermon_series[]
 
   @@index([pastor_in_charge_id], map: "branch_pastor_in_charge_id_idx")
 }
 
 model system_notification_settings {
-  id                              Int      @id
+  id                               Int      @id
   system_failure_recipient_user_id Int?
-  updated_by_user_id              Int?
-  created_at                      DateTime @default(now())
-  updated_at                      DateTime @updatedAt
-  system_failure_recipient        user?    @relation("system_failure_notification_recipient", fields: [system_failure_recipient_user_id], references: [id], map: "sys_notif_settings_recipient_fk")
-  updated_by                      user?    @relation("system_failure_notification_updated_by", fields: [updated_by_user_id], references: [id], map: "sys_notif_settings_updated_by_fk")
+  updated_by_user_id               Int?
+  created_at                       DateTime @default(now())
+  updated_at                       DateTime @updatedAt
+  system_failure_recipient         user?    @relation("system_failure_notification_recipient", fields: [system_failure_recipient_user_id], references: [id], map: "sys_notif_settings_recipient_fk")
+  updated_by                       user?    @relation("system_failure_notification_updated_by", fields: [updated_by_user_id], references: [id], map: "sys_notif_settings_updated_by_fk")
 
   @@index([system_failure_recipient_user_id], map: "system_notification_settings_recipient_idx")
   @@index([updated_by_user_id], map: "system_notification_settings_updated_by_idx")
 }
 
 model attendance_timing_settings {
-  id                Int                    @id
-  early_value       Int                    @default(15)
-  early_unit        attendance_timing_unit @default(MINUTES)
-  on_time_value     Int                    @default(15)
-  on_time_unit      attendance_timing_unit @default(MINUTES)
-  late_value        Int                    @default(15)
-  late_unit         attendance_timing_unit @default(MINUTES)
+  id                 Int                    @id
+  early_value        Int                    @default(15)
+  early_unit         attendance_timing_unit @default(MINUTES)
+  on_time_value      Int                    @default(15)
+  on_time_unit       attendance_timing_unit @default(MINUTES)
+  late_value         Int                    @default(15)
+  late_unit          attendance_timing_unit @default(MINUTES)
   updated_by_user_id Int?
-  created_at        DateTime               @default(now())
-  updated_at        DateTime               @updatedAt
-  updated_by        user?                  @relation("attendance_timing_settings_updated_by", fields: [updated_by_user_id], references: [id], map: "attendance_timing_settings_updated_by_fk")
+  created_at         DateTime               @default(now())
+  updated_at         DateTime               @updatedAt
+  updated_by         user?                  @relation("attendance_timing_settings_updated_by", fields: [updated_by_user_id], references: [id], map: "attendance_timing_settings_updated_by_fk")
 
   @@index([updated_by_user_id], map: "attendance_timing_settings_updated_by_idx")
 }
@@ -219,12 +219,12 @@ model user_info {
 }
 
 model family_relation {
-  id        Int    @id @default(autoincrement())
+  id        Int                  @id @default(autoincrement())
   user_id   Int
   family_id Int
   relation  family_relation_type
-  family    user   @relation("FamilyUser", fields: [family_id], references: [id])
-  user      user   @relation("UserFamily", fields: [user_id], references: [id])
+  family    user                 @relation("FamilyUser", fields: [family_id], references: [id])
+  user      user                 @relation("UserFamily", fields: [user_id], references: [id])
 
   @@unique([user_id, family_id])
   @@index([family_id], map: "family_relation_family_id_fkey")
@@ -250,28 +250,28 @@ model user_emergency_contact {
 }
 
 model department {
-  id                   Int                    @id @default(autoincrement())
-  name                 String
-  department_head      Int?
-  description          String?
-  created_by           Int
-  created_at           DateTime               @default(now())
-  updated_by           Int?
-  updated_at           DateTime?
-  is_sync              Boolean?               @default(false)
-  sync_id              Int?
-  branch_id            Int?
-  status               department_status      @default(OPEN)
-  assets               assets[]
-  department_head_info user?                  @relation(fields: [department_head], references: [id])
-  branch               branch?                @relation(fields: [branch_id], references: [id])
-  department_positions department_positions[]
-  position             position[]
-  request              request[]
+  id                                Int                                 @id @default(autoincrement())
+  name                              String
+  department_head                   Int?
+  description                       String?
+  created_by                        Int
+  created_at                        DateTime                            @default(now())
+  updated_by                        Int?
+  updated_at                        DateTime?
+  is_sync                           Boolean?                            @default(false)
+  sync_id                           Int?
+  branch_id                         Int?
+  status                            department_status                   @default(OPEN)
+  assets                            assets[]
+  department_head_info              user?                               @relation(fields: [department_head], references: [id])
+  branch                            branch?                             @relation(fields: [branch_id], references: [id])
+  department_positions              department_positions[]
+  position                          position[]
+  request                           request[]
   event_report_department_approvals event_report_department_approvals[]
-  user_departments     user_departments[]
-  join_requests        department_join_request[]
-  announcements        announcement[]
+  user_departments                  user_departments[]
+  join_requests                     department_join_request[]
+  announcements                     announcement[]
 
   @@index([department_head], map: "department_department_head_fkey")
   @@index([branch_id], map: "department_branch_id_idx")
@@ -310,21 +310,21 @@ model department_join_request {
 }
 
 model position {
-  id                   Int                    @id @default(autoincrement())
+  id                   Int                          @id @default(autoincrement())
   name                 String
   category             String?
   department_id        Int?
   description          String?
   branch_id            Int?
   created_by           Int
-  created_at           DateTime               @default(now())
+  created_at           DateTime                     @default(now())
   updated_by           Int?
   updated_at           DateTime?
-  is_sync              Boolean?               @default(false)
+  is_sync              Boolean?                     @default(false)
   sync_id              Int?
   department_positions department_positions[]
-  department           department?            @relation(fields: [department_id], references: [id])
-  branch               branch?                @relation(fields: [branch_id], references: [id])
+  department           department?                  @relation(fields: [department_id], references: [id])
+  branch               branch?                      @relation(fields: [branch_id], references: [id])
   eligibility_rules    position_eligibility_rules[]
   user                 user[]
   announcements        announcement[]
@@ -384,47 +384,51 @@ model asset_history {
 }
 
 model event_act {
-  id                Int           @id @default(autoincrement())
-  event_name        String?       @default("event_name")
-  event_status      event_status?
-  event_type        event_type?
-  event_description String?       @default("event_description")
-  event_mgt         event_mgt[]
-  requests          request[]     @relation("RequestEventType")
+  id                  Int             @id @default(autoincrement())
+  event_name          String?         @default("event_name")
+  event_status        event_status?
+  event_type          event_type?
+  event_category      event_category?
+  schedule_day        Int?
+  schedule_start_time String?         @db.VarChar(5)
+  schedule_end_time   String?         @db.VarChar(5)
+  event_description   String?         @default("event_description")
+  event_mgt           event_mgt[]
+  requests            request[]       @relation("RequestEventType")
 }
 
 model event_mgt {
-  id                        Int                         @id @default(autoincrement())
+  id                        Int                          @id @default(autoincrement())
   start_time                String?
   end_time                  String?
   location                  String?
   description               String?
   poster                    String?
   qr_code                   String?
-  public_registration_token String                      @default(uuid()) @unique
+  public_registration_token String                       @unique @default(uuid())
   created_by                Int
-  created_at                DateTime                    @default(now())
+  created_at                DateTime                     @default(now())
   updated_by                Int?
   updated_at                DateTime?
   end_date                  DateTime?
   start_date                DateTime?
   recurrence_end_date       DateTime?
   recurrence_series_id      String?
-  timezone                  String?                     @default("UTC")
+  timezone                  String?                      @default("UTC")
   event_status              event_status?
   event_type                event_type?
-  requires_registration     Boolean                     @default(false)
+  requires_registration     Boolean                      @default(false)
   registration_end_date     DateTime?
   registration_capacity     Int?
-  registration_audience     event_registration_audience @default(MEMBERS_AND_NON_MEMBERS)
+  registration_audience     event_registration_audience  @default(MEMBERS_AND_NON_MEMBERS)
   event_name_id             Int
   branch_id                 Int?
   event_attendance          event_attendance[]
   attendance_summaries      event_attendance_summary[]
   biometric_punches         event_biometric_punch[]
   biometric_import_jobs     event_biometric_import_job[]
-  event                     event_act                   @relation(fields: [event_name_id], references: [id])
-  branch                    branch?                     @relation(fields: [branch_id], references: [id])
+  event                     event_act                    @relation(fields: [event_name_id], references: [id])
+  branch                    branch?                      @relation(fields: [branch_id], references: [id])
   event_registers           event_registers[]
   event_reminders           event_reminder[]
   online_links              event_online_link[]
@@ -535,28 +539,28 @@ model event_biometric_punch {
 }
 
 model event_biometric_import_job {
-  id                  Int                           @id @default(autoincrement())
-  event_mgt_id        Int
+  id                    Int                          @id @default(autoincrement())
+  event_mgt_id          Int
   source_stage_batch_id Int?
-  occurrence_date     DateTime
-  dry_run             Boolean                       @default(false)
-  status              biometric_import_job_status   @default(QUEUED)
-  progress_percentage Int                           @default(0)
-  current_step        String?
-  progress_payload    Json?
-  request_payload     Json
-  result_payload      Json?
-  error_message       String?                       @db.Text
-  created_by          Int
-  created_by_name     String
-  created_at          DateTime                      @default(now())
-  started_at          DateTime?
-  completed_at        DateTime?
-  failed_at           DateTime?
-  updated_at          DateTime                      @updatedAt
-  event               event_mgt                     @relation(fields: [event_mgt_id], references: [id])
-  created_by_user     user                          @relation("event_biometric_import_job_created_by_user", fields: [created_by], references: [id])
-  source_stage_batch  event_biometric_stage_batch?  @relation(fields: [source_stage_batch_id], references: [id])
+  occurrence_date       DateTime
+  dry_run               Boolean                      @default(false)
+  status                biometric_import_job_status  @default(QUEUED)
+  progress_percentage   Int                          @default(0)
+  current_step          String?
+  progress_payload      Json?
+  request_payload       Json
+  result_payload        Json?
+  error_message         String?                      @db.Text
+  created_by            Int
+  created_by_name       String
+  created_at            DateTime                     @default(now())
+  started_at            DateTime?
+  completed_at          DateTime?
+  failed_at             DateTime?
+  updated_at            DateTime                     @updatedAt
+  event                 event_mgt                    @relation(fields: [event_mgt_id], references: [id])
+  created_by_user       user                         @relation("event_biometric_import_job_created_by_user", fields: [created_by], references: [id])
+  source_stage_batch    event_biometric_stage_batch? @relation(fields: [source_stage_batch_id], references: [id])
 
   @@index([event_mgt_id, occurrence_date], map: "event_biometric_import_job_event_date_idx")
   @@index([status, created_at], map: "event_biometric_import_job_status_created_idx")
@@ -565,33 +569,33 @@ model event_biometric_import_job {
 }
 
 model event_biometric_stage_batch {
-  id               Int                         @id @default(autoincrement())
-  status           biometric_import_job_status @default(QUEUED)
-  source           String                      @default("ZTECO_LIBRARY")
-  total_punches    Int                         @default(0)
-  staged_punches   Int                         @default(0)
-  duplicate_punches Int                        @default(0)
-  event_count      Int                         @default(0)
-  request_payload  Json
-  result_payload   Json?
-  error_message    String?                     @db.Text
-  created_by       Int
-  created_by_name  String
-  created_at       DateTime                    @default(now())
-  started_at       DateTime?
-  completed_at     DateTime?
-  failed_at        DateTime?
-  updated_at       DateTime                    @updatedAt
-  created_by_user  user                        @relation("event_biometric_stage_batch_created_by_user", fields: [created_by], references: [id])
-  punches          event_biometric_stage_punch[]
-  import_jobs      event_biometric_import_job[]
+  id                Int                           @id @default(autoincrement())
+  status            biometric_import_job_status   @default(QUEUED)
+  source            String                        @default("ZTECO_LIBRARY")
+  total_punches     Int                           @default(0)
+  staged_punches    Int                           @default(0)
+  duplicate_punches Int                           @default(0)
+  event_count       Int                           @default(0)
+  request_payload   Json
+  result_payload    Json?
+  error_message     String?                       @db.Text
+  created_by        Int
+  created_by_name   String
+  created_at        DateTime                      @default(now())
+  started_at        DateTime?
+  completed_at      DateTime?
+  failed_at         DateTime?
+  updated_at        DateTime                      @updatedAt
+  created_by_user   user                          @relation("event_biometric_stage_batch_created_by_user", fields: [created_by], references: [id])
+  punches           event_biometric_stage_punch[]
+  import_jobs       event_biometric_import_job[]
 
   @@index([status, created_at], map: "event_biometric_stage_batch_status_created_idx")
   @@index([created_by, created_at], map: "event_biometric_stage_batch_created_by_time_idx")
 }
 
 model event_biometric_stage_punch {
-  id                 Int                          @id @default(autoincrement())
+  id                 Int                         @id @default(autoincrement())
   batch_id           Int
   device_id          Int?
   device_ip          String
@@ -599,11 +603,11 @@ model event_biometric_stage_punch {
   device_user_id     String
   device_user_name   String?
   record_time        DateTime
-  state              Int                          @default(-1)
+  state              Int                         @default(-1)
   source_fingerprint String
   raw_payload        Json
-  created_at         DateTime                     @default(now())
-  batch              event_biometric_stage_batch  @relation(fields: [batch_id], references: [id], onDelete: Cascade)
+  created_at         DateTime                    @default(now())
+  batch              event_biometric_stage_batch @relation(fields: [batch_id], references: [id], onDelete: Cascade)
 
   @@unique([batch_id, source_fingerprint], map: "event_biometric_stage_punch_batch_fingerprint_key")
   @@index([batch_id, record_time], map: "event_biometric_stage_punch_batch_time_idx")
@@ -632,7 +636,7 @@ model event_registers {
 }
 
 model request {
-  id                      Int                              @id @default(autoincrement())
+  id                      Int                               @id @default(autoincrement())
   request_id              String
   user_id                 Int
   event_id                Int?
@@ -646,14 +650,14 @@ model request {
   updated_at              DateTime?
   branch_id               Int?
   attachmentsList         request_attachment[]
-  branch                  branch?                          @relation(fields: [branch_id], references: [id])
-  department              department                       @relation(fields: [department_id], references: [id])
-  event                   event_mgt?                       @relation(fields: [event_id], references: [id])
-  eventType               event_act?                       @relation("RequestEventType", fields: [event_type_id], references: [id])
-  user                    user                             @relation(fields: [user_id], references: [id])
+  branch                  branch?                           @relation(fields: [branch_id], references: [id])
+  department              department                        @relation(fields: [department_id], references: [id])
+  event                   event_mgt?                        @relation(fields: [event_id], references: [id])
+  eventType               event_act?                        @relation("RequestEventType", fields: [event_type_id], references: [id])
+  user                    user                              @relation(fields: [user_id], references: [id])
   request_approvals       request_approvals?
   request_comments        request_comments[]
-  products                requested_item[]                 @relation("ProductRequest")
+  products                requested_item[]                  @relation("ProductRequest")
   approval_instances      requisition_approval_instances[]
   notification_events     requisition_notification_events[]
 
@@ -667,30 +671,30 @@ model request {
 }
 
 model event_reports {
-  id                   Int                                  @id @default(autoincrement())
-  event_id             Int
-  event_date           DateTime
-  status               EventReportStatus                    @default(DRAFT)
-  final_approver_user_id Int?
-  final_acted_by_user_id Int?
-  final_acted_at       DateTime?
-  created_by           Int
-  updated_by           Int?
-  created_at           DateTime                             @default(now())
-  updated_at           DateTime                             @default(now()) @updatedAt
-  branch_id            Int?
-  branch               branch?                              @relation(fields: [branch_id], references: [id])
-  event                event_mgt                            @relation(fields: [event_id], references: [id], onDelete: Cascade)
-  creator              user                                 @relation("event_report_created_by", fields: [created_by], references: [id])
-  updater              user?                                @relation("event_report_updated_by", fields: [updated_by], references: [id])
-  final_actor          user?                                @relation("event_report_final_acted_by", fields: [final_acted_by_user_id], references: [id])
-  department_approvals event_report_department_approvals[]
-  attendance_approval  event_report_attendance_approval?
-  finance              event_report_finance?
-  finance_approvals    event_report_finance_approvals[]
-  viewers              event_report_viewers[]
+  id                       Int                                     @id @default(autoincrement())
+  event_id                 Int
+  event_date               DateTime
+  status                   EventReportStatus                       @default(DRAFT)
+  final_approver_user_id   Int?
+  final_acted_by_user_id   Int?
+  final_acted_at           DateTime?
+  created_by               Int
+  updated_by               Int?
+  created_at               DateTime                                @default(now())
+  updated_at               DateTime                                @default(now()) @updatedAt
+  branch_id                Int?
+  branch                   branch?                                 @relation(fields: [branch_id], references: [id])
+  event                    event_mgt                               @relation(fields: [event_id], references: [id], onDelete: Cascade)
+  creator                  user                                    @relation("event_report_created_by", fields: [created_by], references: [id])
+  updater                  user?                                   @relation("event_report_updated_by", fields: [updated_by], references: [id])
+  final_actor              user?                                   @relation("event_report_final_acted_by", fields: [final_acted_by_user_id], references: [id])
+  department_approvals     event_report_department_approvals[]
+  attendance_approval      event_report_attendance_approval?
+  finance                  event_report_finance?
+  finance_approvals        event_report_finance_approvals[]
+  viewers                  event_report_viewers[]
   final_approval_instances event_report_final_approval_instances[]
-  notification_events  event_report_notification_events[]
+  notification_events      event_report_notification_events[]
 
   @@unique([event_id, event_date])
   @@index([event_id])
@@ -703,15 +707,15 @@ model event_reports {
 }
 
 model event_report_department_approvals {
-  id                 Int                              @id @default(autoincrement())
-  event_report_id    Int
-  department_id      Int
-  status             EventReportSectionApprovalStatus @default(PENDING)
+  id                  Int                              @id @default(autoincrement())
+  event_report_id     Int
+  department_id       Int
+  status              EventReportSectionApprovalStatus @default(PENDING)
   approved_by_user_id Int?
-  approved_at        DateTime?
-  event_report       event_reports                    @relation(fields: [event_report_id], references: [id], onDelete: Cascade)
-  department         department                       @relation(fields: [department_id], references: [id])
-  approved_by_user   user?                            @relation("event_report_department_approved_by", fields: [approved_by_user_id], references: [id])
+  approved_at         DateTime?
+  event_report        event_reports                    @relation(fields: [event_report_id], references: [id], onDelete: Cascade)
+  department          department                       @relation(fields: [department_id], references: [id])
+  approved_by_user    user?                            @relation("event_report_department_approved_by", fields: [approved_by_user_id], references: [id])
 
   @@unique([event_report_id, department_id], map: "er_dept_appr_erid_did_uk")
   @@index([department_id])
@@ -719,44 +723,44 @@ model event_report_department_approvals {
 }
 
 model event_report_attendance_approval {
-  id                 Int                              @id @default(autoincrement())
-  event_report_id    Int                              @unique
-  status             EventReportSectionApprovalStatus @default(PENDING)
+  id                  Int                              @id @default(autoincrement())
+  event_report_id     Int                              @unique
+  status              EventReportSectionApprovalStatus @default(PENDING)
   approved_by_user_id Int?
-  approved_at        DateTime?
-  event_report       event_reports                    @relation(fields: [event_report_id], references: [id], onDelete: Cascade)
-  approved_by_user   user?                            @relation("event_report_attendance_approved_by", fields: [approved_by_user_id], references: [id])
+  approved_at         DateTime?
+  event_report        event_reports                    @relation(fields: [event_report_id], references: [id], onDelete: Cascade)
+  approved_by_user    user?                            @relation("event_report_attendance_approved_by", fields: [approved_by_user_id], references: [id])
 
   @@index([approved_by_user_id])
 }
 
 model event_report_finance {
-  id                 Int       @id @default(autoincrement())
-  event_report_id    Int       @unique
-  income_json        String    @db.LongText
-  expense_json       String    @db.LongText
-  total_income       Float     @default(0)
-  total_expense      Float     @default(0)
-  surplus            Float     @default(0)
+  id                 Int           @id @default(autoincrement())
+  event_report_id    Int           @unique
+  income_json        String        @db.LongText
+  expense_json       String        @db.LongText
+  total_income       Float         @default(0)
+  total_expense      Float         @default(0)
+  surplus            Float         @default(0)
   updated_by_user_id Int?
-  updated_at         DateTime  @default(now()) @updatedAt
+  updated_at         DateTime      @default(now()) @updatedAt
   event_report       event_reports @relation(fields: [event_report_id], references: [id], onDelete: Cascade)
-  updated_by_user    user?     @relation("event_report_finance_updated_by", fields: [updated_by_user_id], references: [id])
+  updated_by_user    user?         @relation("event_report_finance_updated_by", fields: [updated_by_user_id], references: [id])
 
   @@index([updated_by_user_id])
 }
 
 model event_report_finance_approvals {
-  id                 Int                              @id @default(autoincrement())
-  event_report_id    Int
-  role               EventReportFinanceRole
-  role_owner_user_id Int?
-  status             EventReportSectionApprovalStatus @default(PENDING)
+  id                  Int                              @id @default(autoincrement())
+  event_report_id     Int
+  role                EventReportFinanceRole
+  role_owner_user_id  Int?
+  status              EventReportSectionApprovalStatus @default(PENDING)
   approved_by_user_id Int?
-  approved_at        DateTime?
-  event_report       event_reports                    @relation(fields: [event_report_id], references: [id], onDelete: Cascade)
-  role_owner_user    user?                            @relation("event_report_finance_role_owner", fields: [role_owner_user_id], references: [id])
-  approved_by_user   user?                            @relation("event_report_finance_approved_by", fields: [approved_by_user_id], references: [id])
+  approved_at         DateTime?
+  event_report        event_reports                    @relation(fields: [event_report_id], references: [id], onDelete: Cascade)
+  role_owner_user     user?                            @relation("event_report_finance_role_owner", fields: [role_owner_user_id], references: [id])
+  approved_by_user    user?                            @relation("event_report_finance_approved_by", fields: [approved_by_user_id], references: [id])
 
   @@unique([event_report_id, role])
   @@index([role_owner_user_id])
@@ -764,11 +768,11 @@ model event_report_finance_approvals {
 }
 
 model event_report_viewers {
-  id              Int          @id @default(autoincrement())
+  id              Int           @id @default(autoincrement())
   event_report_id Int
   user_id         Int
   event_report    event_reports @relation(fields: [event_report_id], references: [id], onDelete: Cascade)
-  user            user         @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  user            user          @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
   @@unique([event_report_id, user_id])
   @@index([user_id])
@@ -802,21 +806,21 @@ model event_report_final_approval_instances {
 }
 
 model event_report_notification_events {
-  id                 Int                              @id @default(autoincrement())
-  idempotency_key    String                           @unique
+  id                 Int                                @id @default(autoincrement())
+  idempotency_key    String                             @unique
   event_type         String
   event_report_id    Int
   actor_user_id      Int?
   decision           String?
-  recipient_user_ids String                           @db.LongText
+  recipient_user_ids String                             @db.LongText
   status             RequisitionNotificationEventStatus @default(PENDING)
-  attempts           Int                              @default(0)
-  last_error         String?                          @db.LongText
+  attempts           Int                                @default(0)
+  last_error         String?                            @db.LongText
   sent_at            DateTime?
-  created_at         DateTime                         @default(now())
-  updated_at         DateTime                         @default(now()) @updatedAt
-  event_report       event_reports                    @relation(fields: [event_report_id], references: [id], onDelete: Cascade)
-  actor_user         user?                            @relation("event_report_notification_actor", fields: [actor_user_id], references: [id], onDelete: SetNull)
+  created_at         DateTime                           @default(now())
+  updated_at         DateTime                           @default(now()) @updatedAt
+  event_report       event_reports                      @relation(fields: [event_report_id], references: [id], onDelete: Cascade)
+  actor_user         user?                              @relation("event_report_notification_actor", fields: [actor_user_id], references: [id], onDelete: SetNull)
 
   @@index([status, created_at])
   @@index([event_report_id])
@@ -893,22 +897,22 @@ model request_approvals {
 }
 
 model requisition_approval_configs {
-  id         Int                                      @id @default(autoincrement())
-  module     RequisitionApprovalModule                @unique
-  is_active  Boolean                                  @default(true)
-  similar_item_lookback_days Int                      @default(30)
-  finance_approver_type RequisitionApproverType?
-  finance_position_id Int?
-  finance_user_id Int?
-  created_by Int?
-  updated_by Int?
-  created_at DateTime                                 @default(now())
-  updated_at DateTime                                 @default(now()) @updatedAt
-  requesters requisition_approval_config_requesters[]
-  steps      requisition_approval_config_steps[]
-  notifications requisition_approval_config_notifications[]
-  instances  requisition_approval_instances[]
-  event_report_instances event_report_final_approval_instances[]
+  id                         Int                                         @id @default(autoincrement())
+  module                     RequisitionApprovalModule                   @unique
+  is_active                  Boolean                                     @default(true)
+  similar_item_lookback_days Int                                         @default(30)
+  finance_approver_type      RequisitionApproverType?
+  finance_position_id        Int?
+  finance_user_id            Int?
+  created_by                 Int?
+  updated_by                 Int?
+  created_at                 DateTime                                    @default(now())
+  updated_at                 DateTime                                    @default(now()) @updatedAt
+  requesters                 requisition_approval_config_requesters[]
+  steps                      requisition_approval_config_steps[]
+  notifications              requisition_approval_config_notifications[]
+  instances                  requisition_approval_instances[]
+  event_report_instances     event_report_final_approval_instances[]
 
   @@index([finance_position_id])
   @@index([finance_user_id])
@@ -976,20 +980,20 @@ model requisition_approval_instances {
 }
 
 model requisition_notification_events {
-  id                 Int                              @id @default(autoincrement())
-  idempotency_key    String                           @unique
+  id                 Int                                @id @default(autoincrement())
+  idempotency_key    String                             @unique
   event_type         String
   requisition_id     Int
   actor_user_id      Int?
   decision           String?
-  recipient_user_ids String                           @db.LongText
+  recipient_user_ids String                             @db.LongText
   status             RequisitionNotificationEventStatus @default(PENDING)
-  attempts           Int                              @default(0)
-  last_error         String?                          @db.LongText
+  attempts           Int                                @default(0)
+  last_error         String?                            @db.LongText
   sent_at            DateTime?
-  created_at         DateTime                         @default(now())
-  updated_at         DateTime                         @default(now()) @updatedAt
-  requisition        request                          @relation(fields: [requisition_id], references: [id], onDelete: Cascade)
+  created_at         DateTime                           @default(now())
+  updated_at         DateTime                           @default(now()) @updatedAt
+  requisition        request                            @relation(fields: [requisition_id], references: [id], onDelete: Cascade)
 
   @@index([status, created_at])
   @@index([requisition_id])
@@ -1009,32 +1013,32 @@ model requisition_edit_logs {
 }
 
 model in_app_notification {
-  id                Int                   @id @default(autoincrement())
-  dedupe_key        String?               @unique
-  type              String
-  title             String
-  body              String                @db.LongText
-  recipient_user_id Int
-  actor_user_id     Int?
-  entity_type       String?
-  entity_id         String?
-  action_url        String?
-  priority          notification_priority @default(MEDIUM)
-  is_read           Boolean               @default(false)
-  read_at           DateTime?
-  email_sent_at     DateTime?
-  sms_delivery_status notification_sms_delivery_status?
-  sms_queued_at     DateTime?
-  sms_last_attempt_at DateTime?
-  sms_sent_at       DateTime?
-  sms_last_error_code String?             @db.VarChar(64)
-  sms_last_error_message String?          @db.VarChar(1024)
-  created_at        DateTime              @default(now())
-  updated_at        DateTime              @default(now()) @updatedAt
-  actor             user?                 @relation("notification_actor", fields: [actor_user_id], references: [id], onDelete: SetNull)
-  recipient         user                  @relation("notification_recipient", fields: [recipient_user_id], references: [id], onDelete: Cascade)
-  push_delivery_jobs notification_push_delivery_job[]
-  sms_delivery_jobs notification_sms_delivery_job[]
+  id                     Int                               @id @default(autoincrement())
+  dedupe_key             String?                           @unique
+  type                   String
+  title                  String
+  body                   String                            @db.LongText
+  recipient_user_id      Int
+  actor_user_id          Int?
+  entity_type            String?
+  entity_id              String?
+  action_url             String?
+  priority               notification_priority             @default(MEDIUM)
+  is_read                Boolean                           @default(false)
+  read_at                DateTime?
+  email_sent_at          DateTime?
+  sms_delivery_status    notification_sms_delivery_status?
+  sms_queued_at          DateTime?
+  sms_last_attempt_at    DateTime?
+  sms_sent_at            DateTime?
+  sms_last_error_code    String?                           @db.VarChar(64)
+  sms_last_error_message String?                           @db.VarChar(1024)
+  created_at             DateTime                          @default(now())
+  updated_at             DateTime                          @default(now()) @updatedAt
+  actor                  user?                             @relation("notification_actor", fields: [actor_user_id], references: [id], onDelete: SetNull)
+  recipient              user                              @relation("notification_recipient", fields: [recipient_user_id], references: [id], onDelete: Cascade)
+  push_delivery_jobs     notification_push_delivery_job[]
+  sms_delivery_jobs      notification_sms_delivery_job[]
 
   @@index([recipient_user_id, is_read, created_at], map: "in_app_notification_recipient_read_created_idx")
   @@index([recipient_user_id, created_at], map: "in_app_notification_recipient_created_idx")
@@ -1059,24 +1063,24 @@ model notification_preference {
 }
 
 model notification_push_subscription {
-  id                 String                          @id @default(uuid())
+  id                 String                           @id @default(uuid())
   user_id            Int
-  endpoint           String                          @unique @db.VarChar(512)
-  p256dh             String                          @db.VarChar(512)
-  auth               String                          @db.VarChar(512)
+  endpoint           String                           @unique @db.VarChar(512)
+  p256dh             String                           @db.VarChar(512)
+  auth               String                           @db.VarChar(512)
   expiration_time    DateTime?
-  is_active          Boolean                         @default(true)
-  user_agent         String?                         @db.VarChar(512)
-  platform           String?                         @db.VarChar(191)
-  language           String?                         @db.VarChar(32)
-  timezone           String?                         @db.VarChar(191)
-  last_seen_at       DateTime                        @default(now())
-  last_error_code    String?                         @db.VarChar(64)
-  last_error_message String?                         @db.VarChar(1024)
+  is_active          Boolean                          @default(true)
+  user_agent         String?                          @db.VarChar(512)
+  platform           String?                          @db.VarChar(191)
+  language           String?                          @db.VarChar(32)
+  timezone           String?                          @db.VarChar(191)
+  last_seen_at       DateTime                         @default(now())
+  last_error_code    String?                          @db.VarChar(64)
+  last_error_message String?                          @db.VarChar(1024)
   last_error_at      DateTime?
-  created_at         DateTime                        @default(now())
-  updated_at         DateTime                        @default(now()) @updatedAt
-  user               user                            @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  created_at         DateTime                         @default(now())
+  updated_at         DateTime                         @default(now()) @updatedAt
+  user               user                             @relation(fields: [user_id], references: [id], onDelete: Cascade)
   delivery_jobs      notification_push_delivery_job[]
 
   @@index([user_id, is_active], map: "notification_push_subscriptions_user_active_idx")
@@ -1157,23 +1161,23 @@ model notification_sms_delivery_job {
 }
 
 model program {
-  id                   Int                     @id @default(autoincrement())
-  title                String
-  description          String
-  completed            Boolean                 @default(false)
-  createdAt            DateTime                @default(now())
-  updatedAt            DateTime                @updatedAt
-  leader_required      Boolean                 @default(false)
-  member_required      Boolean                 @default(false)
-  ministry_required    Boolean                 @default(false)
-  branch_id            Int?
-  branch               branch?                 @relation(fields: [branch_id], references: [id])
-  certificate          certificate[]
-  cohorts              cohort[]
-  requiredForPrograms  program_prerequisites[] @relation("ProgramToRequired")
-  prerequisitePrograms program_prerequisites[] @relation("ProgramToPrerequisite")
-  topics               topic[]
-  eligibility_rules    role_eligibility_rules[]
+  id                         Int                          @id @default(autoincrement())
+  title                      String
+  description                String
+  completed                  Boolean                      @default(false)
+  createdAt                  DateTime                     @default(now())
+  updatedAt                  DateTime                     @updatedAt
+  leader_required            Boolean                      @default(false)
+  member_required            Boolean                      @default(false)
+  ministry_required          Boolean                      @default(false)
+  branch_id                  Int?
+  branch                     branch?                      @relation(fields: [branch_id], references: [id])
+  certificate                certificate[]
+  cohorts                    cohort[]
+  requiredForPrograms        program_prerequisites[]      @relation("ProgramToRequired")
+  prerequisitePrograms       program_prerequisites[]      @relation("ProgramToPrerequisite")
+  topics                     topic[]
+  eligibility_rules          role_eligibility_rules[]
   position_eligibility_rules position_eligibility_rules[]
 
   @@index([branch_id], map: "program_branch_id_idx")
@@ -1185,7 +1189,7 @@ model role_eligibility_rules {
   program_id Int
   created_at DateTime @default(now())
   updated_at DateTime @updatedAt
-  program     program  @relation(fields: [program_id], references: [id], onDelete: Cascade)
+  program    program  @relation(fields: [program_id], references: [id], onDelete: Cascade)
 
   @@unique([role_key, program_id])
   @@index([program_id], map: "role_eligibility_rules_program_id_idx")
@@ -1459,15 +1463,15 @@ model life_center_role {
 }
 
 model life_center {
-  id                 Int                  @id @default(autoincrement())
-  name               String
-  description        String
-  meetingLocation    String
-  meetingDays        String
-  branch_id          Int?
-  branch             branch?              @relation(fields: [branch_id], references: [id])
-  life_center_member life_center_member[]
-  soul_won           soul_won[]           @relation("life_center_soul_won")
+  id                  Int                   @id @default(autoincrement())
+  name                String
+  description         String
+  meetingLocation     String
+  meetingDays         String
+  branch_id           Int?
+  branch              branch?               @relation(fields: [branch_id], references: [id])
+  life_center_member  life_center_member[]
+  soul_won            soul_won[]            @relation("life_center_soul_won")
   life_center_meeting life_center_meeting[]
 
   @@index([branch_id], map: "life_center_branch_id_idx")
@@ -1488,24 +1492,24 @@ model life_center_member {
 }
 
 model soul_won {
-  id             Int         @id @unique @default(autoincrement())
-  title          String?
-  first_name     String
-  last_name      String
-  other_name     String?
-  gender         String?
-  contact_number String
-  contact_email  String?
-  country_code   String?
-  country        String
-  city           String
-  date_won       DateTime
-  wonById        Int
-  lifeCenterId   Int
-  memberId       Int?        @unique
-  lifeCenter     life_center @relation("life_center_soul_won", fields: [lifeCenterId], references: [id], map: "soulwon_lifecenter_fkey")
-  wonBy          user        @relation("user_soul_winner", fields: [wonById], references: [id], map: "soulwon_wonby_fkey")
-  member         user?       @relation("soul_won_member", fields: [memberId], references: [id], map: "soulwon_member_fkey")
+  id                           Int                            @id @unique @default(autoincrement())
+  title                        String?
+  first_name                   String
+  last_name                    String
+  other_name                   String?
+  gender                       String?
+  contact_number               String
+  contact_email                String?
+  country_code                 String?
+  country                      String
+  city                         String
+  date_won                     DateTime
+  wonById                      Int
+  lifeCenterId                 Int
+  memberId                     Int?                           @unique
+  lifeCenter                   life_center                    @relation("life_center_soul_won", fields: [lifeCenterId], references: [id], map: "soulwon_lifecenter_fkey")
+  wonBy                        user                           @relation("user_soul_winner", fields: [wonById], references: [id], map: "soulwon_wonby_fkey")
+  member                       user?                          @relation("soul_won_member", fields: [memberId], references: [id], map: "soulwon_member_fkey")
   life_center_meeting_attendee life_center_meeting_attendee[]
 
   @@index([lifeCenterId], map: "soulwon_lifecenter_fkey")
@@ -1606,29 +1610,29 @@ model markets {
 }
 
 model products {
-  id                  Int               @id @default(autoincrement())
-  name                String
-  description         String?
-  deleted             Boolean           @default(false)
-  colours             String?
-  created_at          DateTime          @default(now())
-  updated_at          DateTime          @updatedAt
-  created_by_id       Int?
-  updated_at_id       Int?
-  image_url           String?
-  market_id           Int?
-  price_amount        Float?
-  price_currency      String?
-  product_category_id Int?
-  product_type_id     Int?
-  status              String?           @default("draft")
-  stock_managed       String            @default("no")
-  order_items         order_items[]
-  product_colours     product_colour[]
+  id                          Int                           @id @default(autoincrement())
+  name                        String
+  description                 String?
+  deleted                     Boolean                       @default(false)
+  colours                     String?
+  created_at                  DateTime                      @default(now())
+  updated_at                  DateTime                      @updatedAt
+  created_by_id               Int?
+  updated_at_id               Int?
+  image_url                   String?
+  market_id                   Int?
+  price_amount                Float?
+  price_currency              String?
+  product_category_id         Int?
+  product_type_id             Int?
+  status                      String?                       @default("draft")
+  stock_managed               String                        @default("no")
+  order_items                 order_items[]
+  product_colours             product_colour[]
   stock_notification_requests stock_notification_requests[]
-  market              markets?          @relation(fields: [market_id], references: [id])
-  product_category    product_category? @relation(fields: [product_category_id], references: [id])
-  product_type        product_type?     @relation(fields: [product_type_id], references: [id])
+  market                      markets?                      @relation(fields: [market_id], references: [id])
+  product_category            product_category?             @relation(fields: [product_category_id], references: [id])
+  product_type                product_type?                 @relation(fields: [product_type_id], references: [id])
 
   @@index([market_id], map: "products_market_id_fkey")
   @@index([product_category_id], map: "products_product_category_id_fkey")
@@ -1636,28 +1640,28 @@ model products {
 }
 
 model sizes {
-  id                           Int                            @id @default(autoincrement())
-  name                         String                         @unique
-  sort_order                   Int?
-  created_at                   DateTime                       @default(now())
-  updated_at                   DateTime                       @updatedAt
-  created_by_id                Int?
-  updated_at_id                Int?
-  product_colour_stock         product_stock[]
-  order_items                  order_items[]
-  stock_notification_requests  stock_notification_requests[]
+  id                          Int                           @id @default(autoincrement())
+  name                        String                        @unique
+  sort_order                  Int?
+  created_at                  DateTime                      @default(now())
+  updated_at                  DateTime                      @updatedAt
+  created_by_id               Int?
+  updated_at_id               Int?
+  product_colour_stock        product_stock[]
+  order_items                 order_items[]
+  stock_notification_requests stock_notification_requests[]
 }
 
 model product_colour {
-  id                           Int                            @id @default(autoincrement())
-  colour                       String?
-  colour_name                  String?
-  image_url                    String?
-  product_id                   Int
-  product                      products                       @relation(fields: [product_id], references: [id])
-  sizes                        product_stock[]
-  order_items                  order_items[]
-  stock_notification_requests  stock_notification_requests[]
+  id                          Int                           @id @default(autoincrement())
+  colour                      String?
+  colour_name                 String?
+  image_url                   String?
+  product_id                  Int
+  product                     products                      @relation(fields: [product_id], references: [id])
+  sizes                       product_stock[]
+  order_items                 order_items[]
+  stock_notification_requests stock_notification_requests[]
 
   @@index([product_id], map: "product_colour_product_id_fkey")
 }
@@ -1804,31 +1808,31 @@ model bankAccountConfig {
 }
 
 model givingOption {
-  id                 String    @id @default(cuid())
+  id                 String               @id @default(cuid())
   name               String
-  description        String?   @db.Text
-  currency           String    @default("GHS")
+  description        String?              @db.Text
+  currency           String               @default("GHS")
   // "ghipss" for bank accounts, "mobile_money" for momo wallets
-  account_type       String    @default("ghipss")
+  account_type       String               @default("ghipss")
   // Paystack bank/provider code, plus the human label kept for display
   settlement_bank    String
   bank_name          String
   account_number     String
   account_name       String
   // Paystack subaccount that payments for this option are routed to
-  subaccount_code    String?   @unique
+  subaccount_code    String?              @unique
   // Routing, not splitting: the subaccount receives the full amount
-  percentage_charge  Float     @default(100)
-  bearer             String    @default("subaccount")
-  is_active          Boolean   @default(true)
+  percentage_charge  Float                @default(100)
+  bearer             String               @default("subaccount")
+  is_active          Boolean              @default(true)
   archived_at        DateTime?
   // Null whenever local state and Paystack are known to have drifted
   paystack_synced_at DateTime?
   branch_id          Int?
-  branch             branch?   @relation(fields: [branch_id], references: [id])
+  branch             branch?              @relation(fields: [branch_id], references: [id])
   created_by         Int?
-  createdAt          DateTime  @default(now())
-  updatedAt          DateTime  @updatedAt
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
   contributions      givingContribution[]
 
   @@index([branch_id], map: "giving_option_branch_id_idx")
@@ -1901,20 +1905,20 @@ model titheBreakdownConfig {
 }
 
 model financials {
-  id                 String   @id @default(cuid())
-  payload            String   @db.LongText
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
-  periodDate         String?  @unique
-  status             String   @default("DRAFT")
-  created_by_user_id Int?
-  updated_by_user_id Int?
+  id                   String    @id @default(cuid())
+  payload              String    @db.LongText
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+  periodDate           String?   @unique
+  status               String    @default("DRAFT")
+  created_by_user_id   Int?
+  updated_by_user_id   Int?
   submitted_by_user_id Int?
-  submitted_at       DateTime?
-  approved_by_user_id Int?
-  approved_at        DateTime?
-  branch_id          Int?
-  branch             branch?  @relation(fields: [branch_id], references: [id])
+  submitted_at         DateTime?
+  approved_by_user_id  Int?
+  approved_at          DateTime?
+  branch_id            Int?
+  branch               branch?   @relation(fields: [branch_id], references: [id])
 
   @@index([status], map: "financials_status_idx")
   @@index([branch_id], map: "financials_branch_id_idx")
@@ -1925,17 +1929,17 @@ model financials {
 }
 
 model finance_approval_config {
-  id                     Int      @id @default(autoincrement())
-  config_key             String   @unique @default("FINANCE")
+  id                       Int                                    @id @default(autoincrement())
+  config_key               String                                 @unique @default("FINANCE")
   finance_approver_user_id Int
-  is_active              Boolean  @default(true)
-  branch_id              Int?
-  branch                 branch?  @relation(fields: [branch_id], references: [id])
-  created_by_user_id     Int?
-  updated_by_user_id     Int?
-  created_at             DateTime @default(now())
-  updated_at             DateTime @updatedAt
-  notifications          finance_approval_config_notification[]
+  is_active                Boolean                                @default(true)
+  branch_id                Int?
+  branch                   branch?                                @relation(fields: [branch_id], references: [id])
+  created_by_user_id       Int?
+  updated_by_user_id       Int?
+  created_at               DateTime                               @default(now())
+  updated_at               DateTime                               @updatedAt
+  notifications            finance_approval_config_notification[]
 
   @@index([branch_id], map: "finance_approval_config_branch_id_idx")
   @@index([finance_approver_user_id], map: "finance_approval_config_approver_user_id_idx")
@@ -1943,11 +1947,11 @@ model finance_approval_config {
 }
 
 model finance_approval_config_notification {
-  id        Int      @id @default(autoincrement())
-  config_id Int
-  user_id   Int
-  created_at DateTime @default(now())
-  config    finance_approval_config @relation(fields: [config_id], references: [id], onDelete: Cascade)
+  id         Int                     @id @default(autoincrement())
+  config_id  Int
+  user_id    Int
+  created_at DateTime                @default(now())
+  config     finance_approval_config @relation(fields: [config_id], references: [id], onDelete: Cascade)
 
   @@unique([config_id, user_id], map: "finance_approval_config_notification_config_id_user_id_key")
   @@index([config_id], map: "finance_approval_config_notification_config_id_idx")
@@ -2008,12 +2012,12 @@ model appointment {
 }
 
 model ai_conversation {
-  id            String          @id @default(uuid())
+  id            String            @id @default(uuid())
   created_by    Int
   title         String?
-  status        String          @default("active")
-  created_at    DateTime        @default(now())
-  updated_at    DateTime        @updatedAt
+  status        String            @default("active")
+  created_at    DateTime          @default(now())
+  updated_at    DateTime          @updatedAt
   messages      ai_message[]
   usage_entries ai_usage_ledger[]
 
@@ -2022,15 +2026,15 @@ model ai_conversation {
 }
 
 model ai_message {
-  id            String          @id @default(uuid())
+  id              String            @id @default(uuid())
   conversation_id String
-  role          String
-  content       String          @db.LongText
-  provider      String?
-  model         String?
-  created_at    DateTime        @default(now())
-  conversation  ai_conversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
-  usage_entries ai_usage_ledger[]
+  role            String
+  content         String            @db.LongText
+  provider        String?
+  model           String?
+  created_at      DateTime          @default(now())
+  conversation    ai_conversation   @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
+  usage_entries   ai_usage_ledger[]
 
   @@index([conversation_id, created_at])
   @@index([created_at])
@@ -2057,14 +2061,14 @@ model ai_usage_ledger {
 }
 
 model ai_usage_quota {
-  id               String   @id @default(uuid())
-  period_start     DateTime
-  period_end       DateTime
-  message_limit    Int
-  token_limit      Int
-  message_used     Int      @default(0)
-  token_used       Int      @default(0)
-  updated_at       DateTime @updatedAt
+  id            String   @id @default(uuid())
+  period_start  DateTime
+  period_end    DateTime
+  message_limit Int
+  token_limit   Int
+  message_used  Int      @default(0)
+  token_used    Int      @default(0)
+  updated_at    DateTime @updatedAt
 
   @@unique([period_start, period_end])
   @@index([period_start, period_end])
@@ -2109,15 +2113,15 @@ model ai_idempotency_key {
 }
 
 model ai_provider_credential {
-  id               String   @id @default(uuid())
+  id               String    @id @default(uuid())
   provider         String
-  encrypted_key    String   @db.LongText
-  encrypted_secret String?  @db.LongText
-  is_active        Boolean  @default(true)
+  encrypted_key    String    @db.LongText
+  encrypted_secret String?   @db.LongText
+  is_active        Boolean   @default(true)
   created_by       Int
   rotated_at       DateTime?
-  created_at       DateTime @default(now())
-  updated_at       DateTime @updatedAt
+  created_at       DateTime  @default(now())
+  updated_at       DateTime  @updatedAt
 
   @@index([provider, is_active])
   @@index([created_at])
@@ -2269,6 +2273,11 @@ enum event_type {
   OTHER
 }
 
+enum event_category {
+  WEEKLY
+  SPECIAL
+}
+
 enum event_status {
   CONFIRMED
   TENTATIVE
@@ -2327,49 +2336,49 @@ enum reminder_status {
 }
 
 model pledge {
-  id                  Int                 @id @default(autoincrement())
-  branch_id           Int?
-  event_id            Int
-  title               String?
-  target_amount       Decimal?            @db.Decimal(15, 2)
-  deadline            DateTime?
-  created_by_user_id  Int?
+  id                 Int              @id @default(autoincrement())
+  branch_id          Int?
+  event_id           Int
+  title              String?
+  target_amount      Decimal?         @db.Decimal(15, 2)
+  deadline           DateTime?
+  created_by_user_id Int?
   // Settlement account for online redemptions, mirroring givingOption: one
   // Paystack subaccount per pledge, receiving the whole payment, with the payer
   // covering the Paystack fee on top. Nullable because pledges created before
   // online payment existed have no account; the create API requires them.
-  currency            String              @default("GHS")
+  currency           String           @default("GHS")
   // "ghipss" for bank accounts, "mobile_money" for momo wallets
-  account_type        String              @default("ghipss")
-  settlement_bank     String?
-  bank_name           String?
-  account_number      String?
-  account_name        String?
-  subaccount_code     String?             @unique
+  account_type       String           @default("ghipss")
+  settlement_bank    String?
+  bank_name          String?
+  account_number     String?
+  account_name       String?
+  subaccount_code    String?          @unique
   // Routing, not splitting: the subaccount receives the full amount
-  percentage_charge   Float               @default(100)
-  bearer              String              @default("subaccount")
+  percentage_charge  Float            @default(100)
+  bearer             String           @default("subaccount")
   // Null whenever local state and Paystack are known to have drifted
-  paystack_synced_at  DateTime?
-  created_at          DateTime            @default(now())
-  updated_at          DateTime            @updatedAt
-  branch              branch?             @relation(fields: [branch_id], references: [id])
-  event              event_mgt           @relation(fields: [event_id], references: [id])
-  created_by          user?               @relation("pledge_created_by", fields: [created_by_user_id], references: [id])
-  groups              pledge_group[]
-  callers             pledge_caller[]
-  payments            pledge_payment[]
+  paystack_synced_at DateTime?
+  created_at         DateTime         @default(now())
+  updated_at         DateTime         @updatedAt
+  branch             branch?          @relation(fields: [branch_id], references: [id])
+  event              event_mgt        @relation(fields: [event_id], references: [id])
+  created_by         user?            @relation("pledge_created_by", fields: [created_by_user_id], references: [id])
+  groups             pledge_group[]
+  callers            pledge_caller[]
+  payments           pledge_payment[]
 
   @@index([branch_id])
   @@index([event_id])
 }
 
 model pledge_group {
-  id            Int        @id @default(autoincrement())
+  id            Int       @id @default(autoincrement())
   pledge_id     Int
-  called_amount Decimal    @db.Decimal(15, 2)
+  called_amount Decimal   @db.Decimal(15, 2)
   label         String?
-  pledge        pledge     @relation(fields: [pledge_id], references: [id], onDelete: Cascade)
+  pledge        pledge    @relation(fields: [pledge_id], references: [id], onDelete: Cascade)
   pledgers      pledger[]
 
   @@index([pledge_id])
@@ -2596,8 +2605,8 @@ model sermon_series {
   updated_at   DateTime      @updatedAt
 
   sermons sermon[]
-  branch  branch? @relation(fields: [branch_id], references: [id])
-  creator user    @relation("sermon_series_creator", fields: [created_by], references: [id])
+  branch  branch?  @relation(fields: [branch_id], references: [id])
+  creator user     @relation("sermon_series_creator", fields: [created_by], references: [id])
 
   @@index([branch_id])
   @@index([created_by])
