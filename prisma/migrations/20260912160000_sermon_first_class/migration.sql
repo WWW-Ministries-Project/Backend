@@ -6,10 +6,10 @@
   then tightened to NOT NULL, so the statement order below matters. `series_id`
   becomes nullable and its foreign key switches from ON DELETE CASCADE to
   ON DELETE SET NULL — deleting a series must no longer destroy its sermons.
-  The constraint is dropped *before* `series_id` is widened to NULL: InnoDB
-  refuses ALTER TABLE on a column that is still part of a foreign key
-  (ER_FK_COLUMN_CANNOT_CHANGE), so drop → modify → re-add is the only ordering
-  guaranteed to apply.
+  The constraint is dropped *before* `series_id` is widened to NULL: InnoDB can
+  refuse ALTER TABLE on a column that is still part of a foreign key
+  (ER_FK_COLUMN_CANNOT_CHANGE), so drop → modify → re-add is the ordering that
+  applies cleanly on every MySQL 8 build.
 
   `thumbnail_url` is derived from the already-stored `video_id` rather than
   uploaded. It is a stored column, not a computed one, so a non-YouTube source
@@ -64,6 +64,14 @@ ALTER TABLE `sermon`
     FOREIGN KEY (`series_id`) REFERENCES `sermon_series`(`id`)
     ON DELETE SET NULL ON UPDATE CASCADE;
 
+-- Indexes first: MySQL auto-creates an index named after the constraint if the
+-- referencing column is unindexed when the foreign key is added, which would
+-- drift from the Prisma schema. branch_id leads the composite, so the branch
+-- foreign key is still covered; a standalone index on a two-value status enum
+-- would earn little. `sermon_series_id_idx` already exists from 20260726130000.
+CREATE INDEX `sermon_branch_id_status_idx` ON `sermon`(`branch_id`, `status`);
+CREATE INDEX `sermon_created_by_idx` ON `sermon`(`created_by`);
+
 -- New foreign keys
 ALTER TABLE `sermon`
     ADD CONSTRAINT `sermon_branch_id_fkey`
@@ -74,12 +82,6 @@ ALTER TABLE `sermon`
     ADD CONSTRAINT `sermon_created_by_fkey`
     FOREIGN KEY (`created_by`) REFERENCES `user`(`id`)
     ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- Indexes. branch_id leads the composite, so the branch foreign key is still
--- covered; a standalone index on a two-value status enum would earn little.
--- `sermon_series_id_idx` already exists from 20260726130000_add_sermons.
-CREATE INDEX `sermon_branch_id_status_idx` ON `sermon`(`branch_id`, `status`);
-CREATE INDEX `sermon_created_by_idx` ON `sermon`(`created_by`);
 
 -- CreateTable
 CREATE TABLE `sermon_tag` (
