@@ -13,8 +13,16 @@ const router = Router();
 // Static paths first: /:id would otherwise swallow "series" and "tags".
 router.get("/tags", [protect], controller.listTags);
 
-router.get("/series", [protect], controller.listSeries);
-router.get("/series/:id", [protect], controller.getOneSeries);
+router.get(
+  "/series",
+  [protect, permissions.attach_sermon_management],
+  controller.listSeries,
+);
+router.get(
+  "/series/:id",
+  [protect, permissions.attach_sermon_management],
+  controller.getOneSeries,
+);
 router.post(
   "/series",
   [protect, permissions.can_manage_sermons],
@@ -42,8 +50,12 @@ router.post(
 );
 
 // Sermons. Open to any authenticated member for reads; writes stay gated.
-router.get("/", [protect], controller.list);
-router.get("/:id", [protect], controller.getOne);
+router.get("/", [protect, permissions.attach_sermon_management], controller.list);
+router.get(
+  "/:id",
+  [protect, permissions.attach_sermon_management],
+  controller.getOne,
+);
 
 router.post("/", [protect, permissions.can_manage_sermons], controller.create);
 router.put("/:id", [protect, permissions.can_manage_sermons], controller.update);

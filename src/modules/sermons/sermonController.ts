@@ -12,6 +12,16 @@ const toPositiveInt = (value: unknown): number | null => {
 
 const getActorUserId = (req: Request) => toPositiveInt((req as any)?.user?.id);
 
+/**
+ * Whether this request may see unpublished sermons. Derived from the
+ * attach_sermon_management probe, never from a query parameter — a member
+ * cannot opt into drafts. A manager may still narrow to published-only by
+ * asking for it.
+ */
+const isPublishedOnly = (req: Request): boolean =>
+  !(req as any).canManageSermons ||
+  String(req.query?.published_only ?? "") === "true";
+
 const getStatusCode = (error: unknown): number | null => {
   if (error && typeof error === "object" && "statusCode" in error) {
     const code = (error as { statusCode?: unknown }).statusCode;
@@ -81,6 +91,7 @@ export class sermonController {
         skip,
         take,
         status,
+        isPublishedOnly(req),
       );
 
       return res.status(200).json({ message: "Sermon series", ...result });
@@ -99,8 +110,10 @@ export class sermonController {
         return res.status(400).json({ message: "Invalid id", data: null });
       }
 
-      const publishedOnly = String(req.query?.published_only ?? "") === "true";
-      const series = await sermonService.getSermonSeries(id, publishedOnly);
+      const series = await sermonService.getSermonSeries(
+        id,
+        isPublishedOnly(req),
+      );
       if (!series) {
         return res
           .status(404)
@@ -252,6 +265,7 @@ export class sermonController {
         seriesId: toPositiveInt(req.query?.series_id),
         tag: tag || null,
         status,
+        publishedOnly: isPublishedOnly(req),
         search: search || null,
         skip: toPositiveInt(req.query?.skip) ?? 0,
         take: toPositiveInt(req.query?.take) ?? 50,
@@ -271,8 +285,7 @@ export class sermonController {
       const id = toPositiveInt(req.params?.id);
       if (!id) return res.status(400).json({ message: "Invalid id", data: null });
 
-      const publishedOnly = String(req.query?.published_only ?? "") === "true";
-      const sermon = await sermonService.getSermon(id, publishedOnly);
+      const sermon = await sermonService.getSermon(id, isPublishedOnly(req));
       if (!sermon) {
         return res.status(404).json({ message: "Sermon not found", data: null });
       }
