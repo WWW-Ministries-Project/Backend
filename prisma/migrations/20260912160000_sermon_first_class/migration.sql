@@ -2,14 +2,15 @@
   Promotes `sermon` from a child row of `sermon_series` to a record in its own
   right.
 
-  New columns are added nullable, backfilled from the parent series, and only
-  then tightened to NOT NULL, so the statement order below matters. `series_id`
-  becomes nullable and its foreign key switches from ON DELETE CASCADE to
-  ON DELETE SET NULL — deleting a series must no longer destroy its sermons.
-  The constraint is dropped *before* `series_id` is widened to NULL: InnoDB can
-  refuse ALTER TABLE on a column that is still part of a foreign key
-  (ER_FK_COLUMN_CANNOT_CHANGE), so drop → modify → re-add is the ordering that
-  applies cleanly on every MySQL 8 build.
+  New columns are added nullable — `status` alone arrives NOT NULL, safely,
+  because it carries a DEFAULT — then backfilled from the parent series, and
+  only then tightened to NOT NULL, so the statement order below matters.
+  `series_id` becomes nullable and its foreign key switches from ON DELETE
+  CASCADE to ON DELETE SET NULL — deleting a series must no longer destroy its
+  sermons. The constraint is dropped *before* `series_id` is widened to NULL:
+  InnoDB can refuse ALTER TABLE on a column that is still part of a foreign
+  key (ER_FK_COLUMN_CANNOT_CHANGE), so drop → modify → re-add is the ordering
+  that applies cleanly on every MySQL 8 build.
 
   `thumbnail_url` is derived from the already-stored `video_id` rather than
   uploaded. It is a stored column, not a computed one, so a non-YouTube source
@@ -17,7 +18,9 @@
 
   `sermon_tag.slug` is the deduplication key: lowercased, trimmed, inner
   whitespace collapsed. The unique index makes duplicate tags impossible even
-  under concurrent writes.
+  under concurrent writes. `sermon_tag_assignment` is a plain join table with
+  no timestamps of its own — a tag either applies to a sermon or it does not,
+  and both sides cascade, so removing either end removes the link.
 
   Forward-only. No column is dropped and no row is deleted, so this is safe to
   apply ahead of the clients that use the new columns.
@@ -36,18 +39,21 @@ ALTER TABLE `sermon`
 -- Backfill from the parent series before anything becomes NOT NULL
 UPDATE `sermon` AS s
     JOIN `sermon_series` AS ss ON ss.`id` = s.`series_id`
-SET s.`created_by`   = ss.`created_by`,
-    s.`branch_id`    = ss.`branch_id`,
-    s.`status`       = ss.`status`,
-    s.`published_at` = ss.`published_at`,
-    s.`updated_at`   = s.`created_at`,
+SET s.`created_by`    = ss.`created_by`,
+    s.`branch_id`     = ss.`branch_id`,
+    s.`status`        = ss.`status`,
+    s.`published_at`  = ss.`published_at`,
+    s.`updated_at`    = s.`created_at`,
     s.`thumbnail_url` = CASE
         WHEN s.`video_id` IS NOT NULL AND s.`video_id` <> ''
         THEN CONCAT('https://i.ytimg.com/vi/', s.`video_id`, '/hqdefault.jpg')
         ELSE NULL
     END;
 
--- Any row the join missed still needs a non-null updated_at
+-- Defensive only. The JOIN above reaches every row under the schema's own
+-- constraints, since series_id is still NOT NULL and foreign-key enforced here.
+-- This covers only rows some out-of-band write (an import run with
+-- FOREIGN_KEY_CHECKS=0, say) could have orphaned.
 UPDATE `sermon` SET `updated_at` = `created_at` WHERE `updated_at` IS NULL;
 
 -- Tighten the backfilled columns
