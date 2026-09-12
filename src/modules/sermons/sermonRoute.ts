@@ -38,16 +38,6 @@ router.delete(
   [protect, permissions.can_delete_sermons],
   controller.removeSeries,
 );
-router.post(
-  "/series/:id/publish",
-  [protect, permissions.can_manage_sermons],
-  controller.publishSeries,
-);
-router.post(
-  "/series/:id/unpublish",
-  [protect, permissions.can_manage_sermons],
-  controller.unpublishSeries,
-);
 
 // Sermons. Open to any authenticated member for reads; writes stay gated.
 router.get("/", [protect, permissions.attach_sermon_management], controller.list);

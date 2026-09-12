@@ -173,6 +173,8 @@ const createSermonSeries = async (input: CreateSermonSeriesInput) => {
     data: {
       title: input.title,
       description: input.description ?? null,
+      // Kept only because the column is NOT NULL. Nothing reads it: a series is
+      // never published, so it never leaves DRAFT.
       status: "DRAFT",
       branch_id: branchId,
       created_by: input.created_by,
@@ -186,14 +188,13 @@ const listSermonSeries = async (
   skip = 0,
   take = 20,
   status?: "DRAFT" | "PUBLISHED",
-  // Set for callers who may not manage sermons. Overrides `status`, so a
-  // member cannot reach draft series by asking for them.
+  // Narrows the sermons nested in each series, never the series rows
+  // themselves: a series is a grouping, not something that gets published.
   publishedOnly = false,
 ) => {
-  const effectiveStatus = publishedOnly ? "PUBLISHED" : status;
   const where: Prisma.sermon_seriesWhereInput = {
     ...(getBranchScopedWhere(branchId) ?? {}),
-    ...(effectiveStatus ? { status: effectiveStatus } : {}),
+    ...(status ? { status } : {}),
   };
 
   const [data, total] = await prisma.$transaction([
@@ -215,9 +216,8 @@ const getSermonSeries = async (id: number, publishedOnly = false) => {
     where: { id },
     include: sermonSeriesIncludeFor(publishedOnly),
   });
-  // Members get published-only detail; a draft is invisible to them (404). The
-  // caller derives publishedOnly from the permission probe, not from the query.
-  if (publishedOnly && series?.status !== "PUBLISHED") return null;
+  // No status check on the series itself — publishing is a property of the
+  // sermon. publishedOnly reaches only the nested sermons, above.
   return series;
 };
 
@@ -245,35 +245,6 @@ const updateSermonSeries = async (
           ? existing.description
           : input.description,
     },
-    include: sermonSeriesInclude,
-  });
-};
-
-const publishSermonSeries = async (id: number) => {
-  const existing = await prisma.sermon_series.findUnique({ where: { id } });
-  if (!existing) {
-    throw httpError("Sermon series not found", 404);
-  }
-  if (existing.status === "PUBLISHED") {
-    throw httpError("Sermon series is already published", 409);
-  }
-
-  return prisma.sermon_series.update({
-    where: { id },
-    data: { status: "PUBLISHED", published_at: new Date() },
-    include: sermonSeriesInclude,
-  });
-};
-
-const unpublishSermonSeries = async (id: number) => {
-  const existing = await prisma.sermon_series.findUnique({ where: { id } });
-  if (!existing) {
-    throw httpError("Sermon series not found", 404);
-  }
-
-  return prisma.sermon_series.update({
-    where: { id },
-    data: { status: "DRAFT", published_at: null },
     include: sermonSeriesInclude,
   });
 };
@@ -460,8 +431,6 @@ export const sermonService = {
   getSermonSeries,
   updateSermonSeries,
   deleteSermonSeries,
-  publishSermonSeries,
-  unpublishSermonSeries,
   createSermon,
   listSermons,
   getSermon,

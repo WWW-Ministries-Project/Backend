@@ -178,46 +178,6 @@ export class sermonController {
     }
   };
 
-  publishSeries = async (req: Request, res: Response) => {
-    try {
-      const id = toPositiveInt(req.params?.id);
-      if (!id) {
-        return res.status(400).json({ message: "Invalid id", data: null });
-      }
-
-      const series = await sermonService.publishSermonSeries(id);
-      return res
-        .status(200)
-        .json({ message: "Sermon series published", data: series });
-    } catch (error) {
-      const statusCode = getStatusCode(error) ?? 500;
-      return res.status(statusCode).json({
-        message: (error as Error).message || "Failed to publish sermon series",
-        data: null,
-      });
-    }
-  };
-
-  unpublishSeries = async (req: Request, res: Response) => {
-    try {
-      const id = toPositiveInt(req.params?.id);
-      if (!id) {
-        return res.status(400).json({ message: "Invalid id", data: null });
-      }
-
-      const series = await sermonService.unpublishSermonSeries(id);
-      return res
-        .status(200)
-        .json({ message: "Sermon series unpublished", data: series });
-    } catch (error) {
-      const statusCode = getStatusCode(error) ?? 500;
-      return res.status(statusCode).json({
-        message: (error as Error).message || "Failed to unpublish sermon series",
-        data: null,
-      });
-    }
-  };
-
   create = async (req: Request, res: Response) => {
     try {
       const actorUserId = getActorUserId(req);
