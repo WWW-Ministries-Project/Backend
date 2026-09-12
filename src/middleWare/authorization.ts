@@ -1843,6 +1843,33 @@ export class Permissions {
     "Not authorized to delete sermons",
   );
 
+  /**
+   * Non-rejecting probe, unlike every checkPermission guard above. Annotates
+   * the request with whether the caller may manage sermons, so one listing
+   * endpoint can serve members the published sermons and managers the full
+   * set. Requires `protect` to have run first.
+   */
+  attach_sermon_management = async (
+    req: any,
+    _res: Response,
+    next: NextFunction,
+  ) => {
+    req.canManageSermons = false;
+    try {
+      const userId = toPositiveInt(req.user?.id);
+      if (userId) {
+        const snapshot = await getOrFetchAuthContextSnapshot(userId);
+        req.canManageSermons = Boolean(
+          snapshot?.isPrivilegedUser &&
+            hasActionPermission(snapshot.permissions, "Sermons", "manage"),
+        );
+      }
+    } catch {
+      req.canManageSermons = false;
+    }
+    return next();
+  };
+
   // Giving options
   can_view_giving = this.checkPermission(
     "Giving",

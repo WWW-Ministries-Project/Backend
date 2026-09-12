@@ -10,10 +10,42 @@ dotenv.config();
 
 const router = Router();
 
-// Open to any authenticated member: viewing published sermons requires no
-// Sermons permission. Management routes below stay permission-gated.
-router.get("/", [protect], controller.list);
-router.get("/:id", [protect], controller.getOne);
+// Static paths first: /:id would otherwise swallow "series" and "tags".
+router.get("/tags", [protect], controller.listTags);
+
+router.get(
+  "/series",
+  [protect, permissions.attach_sermon_management],
+  controller.listSeries,
+);
+router.get(
+  "/series/:id",
+  [protect, permissions.attach_sermon_management],
+  controller.getOneSeries,
+);
+router.post(
+  "/series",
+  [protect, permissions.can_manage_sermons],
+  controller.createSeries,
+);
+router.put(
+  "/series/:id",
+  [protect, permissions.can_manage_sermons],
+  controller.updateSeries,
+);
+router.delete(
+  "/series/:id",
+  [protect, permissions.can_delete_sermons],
+  controller.removeSeries,
+);
+
+// Sermons. Open to any authenticated member for reads; writes stay gated.
+router.get("/", [protect, permissions.attach_sermon_management], controller.list);
+router.get(
+  "/:id",
+  [protect, permissions.attach_sermon_management],
+  controller.getOne,
+);
 
 router.post("/", [protect, permissions.can_manage_sermons], controller.create);
 router.put("/:id", [protect, permissions.can_manage_sermons], controller.update);
@@ -27,7 +59,6 @@ router.post(
   [protect, permissions.can_manage_sermons],
   controller.unpublish,
 );
-
 router.delete(
   "/:id",
   [protect, permissions.can_delete_sermons],
