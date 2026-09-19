@@ -20,6 +20,11 @@ const toPositiveInt = (value: unknown) => {
   return parsedValue;
 };
 
+// The audit columns are Int in the schema, so they have to come from the token
+// rather than the request body: clients have sent `created_by` as a string, and
+// Prisma rejects the whole write with a validation error when they do.
+const getActorUserId = (req: Request) => toPositiveInt((req as any)?.user?.id);
+
 const DEFAULT_DEPARTMENT_MEMBER_PAGE = 1;
 const DEFAULT_DEPARTMENT_MEMBER_PAGE_SIZE = 12;
 
@@ -172,9 +177,17 @@ const getDepartmentMemberCounts = async () => {
 };
 
 export const createDepartment = async (req: Request, res: Response) => {
-  const { name, department_head, description, created_by, branch_id, status } = req.body;
+  const { name, department_head, description, branch_id, status } = req.body;
   departmentSchema.validate(req.body);
   try {
+    const actorUserId = getActorUserId(req);
+    if (!actorUserId) {
+      return res.status(401).json({
+        message: "A valid authenticated user is required",
+        data: null,
+      });
+    }
+
     if (getDepartmentScope(req).mode === "assigned") {
       return res.status(403).json({
         message: "Assigned department access cannot create new departments",
@@ -212,9 +225,9 @@ export const createDepartment = async (req: Request, res: Response) => {
     await prisma.department.create({
       data: {
         name,
-        department_head,
+        department_head: departmentHeadId,
         description,
-        created_by,
+        created_by: actorUserId,
         branch_id: await resolveBranchIdOrDefault(branch_id),
         ...(status ? { status } : {}),
       },
@@ -257,9 +270,17 @@ export const createDepartment = async (req: Request, res: Response) => {
 };
 
 export const updateDepartment = async (req: Request, res: Response) => {
-  const { id, name, department_head, description, updated_by, branch_id, status } = req.body;
+  const { id, name, department_head, description, branch_id, status } = req.body;
 
   try {
+    const actorUserId = getActorUserId(req);
+    if (!actorUserId) {
+      return res.status(401).json({
+        message: "A valid authenticated user is required",
+        data: null,
+      });
+    }
+
     const departmentId = toPositiveInt(id);
     if (!departmentId) {
       return res.status(400).json({
@@ -306,9 +327,12 @@ export const updateDepartment = async (req: Request, res: Response) => {
       },
       data: {
         name,
-        department_head,
+        // Leave the head untouched when the caller omits the field, but coerce
+        // it to an Int whenever one is supplied.
+        department_head:
+          department_head === undefined ? undefined : departmentHeadId,
         description,
-        updated_by,
+        updated_by: actorUserId,
         updated_at: new Date(),
         branch_id: await resolveBranchIdOrDefault(
           branch_id ?? existingDepartment?.branch_id,
