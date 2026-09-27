@@ -106,6 +106,17 @@ visitorRouter.delete(
 );
 
 //prayer request
+// Member-facing: any signed-in member may read and submit their own.
+visitorRouter.get(
+  "/my-prayer-requests",
+  [protect],
+  prayerRequestController.listMyPrayerRequests,
+);
+visitorRouter.post(
+  "/my-prayer-requests",
+  [protect],
+  prayerRequestController.createMyPrayerRequest,
+);
 visitorRouter.post(
   "/prayerrequest",
   [protect, permissions.can_manage_visitor_prayer_requests_scoped],

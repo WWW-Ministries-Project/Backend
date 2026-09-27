@@ -163,6 +163,60 @@ export const listOpenDepartments = async (req: Request, res: Response) => {
   }
 };
 
+/**
+ * The caller's own join requests, newest first, across every department
+ * (open or since closed) and every status — the member-side counterpart of
+ * the approver-only `/list`.
+ */
+export const listMyJoinRequests = async (req: Request, res: Response) => {
+  const userId = getRequestUserId(req);
+  if (!userId) {
+    return res.status(401).json({ message: "Unauthorized", data: null });
+  }
+
+  const requests = await prisma.department_join_request.findMany({
+    where: { user_id: userId },
+    orderBy: { requested_at: "desc" },
+    select: {
+      id: true,
+      status: true,
+      requested_at: true,
+      decided_at: true,
+      decline_reason: true,
+      start_date: true,
+      instructions: true,
+      department: {
+        select: {
+          id: true,
+          name: true,
+          description: true,
+          department_head_info: { select: { id: true, name: true } },
+        },
+      },
+      position_id: true,
+    },
+  });
+
+  // No Prisma relation from a join request to its position — resolve by id.
+  const positionIds = Array.from(
+    new Set(requests.map((request) => request.position_id).filter((id): id is number => Boolean(id))),
+  );
+  const positions = positionIds.length
+    ? await prisma.position.findMany({
+        where: { id: { in: positionIds } },
+        select: { id: true, name: true },
+      })
+    : [];
+  const positionById = new Map(positions.map((position) => [position.id, position]));
+
+  const data = requests.map(({ position_id, ...request }) => ({
+    ...request,
+    position: position_id ? positionById.get(position_id) ?? null : null,
+  }));
+
+  return res.status(200).json({ message: "Success", data });
+};
+
 /** A member submits a request to join a department. */
 export const createJoinRequest = async (req: Request, res: Response) => {
   const userId = getRequestUserId(req);

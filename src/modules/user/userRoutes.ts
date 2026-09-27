@@ -1,5 +1,6 @@
 import Router from "express";
 import * as dotenv from "dotenv";
+import { listDirectoryDepartments, listMemberDirectory } from "./memberDirectoryController";
 import {
   ListUsers,
   changePassword,
@@ -51,6 +52,10 @@ userRouter.get(
   [protect],
   ListUsersLight,
 );
+
+// Member-facing directory: name + where someone serves, no contact details.
+userRouter.get("/directory", [protect], listMemberDirectory);
+userRouter.get("/directory/departments", [protect], listDirectoryDepartments);
 
 userRouter.get(
   "/search-users",
