@@ -1,6 +1,7 @@
 import Router from "express";
 import {
   listOpenDepartments,
+  listMyJoinRequests,
   createJoinRequest,
   listJoinRequests,
   approveJoinRequest,
@@ -17,6 +18,7 @@ export const joinRequestRouter = Router();
 // Member-facing: any authenticated user may view open departments and submit a request.
 joinRequestRouter.get("/open-departments", [protect], listOpenDepartments);
 joinRequestRouter.post("/create", [protect], createJoinRequest);
+joinRequestRouter.get("/mine", [protect], listMyJoinRequests);
 
 // Approver-facing: authorization is enforced per-request inside the controller
 // (Membership_Management manager OR head of the target department).
