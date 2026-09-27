@@ -7,6 +7,8 @@ import {
   assignAccessLevelToUser,
   deleteAccessLevel,
   getAccessLevel,
+  listAssignableUsers,
+  bulkAssignAccessLevel,
 } from "../accessLevels/accessLevelController";
 import { Permissions } from "../../middleWare/authorization";
 const permissions = new Permissions();
@@ -27,6 +29,16 @@ accessRouter.put(
   "/assign_access_to_user",
   [permissions.protect, permissions.can_manage_access],
   assignAccessLevelToUser,
+);
+accessRouter.get(
+  "/assignable-users",
+  [permissions.protect, permissions.can_manage_access],
+  listAssignableUsers,
+);
+accessRouter.put(
+  "/bulk-assign-access-level",
+  [permissions.protect, permissions.can_manage_access],
+  bulkAssignAccessLevel,
 );
 accessRouter.delete(
   "/delete-access-level",
