@@ -1830,6 +1830,20 @@ const fetchUserDirectoryRelations = async (
   };
 };
 
+// Members on the requester's Members exclusion list are still listed, but
+// only by name: contact and personal details are withheld and the client is
+// told the profile can't be opened.
+const maskExcludedListedUser = (user: any) => ({
+  ...user,
+  email: null,
+  primary_number: null,
+  country_code: null,
+  date_of_birth: null,
+  marital_status: null,
+  employment_status: null,
+  is_restricted: true,
+});
+
 const flattenListedUsers = (data: any[]) => {
   return data.map(({ user_info, ...rest }) => {
     const info = user_info || {};
@@ -1957,24 +1971,33 @@ export const ListUsers = async (req: Request, res: Response) => {
       whereConditions.push({ membership_type });
     }
     if (searchTerm) {
+      const contactMatches: any[] = [
+        { email: { contains: searchTerm } },
+        {
+          user_info: {
+            is: {
+              primary_number: { contains: searchTerm },
+            },
+          },
+        },
+      ];
       whereConditions.push({
         OR: [
           { name: { contains: searchTerm } },
-          { email: { contains: searchTerm } },
           { member_id: { contains: searchTerm } },
-          {
-            user_info: {
-              is: {
-                primary_number: { contains: searchTerm },
-              },
-            },
-          },
+          // Excluded members stay listed but their contact details are
+          // masked, so they must not be findable by email or phone either.
+          ...(excludedMemberIds.length > 0
+            ? [
+                {
+                  AND: [
+                    { id: { notIn: excludedMemberIds } },
+                    { OR: contactMatches },
+                  ],
+                },
+              ]
+            : contactMatches),
         ],
-      });
-    }
-    if (excludedMemberIds.length > 0) {
-      whereConditions.push({
-        id: { notIn: excludedMemberIds },
       });
     }
     const whereFilter =
@@ -2071,6 +2094,8 @@ export const ListUsers = async (req: Request, res: Response) => {
       };
     });
 
+    const excludedMemberIdSet = new Set(excludedMemberIds);
+
     res.status(200).json({
       message: "Operation Successful",
       current_page: pageNum,
@@ -2078,7 +2103,11 @@ export const ListUsers = async (req: Request, res: Response) => {
       page_size: pageSize,
       total,
       totalPages: Math.ceil(total / pageSize),
-      data: flattenListedUsers(usersWithDeptName),
+      data: flattenListedUsers(usersWithDeptName).map((user) =>
+        excludedMemberIdSet.has(user.id)
+          ? maskExcludedListedUser(user)
+          : { ...user, is_restricted: false },
+      ),
     });
   } catch (error) {
     return res.status(500).json({ message: "Something Went Wrong", error });
