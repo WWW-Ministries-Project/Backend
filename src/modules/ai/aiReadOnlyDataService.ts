@@ -1,4 +1,8 @@
 import {
+  classifyAttendanceTiming,
+  loadAttendanceTimingResolver,
+} from "../settings/attendanceTimingSettingsService";
+import {
   RequestApprovalStatus,
   RequisitionApprovalInstanceStatus,
   appointment_status,
@@ -396,18 +400,6 @@ export class AiReadOnlyDataService {
     }
 
     return value.toISOString().slice(11, 19);
-  }
-
-  private getAttendanceTimingStatus(minutesFromStart: number): AttendanceTimingStatus {
-    if (minutesFromStart < 0) {
-      return "early";
-    }
-
-    if (minutesFromStart > 0) {
-      return "late";
-    }
-
-    return "on_time";
   }
 
   private appendDateRangeWhere(
@@ -1401,6 +1393,7 @@ export class AiReadOnlyDataService {
         late: 0,
       };
       const matchingDetailedRecords: AttendanceTimingDetail[] = [];
+      const resolveTimingRules = await loadAttendanceTimingResolver();
 
       for (const row of earliestAttendanceRows) {
         const eventInfo = eventById.get(row.event_id);
@@ -1448,7 +1441,10 @@ export class AiReadOnlyDataService {
         const minutesFromStart = Math.round(
           (row.arrival_time.getTime() - scheduledStart.getTime()) / 60000,
         );
-        const status = this.getAttendanceTimingStatus(minutesFromStart);
+        const status = classifyAttendanceTiming(
+          minutesFromStart,
+          resolveTimingRules(row.arrival_time),
+        );
         statusBreakdown[status] += 1;
 
         const timingRecord: AttendanceTimingDetail = {
