@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import { AppointmentService } from "./appointment-service";
 import { notificationService } from "../notifications/notificationService";
+import { prisma } from "../../Models/context";
 
 export class AppointmentController {
   /**
@@ -353,6 +354,62 @@ export class AppointmentController {
       res
         .status(statusCode)
         .json({ error: error.message || "Error updating booking" });
+    }
+  }
+
+  /**
+   * @route   PUT /appointment/bookings/:id/cancel
+   * @desc    The member who requested a booking cancels it. Only the
+   *          requester may; staff keep using PUT /status and DELETE.
+   */
+  async cancelOwnBooking(req: Request, res: Response) {
+    try {
+      const callerId = Number((req as any).user?.id);
+      if (!Number.isInteger(callerId) || callerId <= 0) {
+        return res.status(401).json({ error: "Unauthorized user" });
+      }
+      const id = Number(req.params.id);
+      if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ error: "Booking ID must be a valid number" });
+      }
+
+      const booking = await prisma.appointment.findUnique({
+        where: { id },
+        select: { requesterId: true, status: true },
+      });
+      if (!booking) {
+        return res.status(404).json({ error: "Appointment not found" });
+      }
+      if (booking.requesterId !== callerId) {
+        return res.status(403).json({ error: "You can only cancel your own appointments" });
+      }
+      if (booking.status === "CANCELLED") {
+        return res.status(400).json({ error: "This appointment is already cancelled" });
+      }
+
+      const updated = await AppointmentService.updateStatus(id, "CANCELLED");
+
+      const staffRecipientId = Number(updated.staffId);
+      if (Number.isInteger(staffRecipientId) && staffRecipientId > 0 && staffRecipientId !== callerId) {
+        await notificationService.createInAppNotification({
+          type: "appointment.status_changed",
+          title: "Appointment cancelled",
+          body: `${updated.fullName || "A member"} cancelled their appointment on ${updated.date} (${updated.session.start} - ${updated.session.end}).`,
+          recipientUserId: staffRecipientId,
+          actorUserId: callerId,
+          entityType: "APPOINTMENT",
+          entityId: String(updated.id),
+          actionUrl: "/home/appointments",
+          priority: "MEDIUM",
+          dedupeKey: `appointment:${updated.id}:status:CANCELLED:recipient:${staffRecipientId}`,
+          sendSms: true,
+          smsBody: `${updated.fullName || "A member"} cancelled their appointment on ${updated.date} (${updated.session.start} - ${updated.session.end}).`,
+        });
+      }
+
+      res.status(200).json({ message: "Appointment cancelled successfully", data: updated });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Cancellation failed" });
     }
   }
 

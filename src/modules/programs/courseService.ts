@@ -26,14 +26,13 @@ export class CourseService {
       select: {
         id: true,
         name: true,
-        email: true,
         is_active: true,
+        // `/program/users` is `protect`-only, so any signed-in member can
+        // call it — email and phone numbers must not ride along.
         user_info: {
           select: {
             first_name: true,
             last_name: true,
-            primary_number: true,
-            other_number: true,
           },
         },
       },

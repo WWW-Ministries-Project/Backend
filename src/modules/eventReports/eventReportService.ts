@@ -30,6 +30,12 @@ import {
 } from "../events/attendanceVisitorCounts";
 import { getBranchScopedWhere } from "../branches/branchService";
 import {
+  AttendanceTimingResolver,
+  classifyAttendanceTiming,
+  loadAttendanceTimingResolver,
+} from "../settings/attendanceTimingSettingsService";
+import { getEventReportExcludedUserIds } from "../settings/eventReportExclusionService";
+import {
   escapeHtml,
   generatePdfBufferFromHtml,
   getChurchLogoBuffer,
@@ -345,20 +351,20 @@ const formatRelativeToStart = (
 const getReportedAttendanceStatus = (
   arrivalTime: Date,
   eventStartTime: Date | null,
+  resolveTimingRules: AttendanceTimingResolver,
 ): "early" | "on_time" | "late" => {
   if (!eventStartTime) {
     return "on_time";
   }
 
-  if (arrivalTime.getTime() < eventStartTime.getTime()) {
-    return "early";
-  }
+  const minutesFromStart = Math.round(
+    (arrivalTime.getTime() - eventStartTime.getTime()) / 60000,
+  );
 
-  if (arrivalTime.getTime() > eventStartTime.getTime()) {
-    return "late";
-  }
-
-  return "on_time";
+  return classifyAttendanceTiming(
+    minutesFromStart,
+    resolveTimingRules(arrivalTime),
+  );
 };
 
 const formatAttendanceStatusLabel = (
@@ -442,6 +448,7 @@ const getUserDepartmentIds = (
 const getDepartmentMembersByDepartmentTx = async (
   tx: ApprovalWorkflowTx,
   validDepartmentIdSet: Set<number>,
+  excludedUserIds: Set<number>,
 ) => {
   const validDepartmentIds = Array.from(validDepartmentIdSet);
   if (!validDepartmentIds.length) {
@@ -453,6 +460,9 @@ const getDepartmentMembersByDepartmentTx = async (
     // position). Without this filter the query scans the entire user table
     // inside the report transaction and times out as membership grows.
     where: {
+      ...(excludedUserIds.size
+        ? { id: { notIn: Array.from(excludedUserIds) } }
+        : {}),
       OR: [
         { department_id: { in: validDepartmentIds } },
         { department: { department_id: { in: validDepartmentIds } } },
@@ -666,9 +676,17 @@ const getDepartmentBreakdownTx = async (
     args.eventStartDate,
   );
 
+  const [resolveTimingRules, excludedUserIds] = await Promise.all([
+    loadAttendanceTimingResolver(tx),
+    getEventReportExcludedUserIds(tx),
+  ]);
+
   const attendanceRows = await tx.event_attendance.findMany({
     where: {
       event_id: args.eventId,
+      ...(excludedUserIds.size
+        ? { user_id: { notIn: Array.from(excludedUserIds) } }
+        : {}),
       created_at: {
         gte: start,
         lt: end,
@@ -722,6 +740,7 @@ const getDepartmentBreakdownTx = async (
   const membersByDepartment = await getDepartmentMembersByDepartmentTx(
     tx,
     validDepartmentIdSet,
+    excludedUserIds,
   );
 
   const attendeeByDepartment = new Map<
@@ -802,6 +821,7 @@ const getDepartmentBreakdownTx = async (
           status: getReportedAttendanceStatus(
             attendee.arrival_time,
             reportEventStartTime,
+            resolveTimingRules,
           ),
         });
       }

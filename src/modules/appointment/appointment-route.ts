@@ -36,6 +36,16 @@ appointmentRouter.put(
   appointmentController.updateBooking,
 );
 
+// 4b. The requester cancels their own booking
+// URL: PUT /appointment/bookings/:id/cancel
+// `protect`-only: ownership (requesterId === caller) is checked in the
+// controller, since the scoped manage guard would reject a plain member.
+appointmentRouter.put(
+  "/bookings/:id/cancel",
+  [protect],
+  appointmentController.cancelOwnBooking,
+);
+
 // 5. Delete booking appointment by id
 // URL: DELETE /appointment/bookings/:id
 appointmentRouter.delete(
