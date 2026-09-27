@@ -739,6 +739,181 @@ export const assignAccessLevelToUser = async (req: Request, res: Response) => {
   }
 };
 
+const ACCESS_LEVEL_DETAIL_SELECT = {
+  id: true,
+  name: true,
+  description: true,
+  permissions: true,
+  users_assigned: {
+    select: {
+      id: true,
+      name: true,
+      user_info: {
+        select: {
+          photo: true,
+        },
+      },
+    },
+  },
+} as const;
+
+const parseUserIdList = (value: unknown): number[] | null => {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) return null;
+
+  const ids = value.map((id) => toPositiveInt(id));
+  if (ids.some((id) => id === null)) return null;
+
+  return Array.from(new Set(ids as number[]));
+};
+
+export const listAssignableUsers = async (req: Request, res: Response) => {
+  try {
+    const users = await prisma.user.findMany({
+      where: {
+        is_user: true,
+        OR: [{ is_active: true }, { is_active: null }],
+      },
+      orderBy: {
+        name: "asc",
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        member_id: true,
+        user_info: {
+          select: {
+            first_name: true,
+            last_name: true,
+            photo: true,
+          },
+        },
+        access: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+    });
+
+    const data = users.map((user) => ({
+      id: user.id,
+      name: buildFullName(user) || user.name,
+      email: user.email,
+      member_id: user.member_id,
+      photo: user.user_info?.photo || null,
+      access_level: user.access
+        ? { id: user.access.id, name: user.access.name }
+        : null,
+    }));
+
+    return res.status(200).json({ message: "Operation successful", data });
+  } catch (error: any) {
+    return res
+      .status(500)
+      .json({ message: "Operation Failed", data: error.message });
+  }
+};
+
+export const bulkAssignAccessLevel = async (req: Request, res: Response) => {
+  const { access_level_id, assign_user_ids, unassign_user_ids } = req.body;
+  try {
+    const accessLevelId = toPositiveInt(access_level_id);
+    if (!accessLevelId) {
+      return res.status(400).json({
+        message: "Invalid access_level_id.",
+        data: null,
+      });
+    }
+
+    const assignIds = parseUserIdList(assign_user_ids);
+    const unassignIds = parseUserIdList(unassign_user_ids);
+    if (!assignIds || !unassignIds) {
+      return res.status(400).json({
+        message:
+          "assign_user_ids and unassign_user_ids must be arrays of user ids.",
+        data: null,
+      });
+    }
+
+    if (assignIds.length === 0 && unassignIds.length === 0) {
+      return res.status(400).json({
+        message: "Provide at least one user to assign or unassign.",
+        data: null,
+      });
+    }
+
+    const unassignSet = new Set(unassignIds);
+    const conflictingIds = assignIds.filter((id) => unassignSet.has(id));
+    if (conflictingIds.length > 0) {
+      return res.status(400).json({
+        message: "A user cannot be assigned and unassigned in the same request.",
+        data: { conflicting_user_ids: conflictingIds },
+      });
+    }
+
+    const accessLevel = await prisma.access_level.findUnique({
+      where: { id: accessLevelId },
+      select: { id: true, deleted: true },
+    });
+    if (!accessLevel || accessLevel.deleted) {
+      return res.status(404).json({
+        message: "Access level not found",
+        data: null,
+      });
+    }
+
+    if (assignIds.length > 0) {
+      const { invalidUserIds, nonMinistryWorkerIds } =
+        await validateAssignableUsers(assignIds);
+      if (invalidUserIds.length > 0 || nonMinistryWorkerIds.length > 0) {
+        return res.status(400).json({
+          message:
+            "Only existing ministry workers can be assigned access levels.",
+          data: {
+            invalid_user_ids: invalidUserIds,
+            non_ministry_worker_ids: nonMinistryWorkerIds,
+          },
+        });
+      }
+    }
+
+    const [assigned, unassigned] = await prisma.$transaction([
+      prisma.user.updateMany({
+        where: { id: { in: assignIds }, is_user: true },
+        data: { access_level_id: accessLevelId },
+      }),
+      // Only clear users who are actually on this level, so a stale client
+      // cannot strip someone who has since moved to another level.
+      prisma.user.updateMany({
+        where: { id: { in: unassignIds }, access_level_id: accessLevelId },
+        data: { access_level_id: null },
+      }),
+    ]);
+
+    const updated = await prisma.access_level.findUnique({
+      where: { id: accessLevelId },
+      select: ACCESS_LEVEL_DETAIL_SELECT,
+    });
+    const enriched = await enrichAccessLevelWithExclusions(updated);
+
+    return res.status(200).json({
+      message: "Access level members updated successfully",
+      data: {
+        access_level: enriched,
+        assigned_count: assigned.count,
+        unassigned_count: unassigned.count,
+      },
+    });
+  } catch (error: any) {
+    return res
+      .status(500)
+      .json({ message: "Operation Failed", data: error.message });
+  }
+};
+
 export const deleteAccessLevel = async (req: Request, res: Response) => {
   const { id } = req.query;
   if (!id) {
