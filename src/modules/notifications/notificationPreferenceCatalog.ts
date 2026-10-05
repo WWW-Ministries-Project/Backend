@@ -24,10 +24,23 @@ const IN_APP_AND_EMAIL_CHANNELS: NotificationPreferenceChannelAvailability = {
   sms: false,
 };
 
+const IN_APP_ONLY_CHANNELS: NotificationPreferenceChannelAvailability = {
+  inApp: true,
+  email: false,
+  sms: false,
+};
+
 const DEFAULT_DESCRIPTION = "Manage how you receive this notification.";
 const DEFAULT_CATEGORY = "Other";
 
 export const NOTIFICATION_PREFERENCE_OPTIONS: NotificationPreferenceOption[] = [
+  {
+    type: "livestream.started",
+    title: "Live service alerts",
+    description: "Tell members on the mobile app when the church goes live on YouTube.",
+    category: "Watch",
+    availableChannels: IN_APP_ONLY_CHANNELS,
+  },
   {
     type: "membership.confirmed",
     title: "Membership confirmed",
