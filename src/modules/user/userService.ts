@@ -20,6 +20,7 @@ import {
   hasAnyWorkInfoPayload,
 } from "./workInfoUtils";
 import { resolveBranchIdOrDefault } from "../branches/branchService";
+import { notificationService } from "../notifications/notificationService";
 
 // Optional department/position dates: return a valid Date or null.
 export const parseOptionalDate = (value: unknown): Date | null => {
@@ -1271,7 +1272,7 @@ export class UserService {
     id: number,
     status: MemberStatusTransitionTarget,
   ) {
-    return prisma.user.update({
+    const updated = await prisma.user.update({
       where: {
         id,
       },
@@ -1281,8 +1282,32 @@ export class UserService {
       select: {
         name: true,
         status: true,
+        registration_source: true,
       },
     });
+
+    // Members who signed up in the app are waiting on this decision, so
+    // tell them. Dashboard-created records are confirmed in bulk and were
+    // never told they were pending, so they stay quiet. Best effort: a
+    // delivery failure must not undo the status change.
+    if (status === "CONFIRMED" && updated.registration_source === "MOBILE_APP") {
+      await notificationService
+        .createInAppNotification({
+          type: "membership.confirmed",
+          title: "Your membership is confirmed",
+          body: "Welcome to the family! The church office has confirmed your membership.",
+          recipientUserId: id,
+          entityType: "user",
+          entityId: id,
+          priority: "MEDIUM",
+          dedupeKey: `membership.confirmed:${id}`,
+        })
+        .catch((error) =>
+          console.error("Failed to send membership confirmation notification:", error),
+        );
+    }
+
+    return { name: updated.name, status: updated.status };
   }
 
   async linkSpouses(userId1: number, userId2: number) {

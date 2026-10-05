@@ -1266,6 +1266,128 @@ export const deleteOwnAccount = async (req: Request, res: Response) => {
   }
 };
 
+/** The user fields a session token is built from (login + self-registration). */
+const SESSION_USER_SELECT = {
+  id: true,
+  member_id: true,
+  email: true,
+  name: true,
+  password: true,
+  is_active: true,
+  is_user: true,
+  access_level_id: true,
+  membership_type: true,
+  is_guest: true,
+  status: true,
+  department_positions: {
+    select: {
+      department_id: true,
+      position_id: true,
+      department: {
+        select: {
+          id: true,
+          name: true,
+        },
+      },
+      position: {
+        select: {
+          id: true,
+          name: true,
+        },
+      },
+    },
+  },
+  user_info: {
+    select: {
+      photo: true,
+      member_since: true,
+      primary_number: true,
+    },
+  },
+  access: {
+    select: {
+      permissions: true,
+    },
+  },
+  };
+
+/**
+ * Signs the 12h session JWT for a user loaded with `SESSION_USER_SELECT`.
+ * Shared by `login` and mobile self-registration so both hand out the same
+ * claims.
+ */
+export const signSessionToken = async (existance: any) => {
+  const department_positions = (existance.department_positions || []).map(
+    (deptPos: any) => ({
+      department_id:
+        deptPos?.department?.id ?? deptPos?.department_id ?? null,
+      department_name: deptPos?.department?.name ?? null,
+      position_id: deptPos?.position?.id ?? deptPos?.position_id ?? null,
+      position_name: deptPos?.position?.name ?? null,
+    }),
+  );
+
+  const department: string[] = Array.from(
+    new Set(
+      department_positions
+        .map((deptPos: any) => deptPos.department_name)
+        .filter((name: string | null): name is string => Boolean(name)),
+    ),
+  );
+
+  const ministry_worker = Boolean(existance.is_user);
+  const user_category =
+    ministry_worker && Boolean(existance.access_level_id)
+      ? "admin"
+      : "member";
+  const tokenPermissions =
+    user_category === "admin"
+      ? parsePermissionsObject(existance.access?.permissions) || {}
+      : null;
+
+  const life_center_leader: boolean = await checkIfLifeCenterLeader(
+    existance.id,
+  );
+  const instructor: boolean = await courseService.checkIfInstructor(
+    existance.id,
+  );
+
+  return JWT.sign(
+    {
+      id: existance.id,
+      member_id: existance.member_id || null,
+      name: existance.name,
+      email: existance.email,
+      ministry_worker: ministry_worker,
+      user_category,
+      permissions: tokenPermissions,
+      profile_img: existance.user_info?.photo,
+      membership_type: existance.membership_type || null,
+      department,
+      department_positions,
+      life_center_leader,
+      instructor,
+      phone: existance.user_info?.primary_number || null,
+      member_since: existance.user_info?.member_since || null,
+      is_guest: Boolean(existance.is_guest),
+      status: existance.status ?? null,
+    },
+    JWT_SECRET,
+    {
+      expiresIn: "12h",
+    },
+  );
+};
+
+/** Loads a user by id and signs their session token, or null if missing. */
+export const issueSessionTokenForUser = async (userId: number) => {
+  const existance = await prisma.user.findUnique({
+    where: { id: userId },
+    select: SESSION_USER_SELECT,
+  });
+  return existance ? signSessionToken(existance) : null;
+};
+
 export const login = async (req: Request, res: Response) => {
   const { email, password } = req.body;
   try {
@@ -1282,47 +1404,7 @@ export const login = async (req: Request, res: Response) => {
       where: {
         email: loginEmail,
       },
-      select: {
-        id: true,
-        member_id: true,
-        email: true,
-        name: true,
-        password: true,
-        is_active: true,
-        is_user: true,
-        access_level_id: true,
-        membership_type: true,
-        department_positions: {
-          select: {
-            department_id: true,
-            position_id: true,
-            department: {
-              select: {
-                id: true,
-                name: true,
-              },
-            },
-            position: {
-              select: {
-                id: true,
-                name: true,
-              },
-            },
-          },
-        },
-        user_info: {
-          select: {
-            photo: true,
-            member_since: true,
-            primary_number: true,
-          },
-        },
-        access: {
-          select: {
-            permissions: true,
-          },
-        },
-      },
+      select: SESSION_USER_SELECT,
     });
 
     if (!existance) {
@@ -1344,65 +1426,8 @@ export const login = async (req: Request, res: Response) => {
         .json({ message: "Invalid Credentials", data: null });
     }
 
-    const department_positions = (existance.department_positions || []).map(
-      (deptPos: any) => ({
-        department_id:
-          deptPos?.department?.id ?? deptPos?.department_id ?? null,
-        department_name: deptPos?.department?.name ?? null,
-        position_id: deptPos?.position?.id ?? deptPos?.position_id ?? null,
-        position_name: deptPos?.position?.name ?? null,
-      }),
-    );
-
-    const department: string[] = Array.from(
-      new Set(
-        department_positions
-          .map((deptPos: any) => deptPos.department_name)
-          .filter((name: string | null): name is string => Boolean(name)),
-      ),
-    );
-
-    const ministry_worker = Boolean(existance.is_user);
-    const user_category =
-      ministry_worker && Boolean(existance.access_level_id)
-        ? "admin"
-        : "member";
-    const tokenPermissions =
-      user_category === "admin"
-        ? parsePermissionsObject(existance.access?.permissions) || {}
-        : null;
-
-    const life_center_leader: boolean = await checkIfLifeCenterLeader(
-      existance.id,
-    );
-    const instructor: boolean = await courseService.checkIfInstructor(
-      existance.id,
-    );
-
     if (await comparePassword(String(password || ""), existance.password)) {
-      const token = JWT.sign(
-        {
-          id: existance.id,
-          member_id: existance.member_id || null,
-          name: existance.name,
-          email: existance.email,
-          ministry_worker: ministry_worker,
-          user_category,
-          permissions: tokenPermissions,
-          profile_img: existance.user_info?.photo,
-          membership_type: existance.membership_type || null,
-          department,
-          department_positions,
-          life_center_leader,
-          instructor,
-          phone: existance.user_info?.primary_number || null,
-          member_since: existance.user_info?.member_since || null,
-        },
-        JWT_SECRET,
-        {
-          expiresIn: "12h",
-        },
-      );
+      const token = await signSessionToken(existance);
 
       return res
         .status(200)
@@ -1912,6 +1937,15 @@ export const ListUsers = async (req: Request, res: Response) => {
     const branchWhere = getBranchScopedWhere(req.query?.branch_id);
     if (branchWhere) {
       whereConditions.push(branchWhere);
+    }
+    // Guests who joined from the mobile app have accounts but are not
+    // members: keep them out of the member list and the confirmation queue
+    // (a null status would otherwise land them in UNCONFIRMED). They are
+    // listed under Visitors > Guests instead. `include_guests=true` opts out.
+    if (req.query?.include_guests !== "true") {
+      whereConditions.push({
+        OR: [{ is_guest: false }, { is_guest: null }],
+      });
     }
 
     if (is_active !== undefined) {
@@ -3102,6 +3136,9 @@ export const currentuser = async (req: Request, res: Response) => {
         email: true,
         membership_type: true,
         branch_id: true,
+        member_id: true,
+        status: true,
+        is_guest: true,
       },
     });
 
@@ -3109,7 +3146,7 @@ export const currentuser = async (req: Request, res: Response) => {
       return res.status(404).json({ message: "User not found." });
     }
 
-    const [userInfo, departmentPositions] = await Promise.all([
+    const [userInfo, departmentPositions, membershipRequest] = await Promise.all([
       prisma.user_info.findUnique({
         where: { user_id: authenticatedUserId },
         select: {
@@ -3126,6 +3163,15 @@ export const currentuser = async (req: Request, res: Response) => {
           id: "asc",
         },
       }),
+      // Guests only: the app shows "request sent" vs "request membership"
+      // from the latest request.
+      user.is_guest
+        ? prisma.membership_request.findFirst({
+            where: { user_id: authenticatedUserId },
+            orderBy: { requested_at: "desc" },
+            select: { id: true, status: true, requested_at: true, decline_reason: true },
+          })
+        : Promise.resolve(null),
     ]);
     const departmentIds = toUniquePositiveIds(
       departmentPositions.map((dept) => dept.department_id),
@@ -3157,6 +3203,10 @@ export const currentuser = async (req: Request, res: Response) => {
       department,
       branch_id: user.branch_id ?? null,
       membership_type: user.membership_type || null,
+      member_id: user.member_id || null,
+      status: user.status ?? null,
+      is_guest: Boolean(user.is_guest),
+      membership_request: membershipRequest,
     };
 
     return res.json({ message: "Operation sucessful", data: data });

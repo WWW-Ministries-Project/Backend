@@ -20,11 +20,13 @@ const toPositiveInt = (value: unknown): number | null => {
 
 // `deleteOwnAccount` anonymises instead of deleting: the row stays, renamed
 // "Deleted User {id}" with is_active=false. Exclude both signals so a stale
-// is_active can never surface an anonymised account.
+// is_active can never surface an anonymised account. Guests (self-registered
+// from the app, not members) are not part of the member directory either.
 const activeMemberWhere: Prisma.userWhereInput = {
   AND: [
     { OR: [{ is_active: true }, { is_active: null }] },
     { NOT: { name: { startsWith: "Deleted User" } } },
+    { OR: [{ is_guest: false }, { is_guest: null }] },
   ],
 };
 

@@ -29,6 +29,12 @@ model user {
   sync_id                                      Int?
   mode                                         classFormat?
   spouse_id                                    Int?                                    @unique
+  /// Self-registered from the mobile app as a guest: has an account, is not a
+  /// member. Guests are kept out of the member lists and queues.
+  is_guest                                     Boolean?                                @default(false)
+  /// Where the account was created: null for dashboard-created records,
+  /// "MOBILE_APP" for self-registration from the member app.
+  registration_source                          String?
   appointments                                 appointment[]
   asset_history                                asset_history[]
   assignment_submission                        assignment_submission[]
@@ -106,6 +112,8 @@ model user {
   sermon_series_created                        sermon_series[]                         @relation("sermon_series_creator")
   sermons_created                              sermon[]                                @relation("sermon_creator")
   stock_notification_requests                  stock_notification_requests[]
+  membership_requests                          membership_request[]                    @relation("MembershipRequestUser")
+  membership_requests_decided                  membership_request[]                    @relation("MembershipRequestDecider")
 
   @@index([access_level_id], map: "user_access_level_id_fkey")
   @@index([position_id], map: "user_position_id_fkey")
@@ -116,6 +124,7 @@ model user {
   @@index([is_active], map: "user_is_active_idx")
   @@index([name], map: "user_name_idx")
   @@index([branch_id], map: "user_branch_id_idx")
+  @@index([is_guest], map: "user_is_guest_idx")
 }
 
 model branch {
@@ -324,6 +333,26 @@ model user_departments {
   user            user        @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
   @@index([department_id], map: "user_departments_department_id_fkey")
+}
+
+/// A guest's request to become a member, raised from the mobile app and
+/// decided on the dashboard under Membership management > Guest to membership.
+model membership_request {
+  id             Int                 @id @default(autoincrement())
+  user_id        Int
+  status         join_request_status @default(PENDING)
+  message        String?             @db.Text
+  requested_at   DateTime            @default(now())
+  decline_reason String?             @db.Text
+  decided_by     Int?
+  decided_at     DateTime?
+  branch_id      Int?
+  user           user                @relation("MembershipRequestUser", fields: [user_id], references: [id], onDelete: Cascade)
+  decider        user?               @relation("MembershipRequestDecider", fields: [decided_by], references: [id])
+
+  @@index([user_id])
+  @@index([status])
+  @@index([decided_by])
 }
 
 model department_join_request {

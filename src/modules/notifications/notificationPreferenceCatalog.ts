@@ -29,6 +29,20 @@ const DEFAULT_CATEGORY = "Other";
 
 export const NOTIFICATION_PREFERENCE_OPTIONS: NotificationPreferenceOption[] = [
   {
+    type: "membership.confirmed",
+    title: "Membership confirmed",
+    description: "Tell members who signed up in the app when the church office confirms their membership.",
+    category: "Membership",
+    availableChannels: IN_APP_AND_EMAIL_CHANNELS,
+  },
+  {
+    type: "membership.request_declined",
+    title: "Membership request declined",
+    description: "Tell a guest when their request to become a member is declined.",
+    category: "Membership",
+    availableChannels: IN_APP_AND_EMAIL_CHANNELS,
+  },
+  {
     type: "assignment.submitted",
     title: "Assignment submitted",
     description: "Alert instructors when a student submits an assignment.",
