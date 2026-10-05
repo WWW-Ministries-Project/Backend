@@ -35,6 +35,7 @@ import { pledgesModuleRouter } from "../modules/pledges/route";
 import aiRouter from "../modules/ai/aiRoute";
 import notificationRouter from "../modules/notifications/notificationRoute";
 import settingsRouter from "../modules/settings/route";
+import liveStreamRouter from "../modules/liveStream/liveStreamRoute";
 import joinRequestRouter from "../modules/departmentJoinRequests/joinRequestRoute";
 import { FollowUPController } from "../modules/visitorManagement/followUpController";
 import { Permissions } from "../middleWare/authorization";
@@ -79,6 +80,7 @@ appRouter.use("/pledges", pledgesModuleRouter);
 appRouter.use("/ai", aiRouter);
 appRouter.use("/notifications", notificationRouter);
 appRouter.use("/settings", settingsRouter);
+appRouter.use("/live-stream", liveStreamRouter);
 appRouter.use("/api/ai", aiRouter);
 appRouter.use("/api/v1/ai", aiRouter);
 

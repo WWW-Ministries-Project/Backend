@@ -214,25 +214,25 @@ const deactivateDeviceToken = async (args: {
   }
 };
 
-const deliverExpoPush = async (
-  notification: ExpoPushDispatchInput,
-  userId: number,
+/**
+ * Validate, chunk and send one Expo message per token, deactivating tokens
+ * Expo reports as gone. Shared by the per-user and broadcast senders so both
+ * handle tickets the same way. Never throws.
+ */
+const sendExpoMessages = async (
+  tokens: DeviceTokenRow[],
+  buildMessage: (token: string) => ExpoPushMessageLike,
+  logContext: string,
 ): Promise<{ sent: number; failed: number }> => {
   let sent = 0;
   let failed = 0;
 
   try {
-    const tokens = await listActiveTokensForUser(userId);
     if (!tokens.length) {
       return { sent, failed };
     }
 
     const { Expo } = await loadExpo();
-
-    const priority: "high" | "normal" =
-      notification.priority === "HIGH" || notification.priority === "CRITICAL"
-        ? "high"
-        : "normal";
 
     const tokenById = new Map<string, DeviceTokenRow>();
     const messages: ExpoPushMessageLike[] = [];
@@ -248,21 +248,7 @@ const deliverExpoPush = async (
       }
 
       tokenById.set(tokenRow.token, tokenRow);
-      messages.push({
-        to: tokenRow.token,
-        sound: "default",
-        title: notification.title,
-        body: notification.body,
-        priority,
-        data: {
-          notificationId: notification.id,
-          type: notification.type,
-          entityType: notification.entityType,
-          entityId: notification.entityId,
-          actionUrl: notification.actionUrl,
-          priority: notification.priority,
-        },
-      });
+      messages.push(buildMessage(tokenRow.token));
     }
 
     if (!messages.length) {
@@ -281,7 +267,7 @@ const deliverExpoPush = async (
       } catch (error) {
         failed += chunk.length;
         console.error(
-          `[WARN] Expo push chunk send failed: user=${userId} notification=${notification.id} error=${truncate(
+          `[WARN] Expo push chunk send failed: ${logContext} error=${truncate(
             error instanceof Error ? error.message : String(error),
             MAX_ERROR_MESSAGE_LENGTH,
           )}`,
@@ -315,7 +301,7 @@ const deliverExpoPush = async (
     }
   } catch (error) {
     console.error(
-      `[ERROR] Expo push delivery failed: user=${userId} notification=${notification?.id} error=${truncate(
+      `[ERROR] Expo push delivery failed: ${logContext} error=${truncate(
         error instanceof Error ? error.message : String(error),
         MAX_ERROR_MESSAGE_LENGTH,
       )}`,
@@ -325,9 +311,116 @@ const deliverExpoPush = async (
   return { sent, failed };
 };
 
+const toExpoPriority = (priority: ExpoPushPriority): "high" | "normal" =>
+  priority === "HIGH" || priority === "CRITICAL" ? "high" : "normal";
+
+const deliverExpoPush = async (
+  notification: ExpoPushDispatchInput,
+  userId: number,
+): Promise<{ sent: number; failed: number }> => {
+  let tokens: DeviceTokenRow[] = [];
+  try {
+    tokens = await listActiveTokensForUser(userId);
+  } catch (error) {
+    console.error(
+      `[ERROR] Expo push delivery failed: user=${userId} notification=${notification?.id} error=${truncate(
+        error instanceof Error ? error.message : String(error),
+        MAX_ERROR_MESSAGE_LENGTH,
+      )}`,
+    );
+    return { sent: 0, failed: 0 };
+  }
+
+  const priority = toExpoPriority(notification.priority);
+
+  return sendExpoMessages(
+    tokens,
+    (to) => ({
+      to,
+      sound: "default",
+      title: notification.title,
+      body: notification.body,
+      priority,
+      data: {
+        notificationId: notification.id,
+        type: notification.type,
+        entityType: notification.entityType,
+        entityId: notification.entityId,
+        actionUrl: notification.actionUrl,
+        priority: notification.priority,
+      },
+    }),
+    `user=${userId} notification=${notification.id}`,
+  );
+};
+
+/**
+ * Push one message to every active device whose user is active and has not
+ * switched `notificationType` off (`in_app_enabled = false`). Creates no inbox
+ * rows: a broadcast like "we're live" is moment-bound, and writing one row per
+ * member would be thousands of sequential inserts for a message that is stale
+ * an hour later.
+ */
+const broadcastExpoPush = async (
+  notification: ExpoPushDispatchInput,
+): Promise<{ sent: number; failed: number }> => {
+  let tokens: DeviceTokenRow[] = [];
+  try {
+    tokens = await prisma.notification_device_token.findMany({
+      where: {
+        is_active: true,
+        user: {
+          OR: [{ is_active: true }, { is_active: null }],
+          notification_preferences: {
+            none: {
+              type: notification.type,
+              in_app_enabled: false,
+            },
+          },
+        },
+      },
+      select: {
+        id: true,
+        token: true,
+      },
+    });
+  } catch (error) {
+    console.error(
+      `[ERROR] Expo broadcast token lookup failed: notification=${notification.id} error=${truncate(
+        error instanceof Error ? error.message : String(error),
+        MAX_ERROR_MESSAGE_LENGTH,
+      )}`,
+    );
+    return { sent: 0, failed: 0 };
+  }
+
+  const priority = toExpoPriority(notification.priority);
+
+  return sendExpoMessages(
+    tokens,
+    (to) => ({
+      to,
+      sound: "default",
+      title: notification.title,
+      body: notification.body,
+      priority,
+      data: {
+        notificationId: notification.id,
+        type: notification.type,
+        entityType: notification.entityType,
+        entityId: notification.entityId,
+        actionUrl: notification.actionUrl,
+        priority: notification.priority,
+      },
+    }),
+    `broadcast notification=${notification.id}`,
+  );
+};
+
 export const notificationDeviceService = {
   registerDeviceToken,
   unregisterDeviceToken,
   listActiveTokensForUser,
   deliverExpoPush,
+  broadcastExpoPush,
 };
