@@ -31,6 +31,16 @@ import {
   sendEmailToAllUsers,
   filterUsersInfo,
 } from "../user/userController";
+import {
+  approveMembershipRequest,
+  createMembershipRequest,
+  declineMembershipRequest,
+  getMyMembershipRequest,
+  listGuests,
+  listMembershipRequests,
+  selfRegister,
+  updateMyProfile,
+} from "./selfServiceController";
 import { Permissions } from "../../middleWare/authorization";
 import { authRateLimiter } from "../../middleWare/authRateLimiter";
 const permissions = new Permissions();
@@ -76,6 +86,31 @@ userRouter.post("/change-password", [authRateLimiter, protect], changePassword);
 userRouter.post("/login", [authRateLimiter], login);
 
 userRouter.post("/register", [authRateLimiter], registerUser);
+
+// Mobile self-service. Self-registration is public (rate limited) and fixes
+// every privileged field server-side; see selfServiceController.
+userRouter.post("/self-register", [authRateLimiter], selfRegister);
+userRouter.put("/me/profile", [protect], updateMyProfile);
+userRouter.post("/membership-request", [protect], createMembershipRequest);
+userRouter.get("/membership-request/mine", [protect], getMyMembershipRequest);
+
+// Dashboard: Visitors > Guests, and Membership management > Guest to membership.
+userRouter.get("/guests", [protect, permissions.can_view_visitors_scoped], listGuests);
+userRouter.get(
+  "/membership-requests",
+  [protect, permissions.can_manage_member_details],
+  listMembershipRequests,
+);
+userRouter.patch(
+  "/membership-requests/approve",
+  [protect, permissions.can_manage_member_details],
+  approveMembershipRequest,
+);
+userRouter.patch(
+  "/membership-requests/decline",
+  [protect, permissions.can_manage_member_details],
+  declineMembershipRequest,
+);
 userRouter.put(
   "/update-user",
   [protect, permissions.can_manage_member_details],
