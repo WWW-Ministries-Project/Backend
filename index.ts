@@ -31,6 +31,7 @@ if (shouldRunBackgroundJobs) {
   require("./src/cron-jobs/notificationSmsRetryCron");
   require("./src/cron-jobs/eventReminderCron");
   require("./src/cron-jobs/liveStreamCron");
+  require("./src/cron-jobs/rideReminderCron");
 } else {
   logger.info("Background cron jobs are disabled for this process.");
 }
