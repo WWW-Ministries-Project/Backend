@@ -18,6 +18,21 @@ const toOptionalString = (value: unknown): string | null | undefined => {
   return typeof value === "string" ? value : undefined;
 };
 
+/** A banner link is one of: an app path (`/member/give?segment=Pledges`),
+ *  the app's own scheme (`wwm-mobile://member/watch`), or a web page
+ *  (`https://…`), which the mobile app opens in its in-app browser. */
+const DEEP_LINK_PATTERN = /^(\/|wwm-mobile:\/\/|https?:\/\/[^\s/?#]+)\S*$/i;
+const INVALID_DEEP_LINK_MESSAGE =
+  "deep_link must be an app path starting with / (e.g. /member/give), a wwm-mobile:// link, or a web address starting with http:// or https://";
+
+/** Trimmed `deep_link`, with the same undefined/null semantics as
+ *  `toOptionalString`; `false` when the value is not a usable link. */
+const toOptionalDeepLink = (value: unknown): string | null | undefined | false => {
+  const link = toOptionalString(typeof value === "string" ? value.trim() : value);
+  if (link == null) return link;
+  return DEEP_LINK_PATTERN.test(link) ? link : false;
+};
+
 const toOptionalInt = (value: unknown): number | null | undefined => {
   if (value === undefined) return undefined;
   if (value === null || value === "") return null;
@@ -77,6 +92,13 @@ export class promotionController {
           .json({ message: "title is required", data: null });
       }
 
+      const deepLink = toOptionalDeepLink(body.deep_link);
+      if (deepLink === false) {
+        return res
+          .status(400)
+          .json({ message: INVALID_DEEP_LINK_MESSAGE, data: null });
+      }
+
       const branchId = body.branch_id ?? req.query?.branch_id ?? null;
 
       const promotion = await promotionService.createPromotion({
@@ -84,7 +106,7 @@ export class promotionController {
         subtitle: toOptionalString(body.subtitle),
         image_url: toOptionalString(body.image_url),
         cta_label: toOptionalString(body.cta_label),
-        deep_link: toOptionalString(body.deep_link),
+        deep_link: deepLink,
         sort_order: toOptionalInt(body.sort_order),
         start_date: toOptionalDate(body.start_date),
         end_date: toOptionalDate(body.end_date),
@@ -158,12 +180,19 @@ export class promotionController {
       }
 
       const body = req.body ?? {};
+      const deepLink = toOptionalDeepLink(body.deep_link);
+      if (deepLink === false) {
+        return res
+          .status(400)
+          .json({ message: INVALID_DEEP_LINK_MESSAGE, data: null });
+      }
+
       const promotion = await promotionService.updatePromotion(id, {
         title: body.title,
         subtitle: toOptionalString(body.subtitle),
         image_url: toOptionalString(body.image_url),
         cta_label: toOptionalString(body.cta_label),
-        deep_link: toOptionalString(body.deep_link),
+        deep_link: deepLink,
         sort_order: toOptionalInt(body.sort_order),
         start_date: toOptionalDate(body.start_date),
         end_date: toOptionalDate(body.end_date),
