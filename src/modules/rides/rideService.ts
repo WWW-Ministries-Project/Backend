@@ -1052,6 +1052,162 @@ export const saveArea = async (userId: number, idRaw: unknown, body: any) => {
   });
 };
 
+const SERVICE_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** A "YYYY-MM-DD" service date from the query, or the Sunday being arranged now. */
+const serviceDateFrom = (raw: unknown): Date => {
+  if (typeof raw !== "string" || !SERVICE_DATE.test(raw)) return currentServiceDate();
+  const parsed = new Date(`${raw}T00:00:00.000Z`);
+  if (Number.isNaN(parsed.getTime())) throw new InputValidationError("Invalid service date");
+  return parsed;
+};
+
+/**
+ * Every ride for one service date, with everyone on it — what the church
+ * office sees on Sunday morning. Unlike the member views, names and phone
+ * numbers are shown for every request: the safety team needs them to reach
+ * people.
+ */
+export const getAdminOverview = async (userId: number, serviceDateRaw: unknown) => {
+  await assertSafetyTeam(userId);
+  const serviceDate = serviceDateFrom(serviceDateRaw);
+  const [offers, recentDates, openReports] = await Promise.all([
+    prisma.ride_offer.findMany({
+      where: { service_date: serviceDate },
+      include: offerInclude,
+      orderBy: [{ status: "asc" }, { depart_time: "asc" }],
+    }),
+    prisma.ride_offer.findMany({
+      distinct: ["service_date"],
+      orderBy: { service_date: "desc" },
+      take: 12,
+      select: { service_date: true },
+    }),
+    prisma.ride_report.count({ where: { status: "OPEN" } }),
+  ]);
+
+  const active = offers.filter((offer) => offer.status === "ACTIVE");
+  const requests = active.flatMap((offer) => offer.requests);
+  const current = isoDate(currentServiceDate());
+  const dates = Array.from(new Set([current, ...recentDates.map((row) => isoDate(row.service_date))])).sort().reverse();
+
+  return {
+    service_date: isoDate(serviceDate),
+    current_service_date: current,
+    service_label: SERVICE_LABEL,
+    service_dates: dates,
+    stats: {
+      rides: active.length,
+      cancelled_rides: offers.length - active.length,
+      seats_offered: active.reduce((sum, offer) => sum + offer.seats_total, 0),
+      seats_filled: requests.filter((request) => request.status === "ACCEPTED").length,
+      pending_requests: requests.filter((request) => request.status === "PENDING").length,
+      declined_requests: requests.filter((request) => request.status === "DECLINED").length,
+      open_reports: openReports,
+    },
+    offers: offers.map((offer) => ({
+      id: offer.id,
+      status: offer.status,
+      area: offer.area,
+      depart_time: offer.depart_time,
+      seats_total: offer.seats_total,
+      seats_left: seatsLeftOf(offer),
+      car_details: offer.car_details,
+      cancelled_at: offer.cancelled_at,
+      created_at: offer.created_at,
+      driver: { id: offer.driver.id, name: offer.driver.name, phone: phoneOf(offer.driver) },
+      stops: offer.stops.map((stop) => ({ ...pointView(stop.pickup_point), pickup_time: stop.pickup_time })),
+      route: routeNames(offer),
+      requests: offer.requests.map((request) => ({
+        id: request.id,
+        status: request.status,
+        passenger: { id: request.passenger.id, name: request.passenger.name, phone: phoneOf(request.passenger) },
+        pickup_point: pointView(request.pickup_point),
+        pickup_time: request.pickup_time,
+        decline_reason: request.decline_reason,
+        decline_message: request.decline_message,
+        requested_at: request.requested_at,
+      })),
+    })),
+  };
+};
+
+/**
+ * The safety team takes a ride down (e.g. after a report). Passengers holding
+ * a seat or a pending request are told, the same way as a driver cancel, and
+ * the driver is told the church office removed it.
+ */
+export const adminCancelOffer = async (userId: number, offerIdRaw: unknown, body: any) => {
+  await assertSafetyTeam(userId);
+  const offerId = toPositiveInt(offerIdRaw);
+  if (!offerId) throw new InputValidationError("Ride id is required");
+  const offer = await prisma.ride_offer.findUnique({ where: { id: offerId }, include: offerInclude });
+  if (!offer) throw new NotFoundError("Ride not found");
+  if (offer.status !== "ACTIVE") throw new ConflictError("This ride is already cancelled");
+  const reason = cleanText(body?.reason, 300);
+
+  const affected = offer.requests.filter((request) => (ACTIVE_REQUEST_STATUSES as readonly string[]).includes(request.status));
+  const now = new Date();
+  await prisma.$transaction([
+    prisma.ride_offer.update({ where: { id: offer.id }, data: { status: "CANCELLED", cancelled_at: now } }),
+    prisma.ride_request.updateMany({
+      where: { offer_id: offer.id, status: { in: [...ACTIVE_REQUEST_STATUSES] } },
+      data: { status: "CANCELLED", cancelled_by_driver: true, cancelled_at: now },
+    }),
+  ]);
+
+  void notify({
+    type: "ride.cancelled",
+    title: "The church office cancelled your ride",
+    body: reason
+      ? `Sunday's ride from ${offer.area.name} was removed: ${reason}`
+      : `Sunday's ride from ${offer.area.name} was removed. Contact the church office if you have questions.`,
+    recipientUserId: offer.driver_id,
+    actorUserId: userId,
+    entityId: offer.id,
+    priority: "HIGH",
+    dedupeKey: `ride.cancelled:offer:${offer.id}`,
+  });
+  for (const request of affected) {
+    void notify({
+      type: "ride.cancelled",
+      title: "Sunday's ride was cancelled",
+      body: "Your seat has been released. Find another ride from your pickup point in the app.",
+      recipientUserId: request.passenger_id,
+      actorUserId: userId,
+      entityId: request.id,
+      priority: "HIGH",
+      dedupeKey: `ride.cancelled:${request.id}`,
+    });
+  }
+  return { id: offer.id, status: "CANCELLED", passengers_notified: affected.length };
+};
+
+/** Every member-to-member ride block, newest first. */
+export const listBlocks = async (userId: number) => {
+  await assertSafetyTeam(userId);
+  const rows = await prisma.ride_block.findMany({
+    orderBy: { created_at: "desc" },
+    select: {
+      id: true,
+      created_at: true,
+      blocker: { select: { id: true, name: true } },
+      blocked: { select: { id: true, name: true } },
+    },
+  });
+  return rows;
+};
+
+/** Lifts a block, e.g. once the safety team has resolved the concern. */
+export const removeBlock = async (userId: number, blockIdRaw: unknown) => {
+  await assertSafetyTeam(userId);
+  const blockId = toPositiveInt(blockIdRaw);
+  if (!blockId) throw new InputValidationError("Block id is required");
+  const deleted = await prisma.ride_block.deleteMany({ where: { id: blockId } });
+  if (!deleted.count) throw new NotFoundError("Block not found");
+  return { id: blockId };
+};
+
 /* ------------------------------------------------------------------ */
 /* Reminders (cron)                                                    */
 /* ------------------------------------------------------------------ */

@@ -71,3 +71,15 @@ export const savePickupPoint = async (req: Request, res: Response) =>
 
 export const saveArea = async (req: Request, res: Response) =>
   ok(res, await rides.saveArea(userIdOf(req), req.params.id, req.body), "Area saved");
+
+export const getAdminOverview = async (req: Request, res: Response) =>
+  ok(res, await rides.getAdminOverview(userIdOf(req), req.query?.service_date));
+
+export const adminCancelOffer = async (req: Request, res: Response) =>
+  ok(res, await rides.adminCancelOffer(userIdOf(req), req.params.id, req.body), "Ride cancelled");
+
+export const listBlocks = async (req: Request, res: Response) =>
+  ok(res, await rides.listBlocks(userIdOf(req)));
+
+export const removeBlock = async (req: Request, res: Response) =>
+  ok(res, await rides.removeBlock(userIdOf(req), req.params.id), "Block lifted");
