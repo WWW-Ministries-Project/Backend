@@ -1792,25 +1792,6 @@ export class Permissions {
     "Not authorized to delete events",
   );
 
-  // Announcements
-  can_view_announcements = this.checkPermission(
-    "Announcements",
-    "view",
-    "Not authorized to view announcements",
-  );
-
-  can_manage_announcements = this.checkPermission(
-    "Announcements",
-    "manage",
-    "Not authorized to manage announcements",
-  );
-
-  can_delete_announcements = this.checkPermission(
-    "Announcements",
-    "admin",
-    "Not authorized to delete announcements",
-  );
-
   // Community — Can_View: moderation queue + admin posts list;
   // Can_Manage: remove/restore/warn, MESSAGE/important posts, delete any post.
   can_view_community = this.checkPermission(

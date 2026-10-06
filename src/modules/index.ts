@@ -24,8 +24,6 @@ export * from "./assets/assetRouter";
 
 export * from "./events/eventContoller";
 export * from "./events/eventRoute";
-export * from "./announcements/announcementController";
-export * from "./announcements/announcementRoute";
 export * from "./promotions/promotionController";
 export * from "./promotions/promotionRoute";
 export * from "./eventReports/eventReportController";
