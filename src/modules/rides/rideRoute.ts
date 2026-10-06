@@ -1,16 +1,20 @@
 import Router from "express";
 import {
   acceptRequest,
+  adminCancelOffer,
   cancelOffer,
   cancelRequest,
   declineRequest,
   dismissRequest,
   fileReport,
   getAdminCatalog,
+  getAdminOverview,
   getCatalog,
   getMyRide,
+  listBlocks,
   listReports,
   publishOffer,
+  removeBlock,
   requestSeat,
   resolveReport,
   saveArea,
@@ -42,6 +46,10 @@ rideRouter.post("/reports", [protect], fileReport);
 
 // Safety team / church office: Membership_Management managers, checked in the
 // service so the same rule also picks who receives safety reports.
+rideRouter.get("/admin/overview", [protect], getAdminOverview);
+rideRouter.post("/admin/offers/:id/cancel", [protect], adminCancelOffer);
+rideRouter.get("/admin/blocks", [protect], listBlocks);
+rideRouter.delete("/admin/blocks/:id", [protect], removeBlock);
 rideRouter.get("/admin/reports", [protect], listReports);
 rideRouter.patch("/admin/reports/:id/resolve", [protect], resolveReport);
 rideRouter.get("/admin/catalog", [protect], getAdminCatalog);
