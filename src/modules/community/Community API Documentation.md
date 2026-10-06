@@ -95,7 +95,9 @@ Rules worth knowing:
 - `commentCount` excludes removed, deleted and viewer-hidden comments, comments by blocked members,
   and replies whose top-level comment is excluded.
 - Blocks resolve the real author from `postId` / `commentId` server-side, so an anonymous author
-  can be blocked without being revealed; such a block lists with `name: null`. Blocking yourself → 400.
+  can be blocked without being revealed; such a block lists with `name: null` for good. Anonymous and
+  named blocks of the same member are separate entries and are never merged, so the list can't be
+  used to work out who an anonymous author is. Blocking yourself → 400.
   Content the viewer has already hidden or reported can still be used to block.
 - `/members` searches active non-guest members of the viewer's branch, excluding the viewer.
 

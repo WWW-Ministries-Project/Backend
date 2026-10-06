@@ -226,7 +226,11 @@ export const moderate = async (
 
 export const listAdminPosts = async (viewer: Viewer, query: Record<string, unknown>) => {
   const { skip, take } = parsePaging(query);
-  const conditions: Prisma.community_postWhereInput[] = [{ deleted_at: null }];
+  const conditions: Prisma.community_postWhereInput[] = [
+    { deleted_at: null },
+    // ONLY_ME posts are private notes: moderators only see one once it is reported.
+    { OR: [{ audience: { not: "ONLY_ME" } }, { reports: { some: {} } }] },
+  ];
   if (query.type !== undefined && query.type !== "") {
     conditions.push({ type: parseEnum<community_post_type>(query.type, POST_TYPES, "type") });
   }

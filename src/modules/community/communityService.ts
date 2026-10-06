@@ -290,7 +290,14 @@ export const createPost = async (viewer: Viewer, input: Record<string, unknown>)
       : [];
     if (requested.length) {
       const users = await prisma.user.findMany({
-        where: { AND: [{ id: { in: requested } }, activeUserWhere] },
+        // Same pool as GET /community/members: active members of the viewer's branch.
+        where: {
+          AND: [
+            { id: { in: requested } },
+            activeUserWhere,
+            viewer.branchId ? { branch_id: viewer.branchId } : {},
+          ],
+        },
         select: { id: true },
       });
       recipientIds = users.map((user) => user.id);
@@ -442,7 +449,17 @@ export const createComment = async (viewer: Viewer, postId: unknown, input: Reco
       select: { id: true, parent_id: true, author_id: true },
     });
     if (!parent) throw new NotFoundError("Comment not found");
-    // One level of replies: replying to a reply attaches to its top-level comment.
+    // One level of replies: replying to a reply attaches to its top-level
+    // comment, which must itself still be visible to the viewer.
+    if (parent.parent_id !== null) {
+      const topLevel = await prisma.community_comment.findFirst({
+        where: {
+          AND: [{ id: parent.parent_id, post_id: post.id, parent_id: null }, visibleCommentWhere(viewer)],
+        },
+        select: { id: true },
+      });
+      if (!topLevel) throw new NotFoundError("Comment not found");
+    }
     parentId = parent.parent_id ?? parent.id;
     parentAuthorId = parent.author_id;
   }
@@ -611,10 +628,19 @@ export const createBlock = async (viewer: Viewer, input: Record<string, unknown>
     throw new InputValidationError("You can't block yourself");
   }
 
+  // Anonymous and named blocks are separate rows and are never merged or
+  // converted: an anonymous entry stays nameless forever, and blocking the
+  // same anonymous author again (or by name) never changes how many entries
+  // already exist — either would tell the blocker who the author is.
   await prisma.community_block.upsert({
-    where: { blocker_id_blocked_id: { blocker_id: viewer.id, blocked_id: blockedId } },
-    // Once the blocker knows who it is (a named post or a direct block), show the name.
-    update: viaAnonymous ? {} : { via_anonymous: false },
+    where: {
+      blocker_id_blocked_id_via_anonymous: {
+        blocker_id: viewer.id,
+        blocked_id: blockedId,
+        via_anonymous: viaAnonymous,
+      },
+    },
+    update: {},
     create: { blocker_id: viewer.id, blocked_id: blockedId, via_anonymous: viaAnonymous },
   });
   return { ok: true as const };

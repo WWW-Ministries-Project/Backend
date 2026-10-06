@@ -137,7 +137,7 @@ CREATE TABLE `community_block` (
     `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
 
     INDEX `community_block_blocked_id_idx`(`blocked_id`),
-    UNIQUE INDEX `community_block_blocker_id_blocked_id_key`(`blocker_id`, `blocked_id`),
+    UNIQUE INDEX `community_block_blocker_id_blocked_id_via_anonymous_key`(`blocker_id`, `blocked_id`, `via_anonymous`),
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 

@@ -3154,7 +3154,10 @@ model community_hidden {
 
 /// The blocker stops seeing the blocked member's posts and comments.
 /// `via_anonymous` keeps the blocked member's name from the blocker when the
-/// block was made from anonymous content.
+/// block was made from anonymous content. It is part of the unique key so an
+/// anonymous block and a named block of the same member are separate rows:
+/// merging them would let a member learn who an anonymous author is (by the
+/// entry gaining a name, or by the block list not growing).
 model community_block {
   id            Int      @id @default(autoincrement())
   blocker_id    Int
@@ -3164,7 +3167,7 @@ model community_block {
   blocker       user     @relation("CommunityBlockBlocker", fields: [blocker_id], references: [id], onDelete: Cascade)
   blocked       user     @relation("CommunityBlockBlocked", fields: [blocked_id], references: [id], onDelete: Cascade)
 
-  @@unique([blocker_id, blocked_id])
+  @@unique([blocker_id, blocked_id, via_anonymous])
   @@index([blocked_id])
 }
 

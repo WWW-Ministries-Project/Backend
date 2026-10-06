@@ -41,6 +41,21 @@ const send = async (input: CreateNotificationInput) => {
   }
 };
 
+/** How many notifications a fan-out creates at once. */
+const FAN_OUT_CONCURRENCY = 20;
+
+/**
+ * Sends a large batch in chunks of FAN_OUT_CONCURRENCY. notificationService
+ * has no bulk insert (createManyInAppNotifications is a sequential loop), so
+ * bounded parallelism keeps a church-wide fan-out from either taking minutes
+ * one user at a time or exhausting the connection pool all at once.
+ */
+const sendAll = async (inputs: CreateNotificationInput[]) => {
+  for (let index = 0; index < inputs.length; index += FAN_OUT_CONCURRENCY) {
+    await Promise.all(inputs.slice(index, index + FAN_OUT_CONCURRENCY).map(send));
+  }
+};
+
 /** Members who blocked `authorId` — they never hear about that member's activity. */
 const blockersOf = async (authorId: number): Promise<Set<number>> => {
   const rows = await prisma.community_block.findMany({
@@ -61,12 +76,16 @@ const sendOrRefresh = async (input: CreateNotificationInput & { dedupeKey: strin
     select: { id: true },
   });
   if (existing) {
+    // Resurface it: unread again and moved to the top of the inbox.
     await prisma.in_app_notification.update({
       where: { id: existing.id },
       data: {
         title: input.title,
         body: input.body,
         actor_user_id: input.actorUserId ?? null,
+        is_read: false,
+        read_at: null,
+        created_at: new Date(),
       },
     });
     return;
@@ -134,8 +153,8 @@ export const notifyNewPost = (post: PostForNotify, authorName: string) => {
 
     if (post.is_important) {
       const title = actor ? `${actor} shared an important message` : "New important message";
-      for (const recipientUserId of recipientIds) {
-        await send({
+      await sendAll(
+        recipientIds.map((recipientUserId) => ({
           type: "community.important",
           title,
           body: preview(post.body, 160),
@@ -143,11 +162,12 @@ export const notifyNewPost = (post: PostForNotify, authorName: string) => {
           actorUserId: actor ? post.author_id : null,
           entityId: post.id,
           actionUrl,
-          priority: "HIGH",
+          priority: "HIGH" as const,
           dedupeKey: `community:post:${post.id}:important:${recipientUserId}`,
+          // The only community type that emails, per the contract.
           sendEmail: true,
-        });
-      }
+        })),
+      );
       return;
     }
 
@@ -158,8 +178,8 @@ export const notifyNewPost = (post: PostForNotify, authorName: string) => {
         })
       : null;
     const title = `${actor ?? "Someone"} shared ${withArticle(TYPE_LABEL[post.type])}`;
-    for (const recipientUserId of recipientIds) {
-      await send({
+    await sendAll(
+      recipientIds.map((recipientUserId) => ({
         type: "community.department_post",
         title,
         body: department?.name ?? preview(post.body, 160),
@@ -168,8 +188,8 @@ export const notifyNewPost = (post: PostForNotify, authorName: string) => {
         entityId: post.id,
         actionUrl,
         dedupeKey: `community:post:${post.id}:department:${recipientUserId}`,
-      });
-    }
+      })),
+    );
   });
 };
 
