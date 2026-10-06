@@ -244,8 +244,8 @@ export class promotionController {
   };
 
   /** Mobile Home carousel. Any authenticated member may call this — there is
-   *  no `Promotions` permission on it, the same way `/announcements/mine` is
-   *  open to every signed-in user. */
+   *  no `Promotions` permission on it, the same way the `/community` feed is
+   *  open to every signed-in member. */
   active = async (req: Request, res: Response) => {
     try {
       const actorUserId = getActorUserId(req);

@@ -125,8 +125,7 @@ const updatePromotion = async (id: number, input: UpdatePromotionInput) => {
   validateWindow(startDate, endDate);
 
   // A promotion is display-only, so every field stays editable in every
-  // status — unlike an announcement, whose audience freezes once recipients
-  // have been resolved against it.
+  // status; nothing is ever resolved against its audience.
   return prisma.promotion.update({
     where: { id },
     data: {
@@ -148,7 +147,7 @@ const updatePromotion = async (id: number, input: UpdatePromotionInput) => {
 };
 
 /** Publishing a promotion is deliberately silent — no inbox row, no push.
- *  That is the whole reason promotions are not announcements. */
+ *  That is the whole reason promotions are not important Community posts. */
 const publishPromotion = async (id: number) => {
   const existing = await prisma.promotion.findUnique({ where: { id } });
   if (!existing) {
