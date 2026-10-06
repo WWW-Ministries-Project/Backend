@@ -3061,6 +3061,7 @@ model community_post {
   hidden_by              community_hidden[]
   reports                community_report[]
   moderation_logs        community_moderation_log[]
+  blocks_from            community_block[]
 
   @@index([status, deleted_at, created_at])
   @@index([is_important, created_at])
@@ -3112,6 +3113,7 @@ model community_comment {
   hidden_by       community_hidden[]
   reports         community_report[]
   moderation_logs community_moderation_log[]
+  blocks_from     community_block[]
 
   @@index([post_id, created_at])
   @@index([parent_id])
@@ -3154,21 +3156,33 @@ model community_hidden {
 
 /// The blocker stops seeing the blocked member's posts and comments.
 /// `via_anonymous` keeps the blocked member's name from the blocker when the
-/// block was made from anonymous content. It is part of the unique key so an
-/// anonymous block and a named block of the same member are separate rows:
-/// merging them would let a member learn who an anonymous author is (by the
-/// entry gaining a name, or by the block list not growing).
+/// block was made from anonymous content.
+///
+/// Rows are never merged in a way the blocker could observe: a named block is
+/// unique per (blocker, blocked); an anonymous block is unique per (blocker,
+/// source post/comment), so blocking from two anonymous posts by the same
+/// author makes two entries, exactly as it would for two different authors.
+/// `source_key` carries that rule in one non-null column ("MEMBER",
+/// "POST:<id>" or "COMMENT:<id>"), since MySQL unique keys ignore NULLs. A
+/// member stays blocked while any row for them exists.
 model community_block {
-  id            Int      @id @default(autoincrement())
-  blocker_id    Int
-  blocked_id    Int
-  via_anonymous Boolean  @default(false)
-  created_at    DateTime @default(now())
-  blocker       user     @relation("CommunityBlockBlocker", fields: [blocker_id], references: [id], onDelete: Cascade)
-  blocked       user     @relation("CommunityBlockBlocked", fields: [blocked_id], references: [id], onDelete: Cascade)
+  id                Int                @id @default(autoincrement())
+  blocker_id        Int
+  blocked_id        Int
+  via_anonymous     Boolean            @default(false)
+  source_post_id    Int?
+  source_comment_id Int?
+  source_key        String             @default("MEMBER") @db.VarChar(32)
+  created_at        DateTime           @default(now())
+  blocker           user               @relation("CommunityBlockBlocker", fields: [blocker_id], references: [id], onDelete: Cascade)
+  blocked           user               @relation("CommunityBlockBlocked", fields: [blocked_id], references: [id], onDelete: Cascade)
+  source_post       community_post?    @relation(fields: [source_post_id], references: [id], onDelete: SetNull)
+  source_comment    community_comment? @relation(fields: [source_comment_id], references: [id], onDelete: SetNull)
 
-  @@unique([blocker_id, blocked_id, via_anonymous])
+  @@unique([blocker_id, blocked_id, source_key])
   @@index([blocked_id])
+  @@index([source_post_id])
+  @@index([source_comment_id])
 }
 
 model community_report {

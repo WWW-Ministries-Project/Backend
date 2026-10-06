@@ -601,6 +601,8 @@ export const createBlock = async (viewer: Viewer, input: Record<string, unknown>
   const target = singleTarget(input, ["postId", "commentId", "userId"]);
   let blockedId: number;
   let viaAnonymous = false;
+  let sourcePostId: number | null = null;
+  let sourceCommentId: number | null = null;
 
   if (target.key === "postId") {
     const post = await prisma.community_post.findFirst({
@@ -610,6 +612,7 @@ export const createBlock = async (viewer: Viewer, input: Record<string, unknown>
     if (!post) throw new NotFoundError("Post not found");
     blockedId = post.author_id;
     viaAnonymous = post.is_anonymous;
+    sourcePostId = target.id;
   } else if (target.key === "commentId") {
     const comment = await prisma.community_comment.findFirst({
       where: { id: target.id, deleted_at: null, post: { AND: [{ deleted_at: null }, audienceWhere(viewer)] } },
@@ -618,6 +621,7 @@ export const createBlock = async (viewer: Viewer, input: Record<string, unknown>
     if (!comment) throw new NotFoundError("Comment not found");
     blockedId = comment.author_id;
     viaAnonymous = comment.is_anonymous;
+    sourceCommentId = target.id;
   } else {
     const user = await prisma.user.findUnique({ where: { id: target.id }, select: { id: true } });
     if (!user) throw new NotFoundError("Member not found");
@@ -628,20 +632,32 @@ export const createBlock = async (viewer: Viewer, input: Record<string, unknown>
     throw new InputValidationError("You can't block yourself");
   }
 
-  // Anonymous and named blocks are separate rows and are never merged or
-  // converted: an anonymous entry stays nameless forever, and blocking the
-  // same anonymous author again (or by name) never changes how many entries
-  // already exist — either would tell the blocker who the author is.
+  // A named block is one row per member. An anonymous block is one row per
+  // source post/comment and is never merged with another row or given a
+  // name: if two anonymous posts by the same author shared a row, the block
+  // list not growing would tell the blocker the posts have one author.
+  const sourceKey = !viaAnonymous
+    ? "MEMBER"
+    : sourcePostId
+      ? `POST:${sourcePostId}`
+      : `COMMENT:${sourceCommentId}`;
   await prisma.community_block.upsert({
     where: {
-      blocker_id_blocked_id_via_anonymous: {
+      blocker_id_blocked_id_source_key: {
         blocker_id: viewer.id,
         blocked_id: blockedId,
-        via_anonymous: viaAnonymous,
+        source_key: sourceKey,
       },
     },
     update: {},
-    create: { blocker_id: viewer.id, blocked_id: blockedId, via_anonymous: viaAnonymous },
+    create: {
+      blocker_id: viewer.id,
+      blocked_id: blockedId,
+      via_anonymous: viaAnonymous,
+      source_post_id: viaAnonymous ? sourcePostId : null,
+      source_comment_id: viaAnonymous ? sourceCommentId : null,
+      source_key: sourceKey,
+    },
   });
   return { ok: true as const };
 };

@@ -134,10 +134,15 @@ CREATE TABLE `community_block` (
     `blocker_id` INTEGER NOT NULL,
     `blocked_id` INTEGER NOT NULL,
     `via_anonymous` BOOLEAN NOT NULL DEFAULT false,
+    `source_post_id` INTEGER NULL,
+    `source_comment_id` INTEGER NULL,
+    `source_key` VARCHAR(32) NOT NULL DEFAULT 'MEMBER',
     `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
 
     INDEX `community_block_blocked_id_idx`(`blocked_id`),
-    UNIQUE INDEX `community_block_blocker_id_blocked_id_via_anonymous_key`(`blocker_id`, `blocked_id`, `via_anonymous`),
+    INDEX `community_block_source_post_id_idx`(`source_post_id`),
+    INDEX `community_block_source_comment_id_idx`(`source_comment_id`),
+    UNIQUE INDEX `community_block_blocker_id_blocked_id_source_key_key`(`blocker_id`, `blocked_id`, `source_key`),
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
@@ -227,6 +232,12 @@ ALTER TABLE `community_block` ADD CONSTRAINT `community_block_blocker_id_fkey` F
 
 -- AddForeignKey
 ALTER TABLE `community_block` ADD CONSTRAINT `community_block_blocked_id_fkey` FOREIGN KEY (`blocked_id`) REFERENCES `user`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `community_block` ADD CONSTRAINT `community_block_source_post_id_fkey` FOREIGN KEY (`source_post_id`) REFERENCES `community_post`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `community_block` ADD CONSTRAINT `community_block_source_comment_id_fkey` FOREIGN KEY (`source_comment_id`) REFERENCES `community_comment`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE `community_report` ADD CONSTRAINT `community_report_reporter_id_fkey` FOREIGN KEY (`reporter_id`) REFERENCES `user`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
