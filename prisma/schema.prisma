@@ -114,6 +114,14 @@ model user {
   stock_notification_requests                  stock_notification_requests[]
   membership_requests                          membership_request[]                    @relation("MembershipRequestUser")
   membership_requests_decided                  membership_request[]                    @relation("MembershipRequestDecider")
+  ride_offers                                  ride_offer[]                            @relation("RideOfferDriver")
+  ride_requests                                ride_request[]                          @relation("RideRequestPassenger")
+  ride_pickup_alerts                           ride_pickup_alert[]                     @relation("RidePickupAlertUser")
+  ride_reports_filed                           ride_report[]                           @relation("RideReportReporter")
+  ride_reports_received                        ride_report[]                           @relation("RideReportReported")
+  ride_reports_resolved                        ride_report[]                           @relation("RideReportResolver")
+  ride_blocks_made                             ride_block[]                            @relation("RideBlockBlocker")
+  ride_blocks_received                         ride_block[]                            @relation("RideBlockBlocked")
 
   @@index([access_level_id], map: "user_access_level_id_fkey")
   @@index([position_id], map: "user_position_id_fkey")
@@ -2761,4 +2769,193 @@ model stock_notification_requests {
   @@unique([user_id, product_colour_id, size_id], name: "stock_notification_requests_unique")
   @@index([product_colour_id, size_id], map: "stock_notification_requests_colour_size_idx")
   @@index([user_id], map: "stock_notification_requests_user_id_fkey")
+}
+
+// ── Ride to church ──────────────────────────────────────────────────────────
+// Members offer spare seats on their way to the Sunday service and other
+// members request them. Drivers share an AREA (never an address) plus public
+// pickup points; phone and car details unlock only once a request is accepted.
+
+enum ride_offer_status {
+  ACTIVE
+  CANCELLED
+}
+
+enum ride_request_status {
+  PENDING
+  ACCEPTED
+  DECLINED
+  WITHDRAWN
+  CANCELLED
+}
+
+enum ride_report_status {
+  OPEN
+  RESOLVED
+}
+
+/// A neighbourhood a driver starts from. Curated by the church office.
+model ride_area {
+  id         Int               @id @default(autoincrement())
+  name       String            @unique @db.VarChar(120)
+  sort_order Int               @default(0)
+  is_active  Boolean           @default(true)
+  created_at DateTime          @default(now())
+  updated_at DateTime          @updatedAt
+  route      ride_area_route[]
+  offers     ride_offer[]
+}
+
+/// A public landmark riders can be picked up at — never a home address.
+model ride_pickup_point {
+  id          Int                 @id @default(autoincrement())
+  name        String              @unique @db.VarChar(120)
+  /// The district shown under the landmark name, e.g. "Spintex Road".
+  area_label  String              @db.VarChar(120)
+  sort_order  Int                 @default(0)
+  is_active   Boolean             @default(true)
+  created_at  DateTime            @default(now())
+  updated_at  DateTime            @updatedAt
+  area_routes ride_area_route[]
+  offer_stops ride_offer_stop[]
+  requests    ride_request[]
+  alerts      ride_pickup_alert[]
+}
+
+/// The landmarks a driver from an area usually passes, in order, with the
+/// typical minutes from setting off. Drives "Suggested on your route" and the
+/// pickup time riders see.
+model ride_area_route {
+  id                 Int               @id @default(autoincrement())
+  area_id            Int
+  pickup_point_id    Int
+  position           Int               @default(0)
+  minutes_from_start Int               @default(10)
+  area               ride_area         @relation(fields: [area_id], references: [id], onDelete: Cascade)
+  pickup_point       ride_pickup_point @relation(fields: [pickup_point_id], references: [id], onDelete: Cascade)
+
+  @@unique([area_id, pickup_point_id])
+  @@index([pickup_point_id])
+}
+
+model ride_offer {
+  id            Int               @id @default(autoincrement())
+  driver_id     Int
+  /// The service this ride is for (the Sunday, as a calendar date).
+  service_date  DateTime          @db.Date
+  area_id       Int
+  /// 24h "HH:MM" in church-local time.
+  depart_time   String            @db.VarChar(5)
+  seats_total   Int
+  /// Optional car description shown to accepted passengers only.
+  car_details   String?           @db.VarChar(160)
+  status        ride_offer_status @default(ACTIVE)
+  reminder_sent Boolean           @default(false)
+  cancelled_at  DateTime?
+  created_at    DateTime          @default(now())
+  updated_at    DateTime          @updatedAt
+  driver        user              @relation("RideOfferDriver", fields: [driver_id], references: [id], onDelete: Cascade)
+  area          ride_area         @relation(fields: [area_id], references: [id])
+  stops         ride_offer_stop[]
+  requests      ride_request[]
+  reports       ride_report[]
+
+  @@index([driver_id, service_date])
+  @@index([service_date, status])
+  @@index([area_id])
+}
+
+model ride_offer_stop {
+  id              Int               @id @default(autoincrement())
+  offer_id        Int
+  pickup_point_id Int
+  position        Int
+  /// 24h "HH:MM" — when the driver expects to be at this point.
+  pickup_time     String            @db.VarChar(5)
+  offer           ride_offer        @relation(fields: [offer_id], references: [id], onDelete: Cascade)
+  pickup_point    ride_pickup_point @relation(fields: [pickup_point_id], references: [id])
+
+  @@unique([offer_id, pickup_point_id])
+  @@index([pickup_point_id])
+}
+
+model ride_request {
+  id                  Int                 @id @default(autoincrement())
+  offer_id            Int
+  passenger_id        Int
+  pickup_point_id     Int
+  pickup_time         String              @db.VarChar(5)
+  status              ride_request_status @default(PENDING)
+  decline_reason      String?             @db.VarChar(160)
+  decline_message     String?             @db.VarChar(500)
+  /// Set when a cancellation came from the driver cancelling the whole ride.
+  cancelled_by_driver Boolean             @default(false)
+  /// The passenger has seen a decline/cancellation and moved on.
+  dismissed_at        DateTime?
+  requested_at        DateTime            @default(now())
+  decided_at          DateTime?
+  cancelled_at        DateTime?
+  offer               ride_offer          @relation(fields: [offer_id], references: [id], onDelete: Cascade)
+  passenger           user                @relation("RideRequestPassenger", fields: [passenger_id], references: [id], onDelete: Cascade)
+  pickup_point        ride_pickup_point   @relation(fields: [pickup_point_id], references: [id])
+  reports             ride_report[]
+
+  @@index([offer_id, status])
+  @@index([passenger_id, status])
+  @@index([pickup_point_id])
+}
+
+/// "Notify me when a ride passes this point" for one service date.
+model ride_pickup_alert {
+  id              Int               @id @default(autoincrement())
+  user_id         Int
+  pickup_point_id Int
+  service_date    DateTime          @db.Date
+  notified_at     DateTime?
+  created_at      DateTime          @default(now())
+  user            user              @relation("RidePickupAlertUser", fields: [user_id], references: [id], onDelete: Cascade)
+  pickup_point    ride_pickup_point @relation(fields: [pickup_point_id], references: [id], onDelete: Cascade)
+
+  @@unique([user_id, pickup_point_id, service_date])
+  @@index([pickup_point_id, service_date])
+}
+
+/// A safety concern, routed to the church safety team — never to the other member.
+model ride_report {
+  id               Int                @id @default(autoincrement())
+  reporter_id      Int
+  reported_user_id Int?
+  offer_id         Int?
+  request_id       Int?
+  reason           String             @db.VarChar(120)
+  details          String?            @db.Text
+  blocked          Boolean            @default(false)
+  status           ride_report_status @default(OPEN)
+  resolution_note  String?            @db.Text
+  resolved_by      Int?
+  resolved_at      DateTime?
+  created_at       DateTime           @default(now())
+  reporter         user               @relation("RideReportReporter", fields: [reporter_id], references: [id], onDelete: Cascade)
+  reported_user    user?              @relation("RideReportReported", fields: [reported_user_id], references: [id], onDelete: SetNull)
+  resolver         user?              @relation("RideReportResolver", fields: [resolved_by], references: [id], onDelete: SetNull)
+  offer            ride_offer?        @relation(fields: [offer_id], references: [id], onDelete: SetNull)
+  request          ride_request?      @relation(fields: [request_id], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@index([reporter_id])
+  @@index([reported_user_id])
+}
+
+/// A member who never wants to share a ride with another. Symmetric in effect:
+/// neither sees the other's rides.
+model ride_block {
+  id         Int      @id @default(autoincrement())
+  blocker_id Int
+  blocked_id Int
+  created_at DateTime @default(now())
+  blocker    user     @relation("RideBlockBlocker", fields: [blocker_id], references: [id], onDelete: Cascade)
+  blocked    user     @relation("RideBlockBlocked", fields: [blocked_id], references: [id], onDelete: Cascade)
+
+  @@unique([blocker_id, blocked_id])
+  @@index([blocked_id])
 }
