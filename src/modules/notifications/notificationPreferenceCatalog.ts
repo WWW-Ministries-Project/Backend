@@ -35,6 +35,55 @@ const DEFAULT_CATEGORY = "Other";
 
 export const NOTIFICATION_PREFERENCE_OPTIONS: NotificationPreferenceOption[] = [
   {
+    type: "community.comment",
+    title: "Comments on your posts",
+    description: "Tell a member when someone comments on their Community post.",
+    category: "Community",
+    availableChannels: IN_APP_ONLY_CHANNELS,
+  },
+  {
+    type: "community.reply",
+    title: "Replies to your comments",
+    description: "Tell a member when someone replies to their comment.",
+    category: "Community",
+    availableChannels: IN_APP_ONLY_CHANNELS,
+  },
+  {
+    type: "community.praying",
+    title: "People praying for you",
+    description: "Tell a member when others are praying for their prayer request (at most once a day per request).",
+    category: "Community",
+    availableChannels: IN_APP_ONLY_CHANNELS,
+  },
+  {
+    type: "community.reaction",
+    title: "Reactions to your posts",
+    description: "Tell a member when others react to their post (at most once a day per post).",
+    category: "Community",
+    availableChannels: IN_APP_ONLY_CHANNELS,
+  },
+  {
+    type: "community.important",
+    title: "Important church messages",
+    description: "Important messages from the church, sent to everyone they are addressed to.",
+    category: "Community",
+    availableChannels: IN_APP_AND_EMAIL_CHANNELS,
+  },
+  {
+    type: "community.department_post",
+    title: "New posts in your department",
+    description: "Tell department members when someone posts to their department.",
+    category: "Community",
+    availableChannels: IN_APP_ONLY_CHANNELS,
+  },
+  {
+    type: "community.warning",
+    title: "Moderator warnings",
+    description: "Tell a member when a moderator has reviewed something they posted.",
+    category: "Community",
+    availableChannels: IN_APP_ONLY_CHANNELS,
+  },
+  {
     type: "livestream.started",
     title: "Live service alerts",
     description: "Tell members on the mobile app when the church goes live on YouTube.",
