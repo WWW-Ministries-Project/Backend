@@ -40,8 +40,8 @@ Access-level key `Community` (the migration copied each level's `Announcements` 
 
 Guards: `can_view_community`, `can_manage_community` (reject with 401 like every
 `checkPermission` guard); probe `attach_community_management` sets `req.canViewCommunity` /
-`req.canManageCommunity` without rejecting. `Promotions` now falls back to `Community`, then
-`Announcements`.
+`req.canManageCommunity` without rejecting. `Community` falls back to `Announcements` (an explicit
+`Community` value always wins), and `Promotions` falls back to `Community`, then `Announcements`.
 
 ## Enums
 
@@ -84,12 +84,15 @@ Envelope `{ message, data }`; lists `{ message, data, total }`; errors `{ messag
 Rules worth knowing:
 
 - `body` is trimmed, required and at most 5000 characters (posts and comments).
-- `type: MESSAGE` or `isImportant: true` without Community manage → **403**.
-- `DEPARTMENT` needs `departmentId`, and a member must belong to it (managers may post to any) → 400 / 403.
+- `type: MESSAGE` or `isImportant: true` without Community manage → **403**. That and the guest
+  rule are the only 403s; business-rule rejections are 400 and content the viewer can't see is 404
+  (the web dashboard leaves the page on any 403).
+- Editing or deleting someone else's post or comment without Community manage → 400.
+- `DEPARTMENT` needs `departmentId`, and a member must belong to it (managers may post to any) → 400.
 - `SELECTED` needs at least one active, non-guest `memberIds` entry other than the author → 400.
 - `ONLY_ME` forces `isAnonymous: false`. `imageUrls`: at most 4 http(s) URLs.
 - `filter=discussion` returns `DISCUSSION` and `QUESTION` posts. `departmentId` must be one of
-  the viewer's departments (→ 403) and limits the feed to that department's posts.
+  the viewer's departments (→ 400) and limits the feed to that department's posts.
 - Replying to a reply attaches to its top-level comment (`parentId` in the response is the
   top-level id).
 - `commentCount` excludes removed, deleted and viewer-hidden comments, comments by blocked members,

@@ -42,9 +42,12 @@ const PERMISSION_KEY_ALIASES: Record<string, string[]> = {
   // Announcements were replaced by Community; the key is still accepted on
   // stored access levels and is the last fallback for Promotions below.
   Announcements: ["Announcements"],
-  // The 20261006130000_community migration copied every Announcements value
-  // to Community, so Community needs no fallback of its own.
-  Community: ["Community"],
+  // Community replaced Announcements. The 20261006130000_community migration
+  // copied every Announcements value to Community; the fallback covers any
+  // level that still holds only Announcements. resolvePermissionValue returns
+  // the first key holding a string, so an explicit Community value (even
+  // No_Access) always wins. Mirrors DOMAIN_FALLBACKS in the Frontend.
+  Community: ["Community", "Announcements"],
   Sermons: ["Sermons"],
   // Promotions were split out of Announcements, which Community has since
   // replaced, so they fall back to Community and then Announcements for

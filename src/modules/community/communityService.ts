@@ -48,6 +48,12 @@ import { notifyNewComment, notifyNewPost, notifyReaction } from "./communityNoti
 
 const COMMUNITY_NOTIFICATION_PREFIX = "community.";
 
+// Status codes: 403 (UnauthorizedError) is reserved for real authorization
+// failures — guests / deactivated accounts (loadViewer) and non-managers
+// posting MESSAGE or important posts. The web dashboard treats any 403 as
+// "access denied" and leaves the page, so business-rule rejections are 400
+// (InputValidationError) and content the viewer can't see is 404.
+
 /* ------------------------------------------------------------------ */
 /* Lookups                                                             */
 /* ------------------------------------------------------------------ */
@@ -178,7 +184,7 @@ export const listFeed = async (viewer: Viewer, query: Record<string, unknown>) =
     const departmentId = toPositiveInt(query.departmentId);
     if (!departmentId) throw new InputValidationError("departmentId must be a positive integer");
     if (!viewer.departmentIds.includes(departmentId)) {
-      throw new UnauthorizedError("You are not a member of that department");
+      throw new InputValidationError("You are not a member of that department");
     }
     conditions.push({ audience: "DEPARTMENT", department_id: departmentId });
   }
@@ -275,7 +281,7 @@ export const createPost = async (viewer: Viewer, input: Record<string, unknown>)
     departmentId = toPositiveInt(input.departmentId);
     if (!departmentId) throw new InputValidationError("departmentId is required for a DEPARTMENT audience");
     if (!viewer.canManage && !viewer.departmentIds.includes(departmentId)) {
-      throw new UnauthorizedError("You can only post to a department you belong to");
+      throw new InputValidationError("You can only post to a department you belong to");
     }
     const department = await prisma.department.findUnique({
       where: { id: departmentId },
@@ -342,7 +348,7 @@ const findEditablePost = async (viewer: Viewer, postId: unknown) => {
   });
   if (!post) throw new NotFoundError("Post not found");
   if (post.author_id !== viewer.id && !viewer.canManage) {
-    throw new UnauthorizedError("You can only change your own posts");
+    throw new InputValidationError("You can only change your own posts");
   }
   return post;
 };
@@ -491,7 +497,7 @@ export const deleteComment = async (viewer: Viewer, commentId: unknown) => {
   });
   if (!comment) throw new NotFoundError("Comment not found");
   if (comment.author_id !== viewer.id && !viewer.canManage) {
-    throw new UnauthorizedError("You can only delete your own comments");
+    throw new InputValidationError("You can only delete your own comments");
   }
   await prisma.community_comment.update({ where: { id: comment.id }, data: { deleted_at: new Date() } });
   return { id: comment.id };
