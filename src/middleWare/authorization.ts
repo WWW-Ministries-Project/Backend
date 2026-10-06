@@ -39,14 +39,20 @@ const PERMISSION_KEY_ALIASES: Record<string, string[]> = {
   AI: ["AI", "Settings", "Access_rights", "Access rights"],
   Marketplace: ["Marketplace", "Program"],
   "Life Center": ["Life Center"],
+  // Announcements were replaced by Community; the key is still accepted on
+  // stored access levels and is the last fallback for Promotions below.
   Announcements: ["Announcements"],
+  // The 20261006130000_community migration copied every Announcements value
+  // to Community, so Community needs no fallback of its own.
+  Community: ["Community"],
   Sermons: ["Sermons"],
-  // Promotions were split out of Announcements, so they fall back to it for
+  // Promotions were split out of Announcements, which Community has since
+  // replaced, so they fall back to Community and then Announcements for
   // anyone whose stored permissions predate the domain. An access level that
   // sets Promotions explicitly always wins, since its own key comes first.
   // Mirrors DOMAIN_FALLBACKS in the Frontend's src/utils/accessControl.ts —
   // the two tables must agree or the UI shows a page the API then refuses.
-  Promotions: ["Promotions", "Announcements"],
+  Promotions: ["Promotions", "Community", "Announcements"],
 };
 
 const parsePermissionsObject = (permissions: any): Record<string, any> => {
@@ -1804,6 +1810,54 @@ export class Permissions {
     "admin",
     "Not authorized to delete announcements",
   );
+
+  // Community — Can_View: moderation queue + admin posts list;
+  // Can_Manage: remove/restore/warn, MESSAGE/important posts, delete any post.
+  can_view_community = this.checkPermission(
+    "Community",
+    "view",
+    "Not authorized to view community moderation",
+  );
+
+  can_manage_community = this.checkPermission(
+    "Community",
+    "manage",
+    "Not authorized to manage the community",
+  );
+
+  /**
+   * Non-rejecting probe, like attach_sermon_management. Annotates the request
+   * with the caller's Community access (`canViewCommunity`,
+   * `canManageCommunity`) so member endpoints can widen what a moderator may
+   * do without a separate route. Requires `protect` to have run first.
+   */
+  attach_community_management = async (
+    req: any,
+    _res: Response,
+    next: NextFunction,
+  ) => {
+    req.canViewCommunity = false;
+    req.canManageCommunity = false;
+    try {
+      const userId = toPositiveInt(req.user?.id);
+      if (userId) {
+        const snapshot = await getOrFetchAuthContextSnapshot(userId);
+        const privileged = Boolean(snapshot?.isPrivilegedUser);
+        req.canViewCommunity = Boolean(
+          privileged &&
+            hasActionPermission(snapshot?.permissions, "Community", "view"),
+        );
+        req.canManageCommunity = Boolean(
+          privileged &&
+            hasActionPermission(snapshot?.permissions, "Community", "manage"),
+        );
+      }
+    } catch {
+      req.canViewCommunity = false;
+      req.canManageCommunity = false;
+    }
+    return next();
+  };
 
   // Promotions
   can_view_promotions = this.checkPermission(

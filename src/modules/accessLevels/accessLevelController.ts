@@ -31,7 +31,10 @@ const OPTIONAL_PERMISSION_KEYS = [
   "Marketplace",
   "School_of_ministry",
   "Settings",
+  // Kept so access levels saved before Community replaced Announcements
+  // still validate; the dashboard now edits Community instead.
   "Announcements",
+  "Community",
   "Sermons",
   "Promotions",
 ];
@@ -67,6 +70,7 @@ const PERMISSION_KEY_NORMALIZER: Record<string, string> = {
   Settings: "Settings",
   Announcements: "Announcements",
   Announcement: "Announcements",
+  Community: "Community",
   Sermons: "Sermons",
   Sermon: "Sermons",
   Promotions: "Promotions",
