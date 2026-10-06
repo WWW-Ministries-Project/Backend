@@ -122,6 +122,15 @@ model user {
   ride_reports_resolved                        ride_report[]                           @relation("RideReportResolver")
   ride_blocks_made                             ride_block[]                            @relation("RideBlockBlocker")
   ride_blocks_received                         ride_block[]                            @relation("RideBlockBlocked")
+  community_posts                              community_post[]                        @relation("CommunityPostAuthor")
+  community_post_recipients                    community_post_recipient[]              @relation("CommunityPostRecipientUser")
+  community_comments                           community_comment[]                     @relation("CommunityCommentAuthor")
+  community_reactions                          community_reaction[]                    @relation("CommunityReactionUser")
+  community_hidden                             community_hidden[]                      @relation("CommunityHiddenUser")
+  community_blocks_made                        community_block[]                       @relation("CommunityBlockBlocker")
+  community_blocks_received                    community_block[]                       @relation("CommunityBlockBlocked")
+  community_reports_filed                      community_report[]                      @relation("CommunityReportReporter")
+  community_moderation_actions                 community_moderation_log[]              @relation("CommunityModerationActor")
 
   @@index([access_level_id], map: "user_access_level_id_fkey")
   @@index([position_id], map: "user_position_id_fkey")
@@ -173,6 +182,7 @@ model branch {
   promotions               promotion[]
   sermon_series            sermon_series[]
   sermons                  sermon[]
+  community_posts          community_post[]
 
   @@index([pastor_in_charge_id], map: "branch_pastor_in_charge_id_idx")
 }
@@ -348,6 +358,7 @@ model department {
   user_departments                  user_departments[]
   join_requests                     department_join_request[]
   announcements                     announcement[]
+  community_posts                   community_post[]
 
   @@index([department_head], map: "department_department_head_fkey")
   @@index([branch_id], map: "department_branch_id_idx")
@@ -2595,6 +2606,11 @@ model pledge_payment {
   @@index([createdAt], map: "pledge_payment_created_at_idx")
 }
 
+/// FROZEN ARCHIVE. Announcements were replaced by Community (an announcement
+/// is now a community_post with type MESSAGE + is_important). Migration
+/// 20261006130000_community copied every PUBLISHED announcement into
+/// community_post (legacy_announcement_id). No code reads or writes the two
+/// announcement tables any more; they are kept only as a historical record.
 enum announcement_audience {
   ALL_MEMBERS
   MINISTRY_WORKERS
@@ -2958,4 +2974,236 @@ model ride_block {
 
   @@unique([blocker_id, blocked_id])
   @@index([blocked_id])
+}
+
+// ------------------------------------------------------------------
+// Community — replaces Announcements
+// ------------------------------------------------------------------
+
+enum community_post_type {
+  PRAYER
+  TESTIMONY
+  DISCUSSION
+  CELEBRATION
+  QUESTION
+  MESSAGE
+  GENERAL
+}
+
+enum community_audience {
+  CHURCH
+  DEPARTMENT
+  SELECTED
+  ONLY_ME
+}
+
+enum community_content_status {
+  ACTIVE
+  REMOVED
+}
+
+enum community_reaction_type {
+  PRAY
+  LOVE
+  PRAISE
+  CELEBRATE
+  SUPPORT
+}
+
+enum community_report_reason {
+  INAPPROPRIATE
+  HARASSMENT
+  SAFEGUARDING
+  SPAM
+  MISLEADING
+  OTHER
+}
+
+enum community_report_status {
+  PENDING
+  REMOVED
+  RESTORED
+}
+
+enum community_moderation_action {
+  VIEW_ANON_AUTHOR
+  REMOVE
+  RESTORE
+  WARN
+}
+
+/// A member's post to the church community. `author_id` is always the real
+/// author, even when `is_anonymous` — member endpoints never return it for an
+/// anonymous post; moderators see it and every such view is audited.
+model community_post {
+  id                     Int                        @id @default(autoincrement())
+  type                   community_post_type
+  body                   String                     @db.LongText
+  audience               community_audience
+  department_id          Int?
+  author_id              Int
+  is_anonymous           Boolean                    @default(false)
+  is_important           Boolean                    @default(false)
+  status                 community_content_status   @default(ACTIVE)
+  branch_id              Int?
+  deleted_at             DateTime?
+  /// Set for posts copied from the frozen `announcement` table.
+  legacy_announcement_id Int?                       @unique
+  created_at             DateTime                   @default(now())
+  updated_at             DateTime                   @updatedAt
+  author                 user                       @relation("CommunityPostAuthor", fields: [author_id], references: [id], onDelete: Cascade)
+  department             department?                @relation(fields: [department_id], references: [id], onDelete: SetNull)
+  branch                 branch?                    @relation(fields: [branch_id], references: [id], onDelete: SetNull)
+  images                 community_post_image[]
+  recipients             community_post_recipient[]
+  comments               community_comment[]
+  reactions              community_reaction[]
+  hidden_by              community_hidden[]
+  reports                community_report[]
+  moderation_logs        community_moderation_log[]
+
+  @@index([status, deleted_at, created_at])
+  @@index([is_important, created_at])
+  @@index([audience, branch_id])
+  @@index([author_id])
+  @@index([department_id])
+  @@index([branch_id])
+}
+
+model community_post_image {
+  id       Int            @id @default(autoincrement())
+  post_id  Int
+  url      String         @db.VarChar(1024)
+  position Int            @default(0)
+  post     community_post @relation(fields: [post_id], references: [id], onDelete: Cascade)
+
+  @@index([post_id])
+}
+
+/// Who can see a SELECTED-audience post (besides its author).
+model community_post_recipient {
+  id      Int            @id @default(autoincrement())
+  post_id Int
+  user_id Int
+  post    community_post @relation(fields: [post_id], references: [id], onDelete: Cascade)
+  user    user           @relation("CommunityPostRecipientUser", fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@unique([post_id, user_id])
+  @@index([user_id])
+}
+
+/// One level of replies: `parent_id` always points at a top-level comment.
+model community_comment {
+  id              Int                        @id @default(autoincrement())
+  post_id         Int
+  parent_id       Int?
+  author_id       Int
+  body            String                     @db.Text
+  is_anonymous    Boolean                    @default(false)
+  status          community_content_status   @default(ACTIVE)
+  deleted_at      DateTime?
+  created_at      DateTime                   @default(now())
+  updated_at      DateTime                   @updatedAt
+  post            community_post             @relation(fields: [post_id], references: [id], onDelete: Cascade)
+  parent          community_comment?         @relation("CommunityCommentReplies", fields: [parent_id], references: [id], onDelete: Cascade)
+  replies         community_comment[]        @relation("CommunityCommentReplies")
+  author          user                       @relation("CommunityCommentAuthor", fields: [author_id], references: [id], onDelete: Cascade)
+  reactions       community_reaction[]
+  hidden_by       community_hidden[]
+  reports         community_report[]
+  moderation_logs community_moderation_log[]
+
+  @@index([post_id, created_at])
+  @@index([parent_id])
+  @@index([author_id])
+}
+
+/// A reaction on exactly one of a post or a comment.
+model community_reaction {
+  id         Int                     @id @default(autoincrement())
+  post_id    Int?
+  comment_id Int?
+  user_id    Int
+  type       community_reaction_type
+  created_at DateTime                @default(now())
+  post       community_post?         @relation(fields: [post_id], references: [id], onDelete: Cascade)
+  comment    community_comment?      @relation(fields: [comment_id], references: [id], onDelete: Cascade)
+  user       user                    @relation("CommunityReactionUser", fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@unique([post_id, user_id, type])
+  @@unique([comment_id, user_id, type])
+  @@index([user_id])
+}
+
+/// A member hid a post or a comment from their own view (also set on report).
+model community_hidden {
+  id         Int                @id @default(autoincrement())
+  user_id    Int
+  post_id    Int?
+  comment_id Int?
+  created_at DateTime           @default(now())
+  user       user               @relation("CommunityHiddenUser", fields: [user_id], references: [id], onDelete: Cascade)
+  post       community_post?    @relation(fields: [post_id], references: [id], onDelete: Cascade)
+  comment    community_comment? @relation(fields: [comment_id], references: [id], onDelete: Cascade)
+
+  @@unique([user_id, post_id])
+  @@unique([user_id, comment_id])
+  @@index([post_id])
+  @@index([comment_id])
+}
+
+/// The blocker stops seeing the blocked member's posts and comments.
+/// `via_anonymous` keeps the blocked member's name from the blocker when the
+/// block was made from anonymous content.
+model community_block {
+  id            Int      @id @default(autoincrement())
+  blocker_id    Int
+  blocked_id    Int
+  via_anonymous Boolean  @default(false)
+  created_at    DateTime @default(now())
+  blocker       user     @relation("CommunityBlockBlocker", fields: [blocker_id], references: [id], onDelete: Cascade)
+  blocked       user     @relation("CommunityBlockBlocked", fields: [blocked_id], references: [id], onDelete: Cascade)
+
+  @@unique([blocker_id, blocked_id])
+  @@index([blocked_id])
+}
+
+model community_report {
+  id          Int                     @id @default(autoincrement())
+  reporter_id Int
+  post_id     Int?
+  comment_id  Int?
+  reason      community_report_reason
+  details     String?                 @db.Text
+  status      community_report_status @default(PENDING)
+  warned_at   DateTime?
+  created_at  DateTime                @default(now())
+  updated_at  DateTime                @updatedAt
+  reporter    user                    @relation("CommunityReportReporter", fields: [reporter_id], references: [id], onDelete: Cascade)
+  post        community_post?         @relation(fields: [post_id], references: [id], onDelete: Cascade)
+  comment     community_comment?      @relation(fields: [comment_id], references: [id], onDelete: Cascade)
+
+  @@index([status, created_at])
+  @@index([reporter_id])
+  @@index([post_id])
+  @@index([comment_id])
+}
+
+/// Audit trail of moderator actions, including every time a moderator was
+/// shown the real author of anonymous content.
+model community_moderation_log {
+  id         Int                         @id @default(autoincrement())
+  actor_id   Int
+  action     community_moderation_action
+  post_id    Int?
+  comment_id Int?
+  created_at DateTime                    @default(now())
+  actor      user                        @relation("CommunityModerationActor", fields: [actor_id], references: [id], onDelete: Cascade)
+  post       community_post?             @relation(fields: [post_id], references: [id], onDelete: SetNull)
+  comment    community_comment?          @relation(fields: [comment_id], references: [id], onDelete: SetNull)
+
+  @@index([created_at])
+  @@index([actor_id])
+  @@index([post_id])
+  @@index([comment_id])
 }
