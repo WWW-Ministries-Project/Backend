@@ -55,7 +55,7 @@ Preference type `livestream.started`, channel `inApp`, default on:
 |---|---|---|---|
 | `YOUTUBE_API_KEY` | yes | — | YouTube Data API v3 key. The cron is off without it. |
 | `YOUTUBE_CHANNEL_ID` | no | `UCEdXLYbtPZFk1wXrOKBX0qw` | |
-| `YOUTUBE_API_REFERER` | no | — | Set when the key is HTTP-referrer restricted. |
+| `YOUTUBE_API_REFERER` | no | `http://localhost:3000/` | Sent as `Referer`; the shared key is HTTP-referrer restricted and accepts only this origin. Override if the key's restriction changes. |
 | `LIVE_STREAM_CRON` | no | `20 * * * * *` | Tick schedule; pacing is decided per tick. |
 | `LIVE_STREAM_IDLE_POLL_MINUTES` | no | `5` | |
 | `LIVE_STREAM_LIVE_POLL_MINUTES` | no | `2` | |
