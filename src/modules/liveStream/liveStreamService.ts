@@ -62,7 +62,12 @@ const config = () => {
   const channelId = (process.env.YOUTUBE_CHANNEL_ID || "UCEdXLYbtPZFk1wXrOKBX0qw").trim();
   return {
     apiKey: (process.env.YOUTUBE_API_KEY || "").trim(),
-    referer: (process.env.YOUTUBE_API_REFERER || "").trim(),
+    // The shared key is HTTP-referrer restricted and, today, accepts only
+    // this origin (the dashboard's dev host; the production hosts get 403).
+    // Without a matching Referer every check fails and the app reads
+    // "offline" through a live broadcast. Same workaround as the website's
+    // sync script and the mobile client. Inert once the key is unrestricted.
+    referer: (process.env.YOUTUBE_API_REFERER || "http://localhost:3000/").trim(),
     // UU… is the channel's full uploads playlist; UULV… the Live tab only.
     liveTabPlaylistId: `UULV${channelId.slice(2)}`,
     uploadsPlaylistId: `UU${channelId.slice(2)}`,
