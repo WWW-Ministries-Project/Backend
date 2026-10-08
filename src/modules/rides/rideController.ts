@@ -20,13 +20,13 @@ const ok = (res: Response, data: unknown, message = "Success") =>
 /* Member-facing */
 
 export const getCatalog = async (req: Request, res: Response) =>
-  ok(res, await rides.getCatalog(userIdOf(req)));
+  ok(res, await rides.getCatalog(userIdOf(req), req.query?.event_id));
 
 export const getMyRide = async (req: Request, res: Response) =>
-  ok(res, await rides.getMyRide(userIdOf(req)));
+  ok(res, await rides.getMyRide(userIdOf(req), req.query?.event_id));
 
 export const searchRides = async (req: Request, res: Response) =>
-  ok(res, await rides.searchRides(userIdOf(req), req.query?.pickup_point_id));
+  ok(res, await rides.searchRides(userIdOf(req), req.query?.pickup_point_id, req.query?.event_id));
 
 export const publishOffer = async (req: Request, res: Response) =>
   ok(res, await rides.publishOffer(userIdOf(req), req.body), "Your ride is published");

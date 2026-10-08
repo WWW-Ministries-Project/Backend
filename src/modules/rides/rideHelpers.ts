@@ -1,6 +1,6 @@
 /**
- * Pure helpers for Ride to church: the service-date calendar, "HH:MM" clock
- * arithmetic and member name formatting. No Prisma, no I/O.
+ * Pure helpers for Ride to church: which church events are taking rides,
+ * "HH:MM" clock arithmetic and member name formatting. No Prisma, no I/O.
  */
 
 /**
@@ -13,11 +13,12 @@ const CHURCH_UTC_OFFSET_MINUTES = (() => {
   return Number.isFinite(parsed) ? parsed : 0;
 })();
 
-/** Rides for a Sunday stay "this Sunday" until the service is well over. */
-const SERVICE_DAY_CUTOFF_HOUR = 13;
+/** How far ahead members can arrange rides. */
+export const RIDE_EVENT_WINDOW_DAYS = 14;
 
-export const SERVICE_LABEL = "Sunday Service";
-export const DEPART_TIMES = ["07:00", "07:15", "07:30", "07:45"];
+export const DEFAULT_EVENT_NAME = "Church service";
+/** Suggested departures, in minutes before the event starts. */
+const DEPART_SUGGESTION_LEADS = [60, 45, 30, 15];
 export const MIN_SEATS = 1;
 export const MAX_SEATS = 6;
 /** How long before the driver sets off everyone on the ride is reminded. */
@@ -47,30 +48,40 @@ export const churchNow = (now: Date = new Date()): Date =>
 const dayOf = (local: Date): Date =>
   new Date(Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate()));
 
-/**
- * The Sunday rides are currently being arranged for: today until the service
- * is over, otherwise the coming Sunday.
- */
-export const currentServiceDate = (now: Date = new Date()): Date => {
-  const local = churchNow(now);
-  const today = dayOf(local);
-  const weekday = local.getUTCDay();
-  if (weekday === 0 && local.getUTCHours() < SERVICE_DAY_CUTOFF_HOUR) {
-    return today;
-  }
-  const daysAhead = weekday === 0 ? 7 : 7 - weekday;
-  return new Date(today.getTime() + daysAhead * 86_400_000);
-};
-
 /** Today's date on the church's clock (midnight UTC). */
 export const churchToday = (now: Date = new Date()): Date => dayOf(churchNow(now));
 
+/** The calendar day an event starts on, as a `@db.Date` value. */
+export const eventDay = (startDate: Date): Date => dayOf(startDate);
+
 export const isoDate = (date: Date): string => date.toISOString().slice(0, 10);
+
+const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+export const weekdayOf = (day: Date): string => WEEKDAYS[day.getUTCDay()];
 
 const CLOCK = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
 export const isClockTime = (value: unknown): value is string =>
   typeof value === "string" && CLOCK.test(value);
+
+/**
+ * An event's "HH:MM" start or end time. Events are entered on the dashboard,
+ * so "9:00", "09:00:00" and "9:00 AM" are all accepted; anything else is null.
+ */
+export const parseEventClock = (value: unknown): string | null => {
+  if (typeof value !== "string") return null;
+  const match = /^(\d{1,2}):(\d{2})(?::\d{2})?\s*([ap]\.?m\.?)?$/i.exec(value.trim());
+  if (!match) return null;
+  let hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  const meridiem = match[3]?.toLowerCase().startsWith("p") ? "pm" : match[3] ? "am" : null;
+  if (meridiem && (hours < 1 || hours > 12)) return null;
+  if (meridiem === "pm" && hours < 12) hours += 12;
+  if (meridiem === "am" && hours === 12) hours = 0;
+  if (hours > 23 || minutes > 59) return null;
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+};
 
 export const clockToMinutes = (value: string): number => {
   const [hours, minutes] = value.split(":").map(Number);
@@ -91,6 +102,26 @@ export const addMinutes = (clock: string, minutes: number): string =>
 export const churchMinutesNow = (now: Date = new Date()): number => {
   const local = churchNow(now);
   return local.getUTCHours() * 60 + local.getUTCMinutes();
+};
+
+/** The first and last church days (inclusive) members can arrange rides for. */
+export const rideEventWindow = (now: Date = new Date()): { from: Date; to: Date } => {
+  const from = churchToday(now);
+  return { from, to: new Date(from.getTime() + RIDE_EVENT_WINDOW_DAYS * 86_400_000) };
+};
+
+/**
+ * Whether rides to an event are still being arranged. A ride is for the
+ * event's day, not its hours, so it stays open until that day is over.
+ */
+export const eventStillOpen = (event: { day: Date }, now: Date = new Date()): boolean =>
+  isoDate(event.day) >= isoDate(churchToday(now));
+
+/** Quick-pick departure times ahead of an event; empty when its start is unknown. */
+export const departSuggestions = (startTime: string | null): string[] => {
+  if (!startTime) return [];
+  const start = clockToMinutes(startTime);
+  return DEPART_SUGGESTION_LEADS.filter((lead) => start - lead >= 0).map((lead) => minutesToClock(start - lead));
 };
 
 /**
