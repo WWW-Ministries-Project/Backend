@@ -149,7 +149,8 @@ const eventPhrase = (event: RideEvent | null) => (event ? `${event.name} on ${we
 
 /**
  * Every event members can arrange rides to right now, soonest first: confirmed
- * events from today through the ride window, minus any already over.
+ * events from today through the ride window. Today's stay listed all day,
+ * even once they have finished — a ride is for the day, not the event's hours.
  */
 const upcomingEvents = async (now: Date = new Date()): Promise<RideEvent[]> => {
   const { from, to } = rideEventWindow(now);
@@ -642,9 +643,6 @@ export const publishOffer = async (userId: number, body: any) => {
   if (!areaId) throw new InputValidationError("Choose the area you're starting from");
   if (!isClockTime(departTime)) throw new InputValidationError("Choose a departure time");
   const event = requireEvent(await upcomingEvents(), body?.event_id);
-  if (event.startTime && clockToMinutes(departTime) >= clockToMinutes(event.startTime)) {
-    throw new InputValidationError(`Leave before ${event.name} starts at ${displayClock(event.startTime)}`);
-  }
   if (isoDate(event.day) === isoDate(churchToday()) && clockToMinutes(departTime) <= churchMinutesNow()) {
     throw new InputValidationError("That time has already passed. Choose a later departure.");
   }

@@ -15,8 +15,6 @@ const CHURCH_UTC_OFFSET_MINUTES = (() => {
 
 /** How far ahead members can arrange rides. */
 export const RIDE_EVENT_WINDOW_DAYS = 14;
-/** An event with no end time stays open for rides this long after it starts. */
-const DEFAULT_EVENT_MINUTES = 180;
 
 export const DEFAULT_EVENT_NAME = "Church service";
 /** Suggested departures, in minutes before the event starts. */
@@ -113,25 +111,11 @@ export const rideEventWindow = (now: Date = new Date()): { from: Date; to: Date 
 };
 
 /**
- * Whether rides to an event are still being arranged: any day before it, and
- * on the day until it ends (or a few hours after it starts when it has no end
- * time).
+ * Whether rides to an event are still being arranged. A ride is for the
+ * event's day, not its hours, so it stays open until that day is over.
  */
-export const eventStillOpen = (
-  event: { day: Date; startTime: string | null; endTime: string | null },
-  now: Date = new Date(),
-): boolean => {
-  const day = isoDate(event.day);
-  const today = isoDate(churchToday(now));
-  if (day !== today) return day > today;
-  const { startTime, endTime } = event;
-  const closes = endTime
-    ? clockToMinutes(endTime)
-    : startTime
-      ? clockToMinutes(startTime) + DEFAULT_EVENT_MINUTES
-      : 24 * 60;
-  return churchMinutesNow(now) < closes;
-};
+export const eventStillOpen = (event: { day: Date }, now: Date = new Date()): boolean =>
+  isoDate(event.day) >= isoDate(churchToday(now));
 
 /** Quick-pick departure times ahead of an event; empty when its start is unknown. */
 export const departSuggestions = (startTime: string | null): string[] => {
