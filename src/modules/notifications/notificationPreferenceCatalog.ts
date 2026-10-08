@@ -77,9 +77,23 @@ export const NOTIFICATION_PREFERENCE_OPTIONS: NotificationPreferenceOption[] = [
     availableChannels: IN_APP_AND_EMAIL_CHANNELS,
   },
   {
+    type: "community.church_post",
+    title: "New posts in Community",
+    description: "Tell members when someone shares a post with the whole church.",
+    category: "Community",
+    availableChannels: IN_APP_ONLY_CHANNELS,
+  },
+  {
     type: "community.department_post",
     title: "New posts in your department",
     description: "Tell department members when someone posts to their department.",
+    category: "Community",
+    availableChannels: IN_APP_ONLY_CHANNELS,
+  },
+  {
+    type: "community.selected_post",
+    title: "Posts shared with you",
+    description: "Tell a member when someone shares a Community post with them directly.",
     category: "Community",
     availableChannels: IN_APP_ONLY_CHANNELS,
   },
