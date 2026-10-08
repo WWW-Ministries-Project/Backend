@@ -561,6 +561,7 @@ export const publishOffer = async (userId: number, body: any) => {
         actionUrl: `${MEMBER_ACTION_URL}/find?pickup_point_id=${alert.pickup_point_id}`,
         dedupeKey: `ride.available:${offer.id}:${alert.user_id}`,
         sendEmail: false,
+        bulk: toNotify.length > 1,
       });
     }
   }
