@@ -83,7 +83,13 @@ Envelope `{ message, data }`; lists `{ message, data, total }`; errors `{ messag
 
 Rules worth knowing:
 
-- `body` is trimmed, required and at most 5000 characters (posts and comments).
+- `body` is trimmed and required (posts and comments). It is either plain text or rich text: HTML
+  wrapped in `<html>…</html>` from the mobile editor. Rich text is sanitized on write to `p`, `br`,
+  `b`, `i`, `u`, `s`, `code`, `a[href]` (http/https/mailto), `h1`–`h6`, `ul[data-type="checkbox"]`,
+  `ol`, `li[checked]`, `blockquote`, `codeblock` and `mention[text, indicator, id]` (a mention
+  without a numeric member id becomes plain text). At most 5000 visible characters (markup
+  excluded) and 20000 characters of HTML. Responses return the stored body as is; notification
+  copy and a department's `latest.body` are flattened to plain text.
 - `type: MESSAGE` or `isImportant: true` without Community manage → **403**. That and the guest
   rule are the only 403s; business-rule rejections are 400 and content the viewer can't see is 404
   (the web dashboard leaves the page on any 403).
@@ -176,6 +182,7 @@ named: the title says "Someone" and no actor is stored. Members never hear from 
 |---|---|---|
 | `community.comment` | Someone commented on (or replied under) your post | per comment |
 | `community.reply` | Someone replied to your comment | per comment |
+| `community.mention` | You were mentioned in a post (on create, or newly added on edit) or a comment. Only members who can see the post; not the writer, and not a post/parent author this comment already notified | per post (or comment) per recipient |
 | `community.praying` | `PRAY` on your prayer request — "Someone is praying…" / "3 people are praying…" | per post per day, copy refreshed |
 | `community.reaction` | Any other reaction on your post — "Ama and 2 others reacted to your testimony" | per post per day, copy refreshed |
 | `community.important` | An important post was shared — to its whole audience. **Email on.** | per post per recipient |

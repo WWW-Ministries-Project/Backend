@@ -9,6 +9,7 @@ import {
   community_report_reason,
 } from "@prisma/client";
 import { InputValidationError } from "../../utils/custom-error-handlers";
+import { bodyToPlainText, isHtmlBody, sanitizeBody } from "./communityRichText";
 
 export const POST_TYPES: community_post_type[] = [
   "PRAYER",
@@ -46,7 +47,10 @@ export const REPORT_REASONS: community_report_reason[] = [
   "OTHER",
 ];
 
+/** Limit on what the member actually wrote: the visible text, markup excluded. */
 export const MAX_BODY_LENGTH = 5000;
+/** Separate, generous cap on a rich-text body's raw HTML so markup doesn't eat the allowance. */
+export const MAX_BODY_HTML_LENGTH = 20000;
 export const MAX_REPORT_DETAILS_LENGTH = 1000;
 export const MAX_IMAGES = 4;
 export const MAX_IMAGE_URL_LENGTH = 1024;
@@ -102,15 +106,36 @@ export const parseEnum = <T extends string>(
   return normalized as T;
 };
 
+/**
+ * A post or comment body: legacy plain text, or rich-text HTML (see
+ * communityRichText), which is sanitized here so only whitelisted markup is
+ * ever stored. Length rules apply to the visible text.
+ */
 export const parseBody = (value: unknown, field = "body"): string => {
   const text = typeof value === "string" ? value.replace(/\r\n?/g, "\n").trim() : "";
   if (!text) {
     throw new InputValidationError(`${field} is required`);
   }
-  if (text.length > MAX_BODY_LENGTH) {
+  if (!isHtmlBody(text)) {
+    if (text.length > MAX_BODY_LENGTH) {
+      throw new InputValidationError(`${field} must be ${MAX_BODY_LENGTH} characters or fewer`);
+    }
+    return text;
+  }
+
+  const tooLong = `${field} is too long once formatted; remove some formatting or text`;
+  // Checked before sanitizing too, so an oversized payload is never parsed.
+  if (text.length > MAX_BODY_HTML_LENGTH) throw new InputValidationError(tooLong);
+  const html = sanitizeBody(text);
+  const visible = bodyToPlainText(html);
+  if (!visible) {
+    throw new InputValidationError(`${field} is required`);
+  }
+  if (visible.length > MAX_BODY_LENGTH) {
     throw new InputValidationError(`${field} must be ${MAX_BODY_LENGTH} characters or fewer`);
   }
-  return text;
+  if (html.length > MAX_BODY_HTML_LENGTH) throw new InputValidationError(tooLong);
+  return html;
 };
 
 export const parseBoolean = (value: unknown): boolean =>
@@ -126,9 +151,9 @@ export const initialsOf = (name?: string | null): string =>
     .slice(0, 2)
     .toUpperCase() || "?";
 
-/** One-line excerpt for notification copy. */
+/** One-line excerpt for notification copy; rich-text bodies are flattened first, so no tags leak. */
 export const preview = (text: string, max = 140): string => {
-  const flat = text.replace(/\s+/g, " ").trim();
+  const flat = bodyToPlainText(text).replace(/\s+/g, " ").trim();
   return flat.length > max ? `${flat.slice(0, max - 1).trimEnd()}…` : flat;
 };
 

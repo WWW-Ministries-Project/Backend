@@ -15,6 +15,7 @@ import {
 } from "../notifications/notificationService";
 import { TYPE_LABEL, dayKey, distinctIds, preview, withArticle } from "./communityHelpers";
 import { activeUserWhere, departmentMemberIds } from "./communityQueries";
+import { mentionedUserIds } from "./communityRichText";
 
 export const COMMUNITY_ENTITY_TYPE = "COMMUNITY_POST";
 
@@ -97,6 +98,8 @@ type PostForNotify = {
   id: number;
   type: community_post_type;
   body: string;
+  status: string;
+  deleted_at: Date | null;
   audience: string;
   department_id: number | null;
   branch_id: number | null;
@@ -132,6 +135,114 @@ const audienceRecipientIds = async (post: PostForNotify): Promise<number[]> => {
     default:
       return [];
   }
+};
+
+/**
+ * Of `candidateIds`, the active members who can open the post: in its
+ * audience (or its author), not hiding it, and not blocking its author.
+ * Mirrors visiblePostWhere for a handful of users, without loading a
+ * church-wide audience to check a few mentions.
+ */
+const membersWhoCanSee = async (post: PostForNotify, candidateIds: number[]): Promise<number[]> => {
+  if (!candidateIds.length || post.status !== "ACTIVE" || post.deleted_at) return [];
+  const [users, hidden, postAuthorBlockers] = await Promise.all([
+    prisma.user.findMany({
+      where: { AND: [{ id: { in: candidateIds } }, activeUserWhere] },
+      select: { id: true, branch_id: true },
+    }),
+    prisma.community_hidden.findMany({
+      where: { post_id: post.id, user_id: { in: candidateIds } },
+      select: { user_id: true },
+    }),
+    blockersOf(post.author_id),
+  ]);
+  const hiddenBy = new Set(hidden.map((row) => row.user_id));
+
+  let inAudience: (user: { id: number; branch_id: number | null }) => boolean;
+  switch (post.audience) {
+    case "CHURCH":
+      inAudience = (user) => post.branch_id === null || user.branch_id === post.branch_id;
+      break;
+    case "DEPARTMENT": {
+      const members = post.department_id
+        ? (await departmentMemberIds([post.department_id])).get(post.department_id) ?? []
+        : [];
+      const memberSet = new Set(members);
+      inAudience = (user) => memberSet.has(user.id);
+      break;
+    }
+    case "SELECTED": {
+      const rows = await prisma.community_post_recipient.findMany({
+        where: { post_id: post.id, user_id: { in: candidateIds } },
+        select: { user_id: true },
+      });
+      const recipientSet = new Set(rows.map((row) => row.user_id));
+      inAudience = (user) => recipientSet.has(user.id);
+      break;
+    }
+    default:
+      inAudience = () => false;
+  }
+
+  return users
+    .filter((user) => user.id === post.author_id || inAudience(user))
+    .filter((user) => !hiddenBy.has(user.id) && !postAuthorBlockers.has(user.id))
+    .map((user) => user.id);
+};
+
+/**
+ * community.mention to each member tagged in a post or comment body. Only
+ * ids not in `previousBody` (an edit re-notifies nobody), never the writer,
+ * never `excludeIds` (members this comment already notified as post or
+ * parent author), and only members who can see the post and haven't blocked
+ * the writer. Deduped per post (or comment) per recipient.
+ */
+export const notifyMentions = (args: {
+  post: PostForNotify;
+  comment?: { id: number; body: string; author_id: number; is_anonymous: boolean } | null;
+  previousBody?: string | null;
+  excludeIds?: (number | null)[];
+  writerName: string;
+}) => {
+  const { post, comment } = args;
+  const body = comment ? comment.body : post.body;
+  const writerId = comment ? comment.author_id : post.author_id;
+  const previous = new Set(args.previousBody ? mentionedUserIds(args.previousBody) : []);
+  const excluded = new Set(distinctIds([writerId, ...(args.excludeIds ?? [])]));
+  const candidateIds = mentionedUserIds(body).filter((id) => !previous.has(id) && !excluded.has(id));
+  if (!candidateIds.length) return;
+
+  runInBackground("mention", async () => {
+    const [visible, blockers] = await Promise.all([
+      membersWhoCanSee(post, candidateIds),
+      blockersOf(writerId),
+    ]);
+    const recipientIds = visible.filter((id) => !blockers.has(id));
+    if (!recipientIds.length) return;
+
+    const anonymous = comment ? comment.is_anonymous : post.is_anonymous;
+    const actor = anonymous ? null : args.writerName;
+    const title = comment
+      ? `${actor ?? "Someone"} mentioned you in a comment`
+      : `${actor ?? "Someone"} mentioned you in ${withArticle(TYPE_LABEL[post.type])}`;
+    const excerpt = comment ? `“${preview(comment.body, 120)}”` : preview(post.body, 160);
+    const actionUrl = communityActionUrl(post.id, comment?.id);
+
+    await sendAll(
+      recipientIds.map((recipientUserId) => ({
+        type: "community.mention",
+        title,
+        body: excerpt,
+        recipientUserId,
+        actorUserId: actor ? writerId : null,
+        entityId: post.id,
+        actionUrl,
+        dedupeKey: comment
+          ? `community:comment:${comment.id}:mention:${recipientUserId}`
+          : `community:post:${post.id}:mention:${recipientUserId}`,
+      })),
+    );
+  });
 };
 
 /** community.important to the whole audience, or community.department_post to the department. */

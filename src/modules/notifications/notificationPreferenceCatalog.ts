@@ -49,6 +49,13 @@ export const NOTIFICATION_PREFERENCE_OPTIONS: NotificationPreferenceOption[] = [
     availableChannels: IN_APP_ONLY_CHANNELS,
   },
   {
+    type: "community.mention",
+    title: "Mentions",
+    description: "Tell a member when someone mentions them in a Community post or comment.",
+    category: "Community",
+    availableChannels: IN_APP_ONLY_CHANNELS,
+  },
+  {
     type: "community.praying",
     title: "People praying for you",
     description: "Tell a member when others are praying for their prayer request (at most once a day per request).",
