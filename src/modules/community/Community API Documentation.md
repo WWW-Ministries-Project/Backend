@@ -186,7 +186,9 @@ named: the title says "Someone" and no actor is stored. Members never hear from 
 | `community.praying` | `PRAY` on your prayer request — "Someone is praying…" / "3 people are praying…" | per post per day, copy refreshed |
 | `community.reaction` | Any other reaction on your post — "Ama and 2 others reacted to your testimony" | per post per day, copy refreshed |
 | `community.important` | An important post was shared — to its whole audience. **Email on.** | per post per recipient |
+| `community.church_post` | A non-important post to the church (its branch, when the post has one; author excluded) | per post per recipient |
 | `community.department_post` | A non-important post to your department (author excluded) | per post per recipient |
+| `community.selected_post` | A non-important post shared with you (SELECTED audience; author excluded) | per post per recipient |
 | `community.warning` | A moderator warned you | per target per day |
 
 All types are in `notificationPreferenceCatalog` (category "Community"); email is off for every

@@ -245,9 +245,14 @@ export const notifyMentions = (args: {
   });
 };
 
-/** community.important to the whole audience, or community.department_post to the department. */
+/**
+ * community.important to the whole audience; otherwise community.church_post
+ * to the church (or branch), community.department_post to the department, or
+ * community.selected_post to the members a SELECTED post was addressed to.
+ * ONLY_ME posts have no audience and notify no one.
+ */
 export const notifyNewPost = (post: PostForNotify, authorName: string) => {
-  if (!post.is_important && post.audience !== "DEPARTMENT") return;
+  if (post.audience === "ONLY_ME") return;
 
   runInBackground("new post", async () => {
     const [audience, blockers] = await Promise.all([
@@ -277,6 +282,40 @@ export const notifyNewPost = (post: PostForNotify, authorName: string) => {
           dedupeKey: `community:post:${post.id}:important:${recipientUserId}`,
           // The only community type that emails, per the contract.
           sendEmail: true,
+        })),
+      );
+      return;
+    }
+
+    if (post.audience === "SELECTED") {
+      const title = `${actor ?? "Someone"} shared ${withArticle(TYPE_LABEL[post.type])} with you`;
+      await sendAll(
+        recipientIds.map((recipientUserId) => ({
+          type: "community.selected_post",
+          title,
+          body: preview(post.body, 160),
+          recipientUserId,
+          actorUserId: actor ? post.author_id : null,
+          entityId: post.id,
+          actionUrl,
+          dedupeKey: `community:post:${post.id}:selected:${recipientUserId}`,
+        })),
+      );
+      return;
+    }
+
+    if (post.audience === "CHURCH") {
+      const title = `${actor ?? "Someone"} shared ${withArticle(TYPE_LABEL[post.type])}`;
+      await sendAll(
+        recipientIds.map((recipientUserId) => ({
+          type: "community.church_post",
+          title,
+          body: preview(post.body, 160),
+          recipientUserId,
+          actorUserId: actor ? post.author_id : null,
+          entityId: post.id,
+          actionUrl,
+          dedupeKey: `community:post:${post.id}:church:${recipientUserId}`,
         })),
       );
       return;
