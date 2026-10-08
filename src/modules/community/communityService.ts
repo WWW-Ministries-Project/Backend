@@ -44,7 +44,8 @@ import {
   visibleCommentWhere,
   visiblePostWhere,
 } from "./communityQueries";
-import { notifyNewComment, notifyNewPost, notifyReaction } from "./communityNotifications";
+import { notifyMentions, notifyNewComment, notifyNewPost, notifyReaction } from "./communityNotifications";
+import { bodyToPlainText } from "./communityRichText";
 
 const COMMUNITY_NOTIFICATION_PREFIX = "community.";
 
@@ -123,7 +124,7 @@ export const listDepartments = async (viewer: Viewer) => {
       latest: post
         ? {
             authorName: post.is_anonymous ? null : post.author.name,
-            body: post.body,
+            body: bodyToPlainText(post.body),
             createdAt: post.created_at.toISOString(),
           }
         : null,
@@ -335,6 +336,7 @@ export const createPost = async (viewer: Viewer, input: Record<string, unknown>)
   });
 
   notifyNewPost(created, viewer.name);
+  notifyMentions({ post: created, writerName: viewer.name });
   return postDto(viewer, created.id);
 };
 
@@ -344,7 +346,7 @@ const findEditablePost = async (viewer: Viewer, postId: unknown) => {
   if (!id) throw new NotFoundError("Post not found");
   const post = await prisma.community_post.findFirst({
     where: viewer.canManage ? { id, deleted_at: null } : { AND: [{ id }, visiblePostWhere(viewer)] },
-    select: { id: true, author_id: true },
+    select: { id: true, author_id: true, body: true },
   });
   if (!post) throw new NotFoundError("Post not found");
   if (post.author_id !== viewer.id && !viewer.canManage) {
@@ -356,7 +358,14 @@ const findEditablePost = async (viewer: Viewer, postId: unknown) => {
 export const updatePost = async (viewer: Viewer, postId: unknown, input: Record<string, unknown>) => {
   const post = await findEditablePost(viewer, postId);
   const body = parseBody(input.body);
-  await prisma.community_post.update({ where: { id: post.id }, data: { body } });
+  const updated = await prisma.community_post.update({
+    where: { id: post.id },
+    data: { body },
+    include: { author: { select: { name: true } } },
+  });
+  // The body is the author's even when a manager edits it, so mentions are
+  // sent in the author's name (or anonymously).
+  notifyMentions({ post: updated, previousBody: post.body, writerName: updated.author.name });
   return postDto(viewer, post.id);
 };
 
@@ -482,6 +491,13 @@ export const createComment = async (viewer: Viewer, postId: unknown, input: Reco
   });
 
   notifyNewComment({ post, comment: created, parentAuthorId, commenterName: viewer.name });
+  notifyMentions({
+    post,
+    comment: created,
+    // They already hear about this comment as the post or parent author.
+    excludeIds: [post.author_id, parentAuthorId],
+    writerName: viewer.name,
+  });
   const [dto] = await buildCommentTree(viewer, post, [{ ...created, parent_id: null }]);
   return { ...dto, parentId };
 };

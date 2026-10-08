@@ -3099,7 +3099,7 @@ model community_comment {
   post_id         Int
   parent_id       Int?
   author_id       Int
-  body            String                     @db.Text
+  body            String                     @db.MediumText
   is_anonymous    Boolean                    @default(false)
   status          community_content_status   @default(ACTIVE)
   deleted_at      DateTime?
