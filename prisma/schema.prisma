@@ -544,6 +544,8 @@ model event_mgt {
   event_reports             event_reports[]
   visit                     visit[]
   pledges                   pledge[]
+  ride_offers               ride_offer[]
+  ride_pickup_alerts        ride_pickup_alert[]
 
   @@index([event_name_id], map: "event_mgt_event_name_id_fkey")
   @@index([branch_id], map: "event_mgt_branch_id_idx")
@@ -2857,7 +2859,10 @@ model ride_area_route {
 model ride_offer {
   id            Int               @id @default(autoincrement())
   driver_id     Int
-  /// The service this ride is for (the Sunday, as a calendar date).
+  /// The church event this ride is for. Null only on rides published before
+  /// rides were tied to events and never matched to one.
+  event_id      Int?
+  /// The event's day, as a calendar date (drives reminders and the office overview).
   service_date  DateTime          @db.Date
   area_id       Int
   /// 24h "HH:MM" in church-local time.
@@ -2872,12 +2877,14 @@ model ride_offer {
   updated_at    DateTime          @updatedAt
   driver        user              @relation("RideOfferDriver", fields: [driver_id], references: [id], onDelete: Cascade)
   area          ride_area         @relation(fields: [area_id], references: [id])
+  event         event_mgt?        @relation(fields: [event_id], references: [id], onDelete: SetNull)
   stops         ride_offer_stop[]
   requests      ride_request[]
   reports       ride_report[]
 
   @@index([driver_id, service_date])
   @@index([service_date, status])
+  @@index([event_id, status])
   @@index([area_id])
 }
 
@@ -2921,19 +2928,22 @@ model ride_request {
   @@index([pickup_point_id])
 }
 
-/// "Notify me when a ride passes this point" for one service date.
+/// "Notify me when a ride passes this point" for one church event.
 model ride_pickup_alert {
   id              Int               @id @default(autoincrement())
   user_id         Int
   pickup_point_id Int
+  event_id        Int?
   service_date    DateTime          @db.Date
   notified_at     DateTime?
   created_at      DateTime          @default(now())
   user            user              @relation("RidePickupAlertUser", fields: [user_id], references: [id], onDelete: Cascade)
   pickup_point    ride_pickup_point @relation(fields: [pickup_point_id], references: [id], onDelete: Cascade)
+  event           event_mgt?        @relation(fields: [event_id], references: [id], onDelete: Cascade)
 
-  @@unique([user_id, pickup_point_id, service_date])
+  @@unique([user_id, pickup_point_id, event_id])
   @@index([pickup_point_id, service_date])
+  @@index([event_id, pickup_point_id])
 }
 
 /// A safety concern, routed to the church safety team — never to the other member.

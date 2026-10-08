@@ -1,9 +1,9 @@
 /**
  * rideReminderCron.ts
  *
- * Runs every five minutes. On the day of the service, reminds each driver and
+ * Runs every five minutes. On the day of the event, reminds each driver and
  * their accepted passengers REMINDER_LEAD_MINUTES before the driver sets off
- * (the "we'll remind you Sunday at 6:45 AM" the app promises). Each ride is
+ * (the "we'll remind you at 6:45 AM" the app promises). Each ride is
  * claimed with `reminder_sent` before sending, so overlapping ticks or a
  * second worker never double-send.
  */

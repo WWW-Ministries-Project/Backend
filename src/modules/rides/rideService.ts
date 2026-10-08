@@ -9,23 +9,30 @@ import {
 import { userHasMinimumDomainAccess } from "../../utils/permissionResolver";
 import { notificationService } from "../notifications/notificationService";
 import {
+  churchMinutesNow,
+  churchToday,
   cleanText,
-  currentServiceDate,
+  clockToMinutes,
   DECLINE_REASONS,
-  DEPART_TIMES,
+  DEFAULT_EVENT_NAME,
+  departSuggestions,
   displayClock,
+  eventDay,
+  eventStillOpen,
   firstNameOf,
   initialsOf,
   isClockTime,
   isoDate,
   MAX_SEATS,
   MIN_SEATS,
+  parseEventClock,
   planStops,
   REMINDER_LEAD_MINUTES,
   addMinutes,
   REPORT_REASONS,
-  SERVICE_LABEL,
+  rideEventWindow,
   toPositiveInt,
+  weekdayOf,
 } from "./rideHelpers";
 
 /** Who handles safety reports and curates areas/pickup points. */
@@ -87,7 +94,107 @@ const phoneOf = (user: { user_info?: { primary_number: string | null; country_co
   return code && !number.startsWith("+") && !number.startsWith("0") ? `${code}${number}` : number;
 };
 
+/* ------------------------------------------------------------------ */
+/* Church events rides are arranged for                                */
+/* ------------------------------------------------------------------ */
+
+const eventSelect = {
+  id: true,
+  start_date: true,
+  start_time: true,
+  end_time: true,
+  location: true,
+  event: { select: { event_name: true } },
+} satisfies Prisma.event_mgtSelect;
+
+type EventRow = Prisma.event_mgtGetPayload<{ select: typeof eventSelect }>;
+
+/** One occurrence of a church event, as the ride screens and copy need it. */
+type RideEvent = {
+  id: number;
+  name: string;
+  day: Date;
+  startTime: string | null;
+  endTime: string | null;
+  location: string | null;
+};
+
+const rideEventOf = (row: EventRow | null | undefined): RideEvent | null =>
+  row?.start_date
+    ? {
+        id: row.id,
+        name: row.event?.event_name?.trim() || DEFAULT_EVENT_NAME,
+        day: eventDay(row.start_date),
+        startTime: parseEventClock(row.start_time),
+        endTime: parseEventClock(row.end_time),
+        location: row.location?.trim() || null,
+      }
+    : null;
+
+const eventView = (event: RideEvent | null) =>
+  event
+    ? {
+        id: event.id,
+        name: event.name,
+        date: isoDate(event.day),
+        weekday: weekdayOf(event.day),
+        start_time: event.startTime,
+        end_time: event.endTime,
+        location: event.location,
+      }
+    : null;
+
+/** "Midweek Service on Wednesday" — how notifications name the ride's event. */
+const eventPhrase = (event: RideEvent | null) => (event ? `${event.name} on ${weekdayOf(event.day)}` : "church");
+
+/**
+ * Every event members can arrange rides to right now, soonest first: confirmed
+ * events from today through the ride window, minus any already over.
+ */
+const upcomingEvents = async (now: Date = new Date()): Promise<RideEvent[]> => {
+  const { from, to } = rideEventWindow(now);
+  const rows = await prisma.event_mgt.findMany({
+    where: {
+      start_date: { gte: from, lt: new Date(to.getTime() + 86_400_000) },
+      // Tentative events may not go ahead; legacy rows without a status count.
+      OR: [{ event_status: "CONFIRMED" }, { event_status: null }],
+    },
+    select: eventSelect,
+  });
+  return rows
+    .map(rideEventOf)
+    .filter((event): event is RideEvent => event !== null && eventStillOpen(event, now))
+    .sort(
+      (a, b) =>
+        a.day.getTime() - b.day.getTime() ||
+        (a.startTime ?? "99:99").localeCompare(b.startTime ?? "99:99") ||
+        a.id - b.id,
+    );
+};
+
+const noEventAsked = (eventIdRaw: unknown) => eventIdRaw === undefined || eventIdRaw === null || eventIdRaw === "";
+
+const findEvent = (events: RideEvent[], eventIdRaw: unknown) => {
+  const eventId = toPositiveInt(eventIdRaw);
+  return eventId ? events.find((row) => row.id === eventId) : undefined;
+};
+
+/**
+ * The event a member is acting on: the one asked for, or the soonest when the
+ * request doesn't say (older app versions never send one).
+ */
+const requireEvent = (events: RideEvent[], eventIdRaw: unknown): RideEvent => {
+  if (noEventAsked(eventIdRaw)) {
+    if (!events[0]) throw new NotFoundError("There are no upcoming church events to ride to yet");
+    return events[0];
+  }
+  const event = findEvent(events, eventIdRaw);
+  if (!event) throw new NotFoundError("That event isn't taking rides any more");
+  return event;
+};
+
 const offerInclude = {
+  event: { select: eventSelect },
   area: { select: { id: true, name: true } },
   driver: { select: { id: true, name: true, ...phoneSelect } },
   stops: {
@@ -143,60 +250,79 @@ const notify = (input: Parameters<typeof notificationService.createInAppNotifica
 
 const ACTIVE_REQUEST_STATUSES = ["PENDING", "ACCEPTED"] as const;
 
-const findActiveOffer = (userId: number, serviceDate: Date) =>
+const findActiveOffer = (userId: number, eventId: number) =>
   prisma.ride_offer.findFirst({
-    where: { driver_id: userId, service_date: serviceDate, status: "ACTIVE" },
+    where: { driver_id: userId, event_id: eventId, status: "ACTIVE" },
     include: offerInclude,
   });
 
 /**
- * The passenger's request that still needs their attention this Sunday: one
- * that is pending or accepted, or one that was declined / cancelled by the
- * driver and not yet acknowledged ("Find another ride").
+ * A passenger request that still needs the member's attention: one that is
+ * pending or accepted, or one that was declined / cancelled by the driver and
+ * not yet acknowledged ("Find another ride").
  */
-const findCurrentRequest = (userId: number, serviceDate: Date) =>
+const CURRENT_REQUEST: Prisma.ride_requestWhereInput[] = [
+  { status: { in: [...ACTIVE_REQUEST_STATUSES] } },
+  { status: "DECLINED", dismissed_at: null },
+  { status: "CANCELLED", cancelled_by_driver: true, dismissed_at: null },
+];
+
+/** The passenger's current request for one event. */
+const findCurrentRequest = (userId: number, eventId: number) =>
   prisma.ride_request.findFirst({
-    where: {
-      passenger_id: userId,
-      offer: { service_date: serviceDate },
-      OR: [
-        { status: { in: [...ACTIVE_REQUEST_STATUSES] } },
-        { status: "DECLINED", dismissed_at: null },
-        { status: "CANCELLED", cancelled_by_driver: true, dismissed_at: null },
-      ],
-    },
+    where: { passenger_id: userId, offer: { event_id: eventId }, OR: CURRENT_REQUEST },
     orderBy: { requested_at: "desc" },
     include: { offer: { include: offerInclude }, pickup_point: { select: { id: true, name: true, area_label: true } } },
   });
 
-/** Driving, or holding a live seat request, for this service. */
-const assertNotBusy = async (userId: number, serviceDate: Date) => {
+/** Of these events, the ones the member drives to or has a current request for. */
+const myRideEventIds = async (userId: number, eventIds: number[]): Promise<Set<number>> => {
+  if (!eventIds.length) return new Set();
+  const [offers, requests] = await Promise.all([
+    prisma.ride_offer.findMany({
+      where: { driver_id: userId, event_id: { in: eventIds }, status: "ACTIVE" },
+      select: { event_id: true },
+    }),
+    prisma.ride_request.findMany({
+      where: { passenger_id: userId, offer: { event_id: { in: eventIds } }, OR: CURRENT_REQUEST },
+      select: { offer: { select: { event_id: true } } },
+    }),
+  ]);
+  return new Set(
+    [...offers.map((row) => row.event_id), ...requests.map((row) => row.offer.event_id)].filter(
+      (id): id is number => id !== null,
+    ),
+  );
+};
+
+/** Driving, or holding a live seat request, for this event. */
+const assertNotBusy = async (userId: number, event: RideEvent) => {
   const [offer, request] = await Promise.all([
     prisma.ride_offer.findFirst({
-      where: { driver_id: userId, service_date: serviceDate, status: "ACTIVE" },
+      where: { driver_id: userId, event_id: event.id, status: "ACTIVE" },
       select: { id: true },
     }),
     prisma.ride_request.findFirst({
       where: {
         passenger_id: userId,
         status: { in: [...ACTIVE_REQUEST_STATUSES] },
-        offer: { service_date: serviceDate, status: "ACTIVE" },
+        offer: { event_id: event.id, status: "ACTIVE" },
       },
       select: { id: true },
     }),
   ]);
-  if (offer) throw new ConflictError("You are already driving this Sunday. Cancel that ride first.");
-  if (request) throw new ConflictError("You already have a ride this Sunday.");
+  if (offer) throw new ConflictError(`You are already driving to ${event.name}. Cancel that ride first.`);
+  if (request) throw new ConflictError(`You already have a ride to ${event.name}.`);
 };
 
 /** Clears any declined/cancelled request the passenger never acknowledged. */
-const dismissStaleRequests = (userId: number, serviceDate: Date) =>
+const dismissStaleRequests = (userId: number, eventId: number) =>
   prisma.ride_request.updateMany({
     where: {
       passenger_id: userId,
       dismissed_at: null,
       status: { in: ["DECLINED", "CANCELLED", "WITHDRAWN"] },
-      offer: { service_date: serviceDate },
+      offer: { event_id: eventId },
     },
     data: { dismissed_at: new Date() },
   });
@@ -208,6 +334,7 @@ const driverView = (offer: OfferWithDetail) => {
   return {
     id: offer.id,
     service_date: isoDate(offer.service_date),
+    event: eventView(rideEventOf(offer.event)),
     area: offer.area,
     depart_time: offer.depart_time,
     reminder_time: addMinutes(offer.depart_time, -REMINDER_LEAD_MINUTES),
@@ -271,6 +398,7 @@ const passengerView = (request: CurrentRequest, userId: number) => {
     ride: {
       id: offer.id,
       service_date: isoDate(offer.service_date),
+      event: eventView(rideEventOf(offer.event)),
       area: offer.area,
       depart_time: offer.depart_time,
       seats_total: offer.seats_total,
@@ -290,36 +418,47 @@ const passengerView = (request: CurrentRequest, userId: number) => {
   };
 };
 
-export const getMyRide = async (userId: number) => {
+/**
+ * The member's ride for one event. Without an event id — or with one that has
+ * since ended, as a screen left open past the service can send — it is the
+ * soonest event they have a ride for, else the soonest event: what Home and
+ * the hub show.
+ */
+export const getMyRide = async (userId: number, eventIdRaw?: unknown) => {
   await assertMember(userId);
-  const serviceDate = currentServiceDate();
-  const offer = await findActiveOffer(userId, serviceDate);
-  if (offer) {
-    return { service_date: isoDate(serviceDate), service_label: SERVICE_LABEL, role: "driver", offer: driverView(offer), request: null };
-  }
-  const request = await findCurrentRequest(userId, serviceDate);
-  if (request) {
-    return {
-      service_date: isoDate(serviceDate),
-      service_label: SERVICE_LABEL,
-      role: "passenger",
-      offer: null,
-      request: passengerView(request, userId),
-    };
-  }
-  return { service_date: isoDate(serviceDate), service_label: SERVICE_LABEL, role: null, offer: null, request: null };
+  const events = await upcomingEvents();
+  const mine = await myRideEventIds(userId, events.map((event) => event.id));
+  const event =
+    (noEventAsked(eventIdRaw) ? undefined : findEvent(events, eventIdRaw)) ??
+    events.find((row) => mine.has(row.id)) ??
+    events[0] ??
+    null;
+  const base = {
+    service_date: event ? isoDate(event.day) : null,
+    service_label: event?.name ?? DEFAULT_EVENT_NAME,
+    event: eventView(event),
+    events: events.map(eventView),
+    my_event_ids: events.filter((row) => mine.has(row.id)).map((row) => row.id),
+  };
+  if (!event) return { ...base, role: null, offer: null, request: null };
+
+  const offer = await findActiveOffer(userId, event.id);
+  if (offer) return { ...base, role: "driver", offer: driverView(offer), request: null };
+  const request = await findCurrentRequest(userId, event.id);
+  if (request) return { ...base, role: "passenger", offer: null, request: passengerView(request, userId) };
+  return { ...base, role: null, offer: null, request: null };
 };
 
 /* ------------------------------------------------------------------ */
 /* Catalog + search                                                    */
 /* ------------------------------------------------------------------ */
 
-/** Active offers for the service other than the viewer's own, minus blocked drivers. */
-const visibleOffers = async (userId: number, serviceDate: Date, pickupPointId?: number) => {
+/** Active offers for the event other than the viewer's own, minus blocked drivers. */
+const visibleOffers = async (userId: number, eventId: number, pickupPointId?: number) => {
   const blocked = await blockedPeerIds(userId);
   const offers = await prisma.ride_offer.findMany({
     where: {
-      service_date: serviceDate,
+      event_id: eventId,
       status: "ACTIVE",
       driver_id: { not: userId },
       ...(pickupPointId ? { stops: { some: { pickup_point_id: pickupPointId } } } : {}),
@@ -330,9 +469,12 @@ const visibleOffers = async (userId: number, serviceDate: Date, pickupPointId?: 
   return offers.filter((offer) => !blocked.has(offer.driver_id));
 };
 
-export const getCatalog = async (userId: number) => {
+export const getCatalog = async (userId: number, eventIdRaw?: unknown) => {
   await assertMember(userId);
-  const serviceDate = currentServiceDate();
+  const events = await upcomingEvents();
+  // Lenient like getMyRide: an event that ended while the screen was open
+  // falls back to the soonest one, and `event_id` says which was used.
+  const event = findEvent(events, eventIdRaw) ?? events[0] ?? null;
   const [areas, points, offers, lastOffer, lastRequest, lastAlert, alerts] = await Promise.all([
     prisma.ride_area.findMany({
       where: { is_active: true },
@@ -352,7 +494,7 @@ export const getCatalog = async (userId: number) => {
       orderBy: [{ sort_order: "asc" }, { name: "asc" }],
       select: { id: true, name: true, area_label: true },
     }),
-    visibleOffers(userId, serviceDate),
+    event ? visibleOffers(userId, event.id) : Promise.resolve([]),
     prisma.ride_offer.findFirst({
       where: { driver_id: userId },
       orderBy: { created_at: "desc" },
@@ -368,10 +510,12 @@ export const getCatalog = async (userId: number) => {
       orderBy: { created_at: "desc" },
       select: { pickup_point_id: true, created_at: true },
     }),
-    prisma.ride_pickup_alert.findMany({
-      where: { user_id: userId, service_date: serviceDate },
-      select: { pickup_point_id: true },
-    }),
+    event
+      ? prisma.ride_pickup_alert.findMany({
+          where: { user_id: userId, event_id: event.id },
+          select: { pickup_point_id: true },
+        })
+      : Promise.resolve([]),
   ]);
 
   const openRidesAt = new Map<number, number>();
@@ -388,9 +532,12 @@ export const getCatalog = async (userId: number) => {
       : lastAlert?.pickup_point_id ?? null;
 
   return {
-    service_date: isoDate(serviceDate),
-    service_label: SERVICE_LABEL,
-    depart_times: DEPART_TIMES,
+    service_date: event ? isoDate(event.day) : null,
+    service_label: event?.name ?? DEFAULT_EVENT_NAME,
+    event_id: event?.id ?? null,
+    event: eventView(event),
+    events: events.map(eventView),
+    depart_times: departSuggestions(event?.startTime ?? null),
     min_seats: MIN_SEATS,
     max_seats: MAX_SEATS,
     decline_reasons: DECLINE_REASONS,
@@ -414,7 +561,7 @@ export const getCatalog = async (userId: number) => {
   };
 };
 
-export const searchRides = async (userId: number, pickupPointIdRaw: unknown) => {
+export const searchRides = async (userId: number, pickupPointIdRaw: unknown, eventIdRaw?: unknown) => {
   await assertMember(userId);
   const pickupPointId = toPositiveInt(pickupPointIdRaw);
   if (!pickupPointId) throw new InputValidationError("Choose a pickup point");
@@ -424,19 +571,19 @@ export const searchRides = async (userId: number, pickupPointIdRaw: unknown) => 
   });
   if (!point) throw new NotFoundError("Pickup point not found");
 
-  const serviceDate = currentServiceDate();
+  const event = requireEvent(await upcomingEvents(), eventIdRaw);
   const [offers, alert, myOffer, myRequests] = await Promise.all([
-    visibleOffers(userId, serviceDate, pickupPointId),
+    visibleOffers(userId, event.id, pickupPointId),
     prisma.ride_pickup_alert.findUnique({
-      where: { user_id_pickup_point_id_service_date: { user_id: userId, pickup_point_id: pickupPointId, service_date: serviceDate } },
+      where: { user_id_pickup_point_id_event_id: { user_id: userId, pickup_point_id: pickupPointId, event_id: event.id } },
       select: { id: true },
     }),
     prisma.ride_offer.findFirst({
-      where: { driver_id: userId, service_date: serviceDate, status: "ACTIVE" },
+      where: { driver_id: userId, event_id: event.id, status: "ACTIVE" },
       select: { id: true },
     }),
     prisma.ride_request.findMany({
-      where: { passenger_id: userId, offer: { service_date: serviceDate } },
+      where: { passenger_id: userId, offer: { event_id: event.id } },
       orderBy: { requested_at: "desc" },
       select: { offer_id: true, status: true },
     }),
@@ -452,7 +599,8 @@ export const searchRides = async (userId: number, pickupPointIdRaw: unknown) => 
 
   const open = offers.filter((offer) => seatsLeftOf(offer) > 0);
   return {
-    service_date: isoDate(serviceDate),
+    service_date: isoDate(event.day),
+    event: eventView(event),
     pickup_point: point,
     alert_on: Boolean(alert),
     busy,
@@ -493,6 +641,13 @@ export const publishOffer = async (userId: number, body: any) => {
 
   if (!areaId) throw new InputValidationError("Choose the area you're starting from");
   if (!isClockTime(departTime)) throw new InputValidationError("Choose a departure time");
+  const event = requireEvent(await upcomingEvents(), body?.event_id);
+  if (event.startTime && clockToMinutes(departTime) >= clockToMinutes(event.startTime)) {
+    throw new InputValidationError(`Leave before ${event.name} starts at ${displayClock(event.startTime)}`);
+  }
+  if (isoDate(event.day) === isoDate(churchToday()) && clockToMinutes(departTime) <= churchMinutesNow()) {
+    throw new InputValidationError("That time has already passed. Choose a later departure.");
+  }
   if (!Number.isInteger(seats) || seats < MIN_SEATS || seats > MAX_SEATS) {
     throw new InputValidationError(`Seats must be between ${MIN_SEATS} and ${MAX_SEATS}`);
   }
@@ -513,9 +668,8 @@ export const publishOffer = async (userId: number, body: any) => {
   if (!area) throw new NotFoundError("Area not found");
   if (points.length !== pickupPointIds.length) throw new InputValidationError("One of those pickup points is no longer available");
 
-  const serviceDate = currentServiceDate();
-  await assertNotBusy(userId, serviceDate);
-  await dismissStaleRequests(userId, serviceDate);
+  await assertNotBusy(userId, event);
+  await dismissStaleRequests(userId, event.id);
 
   const route = new Map(area.route.map((stop) => [stop.pickup_point_id, { position: stop.position, minutes: stop.minutes_from_start }]));
   const stops = planStops(departTime, pickupPointIds, route);
@@ -523,7 +677,8 @@ export const publishOffer = async (userId: number, body: any) => {
   const offer = await prisma.ride_offer.create({
     data: {
       driver_id: userId,
-      service_date: serviceDate,
+      event_id: event.id,
+      service_date: event.day,
       area_id: area.id,
       depart_time: departTime,
       seats_total: seats,
@@ -537,7 +692,7 @@ export const publishOffer = async (userId: number, body: any) => {
   const blocked = await blockedPeerIds(userId);
   const alerts = await prisma.ride_pickup_alert.findMany({
     where: {
-      service_date: serviceDate,
+      event_id: event.id,
       notified_at: null,
       pickup_point_id: { in: pickupPointIds },
       user_id: { not: userId },
@@ -554,11 +709,11 @@ export const publishOffer = async (userId: number, body: any) => {
       void notify({
         type: "ride.available",
         title: "A ride now passes your pickup point",
-        body: `${firstNameOf(driver.name)} is driving to church on Sunday and passes ${alert.pickup_point.name}. Request a seat before it fills.`,
+        body: `${firstNameOf(driver.name)} is driving to ${eventPhrase(event)} and passes ${alert.pickup_point.name}. Request a seat before it fills.`,
         recipientUserId: alert.user_id,
         entityId: offer.id,
         // Straight to Find, already filtered to the point they asked about.
-        actionUrl: `${MEMBER_ACTION_URL}/find?pickup_point_id=${alert.pickup_point_id}`,
+        actionUrl: `${MEMBER_ACTION_URL}/find?pickup_point_id=${alert.pickup_point_id}&event_id=${event.id}`,
         dedupeKey: `ride.available:${offer.id}:${alert.user_id}`,
         sendEmail: false,
       });
@@ -595,7 +750,7 @@ export const cancelOffer = async (userId: number, offerIdRaw: unknown) => {
   for (const request of affected) {
     void notify({
       type: "ride.cancelled",
-      title: `${driverFirst} cancelled Sunday's ride`,
+      title: `${driverFirst} cancelled the ride to ${rideEventOf(offer.event)?.name ?? "church"}`,
       body: "Your seat has been released. Find another ride from your pickup point in the app.",
       recipientUserId: request.passenger_id,
       actorUserId: userId,
@@ -619,8 +774,8 @@ export const requestSeat = async (userId: number, body: any) => {
   if (!pickupPointId) throw new InputValidationError("Choose a pickup point");
 
   const offer = await prisma.ride_offer.findUnique({ where: { id: offerId }, include: offerInclude });
-  const serviceDate = currentServiceDate();
-  if (!offer || offer.status !== "ACTIVE" || isoDate(offer.service_date) !== isoDate(serviceDate)) {
+  const event = offer ? findEvent(await upcomingEvents(), offer.event_id) : undefined;
+  if (!offer || offer.status !== "ACTIVE" || !event) {
     throw new NotFoundError("This ride is no longer available");
   }
   if (offer.driver_id === userId) throw new InputValidationError("You can't request a seat on your own ride");
@@ -629,8 +784,8 @@ export const requestSeat = async (userId: number, body: any) => {
   if (!stop) throw new InputValidationError("This ride doesn't pass that pickup point");
   if (seatsLeftOf(offer) <= 0) throw new ConflictError("This ride is now full");
 
-  await assertNotBusy(userId, serviceDate);
-  await dismissStaleRequests(userId, serviceDate);
+  await assertNotBusy(userId, event);
+  await dismissStaleRequests(userId, event.id);
 
   const request = await prisma.ride_request.create({
     data: {
@@ -653,7 +808,7 @@ export const requestSeat = async (userId: number, body: any) => {
     dedupeKey: `ride.request_received:${request.id}`,
   });
 
-  return getMyRide(userId);
+  return getMyRide(userId, event.id);
 };
 
 const loadRequest = async (requestIdRaw: unknown) => {
@@ -662,7 +817,17 @@ const loadRequest = async (requestIdRaw: unknown) => {
   const request = await prisma.ride_request.findUnique({
     where: { id: requestId },
     include: {
-      offer: { select: { id: true, driver_id: true, status: true, seats_total: true, driver: { select: { name: true } } } },
+      offer: {
+        select: {
+          id: true,
+          driver_id: true,
+          status: true,
+          seats_total: true,
+          event_id: true,
+          event: { select: eventSelect },
+          driver: { select: { name: true } },
+        },
+      },
       passenger: { select: { id: true, name: true } },
       pickup_point: { select: { name: true } },
     },
@@ -689,8 +854,8 @@ export const cancelRequest = async (userId: number, requestIdRaw: unknown) => {
     type: "ride.request_withdrawn",
     title: wasAccepted ? `${first} can no longer make it` : `${first} withdrew their request`,
     body: wasAccepted
-      ? `${first} cancelled their seat on Sunday's ride, so it's free again.`
-      : `${first} no longer needs a seat on Sunday's ride.`,
+      ? `${first} cancelled their seat on your ride to ${eventPhrase(rideEventOf(request.offer.event))}, so it's free again.`
+      : `${first} no longer needs a seat on your ride to ${eventPhrase(rideEventOf(request.offer.event))}.`,
     recipientUserId: request.offer.driver_id,
     actorUserId: userId,
     entityId: request.id,
@@ -740,14 +905,14 @@ export const acceptRequest = async (userId: number, requestIdRaw: unknown) => {
   void notify({
     type: "ride.request_accepted",
     title: "Ride confirmed",
-    body: `${driverFirst} accepted your request. Be at ${request.pickup_point.name} by ${displayClock(request.pickup_time)} on Sunday. Their phone and car details are now in the app.`,
+    body: `${driverFirst} accepted your request. Be at ${request.pickup_point.name} by ${displayClock(request.pickup_time)} for ${eventPhrase(rideEventOf(request.offer.event))}. Their phone and car details are now in the app.`,
     recipientUserId: request.passenger_id,
     actorUserId: userId,
     entityId: request.id,
     priority: "HIGH",
     dedupeKey: `ride.request_accepted:${request.id}`,
   });
-  return getMyRide(userId);
+  return getMyRide(userId, request.offer.event_id);
 };
 
 export const declineRequest = async (userId: number, requestIdRaw: unknown, body: any) => {
@@ -773,7 +938,7 @@ export const declineRequest = async (userId: number, requestIdRaw: unknown, body
     entityId: request.id,
     dedupeKey: `ride.request_declined:${request.id}`,
   });
-  return getMyRide(userId);
+  return getMyRide(userId, request.offer.event_id);
 };
 
 /* ------------------------------------------------------------------ */
@@ -788,18 +953,18 @@ export const setPickupAlert = async (userId: number, body: any) => {
   const point = await prisma.ride_pickup_point.findFirst({ where: { id: pickupPointId, is_active: true }, select: { id: true } });
   if (!point) throw new NotFoundError("Pickup point not found");
 
-  const serviceDate = currentServiceDate();
-  const key = { user_id: userId, pickup_point_id: pickupPointId, service_date: serviceDate };
+  const event = requireEvent(await upcomingEvents(), body?.event_id);
+  const key = { user_id: userId, pickup_point_id: pickupPointId, event_id: event.id };
   if (enabled) {
     await prisma.ride_pickup_alert.upsert({
-      where: { user_id_pickup_point_id_service_date: key },
+      where: { user_id_pickup_point_id_event_id: key },
       update: { notified_at: null },
-      create: key,
+      create: { ...key, service_date: event.day },
     });
   } else {
     await prisma.ride_pickup_alert.deleteMany({ where: key });
   }
-  return { pickup_point_id: pickupPointId, alert_on: enabled };
+  return { pickup_point_id: pickupPointId, event_id: event.id, alert_on: enabled };
 };
 
 /* ------------------------------------------------------------------ */
@@ -1054,8 +1219,11 @@ export const saveArea = async (userId: number, idRaw: unknown, body: any) => {
 
 const SERVICE_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
-/** A "YYYY-MM-DD" service date from the query, or the Sunday being arranged now. */
-const serviceDateFrom = (raw: unknown): Date => {
+/** The day of the soonest event taking rides, or today when none is coming up. */
+const currentServiceDate = async (): Promise<Date> => (await upcomingEvents())[0]?.day ?? churchToday();
+
+/** A "YYYY-MM-DD" service date from the query, or the soonest event's day. */
+const serviceDateFrom = async (raw: unknown): Promise<Date> => {
   if (typeof raw !== "string" || !SERVICE_DATE.test(raw)) return currentServiceDate();
   const parsed = new Date(`${raw}T00:00:00.000Z`);
   if (Number.isNaN(parsed.getTime())) throw new InputValidationError("Invalid service date");
@@ -1064,13 +1232,13 @@ const serviceDateFrom = (raw: unknown): Date => {
 
 /**
  * Every ride for one service date, with everyone on it — what the church
- * office sees on Sunday morning. Unlike the member views, names and phone
+ * office sees on the morning of the service. Unlike the member views, names and phone
  * numbers are shown for every request: the safety team needs them to reach
  * people.
  */
 export const getAdminOverview = async (userId: number, serviceDateRaw: unknown) => {
   await assertSafetyTeam(userId);
-  const serviceDate = serviceDateFrom(serviceDateRaw);
+  const serviceDate = await serviceDateFrom(serviceDateRaw);
   const [offers, recentDates, openReports] = await Promise.all([
     prisma.ride_offer.findMany({
       where: { service_date: serviceDate },
@@ -1088,13 +1256,16 @@ export const getAdminOverview = async (userId: number, serviceDateRaw: unknown) 
 
   const active = offers.filter((offer) => offer.status === "ACTIVE");
   const requests = active.flatMap((offer) => offer.requests);
-  const current = isoDate(currentServiceDate());
+  const current = isoDate(await currentServiceDate());
+  const eventNames = Array.from(
+    new Set(offers.map((offer) => rideEventOf(offer.event)?.name).filter((name): name is string => Boolean(name))),
+  );
   const dates = Array.from(new Set([current, ...recentDates.map((row) => isoDate(row.service_date))])).sort().reverse();
 
   return {
     service_date: isoDate(serviceDate),
     current_service_date: current,
-    service_label: SERVICE_LABEL,
+    service_label: eventNames.join(" · ") || DEFAULT_EVENT_NAME,
     service_dates: dates,
     stats: {
       rides: active.length,
@@ -1108,6 +1279,7 @@ export const getAdminOverview = async (userId: number, serviceDateRaw: unknown) 
     offers: offers.map((offer) => ({
       id: offer.id,
       status: offer.status,
+      event: eventView(rideEventOf(offer.event)),
       area: offer.area,
       depart_time: offer.depart_time,
       seats_total: offer.seats_total,
@@ -1160,8 +1332,8 @@ export const adminCancelOffer = async (userId: number, offerIdRaw: unknown, body
     type: "ride.cancelled",
     title: "The church office cancelled your ride",
     body: reason
-      ? `Sunday's ride from ${offer.area.name} was removed: ${reason}`
-      : `Sunday's ride from ${offer.area.name} was removed. Contact the church office if you have questions.`,
+      ? `Your ride to ${eventPhrase(rideEventOf(offer.event))} from ${offer.area.name} was removed: ${reason}`
+      : `Your ride to ${eventPhrase(rideEventOf(offer.event))} from ${offer.area.name} was removed. Contact the church office if you have questions.`,
     recipientUserId: offer.driver_id,
     actorUserId: userId,
     entityId: offer.id,
@@ -1171,7 +1343,7 @@ export const adminCancelOffer = async (userId: number, offerIdRaw: unknown, body
   for (const request of affected) {
     void notify({
       type: "ride.cancelled",
-      title: "Sunday's ride was cancelled",
+      title: `The ride to ${rideEventOf(offer.event)?.name ?? "church"} was cancelled`,
       body: "Your seat has been released. Find another ride from your pickup point in the app.",
       recipientUserId: request.passenger_id,
       actorUserId: userId,
@@ -1237,7 +1409,7 @@ export const sendDueReminders = async (today: Date, minutesNow: number) => {
     const driverFirst = firstNameOf(offer.driver.name);
     void notify({
       type: "ride.reminder",
-      title: "You're driving to church soon",
+      title: `You're driving to ${rideEventOf(offer.event)?.name ?? "church"} soon`,
       body: passengers.length
         ? `Leave ${offer.area.name} at ${displayClock(offer.depart_time)}. Picking up ${passengers
             .map((request) => `${firstNameOf(request.passenger.name)} at ${request.pickup_point.name} (${displayClock(request.pickup_time)})`)
@@ -1252,7 +1424,7 @@ export const sendDueReminders = async (today: Date, minutesNow: number) => {
     for (const request of passengers) {
       void notify({
         type: "ride.reminder",
-        title: "Your ride to church is soon",
+        title: `Your ride to ${rideEventOf(offer.event)?.name ?? "church"} is soon`,
         body: `Be at ${request.pickup_point.name} by ${displayClock(request.pickup_time)}. ${driverFirst} is picking you up.`,
         recipientUserId: request.passenger_id,
         entityId: request.id,
