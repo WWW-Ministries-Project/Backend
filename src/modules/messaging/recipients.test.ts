@@ -88,5 +88,59 @@ test("recipient_name, address and rendered_subject fit VARCHAR(191)", () => {
   assert.ok(rows[0].recipient_name.length <= 191);
   assert.ok(rows[0].rendered_subject.length <= 191);
   assert.ok(rows[0].rendered_subject.length > 100);
-  assert.ok(rows[0].address!.length <= 191);
+  assert.equal(rows[0].status, "SKIPPED");
+  assert.equal(rows[0].error, "Address too long");
+  assert.equal(rows[0].address, null);
+  assert.equal(rows[0].rendered_subject.length, 191);
+  assert.ok(rows[0].rendered_subject.endsWith("…"));
+});
+
+const LONE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])/;
+
+test("SMS body of exactly 612 chars is not truncated; 613 is", () => {
+  const run = (n: number) =>
+    buildRecipientRows({
+      ...base,
+      body: "x".repeat(n),
+      channels: { sms: true, email: false, inApp: false },
+      people: [person({})],
+    })[0].rendered_body;
+  assert.equal(run(612), "x".repeat(612));
+  const out = run(613);
+  assert.equal(out.length, 612);
+  assert.ok(out.endsWith("…"));
+});
+
+test("SMS cap does not leave a lone surrogate", () => {
+  const rows = buildRecipientRows({
+    ...base,
+    body: "x".repeat(610) + "🎉🎉",
+    channels: { sms: true, email: false, inApp: false },
+    people: [person({})],
+  });
+  const b = rows[0].rendered_body;
+  assert.ok(b.length <= 612);
+  assert.ok(b.endsWith("…"));
+  assert.ok(!LONE.test(b));
+});
+
+test("name cap does not leave a lone surrogate", () => {
+  const rows = buildRecipientRows({
+    ...base,
+    channels: { sms: false, email: false, inApp: true },
+    people: [person({ firstName: "a".repeat(190 - 1) + "🎉" + "b".repeat(100) })],
+  });
+  const n = rows[0].recipient_name;
+  assert.ok(n.length <= 191);
+  assert.ok(n.endsWith("…"));
+  assert.ok(!LONE.test(n));
+});
+
+test("whitespace-only first name is trimmed away", () => {
+  const rows = buildRecipientRows({
+    ...base,
+    channels: { sms: false, email: false, inApp: true },
+    people: [person({ firstName: "   ", lastName: "Owusu" })],
+  });
+  assert.equal(rows[0].recipient_name, "Owusu");
 });

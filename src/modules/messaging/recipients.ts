@@ -28,11 +28,20 @@ export type RecipientRow = {
 const keyOf = (p: Person): string | null =>
   p.userId ? `u:${p.userId}` : p.visitorId ? `v:${p.visitorId}` : null;
 
-const capSms = (text: string): string =>
-  text.length > SMS_MAX_LENGTH ? `${text.slice(0, SMS_MAX_LENGTH - 1)}…` : text;
+/** Cuts to at most max UTF-16 units ending in "…", never leaving a lone high surrogate. */
+const truncate = (s: string, max: number): string => {
+  if (s.length <= max) return s;
+  let end = max - 1;
+  const last = s.charCodeAt(end - 1);
+  if (last >= 0xd800 && last <= 0xdbff) end -= 1;
+  return `${s.slice(0, end)}…`;
+};
 
-/** recipient_name, address and rendered_subject are VARCHAR(191) columns. */
-const fit = (s: string, n = 191): string => (s.length > n ? s.slice(0, n - 1) + "…" : s);
+const capSms = (text: string): string => truncate(text, SMS_MAX_LENGTH);
+
+/** recipient_name and rendered_subject are VARCHAR(191) columns. */
+const MAX_COLUMN = 191;
+const fit = (s: string): string => truncate(s, MAX_COLUMN);
 
 export const buildRecipientRows = (args: {
   dispatchId: number;
@@ -63,7 +72,12 @@ export const buildRecipientRows = (args: {
     };
     const body = renderTemplate(args.body, ctx);
     const subject = fit(renderTemplate(args.subject || args.defaultTitle, ctx));
-    const name = fit([person.firstName, person.lastName].filter(Boolean).join(" ") || "Unknown");
+    const name = fit(
+      [person.firstName, person.lastName]
+        .map((s) => s?.trim())
+        .filter(Boolean)
+        .join(" ") || "Unknown",
+    );
     const common = {
       dispatch_id: args.dispatchId,
       recipient_key: key,
@@ -80,19 +94,24 @@ export const buildRecipientRows = (args: {
     ): RecipientRow => ({
       ...common,
       channel,
-      address: address === null ? null : fit(address),
+      address,
       rendered_body: renderedBody,
       status: skipReason ? "SKIPPED" : "PENDING",
       error: skipReason,
     });
 
+    const tooLong = (a: string | null) => a !== null && a.length > MAX_COLUMN;
     if (args.channels.sms) {
-      const phone = person.phone?.trim() || null;
-      rows.push(row("SMS", phone, capSms(body), phone ? null : "No phone number"));
+      const raw = person.phone?.trim() || null;
+      const phone = tooLong(raw) ? null : raw;
+      const skip = tooLong(raw) ? "Address too long" : phone ? null : "No phone number";
+      rows.push(row("SMS", phone, capSms(body), skip));
     }
     if (args.channels.email) {
-      const email = person.email?.trim() || null;
-      rows.push(row("EMAIL", email, body, email ? null : "No email address"));
+      const raw = person.email?.trim() || null;
+      const email = tooLong(raw) ? null : raw;
+      const skip = tooLong(raw) ? "Address too long" : email ? null : "No email address";
+      rows.push(row("EMAIL", email, body, skip));
     }
     if (args.channels.inApp) {
       rows.push(row("IN_APP", null, body, person.userId ? null : "Visitors have no app account"));
@@ -103,13 +122,15 @@ export const buildRecipientRows = (args: {
 
 /** Inserts in chunks; duplicates (same dispatch/channel/person) are ignored. */
 export const insertRecipients = async (rows: RecipientRow[]): Promise<number> => {
-  let inserted = 0;
-  for (let i = 0; i < rows.length; i += 1000) {
-    const result = await prisma.message_recipient.createMany({
-      data: rows.slice(i, i + 1000),
-      skipDuplicates: true,
-    });
-    inserted += result.count;
-  }
-  return inserted;
+  return prisma.$transaction(async (tx) => {
+    let inserted = 0;
+    for (let i = 0; i < rows.length; i += 1000) {
+      const result = await tx.message_recipient.createMany({
+        data: rows.slice(i, i + 1000),
+        skipDuplicates: true,
+      });
+      inserted += result.count;
+    }
+    return inserted;
+  });
 };
