@@ -7,12 +7,25 @@ import { InputValidationError } from "../../utils/custom-error-handlers";
 import { departmentMemberIds } from "../community/communityQueries";
 import { Audience, Person } from "./types";
 
-const toIds = (value: unknown): number[] =>
-  Array.isArray(value)
-    ? Array.from(
-        new Set(value.map(Number).filter((n) => Number.isInteger(n) && n > 0)),
-      )
-    : [];
+const MAX_ID = 2147483647;
+const MAX_RECIPIENT_IDS = 2000;
+
+const toId = (v: unknown): number | null => {
+  const n =
+    typeof v === "number" ? v : typeof v === "string" && /^\d+$/.test(v) ? Number(v) : NaN;
+  return Number.isSafeInteger(n) && n > 0 && n <= MAX_ID ? n : null;
+};
+
+const toIds = (value: unknown): number[] => {
+  if (!Array.isArray(value)) return [];
+  const ids = Array.from(
+    new Set(value.map(toId).filter((n): n is number => n !== null)),
+  );
+  if (ids.length > MAX_RECIPIENT_IDS) {
+    throw new InputValidationError("Too many recipients selected (max 2000)");
+  }
+  return ids;
+};
 
 export const parseAudience = (raw: unknown): Audience => {
   const record =
@@ -115,7 +128,7 @@ export const resolveAudience = async (audience: Audience): Promise<Person[]> => 
   if (audience.scope === "DEPARTMENTS") {
     const byDept = await departmentMemberIds(audience.departmentIds);
     const ids = Array.from(new Set(Array.from(byDept.values()).flat()));
-    return ids.length ? findUsers({ id: { in: ids } }) : [];
+    return ids.length ? findUsers({ AND: [activeWhere, memberWhere, { id: { in: ids } }] }) : [];
   }
 
   const users = await findUsers(
@@ -128,5 +141,13 @@ export const resolveAudience = async (audience: Audience): Promise<Person[]> => 
     where: { consentToContact: true, is_member: false },
     select: visitorSelect,
   });
-  return [...users, ...visitors.map(visitorToPerson)];
+  // Visitors whose email belongs to any user account are either already
+  // messaged as users or were deliberately excluded (inactive accounts).
+  const emails = visitors.flatMap((v) => (v.email ? [v.email.toLowerCase()] : []));
+  const accounts = emails.length
+    ? await prisma.user.findMany({ where: { email: { in: emails } }, select: { email: true } })
+    : [];
+  const taken = new Set(accounts.flatMap((u) => (u.email ? [u.email.toLowerCase()] : [])));
+  const remaining = visitors.filter((v) => !v.email || !taken.has(v.email.toLowerCase()));
+  return [...users, ...remaining.map(visitorToPerson)];
 };

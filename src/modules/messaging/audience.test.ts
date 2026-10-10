@@ -23,3 +23,20 @@ test("rejects unknown scope", () => {
   assert.throws(() => parseAudience({ scope: "EVERYONE" }), /scope/i);
   assert.throws(() => parseAudience(null), /scope/i);
 });
+
+test("userIds parsing is strict", () => {
+  const a = parseAudience({
+    scope: "PEOPLE",
+    userIds: [true, [5], "1.5", " 7 ", "0x1F", 1e300, "8", 9],
+  });
+  assert.deepEqual(a.userIds, [8, 9]);
+});
+
+test("rejects more than 2000 recipients", () => {
+  const userIds = Array.from({ length: 2001 }, (_, i) => i + 1);
+  assert.throws(() => parseAudience({ scope: "PEOPLE", userIds }), /max 2000/);
+});
+
+test("string includeGuests is not truthy", () => {
+  assert.equal(parseAudience({ scope: "CHURCH", includeGuests: "true" }).includeGuests, false);
+});
