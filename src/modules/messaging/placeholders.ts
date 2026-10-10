@@ -76,7 +76,7 @@ const valueOf = (token: string, ctx: RenderContext): string | null => {
     case "{app_download_link}":
       return appDownloadLink(ctx);
     case "{age}":
-      return ctx.age === null ? "" : String(ctx.age);
+      return ctx.age == null ? "" : String(ctx.age);
     default:
       return null;
   }
@@ -84,8 +84,10 @@ const valueOf = (token: string, ctx: RenderContext): string | null => {
 
 export const renderTemplate = (text: string, ctx: RenderContext): string =>
   String(text ?? "")
+    .replace(/\r\n?/g, "\n")
     .replace(TOKEN_PATTERN, (token) => valueOf(token, ctx) ?? token)
     .replace(/[ \t]{2,}/g, " ")
+    // Applies to the whole body (so "Wait ..." becomes "Wait..."); accepted to keep empty placeholders from leaving " ," gaps.
     .replace(/ +([,.!?;:])/g, "$1")
     .replace(/[ \t]+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
@@ -93,7 +95,7 @@ export const renderTemplate = (text: string, ctx: RenderContext): string =>
 
 export const findUnknownPlaceholders = (text: string, kind: PlaceholderKind): string[] => {
   const allowed = new Set(placeholdersFor(kind).map((p) => p.token));
-  const found = String(text ?? "").match(TOKEN_PATTERN) ?? [];
+  const found = String(text ?? "").match(/\{[^{}\s]+\}/g) ?? [];
   return Array.from(new Set(found.filter((token) => !allowed.has(token))));
 };
 
@@ -108,20 +110,30 @@ const GSM_CHARS =
   "@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !\"#¤%&'()*+,-./0123456789:;<=>?¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà^{}\\[~]|€";
 const GSM_SET = new Set(Array.from(GSM_CHARS));
 
+const GSM_EXTENSION = new Set(Array.from("^{}\\[~]|€"));
+
 export const smsSegments = (text: string): { length: number; segments: number; unicode: boolean } => {
-  const chars = Array.from(text ?? "");
-  const length = chars.length;
-  if (!length) return { length: 0, segments: 0, unicode: false };
+  const value = String(text ?? "");
+  const chars = Array.from(value);
+  if (!chars.length) return { length: 0, segments: 0, unicode: false };
   const unicode = chars.some((c) => !GSM_SET.has(c));
-  const single = unicode ? 70 : 160;
-  const multi = unicode ? 67 : 153;
-  return { length, segments: length <= single ? 1 : Math.ceil(length / multi), unicode };
+  if (unicode) {
+    const units = value.length;
+    return { length: units, segments: units <= 70 ? 1 : Math.ceil(units / 67), unicode: true };
+  }
+  const septets = chars.reduce((n, c) => n + (GSM_EXTENSION.has(c) ? 2 : 1), 0);
+  return { length: septets, segments: septets <= 160 ? 1 : Math.ceil(septets / 153), unicode: false };
 };
 
-const URL_PATTERN = /https?:\/\/[^\s<]+/g;
+const URL_PATTERN = /https?:\/\/[^\s<>"']+/g;
+const TRAILING_JUNK = /(?:[.,;:!?)]|&quot;|&#39;|&gt;|&lt;)+$/;
 
 /** Plain text → safe HTML fragment for the unified email layout. */
 export const renderEmailHtml = (text: string): string =>
-  escapeEmailHtml(text)
-    .replace(URL_PATTERN, (url) => `<a href="${url}">${url}</a>`)
+  escapeEmailHtml(String(text ?? "").replace(/\r\n?/g, "\n"))
+    .replace(URL_PATTERN, (match) => {
+      const tail = TRAILING_JUNK.exec(match)?.[0] ?? "";
+      const url = tail ? match.slice(0, -tail.length) : match;
+      return url ? `<a href="${url}">${url}</a>${tail}` : match;
+    })
     .replace(/\n/g, "<br />");

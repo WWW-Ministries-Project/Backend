@@ -38,6 +38,7 @@ export const isBirthdayOn = (
   return month === 2 && day === 29 && today.month === 2 && today.day === 28 && !isLeapYear(today.year);
 };
 
+/** Age reached during `year` — correct on (or after) the birthday itself, which is the only place it is used. */
 export const ageOn = (dateOfBirth: Date, year: number): number | null => {
   const age = year - dateOfBirth.getUTCFullYear();
   return age > 0 && age < 130 ? age : null;
