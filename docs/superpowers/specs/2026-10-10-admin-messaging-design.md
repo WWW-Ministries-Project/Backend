@@ -43,7 +43,7 @@ message_template
   email_subject      String?
   body               Text
   include_app_link   Boolean  default false   (meaningful for WELCOME_VISITOR only)
-  updated_by         Int?  FK user
+  updated_by         Int?  (plain id, no FK)
   updated_at         DateTime @updatedAt
 
 message_settings   (singleton row, id = 1)
@@ -65,7 +65,7 @@ message_dispatch
   audience        Json?                 (GENERAL only — see Audience)
   status          Enum (SCHEDULED | QUEUED | SENDING | SENT | CANCELLED | FAILED)
   scheduled_for   DateTime?
-  created_by      Int? FK user          (null for automatic sends)
+  created_by      Int?                  (plain id, no FK; null for automatic sends)
   counts          Json?                 cached {sms:{sent,failed,skipped}, email:{…}, inApp:{…}}
   created_at, updated_at
   index (status, scheduled_for), index (kind, created_at)
@@ -74,8 +74,9 @@ message_recipient
   id              Int PK
   dispatch_id     Int FK message_dispatch ON DELETE CASCADE
   channel         Enum (SMS | EMAIL | IN_APP)
-  user_id         Int? FK user ON DELETE SET NULL
-  visitor_id      Int? FK visitor ON DELETE SET NULL
+  recipient_key   String               ("u:<userId>" / "v:<visitorId>"; non-null so the unique key works in MySQL)
+  user_id         Int?                 (plain id, no FK — history survives deletions)
+  visitor_id      Int?                 (plain id, no FK)
   recipient_name  String               (snapshot)
   address         String?              (phone or email snapshot; null for IN_APP)
   rendered_body   Text
@@ -85,7 +86,8 @@ message_recipient
   attempts        Int default 0
   next_attempt_at DateTime?
   sent_at         DateTime?
-  UNIQUE (dispatch_id, channel, user_id, visitor_id)
+  claimed_at      DateTime?            (worker claim, for stale-claim reset)
+  UNIQUE (dispatch_id, channel, recipient_key)
   index (status, next_attempt_at)
 ```
 
@@ -117,7 +119,7 @@ Rules:
 - After rendering, collapse runs of more than two newlines.
 - Text is rendered per recipient when the `message_recipient` rows are created and stored in `rendered_body`, so history shows exactly what each person got.
 - SMS: the rendered text is capped at `HUBTEL_SMS_MAX_MESSAGE_LENGTH` (default 612). Longer text is truncated with "…" rather than failing.
-- Email: the rendered text is HTML-escaped, newlines become `<br>`, URLs are linkified, then the text is wrapped in the new `mail_templates/messagingTemplate.ts` layout.
+- Email: the rendered text is HTML-escaped, newlines become `<br>`, URLs are linkified, then the text is wrapped in the existing `buildUnifiedEmailTemplate` layout.
 
 ## Triggers
 
@@ -126,7 +128,7 @@ Rules:
 `messagingService.enqueueWelcome({ userId } | { visitorId })`. It is fire-and-forget, wrapped in try/catch and logs on error; it must never fail the sign-up or the visitor creation.
 
 - **Mobile self-register.** In `selfRegister` (`src/modules/user/selfServiceController.ts`), after `prisma.user.create`, enqueue `WELCOME_GUEST` if `is_guest`, else `WELCOME_MEMBER`.
-- **Legacy welcome email.** `selfRegister` currently sends a hard-coded "Welcome to Worldwide Word Ministries" email. Skip it only when the chosen template is enabled with the email channel on. Otherwise keep it, so nobody gets two welcome emails and nobody gets none.
+- **Set-password email.** `selfRegister` already sends a "Welcome to Worldwide Word Ministries" email that carries the set-password link. It is always sent, because it is how the person gets into their account. The welcome template is an additional message; the admin UI notes this beside the Email channel on the member and guest cards.
 - **Visitor added.** In `VisitorService.createVisitor` (`src/modules/visitorManagement/visitorService.ts`), after `prisma.visitor.create`, enqueue `WELCOME_VISITOR` only if `consentToContact` is true. This covers both the admin form and the public `register-visitor` page.
 - A disabled template means nothing is enqueued.
 - The dedupe key `WELCOME:user:<id>` or `WELCOME:visitor:<id>` makes a repeated call a no-op (catch P2002).
@@ -161,7 +163,7 @@ Rules:
 - `DEPARTMENTS`: active users in any of the departments, via `user_departments` / `department_positions`. Reuse `departmentMemberIds` from `communityQueries.ts`, moving it to a shared spot if importing it would create a cycle.
 - `PEOPLE`: the listed active users.
 - Recipients are de-duplicated by user id or visitor id.
-- Branch scoping follows the existing `*_scoped` permission helpers: an admin limited to a branch can only reach that branch.
+- v1 is church-wide: the Messaging permission is not branch-scoped.
 
 ## Delivery worker
 
@@ -171,7 +173,7 @@ Rules:
 2. **Claim:** select up to 200 `PENDING` recipients with `next_attempt_at` null or due. Flip them to `SENDING` with an `updateMany … where status = PENDING`, and only process the rows this run actually flipped, so two instances never double-send.
 3. **Send** by channel:
    - **SMS.** New `sendHubtelSms({ phone, countryCode, message })` extracted from `notificationSmsService.ts` (the raw HTTP call plus `normalizePhoneForHubtel`). The existing `queueNotificationSms` is refactored to call it, with no behaviour change. If `isSmsEnabled()` is false, the row is `SKIPPED` ("SMS disabled"). A missing or invalid phone gives `SKIPPED` ("no phone").
-   - **Email.** `sendEmail(html, to, subject)` with the `messagingTemplate.ts` layout. A missing email gives `SKIPPED` ("no email").
+   - **Email.** `sendEmail(html, to, subject)` with the `buildUnifiedEmailTemplate` layout. A missing email gives `SKIPPED` ("no email").
    - **In-app.** `createInAppNotification({ type: "messaging.message", title, body, recipientUserId, sendEmail: false, sendSms: false })`, which writes the inbox row and sends web and Expo push. Add `messaging.message` to `notificationPreferenceCatalog.ts`, default on.
 4. **Outcome:**
    - Success sets `SENT` and `sent_at`.
@@ -207,7 +209,7 @@ Validation errors use `InputValidationError`, missing rows use `AppError` 404, m
 
 ### Permission domain
 
-Add `messaging` to `PERMISSION_KEY_ALIASES` and to the allowed list in `accessLevelController.ts`. Add guards `can_view_messaging` / `can_manage_messaging` to `Permissions` in `src/middleWare/authorization.ts`. Super admins pass automatically. Existing access levels get no messaging rights until assigned.
+Add `messaging` to `PERMISSION_KEY_ALIASES` and to the allowed list in `accessLevelController.ts`. Add guards `can_view_messaging` / `can_manage_messaging` to `Permissions` in `src/middleWare/authorization.ts`. The migration grants `Messaging: Super_Admin` to access levels that hold `Access_rights: Super_Admin`; every other level gets no messaging rights until assigned.
 
 ## Admin UI (Frontend)
 
