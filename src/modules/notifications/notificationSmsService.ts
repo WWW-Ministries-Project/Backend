@@ -1073,6 +1073,35 @@ const triggerPendingSmsDeliveryJobProcessing = () => {
   });
 };
 
+/**
+ * Sends one SMS straight to Hubtel without the notification job table, for
+ * callers that keep their own outbox (admin Messaging). Throws
+ * HubtelSmsRequestError on failure; `transient` says whether to retry.
+ */
+const sendSmsDirect = async (input: {
+  phoneNumber: string;
+  countryCode?: string | null;
+  message: string;
+}): Promise<{ skipped: string | null }> => {
+  const config = getConfig();
+  if (!config.enabled) {
+    return { skipped: config.disabledReason || "SMS disabled" };
+  }
+  const phone = normalizePhoneForHubtel(input.phoneNumber, input.countryCode);
+  if (!phone) {
+    return { skipped: "Invalid phone number" };
+  }
+  const message = normalizeMessage(input.message, config.maxMessageLength);
+  if (!message) {
+    return { skipped: "Empty message" };
+  }
+  await sendHubtelSms(
+    { notificationType: "messaging.message", recipientUserId: 0, phoneNumber: phone, message },
+    config,
+  );
+  return { skipped: null };
+};
+
 const isSmsEnabled = (): boolean => getConfig().enabled;
 
 export const notificationSmsService = {
@@ -1081,4 +1110,5 @@ export const notificationSmsService = {
   queueNotificationSms,
   processPendingSmsDeliveryJobs,
   triggerPendingSmsDeliveryJobProcessing,
+  sendSmsDirect,
 };
