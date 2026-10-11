@@ -205,8 +205,17 @@ export const processPendingRecipients = async (): Promise<number> => {
 
   // Rows stuck in SENDING (crash mid-send) are ambiguous: the message may
   // already be out. At-most-once: fail them instead of resending.
+  const staleWhere = {
+    status: "SENDING" as const,
+    claimed_at: { lt: new Date(now.getTime() - STALE_CLAIM_MS) },
+  };
+  const stale = await prisma.message_recipient.findMany({
+    where: staleWhere,
+    select: { dispatch_id: true },
+    distinct: ["dispatch_id"],
+  });
   await prisma.message_recipient.updateMany({
-    where: { status: "SENDING", claimed_at: { lt: new Date(now.getTime() - STALE_CLAIM_MS) } },
+    where: staleWhere,
     data: { status: "FAILED", claimed_at: null, error: INTERRUPTED_ERROR },
   });
 
@@ -220,7 +229,8 @@ export const processPendingRecipients = async (): Promise<number> => {
     take: BATCH_SIZE,
   });
 
-  const touched = new Set<number>();
+  // Dispatches whose stale rows just failed get fresh counts this pass.
+  const touched = new Set<number>(stale.map((r) => r.dispatch_id));
   try {
     for (const row of candidates) {
       try {
