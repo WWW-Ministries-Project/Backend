@@ -7,6 +7,8 @@ import { notificationService } from "../notifications/notificationService";
 import { notificationSmsService } from "../notifications/notificationSmsService";
 import { sendEmail } from "../../utils/emailService";
 import { buildUnifiedEmailTemplate } from "../../utils/mail_templates/unifiedEmailTemplate";
+import { InputValidationError } from "../../utils/custom-error-handlers";
+import { isRetryableSmsError, isValidEmail, sanitizeSubject, smsCountryCodeFor } from "./channelRules";
 import { CHURCH_NAME, renderEmailHtml } from "./placeholders";
 
 export type ChannelRow = {
@@ -43,22 +45,27 @@ const countryCodeFor = async (row: ChannelRow): Promise<string | null> => {
 
 export const sendSmsChannel = async (row: ChannelRow): Promise<string | null> => {
   if (!row.address) return "No phone number";
+  const trimmed = row.address.trim();
+  const isInternational = trimmed.startsWith("+") || trimmed.startsWith("00");
   try {
     const { skipped } = await notificationSmsService.sendSmsDirect({
       phoneNumber: row.address,
-      countryCode: (await countryCodeFor(row)) ?? "+233",
+      countryCode: isInternational
+        ? null
+        : smsCountryCodeFor(row.address, await countryCodeFor(row)),
       message: row.rendered_body,
     });
     return skipped;
   } catch (error: any) {
     const message = error?.message || "SMS failed";
-    throw error?.transient === false ? new PermanentError(message) : new RetryableError(message);
+    throw isRetryableSmsError(error) ? new RetryableError(message) : new PermanentError(message);
   }
 };
 
 export const sendEmailChannel = async (row: ChannelRow): Promise<string | null> => {
   if (!row.address) return "No email address";
-  const subject = row.rendered_subject || CHURCH_NAME;
+  if (!isValidEmail(row.address.trim())) return "Invalid email address";
+  const subject = sanitizeSubject(row.rendered_subject || CHURCH_NAME);
   const html = buildUnifiedEmailTemplate({
     headerTitle: subject,
     headerText: CHURCH_NAME,
@@ -77,7 +84,9 @@ export const sendEmailChannel = async (row: ChannelRow): Promise<string | null> 
 
 export const sendInAppChannel = async (row: ChannelRow): Promise<string | null> => {
   if (!row.user_id) return "Visitors have no app account";
-  const result = await notificationService.createInAppNotification({
+  let result;
+  try {
+    result = await notificationService.createInAppNotification({
     type: "messaging.message",
     title: row.rendered_subject || CHURCH_NAME,
     body: row.rendered_body,
@@ -87,7 +96,13 @@ export const sendInAppChannel = async (row: ChannelRow): Promise<string | null> 
     dedupeKey: `messaging:${row.id}`,
     sendEmail: false,
     sendSms: false,
-  });
+    });
+  } catch (error: any) {
+    const message = error?.message || "In-app notification failed";
+    throw error instanceof InputValidationError || error?.name === "InputValidationError"
+      ? new PermanentError(message)
+      : new RetryableError(message);
+  }
   return result ? null : "Member is inactive or turned these off";
 };
 
