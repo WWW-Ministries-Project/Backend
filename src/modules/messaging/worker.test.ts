@@ -1,6 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { nextAttemptDelayMs, MAX_ATTEMPTS, outcomeData, runExclusive, summarize } from "./worker";
+import {
+  consumeRerunRequest,
+  nextAttemptDelayMs,
+  MAX_ATTEMPTS,
+  outcomeData,
+  runExclusive,
+  summarize,
+} from "./worker";
 
 test("backoff 1 and 5 minutes; FAILED at max attempts", () => {
   assert.equal(MAX_ATTEMPTS, 3);
@@ -86,4 +93,17 @@ test("runExclusive resets the flag after fn throws", async () => {
     true,
   );
   assert.equal(ran, true);
+});
+
+test("a run refused while another is in flight requests a rerun", async () => {
+  consumeRerunRequest();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  const first = runExclusive(() => gate);
+  assert.equal(consumeRerunRequest(), false);
+  assert.equal(await runExclusive(async () => {}), false);
+  assert.equal(consumeRerunRequest(), true);
+  assert.equal(consumeRerunRequest(), false);
+  release();
+  assert.equal(await first, true);
 });

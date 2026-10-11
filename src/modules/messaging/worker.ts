@@ -1,6 +1,14 @@
 /**
- * Outbox worker. Called by messagingDispatchCron every minute and nudged
- * right after an enqueue so welcome messages do not wait for the next tick.
+ * Outbox worker. messagingDispatchCron runs it every minute, as
+ * `runExclusive(async () => { await promoteDueDispatches(); await processPendingRecipients(); })`,
+ * and triggerDispatchProcessing nudges it right after an enqueue so welcome
+ * messages do not wait for the next tick.
+ *
+ * Delivery is at-most-once. A row is claimed (PENDING -> SENDING) before its
+ * send and its outcome is written after. If the process dies in between, the
+ * row stays SENDING; once the claim is stale the message may or may not be
+ * out, so the row is marked FAILED rather than resent. An admin can resend it
+ * with "Retry failed". Only sends that reported an error are retried here.
  */
 import { prisma } from "../../Models/context";
 import { ChannelRow, PermanentError, sendByChannel } from "./channels";
@@ -9,8 +17,16 @@ export const MAX_ATTEMPTS = 3;
 const BATCH_SIZE = 200;
 /** Must comfortably exceed the slowest send so a live claim is never reset. */
 const STALE_CLAIM_MS = 30 * 60_000;
-/** A QUEUED dispatch with nothing open for this long is swept to SENT. */
-const IDLE_DISPATCH_MS = 60_000;
+/**
+ * A QUEUED dispatch with nothing open, untouched for this long, is swept to
+ * SENT. Recipient rows are inserted in their own transaction after the
+ * dispatch row is created, so a dispatch briefly looks idle before its rows
+ * are visible. 10 minutes leaves a slow insert ample room before the sweep
+ * could close the dispatch over rows it cannot see yet.
+ */
+const IDLE_DISPATCH_MS = 10 * 60_000;
+const INTERRUPTED_ERROR = "Delivery outcome unknown (interrupted). Use Retry failed to resend.";
+const MAX_RERUNS = 5;
 const PERSIST_RETRIES = 3;
 const DELAYS_MS = [60_000, 5 * 60_000];
 
@@ -52,7 +68,7 @@ const OPEN_STATUSES = ["PENDING", "SENDING"] as const;
  * time, no recipient is still open. The status flip never trusts the
  * groupBy read above it, so a concurrent claim cannot be closed over.
  */
-export const refreshDispatch = async (dispatchId: number) => {
+const writeCounts = async (dispatchId: number) => {
   const groups = await prisma.message_recipient.groupBy({
     by: ["channel", "status"],
     where: { dispatch_id: dispatchId },
@@ -67,7 +83,11 @@ export const refreshDispatch = async (dispatchId: number) => {
     where: { id: dispatchId, status: { in: ["QUEUED", "SENT"] } },
     data: { counts: { ...summary.counts, people: people.length } },
   });
-  await prisma.message_dispatch.updateMany({
+};
+
+export const refreshDispatch = async (dispatchId: number) => {
+  await writeCounts(dispatchId);
+  const flipped = await prisma.message_dispatch.updateMany({
     where: {
       id: dispatchId,
       status: "QUEUED",
@@ -75,6 +95,9 @@ export const refreshDispatch = async (dispatchId: number) => {
     },
     data: { status: "SENT" },
   });
+  // Rows may have closed between the first count and the flip; recount once
+  // so a SENT dispatch never keeps stale counts.
+  if (flipped.count === 1) await writeCounts(dispatchId);
 };
 
 export type SendOutcome =
@@ -169,6 +192,7 @@ export const processPendingRecipients = async (): Promise<number> => {
       updated_at: { lt: new Date(now.getTime() - IDLE_DISPATCH_MS) },
     },
     select: { id: true },
+    orderBy: { updated_at: "asc" },
     take: 50,
   });
   for (const { id } of idle) {
@@ -179,15 +203,11 @@ export const processPendingRecipients = async (): Promise<number> => {
     }
   }
 
-  // Rows stuck in SENDING (crash mid-send) go back to the queue. The send may
-  // have gone out, so the reset counts as an attempt and is capped.
+  // Rows stuck in SENDING (crash mid-send) are ambiguous: the message may
+  // already be out. At-most-once: fail them instead of resending.
   await prisma.message_recipient.updateMany({
     where: { status: "SENDING", claimed_at: { lt: new Date(now.getTime() - STALE_CLAIM_MS) } },
-    data: { status: "PENDING", claimed_at: null, attempts: { increment: 1 } },
-  });
-  await prisma.message_recipient.updateMany({
-    where: { status: "PENDING", attempts: { gte: MAX_ATTEMPTS } },
-    data: { status: "FAILED", error: "Stopped after repeated interrupted sends", claimed_at: null },
+    data: { status: "FAILED", claimed_at: null, error: INTERRUPTED_ERROR },
   });
 
   const candidates = await prisma.message_recipient.findMany({
@@ -231,10 +251,25 @@ export const processPendingRecipients = async (): Promise<number> => {
 };
 
 let running = false;
+/** Set when a run was refused because another was in flight. */
+let rerunRequested = false;
 
-/** Runs `fn` unless a run is already in flight. Returns whether it ran. */
+/** Returns whether a rerun was requested since the last call, and clears it. */
+export const consumeRerunRequest = (): boolean => {
+  const requested = rerunRequested;
+  rerunRequested = false;
+  return requested;
+};
+
+/**
+ * Runs `fn` unless a run is already in flight. Returns whether it ran. A
+ * refused call records a rerun request so its work is not dropped.
+ */
 export const runExclusive = async (fn: () => Promise<void>): Promise<boolean> => {
-  if (running) return false;
+  if (running) {
+    rerunRequested = true;
+    return false;
+  }
   running = true;
   try {
     await fn();
@@ -248,7 +283,13 @@ export const runExclusive = async (fn: () => Promise<void>): Promise<boolean> =>
 export const triggerDispatchProcessing = () => {
   setImmediate(() => {
     runExclusive(async () => {
-      await processPendingRecipients();
+      // Rows enqueued while this run was busy may have been read too late;
+      // a nudge refused meanwhile asks for another pass (capped).
+      consumeRerunRequest();
+      for (let loop = 0; loop < MAX_RERUNS; loop++) {
+        await processPendingRecipients();
+        if (!consumeRerunRequest()) break;
+      }
     }).catch((error) => {
       console.error("[ERROR] Messaging dispatch nudge failed:", error);
     });
