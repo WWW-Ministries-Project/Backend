@@ -42,8 +42,15 @@ const send = async (input: CreateNotificationInput) => {
   }
 };
 
-/** How many notifications a fan-out creates at once. */
-const FAN_OUT_CONCURRENCY = 20;
+/**
+ * How many notifications a fan-out creates at once. Each one holds two pool
+ * connections at its peak (recipient + preference lookups) and leaves an
+ * unread-count query behind, and the pool is only 10 connections
+ * (PRISMA_CONNECTION_LIMIT). At 20 a church-wide post kept the pool full for
+ * the whole fan-out, so every other request — the author's own POST response
+ * and everyone's feed — queued behind it. 3 leaves room for foreground traffic.
+ */
+const FAN_OUT_CONCURRENCY = 3;
 
 /**
  * Sends a large batch in chunks of FAN_OUT_CONCURRENCY. notificationService
@@ -52,8 +59,10 @@ const FAN_OUT_CONCURRENCY = 20;
  * one user at a time or exhausting the connection pool all at once.
  */
 const sendAll = async (inputs: CreateNotificationInput[]) => {
+  // A batch of one (a single mention) is as urgent as any direct notification.
+  const bulk = inputs.length > 1;
   for (let index = 0; index < inputs.length; index += FAN_OUT_CONCURRENCY) {
-    await Promise.all(inputs.slice(index, index + FAN_OUT_CONCURRENCY).map(send));
+    await Promise.all(inputs.slice(index, index + FAN_OUT_CONCURRENCY).map((input) => send({ ...input, bulk })));
   }
 };
 

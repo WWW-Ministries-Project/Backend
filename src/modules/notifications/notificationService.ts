@@ -89,6 +89,12 @@ export type CreateNotificationInput = {
   sendEmail?: boolean;
   sendSms?: boolean;
   smsBody?: string;
+  /**
+   * Part of a fan-out (one event, many recipients). Its email/push deliveries
+   * wait in a separate lane behind one-to-one notifications, so a church-wide
+   * post queued for hundreds of members can't hold up a ride being accepted.
+   */
+  bulk?: boolean;
 };
 
 type NotificationListArgs = {
@@ -167,6 +173,7 @@ const NOTIFICATION_DELIVERY_CONCURRENCY = (() => {
 const sseClientsByUserId = new Map<number, Set<SseClient>>();
 const sseReplayBufferByUserId = new Map<number, SseEventEnvelope[]>();
 const notificationDeliveryTaskQueue: NotificationDeliveryTask[] = [];
+const bulkNotificationDeliveryTaskQueue: NotificationDeliveryTask[] = [];
 let sseEventIdCounter = 0;
 let activeNotificationDeliveryWorkers = 0;
 
@@ -247,7 +254,8 @@ const parsePositiveInt = (value: unknown): number | null => {
 
 const runNotificationDeliveryQueue = () => {
   while (activeNotificationDeliveryWorkers < NOTIFICATION_DELIVERY_CONCURRENCY) {
-    const task = notificationDeliveryTaskQueue.shift();
+    // One-to-one deliveries first; the fan-out lane only gets idle workers.
+    const task = notificationDeliveryTaskQueue.shift() ?? bulkNotificationDeliveryTaskQueue.shift();
     if (!task) {
       return;
     }
@@ -264,8 +272,8 @@ const runNotificationDeliveryQueue = () => {
   }
 };
 
-const enqueueNotificationDelivery = (task: NotificationDeliveryTask) => {
-  notificationDeliveryTaskQueue.push(task);
+const enqueueNotificationDelivery = (task: NotificationDeliveryTask, bulk = false) => {
+  (bulk ? bulkNotificationDeliveryTaskQueue : notificationDeliveryTaskQueue).push(task);
   runNotificationDeliveryQueue();
 };
 
@@ -516,7 +524,17 @@ const broadcastToUser = (
   return envelope;
 };
 
+// The gauge counts unread rows across every user, and every created or read
+// notification asks for a refresh — so a 500-member fan-out used to run 500
+// table-wide counts, un-awaited, against a 10-connection pool. A gauge only
+// needs to be roughly current: one count in flight, at most every 30s.
+const UNREAD_BACKLOG_REFRESH_MS = 30_000;
+let unreadBacklogRefreshedAt = 0;
+
 const updateUnreadBacklogMetric = async () => {
+  const now = Date.now();
+  if (now - unreadBacklogRefreshedAt < UNREAD_BACKLOG_REFRESH_MS) return;
+  unreadBacklogRefreshedAt = now;
   try {
     const unreadCount = await prisma.in_app_notification.count({
       where: {
@@ -1032,7 +1050,7 @@ const createInAppNotification = async (
       } catch (error) {
         notificationDeliveryFailureCounter.labels("email", trimmedType).inc();
       }
-    });
+    }, input.bulk);
   }
 
   const shouldSendSms =
@@ -1093,7 +1111,7 @@ const createInAppNotification = async (
     } catch (error) {
       notificationDeliveryFailureCounter.labels("push", trimmedType).inc();
     }
-  });
+  }, input.bulk);
 
   enqueueNotificationDelivery(async () => {
     try {
@@ -1121,7 +1139,7 @@ const createInAppNotification = async (
         .labels("expo_push", trimmedType)
         .inc();
     }
-  });
+  }, input.bulk);
 
   return payload;
 };
