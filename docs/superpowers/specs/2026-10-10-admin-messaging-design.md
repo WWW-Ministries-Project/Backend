@@ -63,7 +63,7 @@ message_dispatch
   email_subject   String?
   channels        Json
   audience        Json?                 (GENERAL only — see Audience)
-  status          Enum (SCHEDULED | QUEUED | SENDING | SENT | CANCELLED | FAILED)
+  status          Enum (SCHEDULED | QUEUED | SENT | CANCELLED | FAILED)
   scheduled_for   DateTime?
   created_by      Int?                  (plain id, no FK; null for automatic sends)
   counts          Json?                 cached {sms:{sent,failed,skipped}, email:{…}, inApp:{…}}
@@ -167,7 +167,7 @@ Rules:
 
 ## Delivery worker
 
-`src/cron-jobs/messagingDispatchCron.ts` runs every minute with an `isRunning` guard.
+`src/cron-jobs/messagingDispatchCron.ts` runs every minute through the worker's `runExclusive` (shared with the post-enqueue nudge, so the two never overlap in one process; per-row claims cover other processes).
 
 1. **Promote:** move `SCHEDULED` dispatches with `scheduled_for ≤ now` to `QUEUED`, resolving the audience and inserting recipients.
 2. **Claim:** select up to 200 `PENDING` recipients with `next_attempt_at` null or due. Flip them to `SENDING` with an `updateMany … where status = PENDING`, and only process the rows this run actually flipped, so two instances never double-send.
@@ -177,16 +177,17 @@ Rules:
    - **In-app.** `createInAppNotification({ type: "messaging.message", title, body, recipientUserId, sendEmail: false, sendSms: false })`, which writes the inbox row and sends web and Expo push. Add `messaging.message` to `notificationPreferenceCatalog.ts`, default on.
 4. **Outcome:**
    - Success sets `SENT` and `sent_at`.
-   - Failure increments `attempts`. Below 3 attempts, the row goes back to `PENDING` with backoff (1, 5, then 15 minutes). On the third failure it becomes `FAILED` with the error.
+   - Failure increments `attempts`. Below 3 attempts, the row goes back to `PENDING` with backoff (1, then 5 minutes). On the third failure (or a permanent error) it becomes `FAILED` with the error.
 5. **Finish:**
    - When a dispatch has no `PENDING` or `SENDING` rows, set it to `SENT` and recompute `counts`.
    - A dispatch with zero recipients is `SENT` with zero counts.
-   - `FAILED` is reserved for dispatch-level errors such as audience resolution throwing.
-   - Recipients left in `SENDING` for more than 10 minutes (crash mid-batch) are reset to `PENDING`.
+   - `FAILED` is reserved for dispatch-level errors such as audience resolution throwing, and for an idle `QUEUED` `GENERAL` dispatch with no recipient rows at all (its insert was interrupted): error "Recipients were never added (interrupted). Create the message again." A dispatch-level `FAILED` has no retry — the admin recreates the message.
+   - Delivery is at-most-once. Recipients left in `SENDING` for more than 30 minutes (crash mid-send) become `FAILED` ("Delivery outcome unknown"), never resent automatically; the admin uses Retry failed.
+   - The claim also picks up `PENDING` rows under a `SENT` dispatch, so rows reopened by a retry that races the finish flip still go out.
 
 ## API
 
-Module `src/modules/messaging/` (`messagingRoute.ts`, `messagingController.ts`, `messagingService.ts`, `placeholders.ts`, `audience.ts`, `delivery.ts`), mounted at `/messaging` in `src/routes/appRouter.ts`.
+Module `src/modules/messaging/` (`messagingRoute.ts`, `messagingController.ts`, `messagingService.ts`, `placeholders.ts`, `audience.ts`, `recipients.ts`, `channelRules.ts`, `channels.ts`, `worker.ts`), mounted at `/messaging` in `src/routes/appRouter.ts`.
 
 | Method & path | Permission | Purpose |
 |---|---|---|
@@ -195,12 +196,13 @@ Module `src/modules/messaging/` (`messagingRoute.ts`, `messagingController.ts`, 
 | `GET /messaging/settings` | view | store links, birthday time, timezone |
 | `PUT /messaging/settings` | manage | URLs must be https; time must be HH:mm |
 | `GET /messaging/placeholders?kind=` | view | whitelist with descriptions |
-| `POST /messaging/preview` | view | `{ body, subject?, kind, userId? }` → rendered text and SMS length/segments (sample person if no userId) |
+| `POST /messaging/preview` | view | `{ body, subject?, kind }` → rendered text and SMS length/segments, always for a sample person (a `userId` is ignored so view-only admins cannot render a real member) |
 | `POST /messaging/audience/count` | manage | `{ audience, channels }` → `{ people, sms, email, inApp }` reachable counts |
 | `GET /messaging/birthdays/upcoming?days=7` | view | name and date list |
 | `POST /messaging/dispatches` | manage | general message: `{ title, body, emailSubject?, channels, audience, scheduledFor? }` |
-| `GET /messaging/dispatches?kind=&page=` | view | history, newest first |
-| `GET /messaging/dispatches/:id` | view | dispatch and paged recipients, filterable by channel and status |
+| `GET /messaging/dispatches?kind=&page=` | view | history, newest first; list responses carry `page`/`limit`/`total` and `current_page`/`take`/`totalPages` |
+| `GET /messaging/dispatches/:id` | view | the dispatch |
+| `GET /messaging/dispatches/:id/recipients?channel=&status=&page=` | view | paged recipients, filterable by channel and status |
 | `POST /messaging/dispatches/:id/cancel` | manage | only `SCHEDULED` |
 | `POST /messaging/dispatches/:id/retry-failed` | manage | `FAILED` rows → `PENDING`, attempts reset |
 | `GET /messaging/stats?days=30` | view | sent/failed per template key (welcome and birthday card footers) |
@@ -259,7 +261,7 @@ Messages arrive as inbox notifications of type `messaging.message`. Check that `
 
 ## Testing
 
-- **Backend:** there is no test runner in `package.json`. Add focused unit checks as a `ts-node` script under `scripts/` (or add a minimal runner if the team agrees) covering:
+- **Backend:** `npm test` runs `node:test` over `src/**/*.test.ts` (pure-unit, no DB), covering:
   - `renderTemplate` fallbacks and unknown tokens
   - the Feb-29 birthday rule and once-per-day gating
   - audience de-duplication and consent filtering
