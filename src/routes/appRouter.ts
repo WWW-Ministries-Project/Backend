@@ -38,6 +38,7 @@ import liveStreamRouter from "../modules/liveStream/liveStreamRoute";
 import joinRequestRouter from "../modules/departmentJoinRequests/joinRequestRoute";
 import rideRouter from "../modules/rides/rideRoute";
 import communityRouter from "../modules/community/communityRoute";
+import messagingRouter from "../modules/messaging/messagingRoute";
 import { FollowUPController } from "../modules/visitorManagement/followUpController";
 import { Permissions } from "../middleWare/authorization";
 dotenv.config();
@@ -83,6 +84,7 @@ appRouter.use("/settings", settingsRouter);
 appRouter.use("/live-stream", liveStreamRouter);
 appRouter.use("/rides", rideRouter);
 appRouter.use("/community", communityRouter);
+appRouter.use("/messaging", messagingRouter);
 appRouter.use("/api/ai", aiRouter);
 appRouter.use("/api/v1/ai", aiRouter);
 

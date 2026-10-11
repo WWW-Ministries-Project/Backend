@@ -3234,3 +3234,113 @@ model community_moderation_log {
   @@index([post_id])
   @@index([comment_id])
 }
+
+enum message_template_key {
+  WELCOME_MEMBER
+  WELCOME_GUEST
+  WELCOME_VISITOR
+  BIRTHDAY
+}
+
+enum message_dispatch_kind {
+  WELCOME
+  BIRTHDAY
+  GENERAL
+}
+
+enum message_dispatch_status {
+  SCHEDULED
+  QUEUED
+  SENT
+  CANCELLED
+  FAILED
+}
+
+enum message_channel {
+  SMS
+  EMAIL
+  IN_APP
+}
+
+enum message_recipient_status {
+  PENDING
+  SENDING
+  SENT
+  FAILED
+  SKIPPED
+}
+
+/// Admin-editable automatic message. One row per key, seeded by migration.
+model message_template {
+  id               Int                  @id @default(autoincrement())
+  key              message_template_key @unique
+  enabled          Boolean              @default(false)
+  /// {"sms":bool,"email":bool,"inApp":bool}
+  channels         Json
+  email_subject    String?
+  body             String               @db.Text
+  include_app_link Boolean              @default(false)
+  updated_by       Int?
+  updated_at       DateTime             @updatedAt
+}
+
+/// Singleton (id = 1).
+model message_settings {
+  id                     Int      @id @default(autoincrement())
+  app_store_url          String?
+  play_store_url         String?
+  birthday_send_time     String   @default("07:00")
+  timezone               String   @default("Africa/Accra")
+  last_birthday_run_date String?
+  updated_by             Int?
+  updated_at             DateTime @updatedAt
+}
+
+model message_dispatch {
+  id            Int                     @id @default(autoincrement())
+  kind          message_dispatch_kind
+  template_key  message_template_key?
+  dedupe_key    String?                 @unique
+  title         String
+  body          String                  @db.Text
+  email_subject String?
+  channels      Json
+  audience      Json?
+  status        message_dispatch_status
+  scheduled_for DateTime?
+  error         String?                 @db.Text
+  created_by    Int?
+  counts        Json?
+  created_at    DateTime                @default(now())
+  updated_at    DateTime                @updatedAt
+  recipients    message_recipient[]
+
+  @@index([status, scheduled_for])
+  @@index([kind, created_at])
+}
+
+model message_recipient {
+  id               Int                      @id @default(autoincrement())
+  dispatch_id      Int
+  channel          message_channel
+  /// "u:<userId>" or "v:<visitorId>" — non-null so the unique key works in MySQL.
+  recipient_key    String
+  user_id          Int?
+  visitor_id       Int?
+  recipient_name   String
+  address          String?
+  rendered_subject String?
+  rendered_body    String                   @db.Text
+  status           message_recipient_status
+  error            String?                  @db.Text
+  attempts         Int                      @default(0)
+  next_attempt_at  DateTime?
+  claimed_at       DateTime?
+  sent_at          DateTime?
+  created_at       DateTime                 @default(now())
+  dispatch         message_dispatch         @relation(fields: [dispatch_id], references: [id], onDelete: Cascade)
+
+  @@unique([dispatch_id, channel, recipient_key])
+  @@index([status, next_attempt_at])
+  @@index([user_id])
+}

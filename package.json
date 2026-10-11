@@ -12,7 +12,8 @@
     "migrate:2": "npx prisma generate",
     "prod": "npx tsc && npm run copy:libs && node -r newrelic dist/index.js",
     "jack": "npm run build && node dist/src/utils/rm_user.js",
-    "copy:libs": "cpx \"src/libs/**/*\" dist/src/libs"
+    "copy:libs": "cpx \"src/libs/**/*\" dist/src/libs",
+    "test": "node --test --require ts-node/register/transpile-only $(find src -name '*.test.ts' -not -name '* *')"
   },
   "keywords": [],
   "author": "",

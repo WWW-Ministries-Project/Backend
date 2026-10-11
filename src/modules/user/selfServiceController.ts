@@ -5,6 +5,7 @@ import { prisma } from "../../Models/context";
 import { hashPassword, sendEmail } from "../../utils";
 import { selfRegistrationTemplate } from "../../utils/mail_templates/selfRegistrationTemplate";
 import { getBranchScopedWhere, resolveBranchIdOrDefault } from "../branches/branchService";
+import { enqueueWelcome } from "../messaging/messagingService";
 import { notificationService } from "../notifications/notificationService";
 import { issueSessionTokenForUser } from "./userController";
 import { UserService } from "./userService";
@@ -184,6 +185,10 @@ export const selfRegister = async (req: Request, res: Response) => {
         .generateUserId(user)
         .catch((error) => console.error("Error generating member ID:", error));
     }
+
+    // Admin-configured welcome (Messaging > Welcome). The set-password email
+    // below is always sent: it is how the member gets into their account.
+    void enqueueWelcome({ userId: user.id, isGuest });
 
     try {
       await sendEmail(

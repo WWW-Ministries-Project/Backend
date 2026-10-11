@@ -56,6 +56,10 @@ const PERMISSION_KEY_ALIASES: Record<string, string[]> = {
   // Mirrors DOMAIN_FALLBACKS in the Frontend's src/utils/accessControl.ts —
   // the two tables must agree or the UI shows a page the API then refuses.
   Promotions: ["Promotions", "Community", "Announcements"],
+  // Admin Messaging (welcome, birthday, general SMS/email/in-app). No
+  // fallback: bulk SMS costs money, so it is never inherited from Community.
+  // The 20261010120000_messaging migration grants it to full admins.
+  Messaging: ["Messaging"],
 };
 
 const parsePermissionsObject = (permissions: any): Record<string, any> => {
@@ -1879,6 +1883,19 @@ export class Permissions {
     "Sermons",
     "admin",
     "Not authorized to delete sermons",
+  );
+
+  // Messaging
+  can_view_messaging = this.checkPermission(
+    "Messaging",
+    "view",
+    "Not authorized to view messaging",
+  );
+
+  can_manage_messaging = this.checkPermission(
+    "Messaging",
+    "manage",
+    "Not authorized to manage messaging",
   );
 
   /**

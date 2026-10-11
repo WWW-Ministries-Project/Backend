@@ -17,7 +17,7 @@ Requires `.env` with `DATABASE_URL`, `SHADOW_DATABASE_URL` (MySQL), `JWT_SECRET`
 
 Paystack (giving **and** pledge redemptions) reads `PAYSTACK_SECRET_KEY`, optionally `PAYSTACK_BASE_URL`, the shared donor-borne fee schedule `PAYSTACK_FEE_PERCENT` / `PAYSTACK_FEE_CAP_MINOR_UNITS` / `PAYSTACK_FEE_FLAT_MINOR_UNITS`, and two optional post-payment landing pages: `PAYSTACK_GIVING_CALLBACK_URL` and `PAYSTACK_PLEDGE_CALLBACK_URL`. Both fall back to `Frontend_URL` (`/out/giving-complete`, `/out/pledge-complete`). Callback URLs are always resolved server-side from a fixed set — clients send `client: "web" | "mobile"`, never a URL, because accepting one would be an open redirect on a payment flow. Full shapes: `Frontend/docs/GIVING_OPTIONS_BACKEND_CONTRACT.md` and `Frontend/docs/PLEDGE_PAYMENTS_BACKEND_CONTRACT.md`.
 
-No test runner, linter, or formatter is configured — do not fabricate `npm test`/`npm run lint` invocations.
+`npm test` runs `node:test` (via `ts-node/register/transpile-only`) over `src/**/*.test.ts` — pure-unit tests only, no DB. No linter or formatter is configured — do not fabricate `npm run lint`.
 
 ## Architecture
 
@@ -57,7 +57,9 @@ Scoped variants (`*_scoped`) enforce branch/department/user-ownership filters �
 
 ### Background jobs (`src/cron-jobs/`)
 
-Cron files are `require`d at boot from `index.ts` and self-register with `node-cron` on import. Gate: `RUN_BACKGROUND_JOBS` env — set to `false`/`0`/`no` on non-primary workers to prevent duplicate scheduling. Currently registered: hubtel payment reconciliation, requisition notifications, follow-up notifications, notification retention, push retry, SMS retry, event reminders.
+Cron files are `require`d at boot from `index.ts` and self-register with `node-cron` on import. Gate: `RUN_BACKGROUND_JOBS` env — set to `false`/`0`/`no` on non-primary workers to prevent duplicate scheduling. Currently registered: hubtel payment reconciliation, requisition notifications, follow-up notifications, notification retention, push retry, SMS retry, event reminders, messaging dispatch (`messagingDispatchCron`, `MESSAGING_DISPATCH_CRON`, default `"* * * * *"`), birthday messages (`messagingBirthdayCron`, `MESSAGING_BIRTHDAY_CRON`, default `"*/15 * * * *"`).
+
+The API process also sends messages through a post-enqueue nudge, regardless of `RUN_BACKGROUND_JOBS` — safe across processes because each recipient row is claimed individually. Scheduled messages, backoff retries of failed sends and birthdays still need at least one process with `RUN_BACKGROUND_JOBS` on.
 
 ### Integrations
 

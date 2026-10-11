@@ -35,6 +35,13 @@ const DEFAULT_CATEGORY = "Other";
 
 export const NOTIFICATION_PREFERENCE_OPTIONS: NotificationPreferenceOption[] = [
   {
+    type: "messaging.message",
+    title: "Messages from the church",
+    description: "Welcome, birthday and church-wide messages sent by the church office.",
+    category: "Church",
+    availableChannels: IN_APP_ONLY_CHANNELS,
+  },
+  {
     type: "community.comment",
     title: "Comments on your posts",
     description: "Tell a member when someone comments on their Community post.",
