@@ -6,6 +6,7 @@
  * today's birthday messages. Catches up after a restart past send time.
  */
 import cron from "node-cron";
+import { notificationService } from "../modules/notifications/notificationService";
 import { runBirthdays } from "../modules/messaging/messagingService";
 import {
   isDatabaseUnavailableError,
@@ -29,6 +30,28 @@ export async function processBirthdayMessagesJob() {
       return;
     }
     console.error("[ERROR] Birthday messages job failed:", normalizedError);
+    try {
+      await notificationService.notifyAdminsJobFailed({
+        jobName: "messaging-birthday",
+        errorMessage: normalizedError,
+        actionUrl: "/home/notifications",
+        dedupeKey: `job:messaging-birthday:${new Date().toISOString().slice(0, 13)}`,
+      });
+    } catch (notificationError) {
+      const normalizedNotificationError =
+        normalizeCronJobErrorMessage(notificationError);
+      if (isDatabaseUnavailableError(notificationError)) {
+        logDatabaseUnavailableWarning(
+          "Birthday messages job failure alert",
+          normalizedNotificationError,
+        );
+      } else {
+        console.error(
+          "[ERROR] Birthday messages job failure alert failed:",
+          normalizedNotificationError,
+        );
+      }
+    }
   } finally {
     isBirthdayJobRunning = false;
   }

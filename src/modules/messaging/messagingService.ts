@@ -588,8 +588,9 @@ const SAMPLE: Person = {
 export const preview = async (body: any) => {
   const kind: PlaceholderKind = ["WELCOME", "BIRTHDAY", "GENERAL"].includes(body?.kind) ? body.kind : "GENERAL";
   const settings = await getSettings();
-  const userId = Number(body?.userId);
-  const person = Number.isInteger(userId) && userId > 0 ? (await findUsers({ id: userId }))[0] ?? SAMPLE : SAMPLE;
+  // Always the sample person: view-only admins must not be able to render a
+  // real member's name or age by passing an id.
+  const person = SAMPLE;
   const now = localParts(new Date(), settings.timezone);
   const ctx = {
     firstName: person.firstName,

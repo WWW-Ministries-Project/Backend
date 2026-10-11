@@ -6,6 +6,7 @@
  * the two never overlap in this process; per-row claims cover other workers.
  */
 import cron from "node-cron";
+import { notificationService } from "../modules/notifications/notificationService";
 import { promoteDueDispatches } from "../modules/messaging/messagingService";
 import { consumeRerunRequest, processPendingRecipients, runExclusive } from "../modules/messaging/worker";
 import {
@@ -34,6 +35,28 @@ export async function processMessagingDispatchJob() {
       return;
     }
     console.error("[ERROR] Messaging dispatch job failed:", normalizedError);
+    try {
+      await notificationService.notifyAdminsJobFailed({
+        jobName: "messaging-dispatch",
+        errorMessage: normalizedError,
+        actionUrl: "/home/notifications",
+        dedupeKey: `job:messaging-dispatch:${new Date().toISOString().slice(0, 13)}`,
+      });
+    } catch (notificationError) {
+      const normalizedNotificationError =
+        normalizeCronJobErrorMessage(notificationError);
+      if (isDatabaseUnavailableError(notificationError)) {
+        logDatabaseUnavailableWarning(
+          "Messaging dispatch job failure alert",
+          normalizedNotificationError,
+        );
+      } else {
+        console.error(
+          "[ERROR] Messaging dispatch job failure alert failed:",
+          normalizedNotificationError,
+        );
+      }
+    }
   }
 }
 

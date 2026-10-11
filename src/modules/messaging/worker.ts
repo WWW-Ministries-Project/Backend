@@ -19,13 +19,14 @@ const BATCH_SIZE = 200;
 const STALE_CLAIM_MS = 30 * 60_000;
 /**
  * A QUEUED dispatch with nothing open, untouched for this long, is swept to
- * SENT. Recipient rows are inserted in their own transaction after the
+ * SENT (or FAILED, for a GENERAL dispatch whose recipient rows never landed). Recipient rows are inserted in their own transaction after the
  * dispatch row is created, so a dispatch briefly looks idle before its rows
  * are visible. 10 minutes leaves a slow insert ample room before the sweep
  * could close the dispatch over rows it cannot see yet.
  */
 const IDLE_DISPATCH_MS = 10 * 60_000;
 const INTERRUPTED_ERROR = "Delivery outcome unknown (interrupted). Use Retry failed to resend.";
+const LOST_RECIPIENTS_ERROR = "Recipients were never added (interrupted). Create the message again.";
 const MAX_RERUNS = 5;
 const PERSIST_RETRIES = 3;
 const DELAYS_MS = [60_000, 5 * 60_000];
@@ -191,12 +192,23 @@ export const processPendingRecipients = async (): Promise<number> => {
       recipients: { none: { status: { in: [...OPEN_STATUSES] } } },
       updated_at: { lt: new Date(now.getTime() - IDLE_DISPATCH_MS) },
     },
-    select: { id: true },
+    select: { id: true, kind: true },
     orderBy: { updated_at: "asc" },
     take: 50,
   });
-  for (const { id } of idle) {
+  for (const { id, kind } of idle) {
     try {
+      // A GENERAL dispatch with no recipient rows at all lost its insert
+      // (interrupted between the two transactions). Flipping it to SENT would
+      // show a message nobody received as delivered. A legitimately empty
+      // audience is flipped to SENT at enqueue, so it never reaches here.
+      if (kind === "GENERAL") {
+        const lost = await prisma.message_dispatch.updateMany({
+          where: { id, status: "QUEUED", kind: "GENERAL", recipients: { none: {} } },
+          data: { status: "FAILED", error: LOST_RECIPIENTS_ERROR },
+        });
+        if (lost.count === 1) continue;
+      }
       await refreshDispatch(id);
     } catch (error) {
       console.error(`[ERROR] Messaging: could not refresh idle dispatch ${id}:`, error);
@@ -223,7 +235,10 @@ export const processPendingRecipients = async (): Promise<number> => {
     where: {
       status: "PENDING",
       OR: [{ next_attempt_at: null }, { next_attempt_at: { lte: now } }],
-      dispatch: { status: "QUEUED" },
+      // SENT is included so a PENDING row under a dispatch already flipped to
+      // SENT (a retry re-opening rows racing the refresh's flip) still goes
+      // out; refreshDispatch only recounts a SENT dispatch, never reopens it.
+      dispatch: { status: { in: ["QUEUED", "SENT"] } },
     },
     orderBy: { id: "asc" },
     take: BATCH_SIZE,
