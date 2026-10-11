@@ -469,6 +469,16 @@ export const promoteDueDispatches = async (now: Date = new Date()): Promise<numb
   return promoted;
 };
 
+/** Pagination fields in both spellings: ours, and the dashboard's apiFunctions meta. */
+const pageMeta = (page: number, limit: number, total: number) => ({
+  page,
+  limit,
+  total,
+  current_page: page,
+  take: limit,
+  totalPages: Math.max(Math.ceil(total / limit), 1),
+});
+
 const toDispatchDto = (d: Prisma.message_dispatchGetPayload<{}>) => ({
   id: d.id,
   kind: d.kind,
@@ -502,9 +512,7 @@ export const listDispatches = async (query: any) => {
   const names = new Map(creators.map((c) => [c.id, c.name]));
   return {
     data: rows.map((r) => ({ ...toDispatchDto(r), createdByName: r.created_by ? names.get(r.created_by) ?? null : null })),
-    page,
-    limit,
-    total,
+    ...pageMeta(page, limit, total),
   };
 };
 
@@ -542,7 +550,7 @@ export const listDispatchRecipients = async (id: number, query: any) => {
     }),
     prisma.message_recipient.count({ where }),
   ]);
-  return { data: rows, page, limit, total };
+  return { data: rows, ...pageMeta(page, limit, total) };
 };
 
 export const cancelDispatch = async (id: number) => {
