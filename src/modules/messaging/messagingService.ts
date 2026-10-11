@@ -52,7 +52,8 @@ const httpsOrNull = (value: unknown, field: string): string | null => {
   const text = String(value ?? "").trim();
   if (!text) return null;
   if (!/^https:\/\/\S+$/i.test(text)) throw new InputValidationError(`${field} must be an https:// link`);
-  return text.slice(0, 500);
+  if (text.length > 191) throw new InputValidationError(`${field} must be at most 191 characters`);
+  return text;
 };
 
 export const updateSettings = async (body: any, actorId: number | null) => {
@@ -315,8 +316,9 @@ export const runBirthdays = async (now: Date = new Date()): Promise<number> => {
   });
   if (claim.count !== 1 || !people.length) return 0;
 
+  let dispatchId: number | null;
   try {
-    await createDispatchWithRecipients({
+    dispatchId = await createDispatchWithRecipients({
       kind: "BIRTHDAY",
       templateKey: "BIRTHDAY",
       dedupeKey: `BIRTHDAY:${local.date}`,
@@ -332,7 +334,7 @@ export const runBirthdays = async (now: Date = new Date()): Promise<number> => {
     console.error(`[ERROR] Birthday messages for ${local.date} failed after the day was claimed`);
     throw error;
   }
-  return people.length;
+  return dispatchId ? people.length : 0;
 };
 
 export const upcomingBirthdays = async (days: number, now: Date = new Date()) => {
@@ -449,10 +451,14 @@ export const promoteDueDispatches = async (now: Date = new Date()): Promise<numb
     try {
       await fillGeneralDispatch(id);
     } catch (error: any) {
-      await prisma.message_dispatch.update({
-        where: { id },
-        data: { status: "FAILED", error: String(error?.message || error).slice(0, 1000) },
-      });
+      try {
+        await prisma.message_dispatch.update({
+          where: { id },
+          data: { status: "FAILED", error: String(error?.message || error).slice(0, 1000) },
+        });
+      } catch (markError) {
+        console.error(`[ERROR] Messaging: could not mark dispatch ${id} FAILED:`, markError);
+      }
       continue;
     }
     // Outside the try: once recipients exist, a failed refresh must not mark
@@ -482,8 +488,8 @@ const toDispatchDto = (d: Prisma.message_dispatchGetPayload<{}>) => ({
 
 export const listDispatches = async (query: any) => {
   const kind = ["WELCOME", "BIRTHDAY", "GENERAL"].includes(String(query?.kind)) ? String(query.kind) : undefined;
-  const page = Math.max(Number(query?.page) || 1, 1);
-  const limit = Math.min(Math.max(Number(query?.limit) || 20, 1), 100);
+  const page = Math.min(Math.max(Math.trunc(Number(query?.page)) || 1, 1), 10000);
+  const limit = Math.min(Math.max(Math.trunc(Number(query?.limit)) || 20, 1), 100);
   const where: Prisma.message_dispatchWhereInput = kind ? { kind: kind as any } : {};
   const [rows, total] = await Promise.all([
     prisma.message_dispatch.findMany({ where, orderBy: { id: "desc" }, skip: (page - 1) * limit, take: limit }),
@@ -502,19 +508,27 @@ export const listDispatches = async (query: any) => {
   };
 };
 
+const assertValidId = (id: number) => {
+  if (!Number.isInteger(id) || id <= 0) throw new NotFoundError("Message not found");
+};
+
 export const getDispatch = async (id: number) => {
+  assertValidId(id);
   const d = await prisma.message_dispatch.findUnique({ where: { id } });
   if (!d) throw new NotFoundError("Message not found");
   return toDispatchDto(d);
 };
 
 export const listDispatchRecipients = async (id: number, query: any) => {
+  assertValidId(id);
   await getDispatch(id);
-  const page = Math.max(Number(query?.page) || 1, 1);
-  const limit = Math.min(Math.max(Number(query?.limit) || 50, 1), 200);
+  const page = Math.min(Math.max(Math.trunc(Number(query?.page)) || 1, 1), 10000);
+  const limit = Math.min(Math.max(Math.trunc(Number(query?.limit)) || 50, 1), 200);
   const where: Prisma.message_recipientWhereInput = { dispatch_id: id };
-  if (["SMS", "EMAIL", "IN_APP"].includes(String(query?.channel))) where.channel = query.channel;
-  if (["PENDING", "SENDING", "SENT", "FAILED", "SKIPPED"].includes(String(query?.status))) where.status = query.status;
+  const ch = String(query?.channel ?? "");
+  const st = String(query?.status ?? "");
+  if (["SMS", "EMAIL", "IN_APP"].includes(ch)) where.channel = ch as Prisma.message_recipientWhereInput["channel"];
+  if (["PENDING", "SENDING", "SENT", "FAILED", "SKIPPED"].includes(st)) where.status = st as Prisma.message_recipientWhereInput["status"];
   const [rows, total] = await Promise.all([
     prisma.message_recipient.findMany({
       where,
@@ -532,6 +546,8 @@ export const listDispatchRecipients = async (id: number, query: any) => {
 };
 
 export const cancelDispatch = async (id: number) => {
+  assertValidId(id);
+  await getDispatch(id);
   const result = await prisma.message_dispatch.updateMany({
     where: { id, status: "SCHEDULED" },
     data: { status: "CANCELLED" },
@@ -541,15 +557,16 @@ export const cancelDispatch = async (id: number) => {
 };
 
 export const retryFailed = async (id: number) => {
+  assertValidId(id);
   await getDispatch(id);
-  const result = await prisma.message_recipient.updateMany({
-    where: { dispatch_id: id, status: "FAILED" },
-    data: { status: "PENDING", attempts: 0, next_attempt_at: null, error: null },
-  });
-  if (result.count) {
-    await prisma.message_dispatch.updateMany({ where: { id, status: "SENT" }, data: { status: "QUEUED" } });
-    triggerDispatchProcessing();
-  }
+  const [result] = await prisma.$transaction([
+    prisma.message_recipient.updateMany({
+      where: { dispatch_id: id, status: "FAILED" },
+      data: { status: "PENDING", attempts: 0, next_attempt_at: null, error: null },
+    }),
+    prisma.message_dispatch.updateMany({ where: { id, status: "SENT" }, data: { status: "QUEUED" } }),
+  ]);
+  if (result.count > 0) triggerDispatchProcessing();
   return { retried: result.count };
 };
 
