@@ -2071,6 +2071,15 @@ export class Permissions {
     "Not authorized to delete settings",
   );
 
+  // Appointment settings (e.g. the booking reasons list). A plain domain
+  // manage check: unlike can_manage_appointments_scoped it resolves no
+  // booking/attendee id, since settings belong to no one booking.
+  can_manage_appointment_settings = this.checkPermission(
+    "Appointments",
+    "manage",
+    "Not authorized to manage appointment settings",
+  );
+
   // Marketplace
   can_view_marketplace = this.checkPermission(
     "Marketplace",
