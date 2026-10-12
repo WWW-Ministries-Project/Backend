@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import { AppointmentService } from "./appointment-service";
+import { AppointmentService, SlotUnavailableError } from "./appointment-service";
 import { notificationService } from "../notifications/notificationService";
 import { prisma } from "../../Models/context";
 
@@ -231,7 +231,11 @@ export class AppointmentController {
         data: newBooking,
       });
     } catch (error: any) {
-      // If the overbooking logic throws an error, it will be caught here
+      // Someone else got the session first: 409 + code, so clients refresh
+      // the slot list rather than treating it as a bad request.
+      if (error instanceof SlotUnavailableError) {
+        return res.status(409).json({ error: error.message, code: error.code });
+      }
       res.status(400).json({ error: error.message || "Booking failed" });
     }
   }
@@ -342,6 +346,9 @@ export class AppointmentController {
         data,
       });
     } catch (error: any) {
+      if (error instanceof SlotUnavailableError) {
+        return res.status(409).json({ error: error.message, code: error.code });
+      }
       const statusCode =
         error?.message === "Appointment not found"
           ? 404
