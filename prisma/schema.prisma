@@ -2120,6 +2120,20 @@ model appointment {
   @@index([userId, date, startTime, endTime], map: "appointment_user_date_time_idx")
 }
 
+// Reasons a member picks from when booking an appointment. Admin-configured;
+// "Something else" is a client-side free-text option and is never stored.
+model appointment_reason {
+  id          Int      @id @default(autoincrement())
+  label       String   @db.VarChar(120)
+  description String?  @db.VarChar(255)
+  sort_order  Int      @default(0)
+  is_active   Boolean  @default(true)
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+
+  @@index([is_active, sort_order])
+}
+
 model ai_conversation {
   id            String            @id @default(uuid())
   created_by    Int
