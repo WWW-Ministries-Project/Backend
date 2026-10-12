@@ -4,6 +4,7 @@ import { notificationService } from "./notificationService";
 import { notificationPushService } from "./notificationPushService";
 import { notificationDeviceService } from "./notificationDeviceService";
 import { issueNotificationStreamToken } from "./notificationStreamAuth";
+import { parseNotificationDeleteIds } from "./notificationDeleteIds";
 
 const getAuthenticatedUserId = (req: Request): number => {
   const parsed = Number((req as any)?.user?.id);
@@ -341,6 +342,17 @@ export class NotificationController {
 
     res.status(200).json({
       message: "Notifications cleared",
+      data,
+    });
+  }
+
+  async deleteSelected(req: Request, res: Response) {
+    const userId = getAuthenticatedUserId(req);
+    const ids = parseNotificationDeleteIds(req.body);
+    const data = await notificationService.deleteNotifications(userId, ids);
+
+    res.status(200).json({
+      message: "Notifications deleted",
       data,
     });
   }

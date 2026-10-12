@@ -1402,6 +1402,41 @@ const clearAllNotifications = async (
   return { deleted: result.count };
 };
 
+/**
+ * Deletes the given notifications, owner-scoped: ids that belong to another
+ * user (or no longer exist) are silently ignored. Mirrors
+ * clearAllNotifications' side effects so open streams stay in sync.
+ */
+const deleteNotifications = async (
+  userId: number,
+  ids: number[],
+): Promise<{ deleted: number }> => {
+  const result = await prisma.in_app_notification.deleteMany({
+    where: {
+      id: { in: ids },
+      recipient_user_id: userId,
+    },
+  });
+
+  const unreadCount = await prisma.in_app_notification.count({
+    where: {
+      recipient_user_id: userId,
+      is_read: false,
+    },
+  });
+
+  broadcastToUser(userId, "notifications_deleted", {
+    recipientUserId: String(userId),
+    ids: ids.map(String),
+    deleted: result.count,
+    unreadCount,
+  });
+  emitUnreadCountToUser(userId, unreadCount);
+  void updateUnreadBacklogMetric();
+
+  return { deleted: result.count };
+};
+
 const startSseStream = async (
   userId: number,
   res: Response,
@@ -1547,6 +1582,7 @@ export const notificationService = {
   markNotificationAsUnread,
   markAllNotificationsAsRead,
   clearAllNotifications,
+  deleteNotifications,
   startSseStream,
   pruneOldNotifications,
   notifyAdminsJobFailed,
