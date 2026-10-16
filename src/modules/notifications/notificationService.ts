@@ -498,7 +498,7 @@ const registerSseClient = (userId: number, res: Response): SseClient => {
 // `event` strings passed here must be keys of RealtimeEventMap (realtimeEvents.ts).
 const broadcastToUser = (
   userId: number,
-  event: string,
+  event: RealtimeEventName,
   data: unknown,
   options: SseBroadcastOptions = {},
 ) => {
@@ -510,7 +510,7 @@ const broadcastToUser = (
   // Same event, same body, over socket.io. Runs alongside SSE until the web
   // dashboard moves to sockets (realtime sub-project 2), then SSE goes.
   if (data && typeof data === "object") {
-    emitToUserSocket(userId, event as RealtimeEventName, data as RealtimeEventMap[RealtimeEventName]);
+    emitToUserSocket(userId, event, data as RealtimeEventMap[RealtimeEventName]);
   }
 
   const userClients = sseClientsByUserId.get(userId);

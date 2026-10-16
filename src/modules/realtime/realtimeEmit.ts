@@ -27,11 +27,16 @@ export const setRealtimeServer = (server: RealtimeIo | null) => {
 
 export const userRoom = (userId: number) => `user:${userId}`;
 
-const emitsTotal = new client.Counter({
-  name: "realtime_emits_total",
-  help: "Realtime events emitted, by event name",
-  labelNames: ["event"],
-});
+// Reuse an already-registered metric instead of throwing "already registered".
+const emitsTotal =
+  (client.register.getSingleMetric("realtime_emits_total") as
+    | client.Counter<"event">
+    | undefined) ??
+  new client.Counter({
+    name: "realtime_emits_total",
+    help: "Realtime events emitted, by event name",
+    labelNames: ["event"],
+  });
 
 const isPositiveInt = (value: number) => Number.isInteger(value) && value > 0;
 

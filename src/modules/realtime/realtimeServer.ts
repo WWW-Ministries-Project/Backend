@@ -36,25 +36,30 @@ let io: Server<any, any, any, SocketData> | null = null;
 
 // Both gauges are computed at scrape time from the live sockets, so concurrent
 // subscribes and recoveries cannot drift them.
-new client.Gauge({
-  name: "realtime_connections",
-  help: "Open realtime sockets",
-  collect() {
-    this.set(io ? io.of("/").sockets.size : 0);
-  },
-});
+// An already-registered metric is reused instead of throwing "already registered".
+if (!client.register.getSingleMetric("realtime_connections")) {
+  new client.Gauge({
+    name: "realtime_connections",
+    help: "Open realtime sockets",
+    collect() {
+      this.set(io ? io.of("/").sockets.size : 0);
+    },
+  });
+}
 
-new client.Gauge({
-  name: "realtime_topics",
-  help: "Topic subscriptions across open realtime sockets",
-  collect() {
-    let total = 0;
-    io?.of("/").sockets.forEach((socket) => {
-      total += socket.data.topics?.size ?? 0;
-    });
-    this.set(total);
-  },
-});
+if (!client.register.getSingleMetric("realtime_topics")) {
+  new client.Gauge({
+    name: "realtime_topics",
+    help: "Topic subscriptions across open realtime sockets",
+    collect() {
+      let total = 0;
+      io?.of("/").sockets.forEach((socket) => {
+        total += socket.data.topics?.size ?? 0;
+      });
+      this.set(total);
+    },
+  });
+}
 
 const loadRealtimeUser: LoadRealtimeUser = (userId) =>
   prisma.user.findUnique({

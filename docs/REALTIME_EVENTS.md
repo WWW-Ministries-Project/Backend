@@ -68,4 +68,6 @@ location /socket.io/ {
 }
 ```
 
+`8001` is the production host port (`docker-compose-prod.yml`); use the port the API container is published on in each environment.
+
 `proxy_read_timeout` must stay above ping interval + timeout (45 s).

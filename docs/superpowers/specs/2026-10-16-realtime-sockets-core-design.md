@@ -321,7 +321,7 @@ New test files: `realtimeEvents`, `realtimeEmit`, `realtimeAuth`, `realtimeRooms
 - `realtimeTopics` — authorizer chosen by prefix; unknown prefix; denial; 20-topic cap; rate limit.
 - `realtimeEmit` — envelope shape; never throws with no `io` or a throwing `io`.
 - `sessionChanged` / `sessionRevoked` — call order (invalidate → rooms → emit; revoke disconnects last).
-- `protect` — inactive snapshot → 401; `invalidateAuthContext` forces a fresh lookup.
+- `isSessionActive` — missing snapshot or `is_active: false` is inactive, a missing flag counts as active. `protect` and the snapshot-cache invalidation need the database and are covered by the deploy smoke check (deactivate a test account → next REST call answers 401 `Account inactive`).
 
 Manual smoke script `scripts/realtime-smoke.ts`: connects with a token, prints every event,
 optionally subscribes to a topic. Read-only — it never writes, so it is safe against the shared
