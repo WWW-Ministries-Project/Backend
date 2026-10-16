@@ -17,6 +17,7 @@ import {
 import { notificationPushService } from "./notificationPushService";
 import { notificationDeviceService } from "./notificationDeviceService";
 import { notificationSmsService } from "./notificationSmsService";
+import { toUser as emitToUserSocket } from "../realtime/realtimeEmit";
 
 export type NotificationPriority = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 
@@ -502,6 +503,12 @@ const broadcastToUser = (
   const envelope = createSseEnvelope(event, data);
   if (options.persistForReplay !== false) {
     addReplayEvent(userId, envelope);
+  }
+
+  // Same event, same body, over socket.io. Runs alongside SSE until the web
+  // dashboard moves to sockets (realtime sub-project 2), then SSE goes.
+  if (data && typeof data === "object") {
+    emitToUserSocket(userId, event as "notification", data as Record<string, unknown>);
   }
 
   const userClients = sseClientsByUserId.get(userId);
