@@ -20,6 +20,7 @@ export type RealtimeEventMap = {
   notification_updated: Record<string, unknown>;
   notifications_read_all: Record<string, unknown>;
   notifications_cleared: Record<string, unknown>;
+  notifications_deleted: Record<string, unknown>;
   unread_count: { unreadCount: number };
 };
 
