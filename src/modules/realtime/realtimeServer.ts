@@ -32,17 +32,29 @@ type SocketData = {
 
 type RealtimeSocket = Socket<any, any, any, SocketData>;
 
-const connectionsGauge = new client.Gauge({
+let io: Server<any, any, any, SocketData> | null = null;
+
+// Both gauges are computed at scrape time from the live sockets, so concurrent
+// subscribes and recoveries cannot drift them.
+new client.Gauge({
   name: "realtime_connections",
   help: "Open realtime sockets",
+  collect() {
+    this.set(io ? io.of("/").sockets.size : 0);
+  },
 });
 
-const topicsGauge = new client.Gauge({
+new client.Gauge({
   name: "realtime_topics",
   help: "Topic subscriptions across open realtime sockets",
+  collect() {
+    let total = 0;
+    io?.of("/").sockets.forEach((socket) => {
+      total += socket.data.topics?.size ?? 0;
+    });
+    this.set(total);
+  },
 });
-
-let io: Server<any, any, any, SocketData> | null = null;
 
 const loadRealtimeUser: LoadRealtimeUser = (userId) =>
   prisma.user.findUnique({
@@ -76,28 +88,26 @@ const onConnection = (socket: RealtimeSocket) => {
   const user = socket.data.user;
   socket.data.topics ??= new Set<string>();
   socket.data.subscribeTimes = [];
-  connectionsGauge.inc();
-  topicsGauge.inc(socket.data.topics.size);
   logger.info(`[realtime] connect user=${user.userId} socket=${socket.id} recovered=${socket.recovered}`);
   socket.join(userRoom(user.userId));
 
-  // The topics the disconnect handler counted out of the gauge.
-  let countedOut: Set<string> | null = null;
+  // The topics held at disconnect — the same ones whose rooms socket.io saved
+  // for connection-state recovery.
+  let topicsAtDisconnect: Set<string> | null = null;
 
   socket.on("subscribe", async (payload: unknown, ack?: (result: unknown) => void) => {
-    const before = socket.data.topics.size;
     let result: unknown = { ok: false, code: "FORBIDDEN" };
     try {
       result = await topics.subscribe(socket, payload);
       if (!socket.connected) {
-        // Disconnected mid-authorize: forget a topic added after the disconnect
-        // counted the Set out (a recovered socket gets this same Set back). One a
-        // concurrent subscribe added while still connected was counted out, so it stays.
+        // Disconnected mid-authorize: the join was a no-op, so forget a topic added
+        // after the disconnect — a recovered socket gets this same Set back and must
+        // match its restored rooms. One a concurrent subscribe added while still
+        // connected has its room saved, so it stays.
         const parsed = parseTopic((payload as { topic?: unknown } | null)?.topic);
-        if (parsed && !countedOut?.has(parsed.topic)) socket.data.topics.delete(parsed.topic);
+        if (parsed && !topicsAtDisconnect?.has(parsed.topic)) socket.data.topics.delete(parsed.topic);
         return;
       }
-      topicsGauge.inc(socket.data.topics.size - before);
     } catch (error) {
       logger.warn(`[realtime] subscribe failed user=${user.userId}: ${describe(error)}`);
     }
@@ -105,16 +115,12 @@ const onConnection = (socket: RealtimeSocket) => {
   });
 
   socket.on("unsubscribe", (payload: unknown, ack?: (result: unknown) => void) => {
-    const before = socket.data.topics.size;
     const result = topics.unsubscribe(socket, payload);
-    topicsGauge.dec(before - socket.data.topics.size);
     if (typeof ack === "function") ack(result);
   });
 
   socket.on("disconnect", (reason) => {
-    connectionsGauge.dec();
-    countedOut = new Set(socket.data.topics);
-    topicsGauge.dec(countedOut.size);
+    topicsAtDisconnect = new Set(socket.data.topics);
     logger.info(`[realtime] disconnect user=${user.userId} socket=${socket.id} reason=${reason}`);
   });
 
