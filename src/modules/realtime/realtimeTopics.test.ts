@@ -80,6 +80,21 @@ test("subscribe: topic cap", async () => {
   assert.deepEqual(await registry.subscribe(socket, { topic: "post:999" }), { ok: false, code: "TOO_MANY_TOPICS" });
 });
 
+test("subscribe: concurrent subscribes cannot overshoot the cap", async () => {
+  const registry = createTopicRegistry({ now: (() => { let t = 0; return () => (t += 1000); })() });
+  registry.register("post", async () => true);
+  const socket = fakeSocket();
+  for (let i = 1; i < MAX_TOPICS_PER_SOCKET; i += 1) {
+    await registry.subscribe(socket, { topic: `post:${i}` });
+  }
+  const results = await Promise.all([
+    registry.subscribe(socket, { topic: "post:100" }),
+    registry.subscribe(socket, { topic: "post:101" }),
+  ]);
+  assert.equal(socket.data.topics.size, MAX_TOPICS_PER_SOCKET);
+  assert.deepEqual(results.filter((r) => r.ok).length, 1);
+});
+
 test("subscribe: rate limit of 10 per second", async () => {
   const registry = createTopicRegistry({ now: () => 5_000 });
   registry.register("post", async () => true);

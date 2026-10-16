@@ -67,6 +67,10 @@ export const createTopicRegistry = (options: { now?: () => number } = {}) => {
       allowed = false;
     }
     if (!allowed) return { ok: false, code: "FORBIDDEN" };
+    // Concurrent subscribes all passed the cap check before awaiting; re-check.
+    if (!socket.data.topics.has(parsed.topic) && socket.data.topics.size >= MAX_TOPICS_PER_SOCKET) {
+      return { ok: false, code: "TOO_MANY_TOPICS" };
+    }
 
     socket.join(parsed.topic);
     socket.data.topics.add(parsed.topic);
