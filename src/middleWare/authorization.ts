@@ -319,6 +319,8 @@ const authContextCacheMaxEntries = parsePositiveEnvInt(
 
 const authContextCache = new Map<number, AccessContextCacheEntry>();
 const inflightAuthContextFetches = new Map<number, Promise<AccessContextSnapshot | null>>();
+// Bumped by invalidateAuthContext; one small int per user ever invalidated.
+const authContextGeneration = new Map<number, number>();
 
 const cloneAccessContextSnapshot = (
   snapshot: AccessContextSnapshot,
@@ -522,16 +524,23 @@ const getOrFetchAuthContextSnapshot = async (
     return snapshot ? cloneAccessContextSnapshot(snapshot) : null;
   }
 
-  const fetchPromise = (async () => {
+  // A fetch that started before invalidateAuthContext must not cache its
+  // (possibly stale) result, nor clear a newer fetch's in-flight entry.
+  const generation = authContextGeneration.get(userId) ?? 0;
+  const fetchPromise: Promise<AccessContextSnapshot | null> = (async () => {
     const snapshot = await fetchAuthContextSnapshotFromDb(userId);
-    if (snapshot) {
-      setCachedAuthContextSnapshot(userId, snapshot);
-    } else {
-      authContextCache.delete(userId);
+    if ((authContextGeneration.get(userId) ?? 0) === generation) {
+      if (snapshot) {
+        setCachedAuthContextSnapshot(userId, snapshot);
+      } else {
+        authContextCache.delete(userId);
+      }
     }
     return snapshot;
   })().finally(() => {
-    inflightAuthContextFetches.delete(userId);
+    if (inflightAuthContextFetches.get(userId) === fetchPromise) {
+      inflightAuthContextFetches.delete(userId);
+    }
   });
 
   inflightAuthContextFetches.set(userId, fetchPromise);
@@ -550,6 +559,7 @@ export const isSessionActive = (
  * right after those change.
  */
 export const invalidateAuthContext = (userId: number) => {
+  authContextGeneration.set(userId, (authContextGeneration.get(userId) ?? 0) + 1);
   authContextCache.delete(userId);
   inflightAuthContextFetches.delete(userId);
 };
