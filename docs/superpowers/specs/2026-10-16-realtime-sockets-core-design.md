@@ -57,15 +57,26 @@ new Server(server, {
 ```
 
 Registers the auth middleware, joins rooms on connect, wires the topic handlers, keeps the
-per-user connection cap, updates metrics, and closes `io` on `SIGTERM` before the process exits.
+per-user connection cap, updates metrics, and closes `io` on `SIGTERM`, then exits explicitly.
 Keeps the `Server` instance in module state for `realtimeEmit.ts`.
+
+- On connect the socket joins `user:<id>` synchronously and its audience rooms asynchronously.
+  Audience rooms are re-synced on recovered connects too, because recovery restores the old
+  rooms. The connection cap and the initial `unread_count` apply to non-recovered connects only.
+- `SIGTERM`: closes `io`, then calls `process.exit(0)` (10 s fallback). A `SIGTERM` listener
+  replaces Node's default exit, so without the explicit exit the process would hang.
+- Metrics: `realtime_connections` and `realtime_topics` are computed at scrape time (`collect()`),
+  not incremented and decremented along the way.
+- The topic cap is re-checked after the authorizer resolves, so concurrent subscribes cannot
+  overshoot it.
 
 ### `realtimeAuth.ts`
 
 Handshake middleware (`io.use`).
 
 1. Read `socket.handshake.auth.token`; strip a leading `Bearer `.
-2. `JWT.verify` with `JWT_SECRET`.
+2. `JWT.verify` with `JWT_SECRET`, pinned to HS256. A token with a `purpose` claim (e.g. the SSE
+   stream token) is refused with `TOKEN_INVALID`.
 3. Load `{ id, is_active, is_guest, branch_id }` for the token's `id` (one indexed lookup).
 4. Reject inactive users.
 5. Store `{ userId, isGuest, branchId }` on `socket.data`.
@@ -79,6 +90,7 @@ Rejections use `next(err)` with `err.data = { code }`:
 | `TOKEN_INVALID` | bad signature / malformed | stop retrying |
 | `TOKEN_EXPIRED` | `exp` passed | stop retrying; normal expiry handling |
 | `ACCOUNT_INACTIVE` | `is_active` false or user missing | log out |
+| `SERVER_ERROR` | non-auth failure, e.g. database unavailable during the handshake | keep retrying with backoff |
 
 `ACCOUNT_INACTIVE` covers the device that was offline when `session.revoked` was sent: it learns
 on its next connect. This matters for mobile, whose 401 interceptor deliberately ignores 401s
@@ -172,6 +184,7 @@ sends the initial `unread_count`, as `startSseStream` does for SSE today.
 | `notification_updated` | `{ notificationId, recipientUserId, notification, unreadCount }` | mark read / unread |
 | `notifications_read_all` | `{ recipientUserId, updated, unreadCount }` | `markAllNotificationsAsRead` |
 | `notifications_cleared` | `{ recipientUserId, deleted, unreadCount, totalCount }` | `clearAllNotifications` |
+| `notifications_deleted` | `{ recipientUserId, ids, deleted, unreadCount }` | `deleteNotifications` |
 | `unread_count` | `{ unreadCount }` | `emitUnreadCountToUser`; also sent once on every non-recovered connect |
 
 These are the documented exception to thin signals: the bodies already exist and already go to
@@ -213,18 +226,17 @@ Change points, all called after the write commits:
 
 | Where | Call |
 |---|---|
-| `userController.updateUser` | `sessionChanged([id], ["profile", "permissions", "departments"])` — reasons narrowed to the fields that actually changed |
-| `userController.updateDepartmentPositions`, `userService` department-position write | `sessionChanged([id], ["departments"])` |
-| `accessLevelController.updateAccessLevel` | `sessionChanged(<every user with that access_level_id>, ["permissions"])` |
+| `userController.updateUser` | `sessionChanged([id], ["profile", "permissions", "departments"])` — reasons narrowed to the fields that actually changed. Emitted after the department-positions write and before the family validation (the user row is already committed). `updateDepartmentPositions` is reached only through `updateUser`, so it emits nothing itself |
+| `accessLevelController.updateAccessLevel` | `sessionChanged(<every user with that access_level_id>, ["permissions"])` — holders looked up non-blocking, so a lookup failure cannot fail the update |
 | `accessLevelController.assignAccessLevelToUser` / `bulkAssignAccessLevel` | `sessionChanged(<assigned ids>, ["permissions"])` |
 | `accessLevelController.deleteAccessLevel` | `sessionChanged(<users who held it>, ["permissions"])` — ids read before the delete |
 | `joinRequestController.approveOne` | `sessionChanged([requesterId], ["departments"])` |
-| `departmentController` update / delete | `sessionChanged(<members of that department>, ["departments"])` |
-| `positionController` update / delete | `sessionChanged(<holders of that position>, ["departments"])` |
+| `departmentController` update | `sessionChanged(<members plus old and new head>, ["departments", "permissions"])` — member lookup non-blocking |
+| `departmentController` delete | `sessionChanged(<members, read before the delete>, ["departments"])` |
 | `updateUserSatus`, `activateAccount`, `bulkUpdateUserStatus` → inactive | `sessionRevoked(id, "deactivated")` |
 | same → active | `sessionChanged([id], ["profile"])` (no socket can exist yet; harmless) |
 | `deleteUser`, `deleteOwnAccount` | `sessionRevoked(id, "deleted")` |
-| `resetPassword`, `updateUserPasswordToDefault` | `sessionRevoked(id, "password_reset")` |
+| `resetPassword` | `sessionRevoked(id, "password_reset")` |
 
 **Not revoked:** a member changing their own password (`changePassword`). Revoking would log out
 the device that made the change, and the REST JWT stays valid either way — real "sign out other
@@ -240,6 +252,10 @@ access until the 12-hour token expires. Change:
   or the user no longer exists.
 - The check stays behind the existing 30-second cache; `sessionRevoked` clears the entry, so
   deactivation takes effect on the next request rather than within 30 seconds.
+
+`invalidateAuthContext` also bumps a per-user generation, so an in-flight snapshot fetch started
+before the invalidation cannot re-cache stale data. A database failure in the snapshot lookup
+surfaces as a 500 from `protect`.
 
 This adds one cached lookup to `protect`. The snapshot is already fetched by every permission
 guard, so routes with a guard see no extra query.
@@ -292,7 +308,13 @@ the full refetch that follows a non-recovered reconnect.
 ## Testing
 
 `npm test` runs pure-unit `node:test` files with no database, like `src/modules/messaging/*.test.ts`.
-Database access is injected so the following are testable:
+Database access is injected so the following are testable. The suite needs a dummy
+`DATABASE_URL` env var to construct the Prisma client (nothing connects), e.g.
+`DATABASE_URL=mysql://test:test@127.0.0.1:3306/test npm test`.
+
+New test files: `realtimeEvents`, `realtimeEmit`, `realtimeAuth`, `realtimeRooms`,
+`realtimeTopics`, `sessionNotifier` (all in `src/modules/realtime/`) and `sessionActive`
+(`src/middleWare/`).
 
 - `realtimeAuth` — each rejection code; guest accepted; inactive rejected; disconnect timer set at `exp` and cleared on disconnect.
 - `realtimeRooms` — `roomsFor` for a member, a guest, a multi-department user, a user without a branch; `refreshRooms` leaves stale `dept:` rooms and joins new ones.
@@ -318,7 +340,7 @@ sub-project.
 
 ## Done when
 
-- `npm test` and `npm run build` pass.
+- `npm test` (with the dummy `DATABASE_URL`, including the 7 new test files above) and `npm run build` pass.
 - The smoke script connects through prod Nginx over WebSocket.
 - A test account that is deactivated receives `session.revoked`, is disconnected, and its next REST call answers 401 `"Account inactive"`.
 - `docs/REALTIME_EVENTS.md` lists every event this sub-project emits.
