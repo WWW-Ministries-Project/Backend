@@ -39,6 +39,8 @@ import {
 import { InputValidationError } from "../../utils/custom-error-handlers";
 import { Prisma } from "@prisma/client";
 import { buildPrismaError } from "../../middleWare/errorHandler";
+import { sessionChanged, sessionRevoked } from "../realtime/realtimeSession";
+import { sessionReasonsForUserUpdate } from "../realtime/sessionNotifier";
 import {
   getBranchScopedWhere,
   resolveBranchIdOrDefault,
@@ -777,6 +779,11 @@ export const updateUser = async (req: Request, res: Response) => {
       );
     }
 
+    void sessionChanged(
+      [updatedUser.id],
+      sessionReasonsForUserUpdate(userExists, updatedUser, Boolean(dep_posts)),
+    );
+
     if (hasFamilyField) {
       if (!Array.isArray(family)) {
         return res.status(400).json({
@@ -1160,6 +1167,12 @@ export const updateUserSatus = async (req: Request, res: Response) => {
       sendEmail(userActivatedTemplate(mailDetails), email, "Reset Password");
     }
 
+    if (response.is_active === false) {
+      sessionRevoked(response.id, "deactivated");
+    } else {
+      void sessionChanged([response.id], ["profile"]);
+    }
+
     const { password, ...rest } = response;
 
     return res
@@ -1192,6 +1205,7 @@ export const deleteUser = async (req: Request, res: Response) => {
         id: Number(id),
       },
     });
+    sessionRevoked(Number(id), "deleted");
     return res
       .status(200)
       .json({ message: "User deleted Succesfully", data: null });
@@ -1255,6 +1269,7 @@ export const deleteOwnAccount = async (req: Request, res: Response) => {
         },
       });
     });
+    sessionRevoked(authenticatedUserId, "deleted");
 
     return res
       .status(200)
@@ -1600,6 +1615,8 @@ export const resetPassword = async (req: Request, res: Response) => {
         password: await hashPassword(newpassword),
       },
     });
+    // A forgot-password reset signs the member out everywhere else.
+    sessionRevoked(parsedUserId, "password_reset");
     return res
       .status(200)
       .json({ message: "Password Successfully changed", data: null });
@@ -1630,6 +1647,12 @@ export const activateAccount = async (req: Request, res: Response) => {
         is_active: !existingUser.is_active,
       },
     });
+
+    if (response.is_active === false) {
+      sessionRevoked(response.id, "deactivated");
+    } else {
+      void sessionChanged([response.id], ["profile"]);
+    }
 
     if (response.is_user) {
       sendEmail(
@@ -3025,6 +3048,14 @@ export const bulkUpdateUserStatus = async (req: Request, res: Response) => {
 
   try {
     const result = await userService.bulkUpdateUserStatus(user_ids, is_active);
+    const changedIds = result.results
+      .filter((row) => row.success && !row.noop)
+      .map((row) => Number(row.user_id));
+    if (is_active === false) {
+      changedIds.forEach((userId) => sessionRevoked(userId, "deactivated"));
+    } else {
+      void sessionChanged(changedIds, ["profile"]);
+    }
     return res.status(200).json({ data: result });
   } catch (error: any) {
     return res.status(500).json({
