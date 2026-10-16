@@ -44,7 +44,7 @@ Every event body carries `v: 1` and `at` (ISO time) next to its own fields.
 | `notifications_cleared` | `{ recipientUserId, deleted, unreadCount, totalCount }` | all cleared |
 | `notifications_deleted` | `{ recipientUserId, ids, deleted, unreadCount }` (`ids` are strings) | some notifications deleted |
 | `unread_count` | `{ unreadCount }` | badge value; also sent once on every non-recovered connect |
-| `session.changed` | `{ reasons: ("permissions"\|"departments"\|"profile")[] }` | refetch the profile / permissions |
+| `session.changed` | `{ reasons: ("permissions"\|"departments"\|"profile")[] }` | refetch `GET /user/current-user` — it returns the same permission/profile claims as the login token |
 | `session.revoked` | `{ reason: "deactivated"\|"deleted"\|"password_reset" }` | sign out; the server disconnects next |
 
 ### During migration

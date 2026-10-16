@@ -1327,11 +1327,11 @@ const SESSION_USER_SELECT = {
   };
 
 /**
- * Signs the 12h session JWT for a user loaded with `SESSION_USER_SELECT`.
- * Shared by `login` and mobile self-registration so both hand out the same
- * claims.
+ * The session claims for a user loaded with `SESSION_USER_SELECT`. Signed into
+ * the login JWT and returned by `current-user`, so a client refreshing after a
+ * realtime `session.changed` sees exactly what a fresh login would.
  */
-export const signSessionToken = async (existance: any) => {
+export const buildSessionClaims = async (existance: any) => {
   const department_positions = (existance.department_positions || []).map(
     (deptPos: any) => ({
       department_id:
@@ -1367,32 +1367,36 @@ export const signSessionToken = async (existance: any) => {
     existance.id,
   );
 
-  return JWT.sign(
-    {
-      id: existance.id,
-      member_id: existance.member_id || null,
-      name: existance.name,
-      email: existance.email,
-      ministry_worker: ministry_worker,
-      user_category,
-      permissions: tokenPermissions,
-      profile_img: existance.user_info?.photo,
-      membership_type: existance.membership_type || null,
-      department,
-      department_positions,
-      life_center_leader,
-      instructor,
-      phone: existance.user_info?.primary_number || null,
-      member_since: existance.user_info?.member_since || null,
-      is_guest: Boolean(existance.is_guest),
-      status: existance.status ?? null,
-    },
-    JWT_SECRET,
-    {
-      expiresIn: "12h",
-    },
-  );
+  return {
+    id: existance.id,
+    member_id: existance.member_id || null,
+    name: existance.name,
+    email: existance.email,
+    ministry_worker: ministry_worker,
+    user_category,
+    permissions: tokenPermissions,
+    profile_img: existance.user_info?.photo,
+    membership_type: existance.membership_type || null,
+    department,
+    department_positions,
+    life_center_leader,
+    instructor,
+    phone: existance.user_info?.primary_number || null,
+    member_since: existance.user_info?.member_since || null,
+    is_guest: Boolean(existance.is_guest),
+    status: existance.status ?? null,
+  };
 };
+
+/**
+ * Signs the 12h session JWT for a user loaded with `SESSION_USER_SELECT`.
+ * Shared by `login` and mobile self-registration so both hand out the same
+ * claims.
+ */
+export const signSessionToken = async (existance: any) =>
+  JWT.sign(await buildSessionClaims(existance), JWT_SECRET, {
+    expiresIn: "12h",
+  });
 
 /** Loads a user by id and signs their session token, or null if missing. */
 export const issueSessionTokenForUser = async (userId: number) => {
@@ -3177,7 +3181,7 @@ export const currentuser = async (req: Request, res: Response) => {
       return res.status(404).json({ message: "User not found." });
     }
 
-    const [userInfo, departmentPositions, membershipRequest] = await Promise.all([
+    const [userInfo, departmentPositions, membershipRequest, sessionUser] = await Promise.all([
       prisma.user_info.findUnique({
         where: { user_id: authenticatedUserId },
         select: {
@@ -3203,7 +3207,14 @@ export const currentuser = async (req: Request, res: Response) => {
             select: { id: true, status: true, requested_at: true, decline_reason: true },
           })
         : Promise.resolve(null),
+      // The login-token claims, so a refresh after `session.changed` picks up
+      // live permission/role changes.
+      prisma.user.findUnique({
+        where: { id: authenticatedUserId },
+        select: SESSION_USER_SELECT,
+      }),
     ]);
+    const claims = sessionUser ? await buildSessionClaims(sessionUser) : null;
     const departmentIds = toUniquePositiveIds(
       departmentPositions.map((dept) => dept.department_id),
     );
@@ -3226,6 +3237,13 @@ export const currentuser = async (req: Request, res: Response) => {
       .filter((value): value is string => Boolean(value));
 
     const data = {
+      permissions: claims?.permissions ?? null,
+      user_category: claims?.user_category ?? null,
+      ministry_worker: claims?.ministry_worker ?? false,
+      department_positions: claims?.department_positions ?? [],
+      life_center_leader: claims?.life_center_leader ?? false,
+      instructor: claims?.instructor ?? false,
+      profile_img: claims?.profile_img ?? null,
       id: authenticatedUserId,
       name: user.name,
       email: user.email,
