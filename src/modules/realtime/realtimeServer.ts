@@ -16,7 +16,7 @@ import {
   type RealtimeUser,
 } from "./realtimeAuth";
 import { MAX_SOCKETS_PER_USER, roomsFor, socketsToDrop, syncRooms } from "./realtimeRooms";
-import { topics } from "./realtimeTopics";
+import { parseTopic, topics } from "./realtimeTopics";
 
 /**
  * socket.io on the Express HTTP server. One process, in-memory adapter; the
@@ -79,11 +79,28 @@ const onConnection = (socket: RealtimeSocket) => {
   connectionsGauge.inc();
   topicsGauge.inc(socket.data.topics.size);
   logger.info(`[realtime] connect user=${user.userId} socket=${socket.id} recovered=${socket.recovered}`);
+  socket.join(userRoom(user.userId));
+
+  // The topics the disconnect handler counted out of the gauge.
+  let countedOut: Set<string> | null = null;
 
   socket.on("subscribe", async (payload: unknown, ack?: (result: unknown) => void) => {
     const before = socket.data.topics.size;
-    const result = await topics.subscribe(socket, payload);
-    topicsGauge.inc(socket.data.topics.size - before);
+    let result: unknown = { ok: false, code: "FORBIDDEN" };
+    try {
+      result = await topics.subscribe(socket, payload);
+      if (!socket.connected) {
+        // Disconnected mid-authorize: forget a topic added after the disconnect
+        // counted the Set out (a recovered socket gets this same Set back). One a
+        // concurrent subscribe added while still connected was counted out, so it stays.
+        const parsed = parseTopic((payload as { topic?: unknown } | null)?.topic);
+        if (parsed && !countedOut?.has(parsed.topic)) socket.data.topics.delete(parsed.topic);
+        return;
+      }
+      topicsGauge.inc(socket.data.topics.size - before);
+    } catch (error) {
+      logger.warn(`[realtime] subscribe failed user=${user.userId}: ${describe(error)}`);
+    }
     if (typeof ack === "function") ack(result);
   });
 
@@ -96,16 +113,16 @@ const onConnection = (socket: RealtimeSocket) => {
 
   socket.on("disconnect", (reason) => {
     connectionsGauge.dec();
-    topicsGauge.dec(socket.data.topics.size);
+    countedOut = new Set(socket.data.topics);
+    topicsGauge.dec(countedOut.size);
     logger.info(`[realtime] disconnect user=${user.userId} socket=${socket.id} reason=${reason}`);
   });
-
-  // A recovered socket already has its rooms back and missed packets replayed.
-  if (socket.recovered) return;
 
   void (async () => {
     try {
       syncRooms(socket, roomsFor(user, await departmentsFor(user)));
+      // A recovered socket already got its missed packets replayed.
+      if (socket.recovered) return;
       await enforceConnectionCap(user.userId);
       const unreadCount = await notificationService.getUnreadCount(user.userId);
       socket.emit("unread_count", buildEnvelope({ unreadCount }));
@@ -149,7 +166,9 @@ export const attachRealtime = (server: HttpServer) => {
   setRealtimeServer(io as unknown as RealtimeIo);
 
   process.once("SIGTERM", () => {
-    io?.close();
+    // A SIGTERM listener replaces Node's default exit, so exit explicitly.
+    setTimeout(() => process.exit(0), 10_000).unref();
+    void io?.close(() => process.exit(0));
   });
 
   logger.info("[realtime] socket.io attached on /socket.io");
