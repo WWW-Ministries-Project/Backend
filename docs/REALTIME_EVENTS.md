@@ -17,7 +17,14 @@ const socket = io(API_URL, {
 |---|---|
 | `TOKEN_MISSING`, `TOKEN_INVALID`, `TOKEN_EXPIRED` | stop reconnecting; let the normal auth flow run |
 | `ACCOUNT_INACTIVE` | sign the user out |
-| `SERVER_ERROR` | temporary server-side failure; keep the default reconnect backoff |
+| `SERVER_ERROR` | temporary server-side failure; retry — but call `socket.connect()` yourself with a jittered backoff, see below |
+
+socket.io-client v4 does **not** reconnect on its own after the server refuses the
+handshake (any `connect_error` carrying `err.data`, so `socket.active` is `false`) or
+closes the socket itself (`disconnect` reason `"io server disconnect"`). For
+`SERVER_ERROR` and server-initiated disconnects, schedule `socket.connect()` yourself
+(e.g. 2 s doubling to 60 s, plus up to 1 s jitter). Plain network failures keep
+`socket.active` `true` and retry automatically.
 
 The server disconnects a socket when its JWT expires. After any reconnect where
 `socket.recovered` is `false`, refetch everything realtime keeps fresh, after a random
