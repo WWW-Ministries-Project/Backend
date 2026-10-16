@@ -59,7 +59,7 @@ export const authenticateHandshake = async (
 
   let payload: JWT.JwtPayload;
   try {
-    const decoded = JWT.verify(token, deps.secret);
+    const decoded = JWT.verify(token, deps.secret, { algorithms: ["HS256"] });
     if (!decoded || typeof decoded === "string") throw new RealtimeAuthError("TOKEN_INVALID");
     payload = decoded;
   } catch (error) {

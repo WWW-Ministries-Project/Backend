@@ -128,3 +128,8 @@ test("scheduleExpiryDisconnect: no expiry, no timer", () => {
   );
   assert.equal(created, 0);
 });
+
+test("tokens signed with another algorithm are refused", async () => {
+  const token = JWT.sign({ id: 1 }, SECRET, { algorithm: "HS512" });
+  assert.equal(await codeOf(authenticateHandshake(token, { secret: SECRET, loadUser: activeMember })), "TOKEN_INVALID");
+});
