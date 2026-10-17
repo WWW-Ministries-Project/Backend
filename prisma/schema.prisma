@@ -1383,6 +1383,12 @@ model LearningUnit {
   submissions       assignment_submission[]
   cohortAssignments cohort_assignment[]
   extensions        assignment_extension[]
+  /// Rubric used to grade essay submissions (optional)
+  rubricId          Int?
+  rubric            lms_rubric?             @relation(fields: [rubricId], references: [id], onDelete: SetNull)
+  gradeOverrides    lms_grade_override[]
+
+  @@index([rubricId])
 }
 
 model assignment_extension {
@@ -1401,6 +1407,56 @@ model assignment_extension {
   @@unique([learningUnitId, enrollmentId])
   @@index([cohortId])
   @@index([enrollmentId])
+}
+
+/// Shared question bank for School of Ministry quizzes and exams
+model lms_question {
+  id                Int      @id @default(autoincrement())
+  /// MULTIPLE_CHOICE | TRUE_FALSE | SHORT_ANSWER | ESSAY
+  type              String   @db.VarChar(20)
+  prompt            String   @db.Text
+  /// [{ id, text }] for MULTIPLE_CHOICE / TRUE_FALSE
+  options           Json?
+  correct_option_id String?  @db.VarChar(64)
+  /// string[]
+  tags              Json?
+  /// EASY | MEDIUM | HARD
+  difficulty        String   @default("MEDIUM") @db.VarChar(10)
+  created_by        Int?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+/// Reusable grading rubric: criteria (weights total 100) × levels (score factor 0–1)
+model lms_rubric {
+  id         Int            @id @default(autoincrement())
+  title      String
+  /// [{ id, label, weight }]
+  criteria   Json
+  /// [{ id, label, factor }]
+  levels     Json
+  created_by Int?
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+  units      LearningUnit[]
+}
+
+/// Gradebook override for one learner and unit: a set score or an excusal, without a submission
+model lms_grade_override {
+  id             Int          @id @default(autoincrement())
+  enrollmentId   Int
+  learningUnitId Int
+  score          Int?
+  excused        Boolean      @default(false)
+  note           String?      @db.Text
+  updated_by     Int?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  enrollment     enrollment   @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  learningUnit   LearningUnit @relation(fields: [learningUnitId], references: [id], onDelete: Cascade)
+
+  @@unique([enrollmentId, learningUnitId])
+  @@index([learningUnitId])
 }
 
 model cohort {
@@ -1444,17 +1500,18 @@ model course {
 }
 
 model enrollment {
-  id          Int                     @id @default(autoincrement())
-  enrolledAt  DateTime                @default(now())
-  course_id   Int
-  user_id     Int?
-  completed   Boolean?                @default(false)
-  completedAt DateTime?
-  submissions assignment_submission[]
-  extensions  assignment_extension[]
-  course      course                  @relation(fields: [course_id], references: [id], onDelete: Cascade)
-  user        user?                   @relation(fields: [user_id], references: [id], onDelete: Cascade)
-  progress    progress[]
+  id             Int                     @id @default(autoincrement())
+  enrolledAt     DateTime                @default(now())
+  course_id      Int
+  user_id        Int?
+  completed      Boolean?                @default(false)
+  completedAt    DateTime?
+  submissions    assignment_submission[]
+  extensions     assignment_extension[]
+  gradeOverrides lms_grade_override[]
+  course         course                  @relation(fields: [course_id], references: [id], onDelete: Cascade)
+  user           user?                   @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  progress       progress[]
 
   @@unique([user_id, course_id])
   @@index([course_id], map: "enrollment_course_id_fkey")
@@ -1504,6 +1561,8 @@ model assignment_submission {
   feedback       String?
   gradedById     Int?
   gradedAt       DateTime?
+  /// { [criterionId]: levelId } when graded with a rubric
+  rubric_scores  Json?
   enrollment     enrollment        @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
   gradedBy       user?             @relation(fields: [gradedById], references: [id])
   learningUnit   LearningUnit      @relation(fields: [learningUnitId], references: [id], onDelete: Cascade)
