@@ -13,6 +13,7 @@ import {
   notFoundHandler,
 } from "./src/middleWare/errorHandler";
 import { attachRealtime } from "./src/modules/realtime/realtimeServer";
+import { registerRideTopics } from "./src/modules/rides/rideTopics";
 dotenv.config();
 
 const shouldRunBackgroundJobs = !["false", "0", "no"].includes(
@@ -102,3 +103,4 @@ server.on("error", (err: NodeJS.ErrnoException) => {
 });
 
 attachRealtime(server);
+registerRideTopics();
