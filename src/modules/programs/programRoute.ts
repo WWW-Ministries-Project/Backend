@@ -4,6 +4,7 @@ import { EnrollmentController } from "./enrolmentController";
 import { CohortController } from "./cohortController";
 import { CourseController } from "./courseController";
 import { Permissions } from "../../middleWare/authorization";
+import { assessmentController } from "./lms/assessmentController";
 import { curriculumController } from "./lms/curriculumController";
 const permissions = new Permissions();
 const protect = permissions.protect;
@@ -240,5 +241,23 @@ programRouter.get("/cohort-schedule", [protect], curriculumController.getCohortS
 programRouter.put("/cohort-due-date", manage, curriculumController.setCohortDueDate);
 programRouter.post("/assignment-extension", manage, curriculumController.grantExtension);
 programRouter.delete("/assignment-extension", manage, curriculumController.removeExtension);
+
+// LMS: question bank, rubrics, gradebook, certificates
+programRouter.get("/question-bank", manage, assessmentController.listQuestions);
+programRouter.post("/question-bank", design, assessmentController.createQuestion);
+programRouter.put("/question-bank", design, assessmentController.updateQuestion);
+programRouter.delete("/question-bank", design, assessmentController.deleteQuestion);
+programRouter.post("/question-bank/add-to-unit", design, assessmentController.addQuestionsToUnit);
+programRouter.get("/rubrics", manage, assessmentController.listRubrics);
+programRouter.post("/rubric", design, assessmentController.createRubric);
+programRouter.put("/rubric", design, assessmentController.updateRubric);
+programRouter.delete("/rubric", design, assessmentController.deleteRubric);
+programRouter.put("/unit-rubric", design, assessmentController.setUnitRubric);
+programRouter.get("/submission", manage, assessmentController.getSubmission);
+programRouter.put("/grade-with-rubric", manage, assessmentController.gradeWithRubric);
+programRouter.get("/gradebook", manage, assessmentController.getGradebook);
+programRouter.put("/grade-overrides", manage, assessmentController.setOverrides);
+programRouter.get("/certificates", manage, assessmentController.listCertificates);
+programRouter.post("/certificates/issue", design, assessmentController.issueCertificates);
 
 export default programRouter;
