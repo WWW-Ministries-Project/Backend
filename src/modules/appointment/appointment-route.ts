@@ -1,12 +1,14 @@
 import { Router } from "express";
 import { Permissions } from "../../middleWare/authorization";
 import { AppointmentController } from "./appointment-controller";
+import { AppointmentReasonController } from "./appointment-reason-controller";
 
 const permissions = new Permissions();
 const protect = permissions.protect;
 
 const appointmentRouter = Router();
 const appointmentController = new AppointmentController();
+const reasonController = new AppointmentReasonController();
 
 // 1. Members book an appointment
 // URL: POST /appointment/book
@@ -129,6 +131,58 @@ appointmentRouter.put(
   "/status",
   [protect, permissions.can_manage_appointments_scoped],
   appointmentController.toggleConfirmation,
+);
+
+// 14. Booking reasons — admin-configured list members pick from when booking.
+// "Something else" is client-side free text and is never stored here.
+// `/reasons/manage` and `/reasons/reorder` are registered before
+// `/reasons/:id` so they are not captured as an id.
+
+// 14a. Active reasons, ordered by sort_order then id. Every member books, so
+// `protect` only.
+// URL: GET /appointment/reasons
+appointmentRouter.get("/reasons", [protect], reasonController.listActive);
+
+// 14b. All reasons, including inactive ones (admin screen)
+// URL: GET /appointment/reasons/manage
+appointmentRouter.get(
+  "/reasons/manage",
+  [protect, permissions.can_manage_appointment_settings],
+  reasonController.listAll,
+);
+
+// 14c. Create a reason; it goes to the end of the list
+// Body: { label, description?, is_active? }
+// URL: POST /appointment/reasons
+appointmentRouter.post(
+  "/reasons",
+  [protect, permissions.can_manage_appointment_settings],
+  reasonController.create,
+);
+
+// 14d. Reorder: sort_order = index in `ids`
+// Body: { ids: number[] }
+// URL: PUT /appointment/reasons/reorder
+appointmentRouter.put(
+  "/reasons/reorder",
+  [protect, permissions.can_manage_appointment_settings],
+  reasonController.reorder,
+);
+
+// 14e. Partial update. Body: { label?, description?, is_active? }
+// URL: PUT /appointment/reasons/:id
+appointmentRouter.put(
+  "/reasons/:id",
+  [protect, permissions.can_manage_appointment_settings],
+  reasonController.update,
+);
+
+// 14f. Delete a reason
+// URL: DELETE /appointment/reasons/:id
+appointmentRouter.delete(
+  "/reasons/:id",
+  [protect, permissions.can_manage_appointment_settings],
+  reasonController.remove,
 );
 
 export default appointmentRouter;

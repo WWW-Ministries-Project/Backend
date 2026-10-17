@@ -86,6 +86,15 @@ notificationRouter.delete(
   notificationController.clearAll,
 );
 
+// Delete selected notifications. Body: { ids: Array<number|string> } (1-500).
+// Owner-scoped: ids belonging to another user are silently ignored. POST
+// rather than DELETE-with-body, which some clients and proxies drop.
+notificationRouter.post(
+  "/delete",
+  [permissions.protect],
+  notificationController.deleteSelected,
+);
+
 notificationRouter.get(
   "/preferences",
   [permissions.protect],

@@ -43,17 +43,11 @@ export const listMemberDirectory = async (req: Request, res: Response) => {
   const branchWhere = getBranchScopedWhere(req.query?.branch_id);
 
   const departmentMemberIds = async (where: Prisma.departmentWhereInput) => {
-    const [single, positions] = await Promise.all([
-      prisma.user_departments.findMany({
-        where: { department_info: where },
-        select: { user_id: true },
-      }),
-      prisma.department_positions.findMany({
-        where: { department: where },
-        select: { user_id: true },
-      }),
-    ]);
-    return Array.from(new Set([...single, ...positions].map((row) => row.user_id)));
+    const positions = await prisma.department_positions.findMany({
+      where: { department: where },
+      select: { user_id: true },
+    });
+    return Array.from(new Set(positions.map((row) => row.user_id)));
   };
 
   const filters: Prisma.userWhereInput[] = [activeMemberWhere];
@@ -74,17 +68,13 @@ export const listMemberDirectory = async (req: Request, res: Response) => {
       orderBy: { name: "asc" },
       skip: (page - 1) * take,
       take,
-      select: { id: true, name: true, is_user: true, position_id: true },
+      select: { id: true, name: true, is_user: true },
     }),
   ]);
 
   const userIds = users.map((user) => user.id);
-  const [userDepartments, departmentPositions, headedDepartments] = userIds.length
+  const [departmentPositions, headedDepartments] = userIds.length
     ? await Promise.all([
-        prisma.user_departments.findMany({
-          where: { user_id: { in: userIds } },
-          select: { user_id: true, department_info: { select: { id: true, name: true } } },
-        }),
         prisma.department_positions.findMany({
           where: { user_id: { in: userIds } },
           orderBy: { id: "asc" },
@@ -99,44 +89,30 @@ export const listMemberDirectory = async (req: Request, res: Response) => {
           select: { id: true, name: true, department_head: true },
         }),
       ])
-    : [[], [], []];
+    : [[], []];
 
-  const positionIds = users
-    .map((user) => user.position_id)
-    .filter((id): id is number => Boolean(id));
-  const primaryPositions = positionIds.length
-    ? await prisma.position.findMany({
-        where: { id: { in: positionIds } },
-        select: { id: true, name: true },
-      })
-    : [];
-  const positionById = new Map(primaryPositions.map((position) => [position.id, position]));
-  const departmentByUser = new Map(
-    userDepartments.map((row) => [row.user_id, row.department_info]),
-  );
-
+  // Departments and positions come from `department_positions` alone — the
+  // legacy `user_departments` row and `user.position_id` are not read. One
+  // row per (user, department), so `departments` needs no dedupe.
   const items = users.map((user) => {
     const rows = departmentPositions.filter((row) => row.user_id === user.id);
     const headOf = headedDepartments
       .filter((department) => department.department_head === user.id)
       .map((department) => ({ id: department.id, name: department.name }));
-    const departments = [
-      ...new Map(
-        [departmentByUser.get(user.id), ...rows.map((row) => row.department)]
-          .filter((entry): entry is { id: number; name: string } => Boolean(entry))
-          .map((entry) => [entry.id, entry]),
-      ).values(),
-    ];
+    const departments = rows.map((row) => row.department);
     return {
       id: user.id,
       name: user.name,
       ministry_worker: Boolean(user.is_user),
       department: departments[0] ?? null,
       departments,
-      position:
-        (user.position_id ? positionById.get(user.position_id) : null)
-        ?? rows.find((row) => row.position)?.position
-        ?? null,
+      position: rows.find((row) => row.position)?.position ?? null,
+      department_positions: rows.map((row) => ({
+        department_id: row.department.id,
+        department_name: row.department.name,
+        position_id: row.position?.id ?? null,
+        position_name: row.position?.name ?? null,
+      })),
       head_of_departments: headOf,
     };
   });
@@ -174,31 +150,25 @@ export const listDirectoryDepartments = async (req: Request, res: Response) => {
   });
 
   const departmentIds = departments.map((department) => department.id);
-  const [single, positions] = departmentIds.length
-    ? await Promise.all([
-        prisma.user_departments.findMany({
-          where: { department_id: { in: departmentIds }, user: activeMemberWhere },
-          select: { user_id: true, department_id: true },
-        }),
-        prisma.department_positions.findMany({
-          where: { department_id: { in: departmentIds }, user: activeMemberWhere },
-          select: { user_id: true, department_id: true },
-        }),
-      ])
-    : [[], []];
-  const membersByDepartment = new Map<number, Set<number>>();
-  for (const row of [...single, ...positions]) {
-    if (!row.department_id) continue;
-    const members = membersByDepartment.get(row.department_id) ?? new Set<number>();
-    members.add(row.user_id);
-    membersByDepartment.set(row.department_id, members);
+  // Counted from `department_positions` alone, matching what the
+  // `department_id` filter on `listMemberDirectory` returns. One row per
+  // (user, department), so a row count is a member count.
+  const positions = departmentIds.length
+    ? await prisma.department_positions.findMany({
+        where: { department_id: { in: departmentIds }, user: activeMemberWhere },
+        select: { department_id: true },
+      })
+    : [];
+  const membersByDepartment = new Map<number, number>();
+  for (const row of positions) {
+    membersByDepartment.set(row.department_id, (membersByDepartment.get(row.department_id) ?? 0) + 1);
   }
 
   return res.status(200).json({
     message: "Success",
     data: departments.map((department) => ({
       ...department,
-      member_count: membersByDepartment.get(department.id)?.size ?? 0,
+      member_count: membersByDepartment.get(department.id) ?? 0,
     })),
   });
 };

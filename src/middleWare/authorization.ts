@@ -39,14 +39,27 @@ const PERMISSION_KEY_ALIASES: Record<string, string[]> = {
   AI: ["AI", "Settings", "Access_rights", "Access rights"],
   Marketplace: ["Marketplace", "Program"],
   "Life Center": ["Life Center"],
+  // Announcements were replaced by Community; the key is still accepted on
+  // stored access levels and is the last fallback for Promotions below.
   Announcements: ["Announcements"],
+  // Community replaced Announcements. The 20261006130000_community migration
+  // copied every Announcements value to Community; the fallback covers any
+  // level that still holds only Announcements. resolvePermissionValue returns
+  // the first key holding a string, so an explicit Community value (even
+  // No_Access) always wins. Mirrors DOMAIN_FALLBACKS in the Frontend.
+  Community: ["Community", "Announcements"],
   Sermons: ["Sermons"],
-  // Promotions were split out of Announcements, so they fall back to it for
+  // Promotions were split out of Announcements, which Community has since
+  // replaced, so they fall back to Community and then Announcements for
   // anyone whose stored permissions predate the domain. An access level that
   // sets Promotions explicitly always wins, since its own key comes first.
   // Mirrors DOMAIN_FALLBACKS in the Frontend's src/utils/accessControl.ts —
   // the two tables must agree or the UI shows a page the API then refuses.
-  Promotions: ["Promotions", "Announcements"],
+  Promotions: ["Promotions", "Community", "Announcements"],
+  // Admin Messaging (welcome, birthday, general SMS/email/in-app). No
+  // fallback: bulk SMS costs money, so it is never inherited from Community.
+  // The 20261010120000_messaging migration grants it to full admins.
+  Messaging: ["Messaging"],
 };
 
 const parsePermissionsObject = (permissions: any): Record<string, any> => {
@@ -306,6 +319,8 @@ const authContextCacheMaxEntries = parsePositiveEnvInt(
 
 const authContextCache = new Map<number, AccessContextCacheEntry>();
 const inflightAuthContextFetches = new Map<number, Promise<AccessContextSnapshot | null>>();
+// Bumped by invalidateAuthContext; one small int per user ever invalidated.
+const authContextGeneration = new Map<number, number>();
 
 const cloneAccessContextSnapshot = (
   snapshot: AccessContextSnapshot,
@@ -393,6 +408,7 @@ const fetchAuthContextSnapshotFromDb = async (
     Array<{
       id: number;
       is_user: boolean | number | null;
+      is_active: boolean | number | null;
       access_level_id: number | null;
       department_id: number | null;
       permissions: string | null;
@@ -404,6 +420,7 @@ const fetchAuthContextSnapshotFromDb = async (
     SELECT
       u.id,
       u.is_user,
+      u.is_active,
       u.access_level_id,
       u.department_id,
       al.permissions,
@@ -438,6 +455,7 @@ const fetchAuthContextSnapshotFromDb = async (
   const snapshotUser = {
     id: firstRow.id,
     is_user: Boolean(firstRow.is_user),
+    is_active: firstRow.is_active === null ? true : Boolean(firstRow.is_active),
     access_level_id: firstRow.access_level_id,
     department_id: firstRow.department_id,
     department_positions: departmentIdsFromRows.map((departmentId) => ({
@@ -506,21 +524,44 @@ const getOrFetchAuthContextSnapshot = async (
     return snapshot ? cloneAccessContextSnapshot(snapshot) : null;
   }
 
-  const fetchPromise = (async () => {
+  // A fetch that started before invalidateAuthContext must not cache its
+  // (possibly stale) result, nor clear a newer fetch's in-flight entry.
+  const generation = authContextGeneration.get(userId) ?? 0;
+  const fetchPromise: Promise<AccessContextSnapshot | null> = (async () => {
     const snapshot = await fetchAuthContextSnapshotFromDb(userId);
-    if (snapshot) {
-      setCachedAuthContextSnapshot(userId, snapshot);
-    } else {
-      authContextCache.delete(userId);
+    if ((authContextGeneration.get(userId) ?? 0) === generation) {
+      if (snapshot) {
+        setCachedAuthContextSnapshot(userId, snapshot);
+      } else {
+        authContextCache.delete(userId);
+      }
     }
     return snapshot;
   })().finally(() => {
-    inflightAuthContextFetches.delete(userId);
+    if (inflightAuthContextFetches.get(userId) === fetchPromise) {
+      inflightAuthContextFetches.delete(userId);
+    }
   });
 
   inflightAuthContextFetches.set(userId, fetchPromise);
   const snapshot = await fetchPromise;
   return snapshot ? cloneAccessContextSnapshot(snapshot) : null;
+};
+
+/** False when the user is gone or deactivated. A missing flag counts as active. */
+export const isSessionActive = (
+  snapshot: { currentUser?: { is_active?: boolean | null } | null } | null,
+): boolean => Boolean(snapshot) && snapshot?.currentUser?.is_active !== false;
+
+/**
+ * Drops a user's cached auth snapshot so the next request reloads permissions,
+ * departments and active status. Called by the realtime session notifier
+ * right after those change.
+ */
+export const invalidateAuthContext = (userId: number) => {
+  authContextGeneration.set(userId, (authContextGeneration.get(userId) ?? 0) + 1);
+  authContextCache.delete(userId);
+  inflightAuthContextFetches.delete(userId);
 };
 
 export class Permissions {
@@ -616,25 +657,36 @@ export class Permissions {
     );
   }
 
-  protect = (req: any, res: Response, next: NextFunction) => {
+  protect = async (req: any, res: Response, next: NextFunction) => {
     const token = this.extractToken(req);
     if (!token)
       return res
         .status(401)
         .json({ message: "Not authorized. Token not found", data: null });
 
+    let decoded: any;
     try {
-      const decoded = JWT.verify(
-        token,
-        process.env.JWT_SECRET as string,
-      ) as any;
-      req.user = decoded;
-      next();
+      decoded = JWT.verify(token, process.env.JWT_SECRET as string) as any;
     } catch (error) {
       return res
         .status(401)
         .json({ message: "Session Expired", data: "Session Expired" });
     }
+
+    // A deactivated account keeps a valid JWT for up to 12h; refuse it here.
+    // Cached for 30s and cleared early by the realtime session notifier.
+    const userId = toPositiveInt(decoded?.id);
+    if (userId) {
+      const snapshot = await getOrFetchAuthContextSnapshot(userId);
+      if (!isSessionActive(snapshot)) {
+        return res
+          .status(401)
+          .json({ message: "Account inactive", data: null });
+      }
+    }
+
+    req.user = decoded;
+    next();
   };
 
   // Generic permission checker function
@@ -1786,24 +1838,53 @@ export class Permissions {
     "Not authorized to delete events",
   );
 
-  // Announcements
-  can_view_announcements = this.checkPermission(
-    "Announcements",
+  // Community — Can_View: moderation queue + admin posts list;
+  // Can_Manage: remove/restore/warn, MESSAGE/important posts, delete any post.
+  can_view_community = this.checkPermission(
+    "Community",
     "view",
-    "Not authorized to view announcements",
+    "Not authorized to view community moderation",
   );
 
-  can_manage_announcements = this.checkPermission(
-    "Announcements",
+  can_manage_community = this.checkPermission(
+    "Community",
     "manage",
-    "Not authorized to manage announcements",
+    "Not authorized to manage the community",
   );
 
-  can_delete_announcements = this.checkPermission(
-    "Announcements",
-    "admin",
-    "Not authorized to delete announcements",
-  );
+  /**
+   * Non-rejecting probe, like attach_sermon_management. Annotates the request
+   * with the caller's Community access (`canViewCommunity`,
+   * `canManageCommunity`) so member endpoints can widen what a moderator may
+   * do without a separate route. Requires `protect` to have run first.
+   */
+  attach_community_management = async (
+    req: any,
+    _res: Response,
+    next: NextFunction,
+  ) => {
+    req.canViewCommunity = false;
+    req.canManageCommunity = false;
+    try {
+      const userId = toPositiveInt(req.user?.id);
+      if (userId) {
+        const snapshot = await getOrFetchAuthContextSnapshot(userId);
+        const privileged = Boolean(snapshot?.isPrivilegedUser);
+        req.canViewCommunity = Boolean(
+          privileged &&
+            hasActionPermission(snapshot?.permissions, "Community", "view"),
+        );
+        req.canManageCommunity = Boolean(
+          privileged &&
+            hasActionPermission(snapshot?.permissions, "Community", "manage"),
+        );
+      }
+    } catch {
+      req.canViewCommunity = false;
+      req.canManageCommunity = false;
+    }
+    return next();
+  };
 
   // Promotions
   can_view_promotions = this.checkPermission(
@@ -1841,6 +1922,19 @@ export class Permissions {
     "Sermons",
     "admin",
     "Not authorized to delete sermons",
+  );
+
+  // Messaging
+  can_view_messaging = this.checkPermission(
+    "Messaging",
+    "view",
+    "Not authorized to view messaging",
+  );
+
+  can_manage_messaging = this.checkPermission(
+    "Messaging",
+    "manage",
+    "Not authorized to manage messaging",
   );
 
   /**
@@ -2014,6 +2108,15 @@ export class Permissions {
     "Settings",
     "admin",
     "Not authorized to delete settings",
+  );
+
+  // Appointment settings (e.g. the booking reasons list). A plain domain
+  // manage check: unlike can_manage_appointments_scoped it resolves no
+  // booking/attendee id, since settings belong to no one booking.
+  can_manage_appointment_settings = this.checkPermission(
+    "Appointments",
+    "manage",
+    "Not authorized to manage appointment settings",
   );
 
   // Marketplace

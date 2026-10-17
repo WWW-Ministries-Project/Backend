@@ -114,6 +114,23 @@ model user {
   stock_notification_requests                  stock_notification_requests[]
   membership_requests                          membership_request[]                    @relation("MembershipRequestUser")
   membership_requests_decided                  membership_request[]                    @relation("MembershipRequestDecider")
+  ride_offers                                  ride_offer[]                            @relation("RideOfferDriver")
+  ride_requests                                ride_request[]                          @relation("RideRequestPassenger")
+  ride_pickup_alerts                           ride_pickup_alert[]                     @relation("RidePickupAlertUser")
+  ride_reports_filed                           ride_report[]                           @relation("RideReportReporter")
+  ride_reports_received                        ride_report[]                           @relation("RideReportReported")
+  ride_reports_resolved                        ride_report[]                           @relation("RideReportResolver")
+  ride_blocks_made                             ride_block[]                            @relation("RideBlockBlocker")
+  ride_blocks_received                         ride_block[]                            @relation("RideBlockBlocked")
+  community_posts                              community_post[]                        @relation("CommunityPostAuthor")
+  community_post_recipients                    community_post_recipient[]              @relation("CommunityPostRecipientUser")
+  community_comments                           community_comment[]                     @relation("CommunityCommentAuthor")
+  community_reactions                          community_reaction[]                    @relation("CommunityReactionUser")
+  community_hidden                             community_hidden[]                      @relation("CommunityHiddenUser")
+  community_blocks_made                        community_block[]                       @relation("CommunityBlockBlocker")
+  community_blocks_received                    community_block[]                       @relation("CommunityBlockBlocked")
+  community_reports_filed                      community_report[]                      @relation("CommunityReportReporter")
+  community_moderation_actions                 community_moderation_log[]              @relation("CommunityModerationActor")
 
   @@index([access_level_id], map: "user_access_level_id_fkey")
   @@index([position_id], map: "user_position_id_fkey")
@@ -165,6 +182,7 @@ model branch {
   promotions               promotion[]
   sermon_series            sermon_series[]
   sermons                  sermon[]
+  community_posts          community_post[]
 
   @@index([pastor_in_charge_id], map: "branch_pastor_in_charge_id_idx")
 }
@@ -340,6 +358,7 @@ model department {
   user_departments                  user_departments[]
   join_requests                     department_join_request[]
   announcements                     announcement[]
+  community_posts                   community_post[]
 
   @@index([department_head], map: "department_department_head_fkey")
   @@index([branch_id], map: "department_branch_id_idx")
@@ -525,6 +544,8 @@ model event_mgt {
   event_reports             event_reports[]
   visit                     visit[]
   pledges                   pledge[]
+  ride_offers               ride_offer[]
+  ride_pickup_alerts        ride_pickup_alert[]
 
   @@index([event_name_id], map: "event_mgt_event_name_id_fkey")
   @@index([branch_id], map: "event_mgt_branch_id_idx")
@@ -2099,6 +2120,20 @@ model appointment {
   @@index([userId, date, startTime, endTime], map: "appointment_user_date_time_idx")
 }
 
+// Reasons a member picks from when booking an appointment. Admin-configured;
+// "Something else" is a client-side free-text option and is never stored.
+model appointment_reason {
+  id          Int      @id @default(autoincrement())
+  label       String   @db.VarChar(120)
+  description String?  @db.VarChar(255)
+  sort_order  Int      @default(0)
+  is_active   Boolean  @default(true)
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+
+  @@index([is_active, sort_order])
+}
+
 model ai_conversation {
   id            String            @id @default(uuid())
   created_by    Int
@@ -2587,6 +2622,11 @@ model pledge_payment {
   @@index([createdAt], map: "pledge_payment_created_at_idx")
 }
 
+/// FROZEN ARCHIVE. Announcements were replaced by Community (an announcement
+/// is now a community_post with type MESSAGE + is_important). Migration
+/// 20261006130000_community copied every PUBLISHED announcement into
+/// community_post (legacy_announcement_id). No code reads or writes the two
+/// announcement tables any more; they are kept only as a historical record.
 enum announcement_audience {
   ALL_MEMBERS
   MINISTRY_WORKERS
@@ -2761,4 +2801,560 @@ model stock_notification_requests {
   @@unique([user_id, product_colour_id, size_id], name: "stock_notification_requests_unique")
   @@index([product_colour_id, size_id], map: "stock_notification_requests_colour_size_idx")
   @@index([user_id], map: "stock_notification_requests_user_id_fkey")
+}
+
+// ── Ride to church ──────────────────────────────────────────────────────────
+// Members offer spare seats on their way to the Sunday service and other
+// members request them. Drivers share an AREA (never an address) plus public
+// pickup points; phone and car details unlock only once a request is accepted.
+
+enum ride_offer_status {
+  ACTIVE
+  CANCELLED
+}
+
+enum ride_request_status {
+  PENDING
+  ACCEPTED
+  DECLINED
+  WITHDRAWN
+  CANCELLED
+}
+
+enum ride_report_status {
+  OPEN
+  RESOLVED
+}
+
+/// A neighbourhood a driver starts from. Curated by the church office.
+model ride_area {
+  id         Int               @id @default(autoincrement())
+  name       String            @unique @db.VarChar(120)
+  sort_order Int               @default(0)
+  is_active  Boolean           @default(true)
+  created_at DateTime          @default(now())
+  updated_at DateTime          @updatedAt
+  route      ride_area_route[]
+  offers     ride_offer[]
+}
+
+/// A public landmark riders can be picked up at — never a home address.
+model ride_pickup_point {
+  id          Int                 @id @default(autoincrement())
+  name        String              @unique @db.VarChar(120)
+  /// The district shown under the landmark name, e.g. "Spintex Road".
+  area_label  String              @db.VarChar(120)
+  sort_order  Int                 @default(0)
+  is_active   Boolean             @default(true)
+  created_at  DateTime            @default(now())
+  updated_at  DateTime            @updatedAt
+  area_routes ride_area_route[]
+  offer_stops ride_offer_stop[]
+  requests    ride_request[]
+  alerts      ride_pickup_alert[]
+}
+
+/// The landmarks a driver from an area usually passes, in order, with the
+/// typical minutes from setting off. Drives "Suggested on your route" and the
+/// pickup time riders see.
+model ride_area_route {
+  id                 Int               @id @default(autoincrement())
+  area_id            Int
+  pickup_point_id    Int
+  position           Int               @default(0)
+  minutes_from_start Int               @default(10)
+  area               ride_area         @relation(fields: [area_id], references: [id], onDelete: Cascade)
+  pickup_point       ride_pickup_point @relation(fields: [pickup_point_id], references: [id], onDelete: Cascade)
+
+  @@unique([area_id, pickup_point_id])
+  @@index([pickup_point_id])
+}
+
+model ride_offer {
+  id            Int               @id @default(autoincrement())
+  driver_id     Int
+  /// The church event this ride is for. Null only on rides published before
+  /// rides were tied to events and never matched to one.
+  event_id      Int?
+  /// The event's day, as a calendar date (drives reminders and the office overview).
+  service_date  DateTime          @db.Date
+  area_id       Int
+  /// 24h "HH:MM" in church-local time.
+  depart_time   String            @db.VarChar(5)
+  seats_total   Int
+  /// Optional car description shown to accepted passengers only.
+  car_details   String?           @db.VarChar(160)
+  status        ride_offer_status @default(ACTIVE)
+  reminder_sent Boolean           @default(false)
+  cancelled_at  DateTime?
+  created_at    DateTime          @default(now())
+  updated_at    DateTime          @updatedAt
+  driver        user              @relation("RideOfferDriver", fields: [driver_id], references: [id], onDelete: Cascade)
+  area          ride_area         @relation(fields: [area_id], references: [id])
+  event         event_mgt?        @relation(fields: [event_id], references: [id], onDelete: SetNull)
+  stops         ride_offer_stop[]
+  requests      ride_request[]
+  reports       ride_report[]
+
+  @@index([driver_id, service_date])
+  @@index([service_date, status])
+  @@index([event_id, status])
+  @@index([area_id])
+}
+
+model ride_offer_stop {
+  id              Int               @id @default(autoincrement())
+  offer_id        Int
+  pickup_point_id Int
+  position        Int
+  /// 24h "HH:MM" — when the driver expects to be at this point.
+  pickup_time     String            @db.VarChar(5)
+  offer           ride_offer        @relation(fields: [offer_id], references: [id], onDelete: Cascade)
+  pickup_point    ride_pickup_point @relation(fields: [pickup_point_id], references: [id])
+
+  @@unique([offer_id, pickup_point_id])
+  @@index([pickup_point_id])
+}
+
+model ride_request {
+  id                  Int                 @id @default(autoincrement())
+  offer_id            Int
+  passenger_id        Int
+  pickup_point_id     Int
+  pickup_time         String              @db.VarChar(5)
+  status              ride_request_status @default(PENDING)
+  decline_reason      String?             @db.VarChar(160)
+  decline_message     String?             @db.VarChar(500)
+  /// Set when a cancellation came from the driver cancelling the whole ride.
+  cancelled_by_driver Boolean             @default(false)
+  /// The passenger has seen a decline/cancellation and moved on.
+  dismissed_at        DateTime?
+  requested_at        DateTime            @default(now())
+  decided_at          DateTime?
+  cancelled_at        DateTime?
+  offer               ride_offer          @relation(fields: [offer_id], references: [id], onDelete: Cascade)
+  passenger           user                @relation("RideRequestPassenger", fields: [passenger_id], references: [id], onDelete: Cascade)
+  pickup_point        ride_pickup_point   @relation(fields: [pickup_point_id], references: [id])
+  reports             ride_report[]
+
+  @@index([offer_id, status])
+  @@index([passenger_id, status])
+  @@index([pickup_point_id])
+}
+
+/// "Notify me when a ride passes this point" for one church event.
+model ride_pickup_alert {
+  id              Int               @id @default(autoincrement())
+  user_id         Int
+  pickup_point_id Int
+  event_id        Int?
+  service_date    DateTime          @db.Date
+  notified_at     DateTime?
+  created_at      DateTime          @default(now())
+  user            user              @relation("RidePickupAlertUser", fields: [user_id], references: [id], onDelete: Cascade)
+  pickup_point    ride_pickup_point @relation(fields: [pickup_point_id], references: [id], onDelete: Cascade)
+  event           event_mgt?        @relation(fields: [event_id], references: [id], onDelete: Cascade)
+
+  @@unique([user_id, pickup_point_id, event_id])
+  @@index([pickup_point_id, service_date])
+  @@index([event_id, pickup_point_id])
+}
+
+/// A safety concern, routed to the church safety team — never to the other member.
+model ride_report {
+  id               Int                @id @default(autoincrement())
+  reporter_id      Int
+  reported_user_id Int?
+  offer_id         Int?
+  request_id       Int?
+  reason           String             @db.VarChar(120)
+  details          String?            @db.Text
+  blocked          Boolean            @default(false)
+  status           ride_report_status @default(OPEN)
+  resolution_note  String?            @db.Text
+  resolved_by      Int?
+  resolved_at      DateTime?
+  created_at       DateTime           @default(now())
+  reporter         user               @relation("RideReportReporter", fields: [reporter_id], references: [id], onDelete: Cascade)
+  reported_user    user?              @relation("RideReportReported", fields: [reported_user_id], references: [id], onDelete: SetNull)
+  resolver         user?              @relation("RideReportResolver", fields: [resolved_by], references: [id], onDelete: SetNull)
+  offer            ride_offer?        @relation(fields: [offer_id], references: [id], onDelete: SetNull)
+  request          ride_request?      @relation(fields: [request_id], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@index([reporter_id])
+  @@index([reported_user_id])
+}
+
+/// A member who never wants to share a ride with another. Symmetric in effect:
+/// neither sees the other's rides.
+model ride_block {
+  id         Int      @id @default(autoincrement())
+  blocker_id Int
+  blocked_id Int
+  created_at DateTime @default(now())
+  blocker    user     @relation("RideBlockBlocker", fields: [blocker_id], references: [id], onDelete: Cascade)
+  blocked    user     @relation("RideBlockBlocked", fields: [blocked_id], references: [id], onDelete: Cascade)
+
+  @@unique([blocker_id, blocked_id])
+  @@index([blocked_id])
+}
+
+// ------------------------------------------------------------------
+// Community — replaces Announcements
+// ------------------------------------------------------------------
+
+enum community_post_type {
+  PRAYER
+  TESTIMONY
+  DISCUSSION
+  CELEBRATION
+  QUESTION
+  MESSAGE
+  GENERAL
+}
+
+enum community_audience {
+  CHURCH
+  DEPARTMENT
+  SELECTED
+  ONLY_ME
+}
+
+enum community_content_status {
+  ACTIVE
+  REMOVED
+}
+
+enum community_reaction_type {
+  PRAY
+  LOVE
+  PRAISE
+  CELEBRATE
+  SUPPORT
+}
+
+enum community_report_reason {
+  INAPPROPRIATE
+  HARASSMENT
+  SAFEGUARDING
+  SPAM
+  MISLEADING
+  OTHER
+}
+
+enum community_report_status {
+  PENDING
+  REMOVED
+  RESTORED
+}
+
+enum community_moderation_action {
+  VIEW_ANON_AUTHOR
+  REMOVE
+  RESTORE
+  WARN
+}
+
+/// A member's post to the church community. `author_id` is always the real
+/// author, even when `is_anonymous` — member endpoints never return it for an
+/// anonymous post; moderators see it and every such view is audited.
+model community_post {
+  id                     Int                        @id @default(autoincrement())
+  type                   community_post_type
+  body                   String                     @db.LongText
+  audience               community_audience
+  department_id          Int?
+  author_id              Int
+  is_anonymous           Boolean                    @default(false)
+  is_important           Boolean                    @default(false)
+  status                 community_content_status   @default(ACTIVE)
+  branch_id              Int?
+  deleted_at             DateTime?
+  /// Set for posts copied from the frozen `announcement` table.
+  legacy_announcement_id Int?                       @unique
+  created_at             DateTime                   @default(now())
+  updated_at             DateTime                   @updatedAt
+  author                 user                       @relation("CommunityPostAuthor", fields: [author_id], references: [id], onDelete: Cascade)
+  department             department?                @relation(fields: [department_id], references: [id], onDelete: SetNull)
+  branch                 branch?                    @relation(fields: [branch_id], references: [id], onDelete: SetNull)
+  images                 community_post_image[]
+  recipients             community_post_recipient[]
+  comments               community_comment[]
+  reactions              community_reaction[]
+  hidden_by              community_hidden[]
+  reports                community_report[]
+  moderation_logs        community_moderation_log[]
+  blocks_from            community_block[]
+
+  @@index([status, deleted_at, created_at])
+  @@index([is_important, created_at])
+  @@index([audience, branch_id])
+  @@index([author_id])
+  @@index([department_id])
+  @@index([branch_id])
+}
+
+model community_post_image {
+  id       Int            @id @default(autoincrement())
+  post_id  Int
+  url      String         @db.VarChar(1024)
+  position Int            @default(0)
+  post     community_post @relation(fields: [post_id], references: [id], onDelete: Cascade)
+
+  @@index([post_id])
+}
+
+/// Who can see a SELECTED-audience post (besides its author).
+model community_post_recipient {
+  id      Int            @id @default(autoincrement())
+  post_id Int
+  user_id Int
+  post    community_post @relation(fields: [post_id], references: [id], onDelete: Cascade)
+  user    user           @relation("CommunityPostRecipientUser", fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@unique([post_id, user_id])
+  @@index([user_id])
+}
+
+/// One level of replies: `parent_id` always points at a top-level comment.
+model community_comment {
+  id              Int                        @id @default(autoincrement())
+  post_id         Int
+  parent_id       Int?
+  author_id       Int
+  body            String                     @db.MediumText
+  is_anonymous    Boolean                    @default(false)
+  status          community_content_status   @default(ACTIVE)
+  deleted_at      DateTime?
+  created_at      DateTime                   @default(now())
+  updated_at      DateTime                   @updatedAt
+  post            community_post             @relation(fields: [post_id], references: [id], onDelete: Cascade)
+  parent          community_comment?         @relation("CommunityCommentReplies", fields: [parent_id], references: [id], onDelete: Cascade)
+  replies         community_comment[]        @relation("CommunityCommentReplies")
+  author          user                       @relation("CommunityCommentAuthor", fields: [author_id], references: [id], onDelete: Cascade)
+  reactions       community_reaction[]
+  hidden_by       community_hidden[]
+  reports         community_report[]
+  moderation_logs community_moderation_log[]
+  blocks_from     community_block[]
+
+  @@index([post_id, created_at])
+  @@index([parent_id])
+  @@index([author_id])
+}
+
+/// A reaction on exactly one of a post or a comment.
+model community_reaction {
+  id         Int                     @id @default(autoincrement())
+  post_id    Int?
+  comment_id Int?
+  user_id    Int
+  type       community_reaction_type
+  created_at DateTime                @default(now())
+  post       community_post?         @relation(fields: [post_id], references: [id], onDelete: Cascade)
+  comment    community_comment?      @relation(fields: [comment_id], references: [id], onDelete: Cascade)
+  user       user                    @relation("CommunityReactionUser", fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@unique([post_id, user_id, type])
+  @@unique([comment_id, user_id, type])
+  @@index([user_id])
+}
+
+/// A member hid a post or a comment from their own view (also set on report).
+model community_hidden {
+  id         Int                @id @default(autoincrement())
+  user_id    Int
+  post_id    Int?
+  comment_id Int?
+  created_at DateTime           @default(now())
+  user       user               @relation("CommunityHiddenUser", fields: [user_id], references: [id], onDelete: Cascade)
+  post       community_post?    @relation(fields: [post_id], references: [id], onDelete: Cascade)
+  comment    community_comment? @relation(fields: [comment_id], references: [id], onDelete: Cascade)
+
+  @@unique([user_id, post_id])
+  @@unique([user_id, comment_id])
+  @@index([post_id])
+  @@index([comment_id])
+}
+
+/// The blocker stops seeing the blocked member's posts and comments.
+/// `via_anonymous` keeps the blocked member's name from the blocker when the
+/// block was made from anonymous content.
+///
+/// Rows are never merged in a way the blocker could observe: a named block is
+/// unique per (blocker, blocked); an anonymous block is unique per (blocker,
+/// source post/comment), so blocking from two anonymous posts by the same
+/// author makes two entries, exactly as it would for two different authors.
+/// `source_key` carries that rule in one non-null column ("MEMBER",
+/// "POST:<id>" or "COMMENT:<id>"), since MySQL unique keys ignore NULLs. A
+/// member stays blocked while any row for them exists.
+model community_block {
+  id                Int                @id @default(autoincrement())
+  blocker_id        Int
+  blocked_id        Int
+  via_anonymous     Boolean            @default(false)
+  source_post_id    Int?
+  source_comment_id Int?
+  source_key        String             @default("MEMBER") @db.VarChar(32)
+  created_at        DateTime           @default(now())
+  blocker           user               @relation("CommunityBlockBlocker", fields: [blocker_id], references: [id], onDelete: Cascade)
+  blocked           user               @relation("CommunityBlockBlocked", fields: [blocked_id], references: [id], onDelete: Cascade)
+  source_post       community_post?    @relation(fields: [source_post_id], references: [id], onDelete: SetNull)
+  source_comment    community_comment? @relation(fields: [source_comment_id], references: [id], onDelete: SetNull)
+
+  @@unique([blocker_id, blocked_id, source_key])
+  @@index([blocked_id])
+  @@index([source_post_id])
+  @@index([source_comment_id])
+}
+
+model community_report {
+  id          Int                     @id @default(autoincrement())
+  reporter_id Int
+  post_id     Int?
+  comment_id  Int?
+  reason      community_report_reason
+  details     String?                 @db.Text
+  status      community_report_status @default(PENDING)
+  warned_at   DateTime?
+  created_at  DateTime                @default(now())
+  updated_at  DateTime                @updatedAt
+  reporter    user                    @relation("CommunityReportReporter", fields: [reporter_id], references: [id], onDelete: Cascade)
+  post        community_post?         @relation(fields: [post_id], references: [id], onDelete: Cascade)
+  comment     community_comment?      @relation(fields: [comment_id], references: [id], onDelete: Cascade)
+
+  @@index([status, created_at])
+  @@index([reporter_id])
+  @@index([post_id])
+  @@index([comment_id])
+}
+
+/// Audit trail of moderator actions, including every time a moderator was
+/// shown the real author of anonymous content.
+model community_moderation_log {
+  id         Int                         @id @default(autoincrement())
+  actor_id   Int
+  action     community_moderation_action
+  post_id    Int?
+  comment_id Int?
+  created_at DateTime                    @default(now())
+  actor      user                        @relation("CommunityModerationActor", fields: [actor_id], references: [id], onDelete: Cascade)
+  post       community_post?             @relation(fields: [post_id], references: [id], onDelete: SetNull)
+  comment    community_comment?          @relation(fields: [comment_id], references: [id], onDelete: SetNull)
+
+  @@index([created_at])
+  @@index([actor_id])
+  @@index([post_id])
+  @@index([comment_id])
+}
+
+enum message_template_key {
+  WELCOME_MEMBER
+  WELCOME_GUEST
+  WELCOME_VISITOR
+  BIRTHDAY
+}
+
+enum message_dispatch_kind {
+  WELCOME
+  BIRTHDAY
+  GENERAL
+}
+
+enum message_dispatch_status {
+  SCHEDULED
+  QUEUED
+  SENT
+  CANCELLED
+  FAILED
+}
+
+enum message_channel {
+  SMS
+  EMAIL
+  IN_APP
+}
+
+enum message_recipient_status {
+  PENDING
+  SENDING
+  SENT
+  FAILED
+  SKIPPED
+}
+
+/// Admin-editable automatic message. One row per key, seeded by migration.
+model message_template {
+  id               Int                  @id @default(autoincrement())
+  key              message_template_key @unique
+  enabled          Boolean              @default(false)
+  /// {"sms":bool,"email":bool,"inApp":bool}
+  channels         Json
+  email_subject    String?
+  body             String               @db.Text
+  include_app_link Boolean              @default(false)
+  updated_by       Int?
+  updated_at       DateTime             @updatedAt
+}
+
+/// Singleton (id = 1).
+model message_settings {
+  id                     Int      @id @default(autoincrement())
+  app_store_url          String?
+  play_store_url         String?
+  birthday_send_time     String   @default("07:00")
+  timezone               String   @default("Africa/Accra")
+  last_birthday_run_date String?
+  updated_by             Int?
+  updated_at             DateTime @updatedAt
+}
+
+model message_dispatch {
+  id            Int                     @id @default(autoincrement())
+  kind          message_dispatch_kind
+  template_key  message_template_key?
+  dedupe_key    String?                 @unique
+  title         String
+  body          String                  @db.Text
+  email_subject String?
+  channels      Json
+  audience      Json?
+  status        message_dispatch_status
+  scheduled_for DateTime?
+  error         String?                 @db.Text
+  created_by    Int?
+  counts        Json?
+  created_at    DateTime                @default(now())
+  updated_at    DateTime                @updatedAt
+  recipients    message_recipient[]
+
+  @@index([status, scheduled_for])
+  @@index([kind, created_at])
+}
+
+model message_recipient {
+  id               Int                      @id @default(autoincrement())
+  dispatch_id      Int
+  channel          message_channel
+  /// "u:<userId>" or "v:<visitorId>" — non-null so the unique key works in MySQL.
+  recipient_key    String
+  user_id          Int?
+  visitor_id       Int?
+  recipient_name   String
+  address          String?
+  rendered_subject String?
+  rendered_body    String                   @db.Text
+  status           message_recipient_status
+  error            String?                  @db.Text
+  attempts         Int                      @default(0)
+  next_attempt_at  DateTime?
+  claimed_at       DateTime?
+  sent_at          DateTime?
+  created_at       DateTime                 @default(now())
+  dispatch         message_dispatch         @relation(fields: [dispatch_id], references: [id], onDelete: Cascade)
+
+  @@unique([dispatch_id, channel, recipient_key])
+  @@index([status, next_attempt_at])
+  @@index([user_id])
 }

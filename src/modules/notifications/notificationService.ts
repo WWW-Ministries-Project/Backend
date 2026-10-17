@@ -17,6 +17,8 @@ import {
 import { notificationPushService } from "./notificationPushService";
 import { notificationDeviceService } from "./notificationDeviceService";
 import { notificationSmsService } from "./notificationSmsService";
+import { toUser as emitToUserSocket } from "../realtime/realtimeEmit";
+import type { RealtimeEventMap, RealtimeEventName } from "../realtime/realtimeEvents";
 
 export type NotificationPriority = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 
@@ -89,6 +91,12 @@ export type CreateNotificationInput = {
   sendEmail?: boolean;
   sendSms?: boolean;
   smsBody?: string;
+  /**
+   * Part of a fan-out (one event, many recipients). Its email/push deliveries
+   * wait in a separate lane behind one-to-one notifications, so a church-wide
+   * post queued for hundreds of members can't hold up a ride being accepted.
+   */
+  bulk?: boolean;
 };
 
 type NotificationListArgs = {
@@ -167,6 +175,7 @@ const NOTIFICATION_DELIVERY_CONCURRENCY = (() => {
 const sseClientsByUserId = new Map<number, Set<SseClient>>();
 const sseReplayBufferByUserId = new Map<number, SseEventEnvelope[]>();
 const notificationDeliveryTaskQueue: NotificationDeliveryTask[] = [];
+const bulkNotificationDeliveryTaskQueue: NotificationDeliveryTask[] = [];
 let sseEventIdCounter = 0;
 let activeNotificationDeliveryWorkers = 0;
 
@@ -247,7 +256,8 @@ const parsePositiveInt = (value: unknown): number | null => {
 
 const runNotificationDeliveryQueue = () => {
   while (activeNotificationDeliveryWorkers < NOTIFICATION_DELIVERY_CONCURRENCY) {
-    const task = notificationDeliveryTaskQueue.shift();
+    // One-to-one deliveries first; the fan-out lane only gets idle workers.
+    const task = notificationDeliveryTaskQueue.shift() ?? bulkNotificationDeliveryTaskQueue.shift();
     if (!task) {
       return;
     }
@@ -264,8 +274,8 @@ const runNotificationDeliveryQueue = () => {
   }
 };
 
-const enqueueNotificationDelivery = (task: NotificationDeliveryTask) => {
-  notificationDeliveryTaskQueue.push(task);
+const enqueueNotificationDelivery = (task: NotificationDeliveryTask, bulk = false) => {
+  (bulk ? bulkNotificationDeliveryTaskQueue : notificationDeliveryTaskQueue).push(task);
   runNotificationDeliveryQueue();
 };
 
@@ -485,15 +495,22 @@ const registerSseClient = (userId: number, res: Response): SseClient => {
   return clientState;
 };
 
+// `event` strings passed here must be keys of RealtimeEventMap (realtimeEvents.ts).
 const broadcastToUser = (
   userId: number,
-  event: string,
+  event: RealtimeEventName,
   data: unknown,
   options: SseBroadcastOptions = {},
 ) => {
   const envelope = createSseEnvelope(event, data);
   if (options.persistForReplay !== false) {
     addReplayEvent(userId, envelope);
+  }
+
+  // Same event, same body, over socket.io. Runs alongside SSE until the web
+  // dashboard moves to sockets (realtime sub-project 2), then SSE goes.
+  if (data && typeof data === "object") {
+    emitToUserSocket(userId, event, data as RealtimeEventMap[RealtimeEventName]);
   }
 
   const userClients = sseClientsByUserId.get(userId);
@@ -516,7 +533,17 @@ const broadcastToUser = (
   return envelope;
 };
 
+// The gauge counts unread rows across every user, and every created or read
+// notification asks for a refresh — so a 500-member fan-out used to run 500
+// table-wide counts, un-awaited, against a 10-connection pool. A gauge only
+// needs to be roughly current: one count in flight, at most every 30s.
+const UNREAD_BACKLOG_REFRESH_MS = 30_000;
+let unreadBacklogRefreshedAt = 0;
+
 const updateUnreadBacklogMetric = async () => {
+  const now = Date.now();
+  if (now - unreadBacklogRefreshedAt < UNREAD_BACKLOG_REFRESH_MS) return;
+  unreadBacklogRefreshedAt = now;
   try {
     const unreadCount = await prisma.in_app_notification.count({
       where: {
@@ -1032,7 +1059,7 @@ const createInAppNotification = async (
       } catch (error) {
         notificationDeliveryFailureCounter.labels("email", trimmedType).inc();
       }
-    });
+    }, input.bulk);
   }
 
   const shouldSendSms =
@@ -1093,7 +1120,7 @@ const createInAppNotification = async (
     } catch (error) {
       notificationDeliveryFailureCounter.labels("push", trimmedType).inc();
     }
-  });
+  }, input.bulk);
 
   enqueueNotificationDelivery(async () => {
     try {
@@ -1121,7 +1148,7 @@ const createInAppNotification = async (
         .labels("expo_push", trimmedType)
         .inc();
     }
-  });
+  }, input.bulk);
 
   return payload;
 };
@@ -1384,6 +1411,41 @@ const clearAllNotifications = async (
   return { deleted: result.count };
 };
 
+/**
+ * Deletes the given notifications, owner-scoped: ids that belong to another
+ * user (or no longer exist) are silently ignored. Mirrors
+ * clearAllNotifications' side effects so open streams stay in sync.
+ */
+const deleteNotifications = async (
+  userId: number,
+  ids: number[],
+): Promise<{ deleted: number }> => {
+  const result = await prisma.in_app_notification.deleteMany({
+    where: {
+      id: { in: ids },
+      recipient_user_id: userId,
+    },
+  });
+
+  const unreadCount = await prisma.in_app_notification.count({
+    where: {
+      recipient_user_id: userId,
+      is_read: false,
+    },
+  });
+
+  broadcastToUser(userId, "notifications_deleted", {
+    recipientUserId: String(userId),
+    ids: ids.map(String),
+    deleted: result.count,
+    unreadCount,
+  });
+  emitUnreadCountToUser(userId, unreadCount);
+  void updateUnreadBacklogMetric();
+
+  return { deleted: result.count };
+};
+
 const startSseStream = async (
   userId: number,
   res: Response,
@@ -1529,6 +1591,7 @@ export const notificationService = {
   markNotificationAsUnread,
   markAllNotificationsAsRead,
   clearAllNotifications,
+  deleteNotifications,
   startSseStream,
   pruneOldNotifications,
   notifyAdminsJobFailed,

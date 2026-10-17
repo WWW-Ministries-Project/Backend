@@ -3,6 +3,7 @@ import { prisma } from "../../Models/context";
 import { getBranchScopedWhere } from "../branches/branchService";
 import { userHasMinimumDomainAccess } from "../../utils/permissionResolver";
 import { notificationService } from "../notifications/notificationService";
+import { sessionChanged } from "../realtime/realtimeSession";
 import {
   buildRoleEligibilityFailureResponse,
   isRoleEligibilityValidationError,
@@ -493,6 +494,7 @@ const approveOne = async (
       instructions: payload.instructions ?? null,
     },
   });
+  void sessionChanged([request.user_id], ["departments"]);
 
   await notificationService.createInAppNotification({
     type: "department_join_request.approved",

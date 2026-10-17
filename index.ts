@@ -12,6 +12,8 @@ import {
   globalErrorHandler,
   notFoundHandler,
 } from "./src/middleWare/errorHandler";
+import { attachRealtime } from "./src/modules/realtime/realtimeServer";
+import { registerRideTopics } from "./src/modules/rides/rideTopics";
 dotenv.config();
 
 const shouldRunBackgroundJobs = !["false", "0", "no"].includes(
@@ -31,6 +33,9 @@ if (shouldRunBackgroundJobs) {
   require("./src/cron-jobs/notificationSmsRetryCron");
   require("./src/cron-jobs/eventReminderCron");
   require("./src/cron-jobs/liveStreamCron");
+  require("./src/cron-jobs/rideReminderCron");
+  require("./src/cron-jobs/messagingDispatchCron");
+  require("./src/cron-jobs/messagingBirthdayCron");
 } else {
   logger.info("Background cron jobs are disabled for this process.");
 }
@@ -96,3 +101,6 @@ server.on("error", (err: NodeJS.ErrnoException) => {
   }
   process.exit(1);
 });
+
+attachRealtime(server);
+registerRideTopics();

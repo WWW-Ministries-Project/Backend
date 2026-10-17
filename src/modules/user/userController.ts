@@ -39,6 +39,8 @@ import {
 import { InputValidationError } from "../../utils/custom-error-handlers";
 import { Prisma } from "@prisma/client";
 import { buildPrismaError } from "../../middleWare/errorHandler";
+import { sessionChanged, sessionRevoked } from "../realtime/realtimeSession";
+import { sessionReasonsForUserUpdate } from "../realtime/sessionNotifier";
 import {
   getBranchScopedWhere,
   resolveBranchIdOrDefault,
@@ -777,6 +779,11 @@ export const updateUser = async (req: Request, res: Response) => {
       );
     }
 
+    void sessionChanged(
+      [updatedUser.id],
+      sessionReasonsForUserUpdate(userExists, updatedUser, Boolean(dep_posts)),
+    );
+
     if (hasFamilyField) {
       if (!Array.isArray(family)) {
         return res.status(400).json({
@@ -1160,6 +1167,12 @@ export const updateUserSatus = async (req: Request, res: Response) => {
       sendEmail(userActivatedTemplate(mailDetails), email, "Reset Password");
     }
 
+    if (response.is_active === false) {
+      sessionRevoked(response.id, "deactivated");
+    } else {
+      void sessionChanged([response.id], ["profile"]);
+    }
+
     const { password, ...rest } = response;
 
     return res
@@ -1192,6 +1205,7 @@ export const deleteUser = async (req: Request, res: Response) => {
         id: Number(id),
       },
     });
+    sessionRevoked(Number(id), "deleted");
     return res
       .status(200)
       .json({ message: "User deleted Succesfully", data: null });
@@ -1255,6 +1269,7 @@ export const deleteOwnAccount = async (req: Request, res: Response) => {
         },
       });
     });
+    sessionRevoked(authenticatedUserId, "deleted");
 
     return res
       .status(200)
@@ -1312,11 +1327,11 @@ const SESSION_USER_SELECT = {
   };
 
 /**
- * Signs the 12h session JWT for a user loaded with `SESSION_USER_SELECT`.
- * Shared by `login` and mobile self-registration so both hand out the same
- * claims.
+ * The session claims for a user loaded with `SESSION_USER_SELECT`. Signed into
+ * the login JWT and returned by `current-user`, so a client refreshing after a
+ * realtime `session.changed` sees exactly what a fresh login would.
  */
-export const signSessionToken = async (existance: any) => {
+export const buildSessionClaims = async (existance: any) => {
   const department_positions = (existance.department_positions || []).map(
     (deptPos: any) => ({
       department_id:
@@ -1352,32 +1367,36 @@ export const signSessionToken = async (existance: any) => {
     existance.id,
   );
 
-  return JWT.sign(
-    {
-      id: existance.id,
-      member_id: existance.member_id || null,
-      name: existance.name,
-      email: existance.email,
-      ministry_worker: ministry_worker,
-      user_category,
-      permissions: tokenPermissions,
-      profile_img: existance.user_info?.photo,
-      membership_type: existance.membership_type || null,
-      department,
-      department_positions,
-      life_center_leader,
-      instructor,
-      phone: existance.user_info?.primary_number || null,
-      member_since: existance.user_info?.member_since || null,
-      is_guest: Boolean(existance.is_guest),
-      status: existance.status ?? null,
-    },
-    JWT_SECRET,
-    {
-      expiresIn: "12h",
-    },
-  );
+  return {
+    id: existance.id,
+    member_id: existance.member_id || null,
+    name: existance.name,
+    email: existance.email,
+    ministry_worker: ministry_worker,
+    user_category,
+    permissions: tokenPermissions,
+    profile_img: existance.user_info?.photo,
+    membership_type: existance.membership_type || null,
+    department,
+    department_positions,
+    life_center_leader,
+    instructor,
+    phone: existance.user_info?.primary_number || null,
+    member_since: existance.user_info?.member_since || null,
+    is_guest: Boolean(existance.is_guest),
+    status: existance.status ?? null,
+  };
 };
+
+/**
+ * Signs the 12h session JWT for a user loaded with `SESSION_USER_SELECT`.
+ * Shared by `login` and mobile self-registration so both hand out the same
+ * claims.
+ */
+export const signSessionToken = async (existance: any) =>
+  JWT.sign(await buildSessionClaims(existance), JWT_SECRET, {
+    expiresIn: "12h",
+  });
 
 /** Loads a user by id and signs their session token, or null if missing. */
 export const issueSessionTokenForUser = async (userId: number) => {
@@ -1600,6 +1619,8 @@ export const resetPassword = async (req: Request, res: Response) => {
         password: await hashPassword(newpassword),
       },
     });
+    // A forgot-password reset signs the member out everywhere else.
+    sessionRevoked(parsedUserId, "password_reset");
     return res
       .status(200)
       .json({ message: "Password Successfully changed", data: null });
@@ -1630,6 +1651,12 @@ export const activateAccount = async (req: Request, res: Response) => {
         is_active: !existingUser.is_active,
       },
     });
+
+    if (response.is_active === false) {
+      sessionRevoked(response.id, "deactivated");
+    } else {
+      void sessionChanged([response.id], ["profile"]);
+    }
 
     if (response.is_user) {
       sendEmail(
@@ -2633,16 +2660,16 @@ export const getUser = async (req: Request, res: Response) => {
     /* =========================
        8️⃣ FLATTEN DEPARTMENTS
     ========================== */
-    if (department_positions?.length) {
-      user.department_positions = department_positions.map((dp: any) => ({
-        department_id: dp.department?.id ?? null,
-        department_name: dp.department?.name ?? null,
-        position_id: dp.position?.id ?? null,
-        position_name: dp.position?.name ?? null,
-        start_date: dp.start_date ?? null,
-        end_date: dp.end_date ?? null,
-      }));
-    }
+    // Always an array (empty when the member serves nowhere), so clients can
+    // treat `department_positions` as the source of department/position data.
+    user.department_positions = (department_positions || []).map((dp: any) => ({
+      department_id: dp.department?.id ?? null,
+      department_name: dp.department?.name ?? null,
+      position_id: dp.position?.id ?? null,
+      position_name: dp.position?.name ?? null,
+      start_date: dp.start_date ?? null,
+      end_date: dp.end_date ?? null,
+    }));
 
     const enrolledPrograms = (enrollments || []).map((enrollment: any) => {
       const completed = Boolean(enrollment.completed);
@@ -3025,6 +3052,14 @@ export const bulkUpdateUserStatus = async (req: Request, res: Response) => {
 
   try {
     const result = await userService.bulkUpdateUserStatus(user_ids, is_active);
+    const changedIds = result.results
+      .filter((row) => row.success && !row.noop)
+      .map((row) => Number(row.user_id));
+    if (is_active === false) {
+      changedIds.forEach((userId) => sessionRevoked(userId, "deactivated"));
+    } else {
+      void sessionChanged(changedIds, ["profile"]);
+    }
     return res.status(200).json({ data: result });
   } catch (error: any) {
     return res.status(500).json({
@@ -3146,7 +3181,7 @@ export const currentuser = async (req: Request, res: Response) => {
       return res.status(404).json({ message: "User not found." });
     }
 
-    const [userInfo, departmentPositions, membershipRequest] = await Promise.all([
+    const [userInfo, departmentPositions, membershipRequest, sessionUser] = await Promise.all([
       prisma.user_info.findUnique({
         where: { user_id: authenticatedUserId },
         select: {
@@ -3172,7 +3207,14 @@ export const currentuser = async (req: Request, res: Response) => {
             select: { id: true, status: true, requested_at: true, decline_reason: true },
           })
         : Promise.resolve(null),
+      // The login-token claims, so a refresh after `session.changed` picks up
+      // live permission/role changes.
+      prisma.user.findUnique({
+        where: { id: authenticatedUserId },
+        select: SESSION_USER_SELECT,
+      }),
     ]);
+    const claims = sessionUser ? await buildSessionClaims(sessionUser) : null;
     const departmentIds = toUniquePositiveIds(
       departmentPositions.map((dept) => dept.department_id),
     );
@@ -3195,6 +3237,13 @@ export const currentuser = async (req: Request, res: Response) => {
       .filter((value): value is string => Boolean(value));
 
     const data = {
+      permissions: claims?.permissions ?? null,
+      user_category: claims?.user_category ?? null,
+      ministry_worker: claims?.ministry_worker ?? false,
+      department_positions: claims?.department_positions ?? [],
+      life_center_leader: claims?.life_center_leader ?? false,
+      instructor: claims?.instructor ?? false,
+      profile_img: claims?.profile_img ?? null,
       id: authenticatedUserId,
       name: user.name,
       email: user.email,

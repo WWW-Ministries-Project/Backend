@@ -1,4 +1,4 @@
-import { appointment_status } from "@prisma/client";
+import { Prisma, appointment_status } from "@prisma/client";
 import { prisma } from "../../Models/context";
 import {
   getBranchScopedWhere,
@@ -412,16 +412,42 @@ function mapAvailabilityPayload(records: any[]) {
   });
 }
 
-async function validateBookingWindow(params: {
-  staffId: number;
-  date: string;
-  session: { start: string; end: string };
-  excludeAppointmentId?: number;
-}) {
+/**
+ * The chosen session was taken (or its block filled up) before this request
+ * got to it. The controller answers 409 so clients know to refresh the slot
+ * list instead of treating it as a bad payload.
+ */
+export class SlotUnavailableError extends Error {
+  readonly code = "SLOT_UNAVAILABLE";
+}
+
+/**
+ * Booking validation reads, then writes, so two members tapping the same
+ * session at once could both pass the check before either row exists.
+ * Locking the staff member's user row first queues concurrent bookings for
+ * that person: the second waits for the first to commit, then re-reads and
+ * sees the session taken. `user` is non-reserved in MySQL, so no quoting.
+ */
+async function lockStaffForBooking(
+  tx: Prisma.TransactionClient,
+  staffId: number,
+) {
+  await tx.$queryRaw`SELECT id FROM user WHERE id = ${staffId} FOR UPDATE`;
+}
+
+async function validateBookingWindow(
+  db: Prisma.TransactionClient,
+  params: {
+    staffId: number;
+    date: string;
+    session: { start: string; end: string };
+    excludeAppointmentId?: number;
+  },
+) {
   const { staffId, date, session, excludeAppointmentId } = params;
   const { dayStart, dayEnd, dayName, appointmentDate } = parseDateInput(date);
 
-  const availabilityCandidates = await prisma.availability.findMany({
+  const availabilityCandidates = await db.availability.findMany({
     where: {
       userId: staffId,
       sessions: {
@@ -444,7 +470,7 @@ async function validateBookingWindow(params: {
     throw new Error("Selected session is not available for this user");
   }
 
-  const existingSessionBooking = await prisma.appointment.findFirst({
+  const existingSessionBooking = await db.appointment.findFirst({
     where: {
       userId: staffId,
       date: {
@@ -468,7 +494,7 @@ async function validateBookingWindow(params: {
   });
 
   if (existingSessionBooking) {
-    throw new Error("This session is already booked");
+    throw new SlotUnavailableError("This session is already booked");
   }
 
   const sessionFilters = availabilityForSession.sessions.map((s) => ({
@@ -476,7 +502,7 @@ async function validateBookingWindow(params: {
     endTime: s.end,
   }));
 
-  const bookedSessionsInBlock = await prisma.appointment.findMany({
+  const bookedSessionsInBlock = await db.appointment.findMany({
     where: {
       userId: staffId,
       date: {
@@ -509,7 +535,7 @@ async function validateBookingWindow(params: {
 
   const limit = availabilityForSession.maxBookingsPerSlot || 1;
   if (uniqueBookedSessions.size >= limit) {
-    throw new Error(
+    throw new SlotUnavailableError(
       "This availability block has reached its max number of booked sessions",
     );
   }
@@ -532,28 +558,33 @@ export const AppointmentService = {
       throw new Error("date is required in YYYY-MM-DD format");
     }
 
-    const appointmentDate = await validateBookingWindow({
-      staffId,
-      date: payload.date,
-      session,
-    });
+    const branchId = await resolveBranchIdOrDefault(payload?.branch_id);
 
-    const created = await prisma.appointment.create({
-      data: {
-        fullName,
-        email,
-        phone,
-        purpose,
-        note: note || "",
-        date: appointmentDate,
-        startTime: session.start,
-        endTime: session.end,
-        userId: staffId,
-        requesterId,
-        branch_id: await resolveBranchIdOrDefault(payload?.branch_id),
-        status: "PENDING",
-      },
-      include: appointmentInclude,
+    const created = await prisma.$transaction(async (tx) => {
+      await lockStaffForBooking(tx, staffId);
+      const appointmentDate = await validateBookingWindow(tx, {
+        staffId,
+        date: payload.date,
+        session,
+      });
+
+      return tx.appointment.create({
+        data: {
+          fullName,
+          email,
+          phone,
+          purpose,
+          note: note || "",
+          date: appointmentDate,
+          startTime: session.start,
+          endTime: session.end,
+          userId: staffId,
+          requesterId,
+          branch_id: branchId,
+          status: "PENDING",
+        },
+        include: appointmentInclude,
+      });
     });
 
     return mapAppointmentWithRequester(created);
@@ -1189,43 +1220,49 @@ export const AppointmentService = {
       nextSession.end !== existing.endTime ||
       nextDate !== formatDateUTC(existing.date);
 
-    const appointmentDate = shouldRevalidate
-      ? await validateBookingWindow({
-          staffId: nextstaffId,
-          date: nextDate,
-          session: nextSession,
-          excludeAppointmentId: id,
-        })
-      : existing.date;
-
     const status =
       payload.status !== undefined
         ? normalizeStatus(String(payload.status))
         : existing.status;
 
-    const updated = await prisma.appointment.update({
-      where: { id },
-      data: {
-        fullName:
-          payload.fullName !== undefined ? String(payload.fullName) : existing.fullName,
-        email: payload.email !== undefined ? String(payload.email) : existing.email,
-        phone: payload.phone !== undefined ? String(payload.phone) : existing.phone,
-        purpose:
-          payload.purpose !== undefined ? String(payload.purpose) : existing.purpose,
-        note: payload.note !== undefined ? String(payload.note) : existing.note,
-        date: appointmentDate,
-        startTime: nextSession.start,
-        endTime: nextSession.end,
-        userId: nextstaffId,
-        requesterId: nextRequesterId,
-        ...(payload.branch_id !== undefined
-          ? {
-              branch_id: await resolveBranchIdOrDefault(payload.branch_id),
-            }
-          : {}),
-        status,
-      },
-      include: appointmentInclude,
+    const branchId =
+      payload.branch_id !== undefined
+        ? await resolveBranchIdOrDefault(payload.branch_id)
+        : undefined;
+
+    const updated = await prisma.$transaction(async (tx) => {
+      // Moving to another time competes with new bookings for it, so it
+      // takes the same lock; edits that keep the time skip both.
+      if (shouldRevalidate) await lockStaffForBooking(tx, nextstaffId);
+      const appointmentDate = shouldRevalidate
+        ? await validateBookingWindow(tx, {
+            staffId: nextstaffId,
+            date: nextDate,
+            session: nextSession,
+            excludeAppointmentId: id,
+          })
+        : existing.date;
+
+      return tx.appointment.update({
+        where: { id },
+        data: {
+          fullName:
+            payload.fullName !== undefined ? String(payload.fullName) : existing.fullName,
+          email: payload.email !== undefined ? String(payload.email) : existing.email,
+          phone: payload.phone !== undefined ? String(payload.phone) : existing.phone,
+          purpose:
+            payload.purpose !== undefined ? String(payload.purpose) : existing.purpose,
+          note: payload.note !== undefined ? String(payload.note) : existing.note,
+          date: appointmentDate,
+          startTime: nextSession.start,
+          endTime: nextSession.end,
+          userId: nextstaffId,
+          requesterId: nextRequesterId,
+          ...(branchId !== undefined ? { branch_id: branchId } : {}),
+          status,
+        },
+        include: appointmentInclude,
+      });
     });
 
     return mapAppointmentWithRequester(updated);

@@ -4,6 +4,7 @@ import {
   NotFoundError,
 } from "../../utils/custom-error-handlers";
 import { UserService } from "../user/userService";
+import { enqueueWelcome } from "../messaging/messagingService";
 import { VisitService } from "./visitService";
 import { toSentenceCase } from "../../utils";
 import {
@@ -856,6 +857,10 @@ export class VisitorService {
     const createdVisitor = await prisma.visitor.create({
       data: newVisitorData,
     });
+
+    if (createdVisitor.consentToContact) {
+      void enqueueWelcome({ visitorId: createdVisitor.id });
+    }
 
     const newVisit = await visitService.createVisit({
       visitorId: createdVisitor.id,
