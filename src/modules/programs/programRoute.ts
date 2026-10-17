@@ -4,6 +4,7 @@ import { EnrollmentController } from "./enrolmentController";
 import { CohortController } from "./cohortController";
 import { CourseController } from "./courseController";
 import { Permissions } from "../../middleWare/authorization";
+import { curriculumController } from "./lms/curriculumController";
 const permissions = new Permissions();
 const protect = permissions.protect;
 
@@ -221,5 +222,23 @@ programRouter.put(
   [protect, permissions.can_manage_programs_or_facilitator],
   programController.reorderTopics,
 );
+
+// LMS: curriculum modules, grading model, due-date rules and extensions
+// Program design is admin-only; instructors (facilitators) may run cohorts.
+const design = [protect, permissions.can_manage_school_of_ministry];
+const manage = [protect, permissions.can_manage_programs_or_facilitator];
+programRouter.get("/modules", [protect], curriculumController.listModules);
+programRouter.post("/module", design, curriculumController.createModule);
+programRouter.put("/module", design, curriculumController.updateModule);
+programRouter.delete("/module", design, curriculumController.deleteModule);
+programRouter.put("/reorder-modules", design, curriculumController.reorderModules);
+programRouter.put("/topic-module", design, curriculumController.setTopicModule);
+programRouter.get("/grading", [protect], curriculumController.getGrading);
+programRouter.put("/grading", design, curriculumController.updateGrading);
+programRouter.put("/unit-settings", design, curriculumController.updateUnitSettings);
+programRouter.get("/cohort-schedule", [protect], curriculumController.getCohortSchedule);
+programRouter.put("/cohort-due-date", manage, curriculumController.setCohortDueDate);
+programRouter.post("/assignment-extension", manage, curriculumController.grantExtension);
+programRouter.delete("/assignment-extension", manage, curriculumController.removeExtension);
 
 export default programRouter;

@@ -1288,6 +1288,15 @@ model program {
   topics                     topic[]
   eligibility_rules          role_eligibility_rules[]
   position_eligibility_rules position_eligibility_rules[]
+  modules                    program_module[]
+  /// "PASS_FAIL" (every graded unit passed) or "WEIGHTED" (category weights roll up to a final grade)
+  grading_mode               String                       @default("PASS_FAIL") @db.VarChar(20)
+  pass_mark                  Int                          @default(50)
+  /// { quiz, essay, exam, attendance } percentages summing to 100; used when grading_mode = WEIGHTED
+  grading_weights            Json?
+  /// { requireGrade, requireAllUnits, minAttendance: number | null }
+  completion_rules           Json?
+  auto_certificate           Boolean                      @default(true)
 
   @@index([branch_id], map: "program_branch_id_idx")
 }
@@ -1329,16 +1338,34 @@ model program_prerequisites {
 }
 
 model topic {
-  id           Int           @id @default(autoincrement())
+  id           Int             @id @default(autoincrement())
   name         String
   programId    Int
   description  String?
   order_number Int?
+  moduleId     Int?
   LearningUnit LearningUnit?
   progress     progress[]
-  program      program       @relation(fields: [programId], references: [id], onDelete: Cascade)
+  program      program         @relation(fields: [programId], references: [id], onDelete: Cascade)
+  module       program_module? @relation(fields: [moduleId], references: [id], onDelete: SetNull)
 
   @@index([programId], map: "topic_programId_fkey")
+  @@index([moduleId])
+}
+
+model program_module {
+  id           Int      @id @default(autoincrement())
+  programId    Int
+  title        String
+  description  String?  @db.Text
+  order_number Int      @default(0)
+  weeks        Int?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  program      program  @relation(fields: [programId], references: [id], onDelete: Cascade)
+  topics       topic[]
+
+  @@index([programId])
 }
 
 model LearningUnit {
@@ -1348,13 +1375,36 @@ model LearningUnit {
   data              String                  @db.LongText
   version           Int                     @default(1)
   maxAttempts       Int?                    @default(3)
+  /// { week, mode: "day" | "after", day?: "Mon".."Sun", days?: number }; due date per cohort is derived from cohort.startDate
+  due_rule          Json?
+  /// "quiz" | "essay" | "exam"; defaults from type when null
+  grading_category  String?                 @db.VarChar(20)
   topic             topic                   @relation(fields: [topicId], references: [id], onDelete: Cascade)
   submissions       assignment_submission[]
   cohortAssignments cohort_assignment[]
+  extensions        assignment_extension[]
+}
+
+model assignment_extension {
+  id             Int          @id @default(autoincrement())
+  cohortId       Int
+  learningUnitId Int
+  enrollmentId   Int
+  dueDate        DateTime
+  reason         String?      @db.Text
+  grantedById    Int?
+  createdAt      DateTime     @default(now())
+  cohort         cohort       @relation(fields: [cohortId], references: [id], onDelete: Cascade)
+  learningUnit   LearningUnit @relation(fields: [learningUnitId], references: [id], onDelete: Cascade)
+  enrollment     enrollment   @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+
+  @@unique([learningUnitId, enrollmentId])
+  @@index([cohortId])
+  @@index([enrollmentId])
 }
 
 model cohort {
-  id                  Int                 @id @default(autoincrement())
+  id                  Int                    @id @default(autoincrement())
   name                String
   startDate           DateTime
   status              String
@@ -1362,11 +1412,12 @@ model cohort {
   duration            String
   applicationDeadline DateTime
   programId           Int
-  createdAt           DateTime            @default(now())
-  updatedAt           DateTime            @updatedAt
-  program             program             @relation(fields: [programId], references: [id], onDelete: Cascade)
+  createdAt           DateTime               @default(now())
+  updatedAt           DateTime               @updatedAt
+  program             program                @relation(fields: [programId], references: [id], onDelete: Cascade)
   assignments         cohort_assignment[]
   courses             course[]
+  extensions          assignment_extension[]
 
   @@index([programId], map: "cohort_programId_fkey")
 }
@@ -1400,6 +1451,7 @@ model enrollment {
   completed   Boolean?                @default(false)
   completedAt DateTime?
   submissions assignment_submission[]
+  extensions  assignment_extension[]
   course      course                  @relation(fields: [course_id], references: [id], onDelete: Cascade)
   user        user?                   @relation(fields: [user_id], references: [id], onDelete: Cascade)
   progress    progress[]
@@ -2756,9 +2808,9 @@ model sermon {
   created_at    DateTime      @default(now())
   updated_at    DateTime      @updatedAt
 
-  series  sermon_series? @relation(fields: [series_id], references: [id], onDelete: SetNull)
-  branch  branch?        @relation(fields: [branch_id], references: [id])
-  creator user           @relation("sermon_creator", fields: [created_by], references: [id])
+  series  sermon_series?          @relation(fields: [series_id], references: [id], onDelete: SetNull)
+  branch  branch?                 @relation(fields: [branch_id], references: [id])
+  creator user                    @relation("sermon_creator", fields: [created_by], references: [id])
   tags    sermon_tag_assignment[]
 
   @@index([series_id])
