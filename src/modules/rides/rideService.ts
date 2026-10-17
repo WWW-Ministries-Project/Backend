@@ -8,6 +8,7 @@ import {
 } from "../../utils/custom-error-handlers";
 import { userHasMinimumDomainAccess } from "../../utils/permissionResolver";
 import { notificationService } from "../notifications/notificationService";
+import { emitRideChange } from "./rideEvents";
 import {
   churchMinutesNow,
   churchToday,
@@ -152,7 +153,7 @@ const eventPhrase = (event: RideEvent | null) => (event ? `${event.name} on ${we
  * events from today through the ride window. Today's stay listed all day,
  * even once they have finished — a ride is for the day, not the event's hours.
  */
-const upcomingEvents = async (now: Date = new Date()): Promise<RideEvent[]> => {
+export const upcomingEvents = async (now: Date = new Date()): Promise<RideEvent[]> => {
   const { from, to } = rideEventWindow(now);
   const rows = await prisma.event_mgt.findMany({
     where: {
@@ -719,6 +720,7 @@ export const publishOffer = async (userId: number, body: any) => {
     }
   }
 
+  emitRideChange({ eventId: event.id, offerId: offer.id }, [userId], { catalog: true });
   return driverView(offer);
 };
 
@@ -758,6 +760,11 @@ export const cancelOffer = async (userId: number, offerIdRaw: unknown) => {
       dedupeKey: `ride.cancelled:${request.id}`,
     });
   }
+  emitRideChange(
+    { eventId: offer.event_id, offerId: offer.id },
+    [userId, ...affected.map((request) => request.passenger_id)],
+    { catalog: true },
+  );
   return { id: offer.id, status: "CANCELLED" };
 };
 
@@ -807,6 +814,7 @@ export const requestSeat = async (userId: number, body: any) => {
     dedupeKey: `ride.request_received:${request.id}`,
   });
 
+  emitRideChange({ eventId: offer.event_id, offerId: offer.id }, [offer.driver_id, userId], { catalog: false });
   return getMyRide(userId, event.id);
 };
 
@@ -861,6 +869,11 @@ export const cancelRequest = async (userId: number, requestIdRaw: unknown) => {
     priority: wasAccepted ? "HIGH" : "MEDIUM",
     dedupeKey: `ride.request_withdrawn:${request.id}`,
   });
+  emitRideChange(
+    { eventId: request.offer.event_id, offerId: request.offer.id },
+    [request.offer.driver_id, userId],
+    { catalog: wasAccepted },
+  );
   return { id: request.id, status: wasAccepted ? "CANCELLED" : "WITHDRAWN" };
 };
 
@@ -872,6 +885,7 @@ export const dismissRequest = async (userId: number, requestIdRaw: unknown) => {
     throw new ConflictError("Withdraw the request instead");
   }
   await prisma.ride_request.update({ where: { id: request.id }, data: { dismissed_at: new Date() } });
+  emitRideChange({ eventId: request.offer.event_id, offerId: request.offer.id }, [userId], { catalog: false });
   return { id: request.id };
 };
 
@@ -911,6 +925,11 @@ export const acceptRequest = async (userId: number, requestIdRaw: unknown) => {
     priority: "HIGH",
     dedupeKey: `ride.request_accepted:${request.id}`,
   });
+  emitRideChange(
+    { eventId: request.offer.event_id, offerId: request.offer.id },
+    [userId, request.passenger_id],
+    { catalog: true },
+  );
   return getMyRide(userId, request.offer.event_id);
 };
 
@@ -937,6 +956,11 @@ export const declineRequest = async (userId: number, requestIdRaw: unknown, body
     entityId: request.id,
     dedupeKey: `ride.request_declined:${request.id}`,
   });
+  emitRideChange(
+    { eventId: request.offer.event_id, offerId: request.offer.id },
+    [userId, request.passenger_id],
+    { catalog: false },
+  );
   return getMyRide(userId, request.offer.event_id);
 };
 
@@ -1351,6 +1375,11 @@ export const adminCancelOffer = async (userId: number, offerIdRaw: unknown, body
       dedupeKey: `ride.cancelled:${request.id}`,
     });
   }
+  emitRideChange(
+    { eventId: offer.event_id, offerId: offer.id },
+    [offer.driver_id, ...affected.map((request) => request.passenger_id)],
+    { catalog: true },
+  );
   return { id: offer.id, status: "CANCELLED", passengers_notified: affected.length };
 };
 

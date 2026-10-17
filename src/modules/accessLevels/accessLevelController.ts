@@ -1,5 +1,6 @@
 import { prisma } from "../../Models/context";
 import { Request, Response } from "express";
+import { sessionChanged, usersWithAccessLevel } from "../realtime/realtimeSession";
 
 const ALLOWED_PERMISSION_VALUES = new Set([
   "Can_View",
@@ -467,6 +468,7 @@ export const createAccessLevel = async (req: Request, res: Response) => {
           access_level_id: response.id,
         },
       });
+      void sessionChanged(assigned_users.map((id: any) => Number(id)), ["permissions"]);
     }
 
     const data = await prisma.access_level.findMany({
@@ -594,6 +596,10 @@ export const updateAccessLevel = async (req: Request, res: Response) => {
         },
       });
     }
+    // Permissions changed for every holder, not only newly assigned users.
+    void usersWithAccessLevel(response.id)
+      .then((holders) => sessionChanged(holders, ["permissions"]))
+      .catch(() => undefined);
     const enrichedResponse = await enrichAccessLevelWithExclusions(response);
     res
       .status(200)
@@ -737,6 +743,7 @@ export const assignAccessLevelToUser = async (req: Request, res: Response) => {
       return res.status(500).json({ message: "Invalid User Id" });
     }
 
+    void sessionChanged([userId], ["permissions"]);
     return res.status(200).json({ message: "Operation successful" });
   } catch (error: any) {
     return res
@@ -898,6 +905,7 @@ export const bulkAssignAccessLevel = async (req: Request, res: Response) => {
         data: { access_level_id: null },
       }),
     ]);
+    void sessionChanged([...assignIds, ...unassignIds], ["permissions"]);
 
     const updated = await prisma.access_level.findUnique({
       where: { id: accessLevelId },
@@ -929,6 +937,7 @@ export const deleteAccessLevel = async (req: Request, res: Response) => {
     });
   }
   try {
+    const holders = await usersWithAccessLevel(Number(id));
     const unAssign = await prisma.user.updateMany({
       where: {
         access_level_id: Number(id),
@@ -943,6 +952,7 @@ export const deleteAccessLevel = async (req: Request, res: Response) => {
     if (!deleteAccess) {
       res.status(500).json({ message: "Invalid Access Level Id" });
     }
+    void sessionChanged(holders, ["permissions"]);
     listAllAccessLevel(req, res);
   } catch (error: any) {
     return res

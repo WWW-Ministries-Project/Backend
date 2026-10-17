@@ -1,6 +1,7 @@
 import { prisma } from "../../Models/context";
 import { Request, Response } from "express";
 import { departmentSchema } from "../../utils";
+import { membersOfDepartment, sessionChanged } from "../realtime/realtimeSession";
 import {
   buildRoleEligibilityFailureResponse,
   isRoleEligibilityValidationError,
@@ -318,6 +319,7 @@ export const updateDepartment = async (req: Request, res: Response) => {
       select: {
         id: true,
         branch_id: true,
+        department_head: true,
       },
     });
 
@@ -354,6 +356,12 @@ export const updateDepartment = async (req: Request, res: Response) => {
         },
       },
     });
+    // Members see the new name/branch; old and new heads gain or lose scoped access.
+    const heads = [existingDepartment?.department_head, response.department_head_info?.id]
+      .filter((headId): headId is number => typeof headId === "number");
+    void membersOfDepartment(departmentId)
+      .then((members) => sessionChanged([...members, ...heads], ["departments", "permissions"]))
+      .catch(() => undefined);
     res
       .status(200)
       .json({ message: "Department Updated Succesfully", data: response });
@@ -389,11 +397,13 @@ export const deleteDepartment = async (req: Request, res: Response) => {
       });
     }
 
+    const affected = await membersOfDepartment(departmentId);
     await prisma.department.delete({
       where: {
         id: departmentId,
       },
     });
+    void sessionChanged(affected, ["departments"]);
     const data = await prisma.department.findMany({
       where: getBranchScopedWhere(req.query?.branch_id),
       orderBy: {

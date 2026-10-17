@@ -17,6 +17,8 @@ import {
 import { notificationPushService } from "./notificationPushService";
 import { notificationDeviceService } from "./notificationDeviceService";
 import { notificationSmsService } from "./notificationSmsService";
+import { toUser as emitToUserSocket } from "../realtime/realtimeEmit";
+import type { RealtimeEventMap, RealtimeEventName } from "../realtime/realtimeEvents";
 
 export type NotificationPriority = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 
@@ -493,15 +495,22 @@ const registerSseClient = (userId: number, res: Response): SseClient => {
   return clientState;
 };
 
+// `event` strings passed here must be keys of RealtimeEventMap (realtimeEvents.ts).
 const broadcastToUser = (
   userId: number,
-  event: string,
+  event: RealtimeEventName,
   data: unknown,
   options: SseBroadcastOptions = {},
 ) => {
   const envelope = createSseEnvelope(event, data);
   if (options.persistForReplay !== false) {
     addReplayEvent(userId, envelope);
+  }
+
+  // Same event, same body, over socket.io. Runs alongside SSE until the web
+  // dashboard moves to sockets (realtime sub-project 2), then SSE goes.
+  if (data && typeof data === "object") {
+    emitToUserSocket(userId, event, data as RealtimeEventMap[RealtimeEventName]);
   }
 
   const userClients = sseClientsByUserId.get(userId);
