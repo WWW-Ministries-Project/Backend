@@ -1443,6 +1443,8 @@ export class Permissions {
       return this.unauthorized(res, errorMessage);
     }
 
+    // LMS services narrow facilitators to the programs they teach (lms/lmsAccess.ts).
+    (req as any).somScope = { manageAll: Boolean(canManageAll) };
     return next();
   };
 

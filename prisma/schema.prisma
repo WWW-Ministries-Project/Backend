@@ -131,6 +131,8 @@ model user {
   community_blocks_received                    community_block[]                       @relation("CommunityBlockBlocked")
   community_reports_filed                      community_report[]                      @relation("CommunityReportReporter")
   community_moderation_actions                 community_moderation_log[]              @relation("CommunityModerationActor")
+  lms_applications                             lms_application[]
+  program_instructor_roles                     program_instructor[]
 
   @@index([access_level_id], map: "user_access_level_id_fkey")
   @@index([position_id], map: "user_position_id_fkey")
@@ -1297,6 +1299,8 @@ model program {
   /// { requireGrade, requireAllUnits, minAttendance: number | null }
   completion_rules           Json?
   auto_certificate           Boolean                      @default(true)
+  instructors_roster         program_instructor[]
+  lms_applications           lms_application[]
 
   @@index([branch_id], map: "program_branch_id_idx")
 }
@@ -1388,7 +1392,12 @@ model LearningUnit {
   rubric            lms_rubric?             @relation(fields: [rubricId], references: [id], onDelete: SetNull)
   gradeOverrides    lms_grade_override[]
 
+  /// Content library item this unit was created from; URL edits on the item propagate to the unit
+  libraryItemId Int?
+  libraryItem   lms_library_item? @relation(fields: [libraryItemId], references: [id], onDelete: SetNull)
+
   @@index([rubricId])
+  @@index([libraryItemId])
 }
 
 model assignment_extension {
@@ -1461,6 +1470,136 @@ model lms_grade_override {
   @@index([learningUnitId])
 }
 
+/// Teaching session (class meeting) for a cohort, optionally for one class
+model lms_session {
+  id           Int              @id @default(autoincrement())
+  cohortId     Int
+  /// null = whole cohort
+  courseId     Int?
+  title        String
+  starts_at    DateTime
+  ends_at      DateTime?
+  /// IN_PERSON | ONLINE | HYBRID
+  mode         String           @db.VarChar(20)
+  location     String?
+  meeting_link String?          @db.Text
+  week         Int?
+  cancelled    Boolean          @default(false)
+  notes        String?          @db.Text
+  created_by   Int?
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+  cohort       cohort           @relation(fields: [cohortId], references: [id], onDelete: Cascade)
+  course       course?          @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  attendance   lms_attendance[]
+
+  @@index([cohortId, starts_at])
+  @@index([courseId])
+}
+
+model lms_attendance {
+  id           Int         @id @default(autoincrement())
+  sessionId    Int
+  enrollmentId Int
+  /// PRESENT | LATE | ABSENT | EXCUSED
+  status       String      @db.VarChar(10)
+  note         String?
+  recorded_by  Int?
+  updatedAt    DateTime    @updatedAt
+  session      lms_session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  enrollment   enrollment  @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, enrollmentId])
+  @@index([enrollmentId])
+}
+
+/// Announcement to a cohort, one class, or its at-risk learners; delivered through the messaging outbox
+model lms_announcement {
+  id              Int       @id @default(autoincrement())
+  cohortId        Int
+  courseId        Int?
+  /// COHORT | CLASS | AT_RISK
+  audience        String    @db.VarChar(20)
+  title           String
+  body            String    @db.Text
+  /// { inApp, email, sms }
+  channels        Json
+  recipient_count Int       @default(0)
+  /// message_dispatch.id (no FK: the outbox prunes independently)
+  dispatch_id     Int?
+  scheduled_for   DateTime?
+  sent_by         Int?
+  createdAt       DateTime  @default(now())
+  cohort          cohort    @relation(fields: [cohortId], references: [id], onDelete: Cascade)
+  course          course?   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@index([cohortId])
+}
+
+/// Application held back by eligibility or capacity, for admin review
+model lms_application {
+  id           Int       @id @default(autoincrement())
+  programId    Int
+  cohortId     Int?
+  courseId     Int?
+  userId       Int
+  /// PENDING | APPROVED | DECLINED
+  status       String    @default("PENDING") @db.VarChar(10)
+  /// string[] of reasons the rules held the applicant back
+  reasons      Json?
+  note         String?   @db.Text
+  decided_by   Int?
+  decided_at   DateTime?
+  enrollmentId Int?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  program      program   @relation(fields: [programId], references: [id], onDelete: Cascade)
+  cohort       cohort?   @relation(fields: [cohortId], references: [id], onDelete: SetNull)
+  course       course?   @relation(fields: [courseId], references: [id], onDelete: SetNull)
+  user         user      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+  @@index([programId])
+  @@index([userId])
+}
+
+/// Instructors attached to a program, with what they may do in its cohorts
+model program_instructor {
+  id                  Int      @id @default(autoincrement())
+  programId           Int
+  userId              Int
+  can_grade           Boolean  @default(true)
+  can_attendance      Boolean  @default(true)
+  can_message         Boolean  @default(true)
+  can_edit_curriculum Boolean  @default(false)
+  added_by            Int?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  program             program  @relation(fields: [programId], references: [id], onDelete: Cascade)
+  user                user     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([programId, userId])
+  @@index([userId])
+}
+
+/// Shared content (files, videos, links) reused across programs
+model lms_library_item {
+  id               Int            @id @default(autoincrement())
+  title            String
+  /// VIDEO | PDF | SLIDES | DOCUMENT | LINK | IMAGE
+  type             String         @db.VarChar(20)
+  url              String         @db.Text
+  size_bytes       Int?
+  duration_minutes Int?
+  pages            Int?
+  /// string[]
+  tags             Json?
+  created_by       Int?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  units            LearningUnit[]
+}
+
 model cohort {
   id                  Int                    @id @default(autoincrement())
   name                String
@@ -1476,26 +1615,32 @@ model cohort {
   assignments         cohort_assignment[]
   courses             course[]
   extensions          assignment_extension[]
+  lms_sessions        lms_session[]
+  lms_announcements   lms_announcement[]
+  lms_applications    lms_application[]
 
   @@index([programId], map: "cohort_programId_fkey")
 }
 
 model course {
-  id           Int          @id @default(autoincrement())
-  name         String
-  capacity     Int
-  enrolled     Int          @default(0)
-  schedule     String
-  cohortId     Int
-  classFormat  classFormat?
-  location     String?
-  meetingLink  String?
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
-  instructorId Int?
-  cohort       cohort       @relation(fields: [cohortId], references: [id], onDelete: Cascade)
-  instructor   user?        @relation(fields: [instructorId], references: [id], onDelete: Cascade)
-  enrollments  enrollment[]
+  id                Int                @id @default(autoincrement())
+  name              String
+  capacity          Int
+  enrolled          Int                @default(0)
+  schedule          String
+  cohortId          Int
+  classFormat       classFormat?
+  location          String?
+  meetingLink       String?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  instructorId      Int?
+  cohort            cohort             @relation(fields: [cohortId], references: [id], onDelete: Cascade)
+  instructor        user?              @relation(fields: [instructorId], references: [id], onDelete: Cascade)
+  enrollments       enrollment[]
+  lms_sessions      lms_session[]
+  lms_announcements lms_announcement[]
+  lms_applications  lms_application[]
 
   @@index([cohortId], map: "course_cohortId_fkey")
   @@index([instructorId], map: "course_instructorId_fkey")
@@ -1514,6 +1659,7 @@ model enrollment {
   course         course                  @relation(fields: [course_id], references: [id], onDelete: Cascade)
   user           user?                   @relation(fields: [user_id], references: [id], onDelete: Cascade)
   progress       progress[]
+  lms_attendance lms_attendance[]
 
   @@unique([user_id, course_id])
   @@index([course_id], map: "enrollment_course_id_fkey")

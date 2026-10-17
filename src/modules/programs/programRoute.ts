@@ -6,6 +6,7 @@ import { CourseController } from "./courseController";
 import { Permissions } from "../../middleWare/authorization";
 import { assessmentController } from "./lms/assessmentController";
 import { curriculumController } from "./lms/curriculumController";
+import { operationsController } from "./lms/operationsController";
 const permissions = new Permissions();
 const protect = permissions.protect;
 
@@ -259,5 +260,34 @@ programRouter.get("/gradebook", manage, assessmentController.getGradebook);
 programRouter.put("/grade-overrides", manage, assessmentController.setOverrides);
 programRouter.get("/certificates", manage, assessmentController.listCertificates);
 programRouter.post("/certificates/issue", design, assessmentController.issueCertificates);
+
+// LMS: sessions, attendance, announcements (facilitators scoped per program in the controller)
+programRouter.get("/sessions", manage, operationsController.listSessions);
+programRouter.post("/session", manage, operationsController.createSession);
+programRouter.put("/session", manage, operationsController.updateSession);
+programRouter.delete("/session", manage, operationsController.deleteSession);
+programRouter.get("/session-attendance", manage, operationsController.getAttendance);
+programRouter.put("/session-attendance", manage, operationsController.saveAttendance);
+programRouter.get("/announcements", manage, operationsController.listAnnouncements);
+programRouter.post("/announcement", manage, operationsController.createAnnouncement);
+
+// LMS: applications and review queue
+programRouter.post("/apply", [protect], operationsController.apply);
+programRouter.get("/apply/eligibility", [protect], operationsController.checkEligibility);
+programRouter.get("/applications", design, operationsController.listApplications);
+programRouter.put("/application/decide", design, operationsController.decideApplication);
+
+// LMS: instructors, content library, reports
+programRouter.get("/program-instructors", manage, operationsController.listRoster);
+programRouter.post("/program-instructors", design, operationsController.addToRoster);
+programRouter.put("/program-instructor", design, operationsController.updateRoster);
+programRouter.delete("/program-instructor", design, operationsController.removeFromRoster);
+programRouter.get("/instructors-overview", design, operationsController.instructorsOverview);
+programRouter.get("/library", manage, operationsController.listLibrary);
+programRouter.post("/library-item", design, operationsController.createLibraryItem);
+programRouter.put("/library-item", design, operationsController.updateLibraryItem);
+programRouter.delete("/library-item", design, operationsController.deleteLibraryItem);
+programRouter.post("/library/use", design, operationsController.useLibraryItem);
+programRouter.get("/lms-reports", design, operationsController.reports);
 
 export default programRouter;

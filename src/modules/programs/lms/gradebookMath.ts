@@ -153,3 +153,28 @@ export const rubricPercentage = (
   }
   return Math.round((sum / totalWeight) * 100);
 };
+
+export const ATTENDANCE_STATUSES = ["PRESENT", "LATE", "ABSENT", "EXCUSED"] as const;
+export type AttendanceStatus = (typeof ATTENDANCE_STATUSES)[number];
+
+/**
+ * Attendance % for one learner. Only sessions where attendance was taken count
+ * (a session with at least one record); a learner with no record in such a
+ * session is treated as absent. Excused sessions are left out. Late counts as
+ * attended. Returns null when nothing counts yet.
+ */
+export const attendancePercent = (
+  takenSessionIds: number[],
+  records: { sessionId: number; status: string }[],
+): number | null => {
+  const bySession = new Map(records.map((r) => [r.sessionId, r.status]));
+  let attended = 0;
+  let counted = 0;
+  for (const id of takenSessionIds) {
+    const status = bySession.get(id) ?? "ABSENT";
+    if (status === "EXCUSED") continue;
+    counted += 1;
+    if (status === "PRESENT" || status === "LATE") attended += 1;
+  }
+  return counted ? Math.round((attended / counted) * 100) : null;
+};
