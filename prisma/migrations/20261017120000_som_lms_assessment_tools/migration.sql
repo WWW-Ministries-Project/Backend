@@ -54,6 +54,7 @@ CREATE TABLE `lms_grade_override` (
     `score` INTEGER NULL,
     `excused` BOOLEAN NOT NULL DEFAULT false,
     `note` TEXT NULL,
+    `prev_progress` JSON NULL,
     `updated_by` INTEGER NULL,
     `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     `updatedAt` DATETIME(3) NOT NULL,

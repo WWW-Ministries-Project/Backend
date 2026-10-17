@@ -1495,6 +1495,16 @@ export class ProgramService {
     if (!normalizedFileUrl) {
       throw new Error("fileUrl is required");
     }
+    // Instructors open this link from the dashboard; never accept javascript:/data: URLs.
+    let parsedFileUrl: URL;
+    try {
+      parsedFileUrl = new URL(normalizedFileUrl);
+    } catch {
+      throw new Error("fileUrl must be a valid http(s) link");
+    }
+    if (parsedFileUrl.protocol !== "https:" && parsedFileUrl.protocol !== "http:") {
+      throw new Error("fileUrl must be a valid http(s) link");
+    }
 
     const { learningUnit, enrollment, currentAttempt, maxAttempts } =
       await this.resolveAssignmentSubmissionContext({

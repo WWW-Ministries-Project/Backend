@@ -43,7 +43,8 @@ const parseJson = (value: unknown): any => {
 
 const unitPassMark = (data: unknown) => {
   const parsed = parseJson(data);
-  const raw = parsed && typeof parsed === "object" ? (parsed.passMark ?? parsed.pass_mark) : undefined;
+  const raw =
+    parsed && typeof parsed === "object" ? (parsed.passMark ?? parsed.pass_mark ?? parsed.passmark) : undefined;
   const n = Number(raw);
   return Number.isFinite(n) && n >= 0 ? n : 50;
 };
@@ -104,8 +105,13 @@ export class AssessmentService {
     const where: Prisma.lms_questionWhereInput = {};
     if (filters.search) where.prompt = { contains: filters.search };
     if (filters.type && QUESTION_TYPES.includes(filters.type as QuestionType)) where.type = filters.type;
-    const rows = await prisma.lms_question.findMany({ where, orderBy: { updatedAt: "desc" }, take: 500 });
     const tag = filters.tag?.trim().toLowerCase();
+    // Tags are JSON; filter them in memory, so only cap the page when not filtering by tag.
+    const rows = await prisma.lms_question.findMany({
+      where,
+      orderBy: { updatedAt: "desc" },
+      ...(tag ? {} : { take: 500 }),
+    });
     return tag
       ? rows.filter((r) => asStringArray(r.tags).some((t) => t.toLowerCase() === tag))
       : rows;
@@ -174,13 +180,16 @@ export class AssessmentService {
         };
       });
 
-    await prisma.learningUnit.update({
-      where: { id: unit.id },
+    const written = await prisma.learningUnit.updateMany({
+      where: { id: unit.id, version: unit.version },
       data: {
         data: JSON.stringify({ ...current, questions: [...existing, ...additions] }),
         version: { increment: 1 },
       },
     });
+    if (written.count === 0) {
+      throw new LmsError("This quiz was changed by someone else. Reload and try again.", 409);
+    }
     return { added: additions.length, skipped: usable.length - additions.length, total: existing.length + additions.length };
   }
 
@@ -291,15 +300,16 @@ export class AssessmentService {
       throw new LmsError(error.message);
     }
 
+    // Store the rubric choice first: if grading then fails, a retry simply re-grades.
+    await prisma.assignment_submission.update({
+      where: { id: args.submissionId },
+      data: { rubric_scores: args.scores as unknown as Prisma.InputJsonValue },
+    });
     const result = await this.programs.gradeAssignmentSubmission({
       submissionId: args.submissionId,
       grade,
       feedback: args.feedback,
       actorUserId: args.actorUserId,
-    });
-    await prisma.assignment_submission.update({
-      where: { id: args.submissionId },
-      data: { rubric_scores: args.scores as unknown as Prisma.InputJsonValue },
     });
     return { ...result, rubricScores: args.scores };
   }
@@ -499,7 +509,14 @@ export class AssessmentService {
     return {
       cohort: { id: cohort.id, name: cohort.name, startDate: cohort.startDate },
       program: { id: program.id, title: program.title },
-      grading: { mode, passMark: program.pass_mark, weights, completion },
+      grading: {
+        mode,
+        passMark: program.pass_mark,
+        weights,
+        completion,
+        // False until attendance is recorded (phase 3); the attendance weight is then left out and the rest renormalised.
+        attendanceTracked: Boolean(attendance),
+      },
       columns,
       rows,
       totals: {
@@ -527,51 +544,93 @@ export class AssessmentService {
   }) {
     const unit = await prisma.learningUnit.findUnique({
       where: { topicId: args.topicId },
-      select: { id: true, type: true, data: true },
+      select: { id: true, type: true, data: true, topic: { select: { programId: true } } },
     });
     if (!unit || !unit.type.startsWith("assignment")) throw new LmsError("Only quiz and essay units can be overridden");
     if (!args.clear && !args.excused && (args.score === null || args.score < 0 || args.score > 100)) {
       throw new LmsError("score must be from 0 to 100, or set excused");
     }
+
+    // Only learners enrolled in this unit's program.
+    const valid = await prisma.enrollment.findMany({
+      where: { id: { in: args.enrollmentIds }, course: { cohort: { programId: unit.topic.programId } } },
+      select: { id: true },
+    });
+    if (valid.length !== args.enrollmentIds.length) {
+      throw new LmsError("Some learners are not enrolled in this program");
+    }
+
     const passMark = unitPassMark(unit.data);
     const now = new Date();
 
-    await prisma.$transaction(async (tx) => {
-      for (const enrollmentId of args.enrollmentIds) {
-        const key = { enrollmentId_learningUnitId: { enrollmentId, learningUnitId: unit.id } };
-        if (args.clear) {
-          await tx.lms_grade_override.deleteMany({ where: { enrollmentId, learningUnitId: unit.id } });
-          continue;
-        }
-        await tx.lms_grade_override.upsert({
-          where: key,
-          update: { score: args.excused ? null : args.score, excused: args.excused, note: args.note, updated_by: args.userId },
-          create: {
-            enrollmentId,
-            learningUnitId: unit.id,
+    await prisma.$transaction(
+      async (tx) => {
+        for (const enrollmentId of args.enrollmentIds) {
+          const progressKey = { enrollmentId_topicId: { enrollmentId, topicId: args.topicId } };
+          const overrideKey = { enrollmentId_learningUnitId: { enrollmentId, learningUnitId: unit.id } };
+          const existing = await tx.lms_grade_override.findUnique({ where: overrideKey });
+
+          if (args.clear) {
+            if (!existing) continue;
+            await tx.lms_grade_override.delete({ where: overrideKey });
+            // Put back exactly what the learner had before staff stepped in.
+            const prev = existing.prev_progress as
+              | { score: number; status: "PASS" | "FAIL" | "PENDING"; completed: boolean | null; completedAt: string | null; notes: string | null }
+              | null;
+            if (prev) {
+              await tx.progress.update({
+                where: progressKey,
+                data: {
+                  score: prev.score,
+                  status: prev.status,
+                  completed: prev.completed,
+                  completedAt: prev.completedAt ? new Date(prev.completedAt) : null,
+                  notes: prev.notes,
+                },
+              });
+            } else {
+              await tx.progress.deleteMany({ where: { enrollmentId, topicId: args.topicId } });
+            }
+            continue;
+          }
+
+          // Snapshot the learner's own progress only on the first override.
+          let prevProgress: Prisma.InputJsonValue | typeof Prisma.DbNull | undefined;
+          if (!existing) {
+            const current = await tx.progress.findUnique({
+              where: progressKey,
+              select: { score: true, status: true, completed: true, completedAt: true, notes: true },
+            });
+            prevProgress = current
+              ? ({ ...current, completedAt: current.completedAt?.toISOString() ?? null } as Prisma.InputJsonValue)
+              : Prisma.DbNull;
+          }
+
+          const fields = {
             score: args.excused ? null : args.score,
             excused: args.excused,
             note: args.note,
             updated_by: args.userId,
-          },
-        });
-        const score = args.excused ? 0 : (args.score as number);
-        const status = args.excused || score >= passMark ? "PASS" : "FAIL";
-        await tx.progress.upsert({
-          where: { enrollmentId_topicId: { enrollmentId, topicId: args.topicId } },
-          update: { score, status, completed: true, completedAt: now, notes: args.excused ? "Excused" : args.note },
-          create: {
-            enrollmentId,
-            topicId: args.topicId,
-            score,
-            status,
-            completed: true,
-            completedAt: now,
-            notes: args.excused ? "Excused" : args.note,
-          },
-        });
-      }
-    });
+          };
+          await tx.lms_grade_override.upsert({
+            where: overrideKey,
+            update: fields,
+            create: { enrollmentId, learningUnitId: unit.id, ...fields, prev_progress: prevProgress ?? Prisma.DbNull },
+          });
+
+          // Excused counts as passed so it never blocks completion or a certificate.
+          const score = args.excused ? 0 : (args.score as number);
+          const status = args.excused || score >= passMark ? "PASS" : "FAIL";
+          const notes = args.excused ? "Excused" : args.note;
+          await tx.progress.upsert({
+            where: progressKey,
+            update: { score, status, completed: true, completedAt: now, notes },
+            create: { enrollmentId, topicId: args.topicId, score, status, completed: true, completedAt: now, notes },
+          });
+        }
+      },
+      { timeout: 30000 },
+    );
     return { updated: args.enrollmentIds.length };
   }
 
@@ -594,6 +653,7 @@ export class AssessmentService {
       }),
       prisma.enrollment.findMany({
         where: { course: { cohort: { programId } } },
+        orderBy: { id: "asc" },
         select: {
           user_id: true,
           user: { select: { name: true, user_info: { select: { first_name: true, last_name: true } } } },
@@ -607,8 +667,12 @@ export class AssessmentService {
     const topicIds = new Set(program.topics.map((t) => t.id));
     const issuedUserIds = new Set(issued.map((c) => c.user.id));
     const eligible = new Map<number, { userId: number; name: string; cohort: string; className: string }>();
+    // Issuing checks the user's first enrollment in the program (findFirst), so judge that one only.
+    const seen = new Set<number>();
     for (const e of enrollments) {
-      if (!e.user_id || issuedUserIds.has(e.user_id) || !topicIds.size) continue;
+      if (!e.user_id || seen.has(e.user_id)) continue;
+      seen.add(e.user_id);
+      if (issuedUserIds.has(e.user_id) || !topicIds.size) continue;
       const passed = new Set(e.progress.map((p) => p.topicId).filter((id) => topicIds.has(id)));
       if (passed.size === topicIds.size) {
         eligible.set(e.user_id, {

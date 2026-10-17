@@ -1449,6 +1449,8 @@ model lms_grade_override {
   score          Int?
   excused        Boolean      @default(false)
   note           String?      @db.Text
+  /// Learner's progress row before the first override ({ score, status, completed, completedAt } or null); restored on clear
+  prev_progress  Json?
   updated_by     Int?
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
