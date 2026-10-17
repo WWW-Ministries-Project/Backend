@@ -2660,16 +2660,16 @@ export const getUser = async (req: Request, res: Response) => {
     /* =========================
        8️⃣ FLATTEN DEPARTMENTS
     ========================== */
-    if (department_positions?.length) {
-      user.department_positions = department_positions.map((dp: any) => ({
-        department_id: dp.department?.id ?? null,
-        department_name: dp.department?.name ?? null,
-        position_id: dp.position?.id ?? null,
-        position_name: dp.position?.name ?? null,
-        start_date: dp.start_date ?? null,
-        end_date: dp.end_date ?? null,
-      }));
-    }
+    // Always an array (empty when the member serves nowhere), so clients can
+    // treat `department_positions` as the source of department/position data.
+    user.department_positions = (department_positions || []).map((dp: any) => ({
+      department_id: dp.department?.id ?? null,
+      department_name: dp.department?.name ?? null,
+      position_id: dp.position?.id ?? null,
+      position_name: dp.position?.name ?? null,
+      start_date: dp.start_date ?? null,
+      end_date: dp.end_date ?? null,
+    }));
 
     const enrolledPrograms = (enrollments || []).map((enrollment: any) => {
       const completed = Boolean(enrollment.completed);
