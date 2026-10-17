@@ -152,7 +152,7 @@ const eventPhrase = (event: RideEvent | null) => (event ? `${event.name} on ${we
  * events from today through the ride window. Today's stay listed all day,
  * even once they have finished — a ride is for the day, not the event's hours.
  */
-const upcomingEvents = async (now: Date = new Date()): Promise<RideEvent[]> => {
+export const upcomingEvents = async (now: Date = new Date()): Promise<RideEvent[]> => {
   const { from, to } = rideEventWindow(now);
   const rows = await prisma.event_mgt.findMany({
     where: {

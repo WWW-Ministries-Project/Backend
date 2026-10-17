@@ -22,6 +22,8 @@ export type RealtimeEventMap = {
   notifications_cleared: Record<string, unknown>;
   notifications_deleted: Record<string, unknown>;
   unread_count: { unreadCount: number };
+  "rides.changed": { eventId: number | null; offerId: number };
+  "rides.catalog_changed": { eventId: number };
 };
 
 export type RealtimeEventName = keyof RealtimeEventMap;
