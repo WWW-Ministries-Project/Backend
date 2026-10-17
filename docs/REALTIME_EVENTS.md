@@ -46,6 +46,8 @@ Every event body carries `v: 1` and `at` (ISO time) next to its own fields.
 | `unread_count` | `{ unreadCount }` | badge value; also sent once on every non-recovered connect |
 | `session.changed` | `{ reasons: ("permissions"\|"departments"\|"profile")[] }` | refetch `GET /user/current-user` — it returns the same permission/profile claims as the login token |
 | `session.revoked` | `{ reason: "deactivated"\|"deleted"\|"password_reset" }` | sign out; the server disconnects next |
+| `rides.changed` | `{ eventId \| null, offerId }` | a ride you drive or ride in changed — refetch My ride and your ride lists |
+| `rides.catalog_changed` | `{ eventId }` | seats or offers changed for that event — refetch its catalog and search lists |
 
 ### During migration
 
@@ -57,7 +59,7 @@ The same notification events are still sent over the SSE stream
 `socket.emit("subscribe", { topic }, ack)` / `socket.emit("unsubscribe", { topic }, ack)`.
 Ack: `{ ok: true }` or `{ ok: false, code }` with `BAD_TOPIC`, `UNKNOWN_TOPIC`,
 `FORBIDDEN`, `TOO_MANY_TOPICS` (20 per socket), `RATE_LIMITED` (10 per second).
-No topics are registered yet; feature topics arrive with realtime sub-project 4.
+`ride-event:<eventId>` — follow an event's rides while a ride screen is open. Allowed for active, non-guest members and upcoming ride events; carries `rides.catalog_changed`.
 Re-subscribe after any non-recovered reconnect.
 
 ## Nginx
