@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../../../Models/context";
 import { EnrollmentService } from "../enrolmentService";
 import { ProgramService } from "../programService";
+import { attendanceByEnrollment } from "./attendanceQuery";
 import { categoryForUnit, readCompletion, readWeights } from "./curriculumService";
 import { dueDateFromRule, parseDueRule } from "./dueRules";
 import {
@@ -371,7 +372,8 @@ export class AssessmentService {
   // Gradebook
   // ---------------------------------------------------------------------------
 
-  async getGradebook(cohortId: number, courseId: number | null, attendance?: Map<number, number | null>) {
+  async getGradebook(cohortId: number, courseId: number | null) {
+    const { tracked: attendanceTracked, map: attendance } = await attendanceByEnrollment(cohortId);
     const cohort = await prisma.cohort.findUnique({
       where: { id: cohortId },
       select: {
@@ -479,7 +481,7 @@ export class AssessmentService {
           return { topicId: col.topicId, ...cell, note: override?.note ?? null, extendedTo: extension?.dueDate ?? null };
         });
 
-        const att = attendance?.get(enrollment.id) ?? null;
+        const att = attendance.get(enrollment.id) ?? null;
         const summary = summarizeLearner({
           mode,
           passMark: program.pass_mark,
@@ -514,8 +516,8 @@ export class AssessmentService {
         passMark: program.pass_mark,
         weights,
         completion,
-        // False until attendance is recorded (phase 3); the attendance weight is then left out and the rest renormalised.
-        attendanceTracked: Boolean(attendance),
+        // False until attendance is taken for a session; until then the attendance weight is left out.
+        attendanceTracked,
       },
       columns,
       rows,

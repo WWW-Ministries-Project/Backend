@@ -1,4 +1,5 @@
 import { assessmentService } from "./assessmentService";
+import { assertCohortAbility, assertProgramAbility, programIdForSubmission, programIdForTopic } from "./lmsAccess";
 import { LmsError, lmsHandler, optionalPositiveInt, positiveInt, requestUserId } from "./lmsHttp";
 
 const idList = (value: unknown, field: string) => {
@@ -51,16 +52,20 @@ export const assessmentController = {
       optionalPositiveInt(req.body.rubricId, "rubricId"),
     ),
   ),
-  getSubmission: lmsHandler("Submission fetched", (req) =>
-    assessmentService.getSubmissionForGrading(positiveInt(req.query.id, "id")),
-  ),
-  gradeWithRubric: lmsHandler("Submission graded", (req) => {
+  getSubmission: lmsHandler("Submission fetched", async (req) => {
+    const id = positiveInt(req.query.id, "id");
+    await assertProgramAbility(req, await programIdForSubmission(id), "can_grade");
+    return assessmentService.getSubmissionForGrading(id);
+  }),
+  gradeWithRubric: lmsHandler("Submission graded", async (req) => {
+    const submissionId = positiveInt(req.body.submissionId, "submissionId");
+    await assertProgramAbility(req, await programIdForSubmission(submissionId), "can_grade");
     const scores = req.body?.scores;
     if (!scores || typeof scores !== "object" || Array.isArray(scores)) {
       throw new LmsError("scores must map each criterion id to a level id");
     }
     return assessmentService.gradeWithRubric({
-      submissionId: positiveInt(req.body.submissionId, "submissionId"),
+      submissionId,
       scores: Object.fromEntries(Object.entries(scores).map(([k, v]) => [k, String(v)])),
       feedback: text(req.body.feedback),
       actorUserId: requestUserId(req),
@@ -68,13 +73,13 @@ export const assessmentController = {
   }),
 
   // Gradebook
-  getGradebook: lmsHandler("Gradebook fetched", (req) =>
-    assessmentService.getGradebook(
-      positiveInt(req.query.cohortId, "cohortId"),
-      optionalPositiveInt(req.query.courseId, "courseId"),
-    ),
-  ),
-  setOverrides: lmsHandler("Grades updated", (req) => {
+  getGradebook: lmsHandler("Gradebook fetched", async (req) => {
+    const cohortId = positiveInt(req.query.cohortId, "cohortId");
+    await assertCohortAbility(req, cohortId, "can_grade");
+    return assessmentService.getGradebook(cohortId, optionalPositiveInt(req.query.courseId, "courseId"));
+  }),
+  setOverrides: lmsHandler("Grades updated", async (req) => {
+    await assertProgramAbility(req, await programIdForTopic(positiveInt(req.body.topicId, "topicId")), "can_grade");
     const clear = req.body?.clear === true;
     const excused = req.body?.excused === true;
     const rawScore = req.body?.score;
@@ -92,9 +97,11 @@ export const assessmentController = {
   }),
 
   // Certificates
-  listCertificates: lmsHandler("Certificates fetched", (req) =>
-    assessmentService.listCertificates(positiveInt(req.query.programId, "programId")),
-  ),
+  listCertificates: lmsHandler("Certificates fetched", async (req) => {
+    const programId = positiveInt(req.query.programId, "programId");
+    await assertProgramAbility(req, programId, "can_grade");
+    return assessmentService.listCertificates(programId);
+  }),
   issueCertificates: lmsHandler("Certificates issued", (req) =>
     assessmentService.issueCertificates(
       positiveInt(req.body.programId, "programId"),

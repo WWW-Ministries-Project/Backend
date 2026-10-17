@@ -1,4 +1,5 @@
 import { Request, Response } from "express";
+import { AppError } from "../../../utils/custom-error-handlers";
 
 /** Error with an HTTP status, thrown by LMS services and mapped by `lmsHandler`. */
 export class LmsError extends Error {
@@ -54,9 +55,16 @@ export const lmsHandler =
       const data = await action(req);
       return res.status(200).json({ message: successMessage, data });
     } catch (error: any) {
-      const status = error instanceof LmsError ? error.status : 500;
+      // LmsError, or the shared AppError family (InputValidationError, NotFoundError, …).
+      const status =
+        error instanceof LmsError
+          ? error.status
+          : error instanceof AppError
+            ? error.statusCode
+            : 500;
+      const known = status < 500;
       return res.status(status).json({
-        message: error instanceof LmsError ? error.message : "Something went wrong",
+        message: known ? error.message : "Something went wrong",
         error: error?.message,
       });
     }

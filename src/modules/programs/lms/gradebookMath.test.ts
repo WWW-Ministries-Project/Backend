@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { computeCell, rubricPercentage, summarizeLearner, type Cell } from "./gradebookMath";
+import { attendancePercent, computeCell, rubricPercentage, summarizeLearner, type Cell } from "./gradebookMath";
 
 const NOW = new Date("2026-10-17T12:00:00Z");
 const PAST = new Date("2026-10-10T23:59:00Z");
@@ -115,4 +115,19 @@ test("rubricPercentage weights criteria by level factor", () => {
   ];
   assert.equal(rubricPercentage(criteria, levels, { a: "x", b: "g" }), 88);
   assert.throws(() => rubricPercentage(criteria, levels, { a: "x" }), /Application/);
+});
+
+
+test("attendancePercent counts late as attended, skips excused, treats no record as absent", () => {
+  const taken = [1, 2, 3, 4];
+  assert.equal(
+    attendancePercent(taken, [
+      { sessionId: 1, status: "PRESENT" },
+      { sessionId: 2, status: "LATE" },
+      { sessionId: 3, status: "EXCUSED" },
+    ]),
+    67,
+  );
+  assert.equal(attendancePercent([], []), null);
+  assert.equal(attendancePercent([5], [{ sessionId: 5, status: "EXCUSED" }]), null);
 });

@@ -1,4 +1,5 @@
 import { curriculumService } from "./curriculumService";
+import { assertCohortAbility, assertProgramAbility, programIdForExtension } from "./lmsAccess";
 import {
   LmsError,
   lmsHandler,
@@ -83,19 +84,23 @@ export const curriculumController = {
     curriculumService.getCohortSchedule(positiveInt(req.query.cohortId, "cohortId")),
   ),
 
-  setCohortDueDate: lmsHandler("Due date updated", (req) =>
-    curriculumService.setCohortDueDate(
-      positiveInt(req.body.cohortId, "cohortId"),
+  setCohortDueDate: lmsHandler("Due date updated", async (req) => {
+    const cohortId = positiveInt(req.body.cohortId, "cohortId");
+    await assertCohortAbility(req, cohortId, "can_grade");
+    return curriculumService.setCohortDueDate(
+      cohortId,
       positiveInt(req.body.topicId, "topicId"),
       optionalDate(req.body.dueDate, "dueDate"),
-    ),
-  ),
+    );
+  }),
 
-  grantExtension: lmsHandler("Extension granted", (req) => {
+  grantExtension: lmsHandler("Extension granted", async (req) => {
     const dueDate = optionalDate(req.body.dueDate, "dueDate");
     if (!dueDate) throw new LmsError("dueDate is required");
+    const cohortId = positiveInt(req.body.cohortId, "cohortId");
+    await assertCohortAbility(req, cohortId, "can_grade");
     return curriculumService.grantExtension({
-      cohortId: positiveInt(req.body.cohortId, "cohortId"),
+      cohortId,
       topicId: positiveInt(req.body.topicId, "topicId"),
       enrollmentId: positiveInt(req.body.enrollmentId, "enrollmentId"),
       dueDate,
@@ -104,7 +109,9 @@ export const curriculumController = {
     });
   }),
 
-  removeExtension: lmsHandler("Extension removed", (req) =>
-    curriculumService.removeExtension(positiveInt(req.query.id, "id")),
-  ),
+  removeExtension: lmsHandler("Extension removed", async (req) => {
+    const id = positiveInt(req.query.id, "id");
+    await assertProgramAbility(req, await programIdForExtension(id), "can_grade");
+    return curriculumService.removeExtension(id);
+  }),
 };
