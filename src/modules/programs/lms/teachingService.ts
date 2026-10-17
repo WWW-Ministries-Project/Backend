@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../../Models/context";
+import { getBranchScopedWhere } from "../../branches/branchService";
 import { createGeneralDispatch } from "../../messaging/messagingService";
 import { assessmentService } from "./assessmentService";
 import { attendanceByEnrollment } from "./attendanceQuery";
@@ -62,8 +63,17 @@ export class TeachingService {
     return cohortId;
   }
 
-  async listSessions(filters: { cohortId?: number; courseId?: number; from?: Date; to?: Date; cohortIds?: number[] }) {
+  async listSessions(filters: {
+    cohortId?: number;
+    courseId?: number;
+    from?: Date;
+    to?: Date;
+    cohortIds?: number[];
+    branchId?: unknown;
+  }) {
     const where: Prisma.lms_sessionWhereInput = {};
+    const branchWhere = getBranchScopedWhere(filters.branchId);
+    if (branchWhere) where.cohort = { program: branchWhere };
     if (filters.cohortId) where.cohortId = filters.cohortId;
     if (filters.cohortIds) where.cohortId = { in: filters.cohortIds };
     if (filters.courseId) where.OR = [{ courseId: filters.courseId }, { courseId: null }];
@@ -191,6 +201,9 @@ export class TeachingService {
     if (session.cancelled) throw new LmsError("This session was cancelled");
     if (records.some((r) => !ATTENDANCE_STATUSES.includes(r.status as AttendanceStatus))) {
       throw new LmsError("status must be PRESENT, LATE, ABSENT or EXCUSED");
+    }
+    if (records.some((r) => (r.note?.length ?? 0) > 191)) {
+      throw new LmsError("Attendance notes must be at most 191 characters");
     }
     const ids = records.map((r) => r.enrollmentId);
     const inScope = await prisma.enrollment.count({ where: { AND: [{ id: { in: ids } }, sessionScopeWhere(session)] } });

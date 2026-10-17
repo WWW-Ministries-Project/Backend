@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../../Models/context";
 import { notificationService } from "../../notifications/notificationService";
+import { getBranchScopedWhere } from "../../branches/branchService";
 import { EnrollmentService } from "../enrolmentService";
 import { eligibilityReasons } from "./eligibility";
 import { LmsError } from "./lmsHttp";
@@ -115,11 +116,13 @@ export class ApplicationService {
     return { status: "PENDING" as const, applicationId: application.id, reasons: check.reasons };
   }
 
-  async list(filters: { status?: string; programId?: number }) {
+  async list(filters: { status?: string; programId?: number; branchId?: unknown }) {
+    const branchWhere = getBranchScopedWhere(filters.branchId);
     const rows = await prisma.lms_application.findMany({
       where: {
         ...(filters.status ? { status: filters.status } : {}),
         ...(filters.programId ? { programId: filters.programId } : {}),
+        ...(branchWhere ? { program: branchWhere } : {}),
       },
       orderBy: { createdAt: "desc" },
       take: 500,

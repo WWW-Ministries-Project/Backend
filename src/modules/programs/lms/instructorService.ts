@@ -1,4 +1,5 @@
 import { prisma } from "../../../Models/context";
+import { getBranchScopedWhere } from "../../branches/branchService";
 import { LmsError } from "./lmsHttp";
 
 const personName = (user: { name: string | null; user_info?: { first_name: string | null; last_name: string | null } | null } | null) =>
@@ -107,11 +108,12 @@ export class InstructorService {
   }
 
   /** Every instructor (class instructors and roster members) with workload and grading speed. */
-  async overview() {
+  async overview(branchId?: unknown) {
     const since = new Date(Date.now() - GRADING_WINDOW_DAYS * 86_400_000);
+    const branchWhere = getBranchScopedWhere(branchId);
     const [courses, roster, pending, graded] = await Promise.all([
       prisma.course.findMany({
-        where: { instructorId: { not: null } },
+        where: { instructorId: { not: null }, ...(branchWhere ? { cohort: { program: branchWhere } } : {}) },
         select: {
           id: true,
           name: true,
@@ -121,13 +123,28 @@ export class InstructorService {
           cohort: { select: { id: true, name: true, status: true, program: { select: { id: true, title: true } } } },
         },
       }),
-      prisma.program_instructor.findMany({ select: { userId: true, program: { select: { id: true, title: true } } } }),
+      prisma.program_instructor.findMany({
+        where: branchWhere ? { program: branchWhere } : undefined,
+        select: { userId: true, program: { select: { id: true, title: true } } },
+      }),
       prisma.assignment_submission.findMany({
-        where: { status: { in: [...PENDING] }, enrollment: { course: { instructorId: { not: null } } } },
+        where: {
+          status: { in: [...PENDING] },
+          enrollment: {
+            course: { instructorId: { not: null }, ...(branchWhere ? { cohort: { program: branchWhere } } : {}) },
+          },
+        },
         select: { enrollment: { select: { course: { select: { instructorId: true } } } } },
       }),
       prisma.assignment_submission.findMany({
-        where: { gradedById: { not: null }, gradedAt: { gte: since }, learningUnit: { type: "assignment-essay" } },
+        where: {
+          gradedById: { not: null },
+          gradedAt: { gte: since },
+          learningUnit: {
+            type: "assignment-essay",
+            ...(branchWhere ? { topic: { program: branchWhere } } : {}),
+          },
+        },
         select: { gradedById: true, submittedAt: true, gradedAt: true },
       }),
     ]);

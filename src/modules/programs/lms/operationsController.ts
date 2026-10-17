@@ -58,6 +58,7 @@ export const operationsController = {
       courseId: optionalPositiveInt(req.query.courseId, "courseId") ?? undefined,
       from: optionalDate(req.query.from, "from") ?? undefined,
       to: optionalDate(req.query.to, "to") ?? undefined,
+      branchId: req.query.branch_id,
     });
   }),
   createSession: lmsHandler("Session created", async (req) => {
@@ -145,6 +146,7 @@ export const operationsController = {
     applicationService.list({
       status: text(req.query.status) ?? undefined,
       programId: optionalPositiveInt(req.query.programId, "programId") ?? undefined,
+      branchId: req.query.branch_id,
     }),
   ),
   decideApplication: lmsHandler("Application decided", (req) => {
@@ -179,7 +181,7 @@ export const operationsController = {
   removeFromRoster: lmsHandler("Instructor removed", (req) =>
     instructorService.removeFromRoster(positiveInt(req.query.id, "id")),
   ),
-  instructorsOverview: lmsHandler("Instructors fetched", () => instructorService.overview()),
+  instructorsOverview: lmsHandler("Instructors fetched", (req) => instructorService.overview(req.query.branch_id)),
 
   // Content library ---------------------------------------------------------------
   listLibrary: lmsHandler("Library fetched", (req) =>
