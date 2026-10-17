@@ -1,10 +1,10 @@
 import type { RealtimeUser } from "./realtimeAuth";
 
 /**
- * Client-requested subscriptions for frequent, screen-bound events (comments
- * on an open post, seats on an open ride offer, a staff member's free slots).
- * Each topic family registers an authorizer by prefix; feature modules
- * register theirs (sub-project 4). The audience prefixes are reserved.
+ * Client-requested subscriptions for frequent, screen-bound events (e.g. an
+ * event's ride catalog while a ride screen is open: `ride-event:<id>`).
+ * Each topic family registers an authorizer by prefix from its feature module
+ * at boot (see rides/rideTopics.ts). The audience prefixes are reserved.
  */
 
 export const MAX_TOPICS_PER_SOCKET = 20;
