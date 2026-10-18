@@ -1156,6 +1156,10 @@ export class ProgramService {
               include: {
                 program: {
                   include: {
+                    modules: {
+                      orderBy: [{ order_number: "asc" }, { id: "asc" }],
+                      select: { id: true, title: true, order_number: true },
+                    },
                     topics: {
                       orderBy: {
                         order_number: "asc",
@@ -1200,6 +1204,7 @@ export class ProgramService {
         id: topic.id,
         name: topic.name,
         description: topic.description,
+        moduleId: topic.moduleId,
         completed: progress?.completed ?? false,
         status: progress?.status ?? "PENDING",
         order_number: topic.order_number,
@@ -1253,6 +1258,9 @@ export class ProgramService {
       title: program.title,
       description: program.description,
       completed: enrollment.completed ?? false,
+      cohortName: enrollment.course.cohort.name,
+      className: enrollment.course.name,
+      modules: program.modules,
       topics,
     };
   }
