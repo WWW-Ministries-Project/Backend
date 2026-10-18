@@ -17,6 +17,8 @@ Requires `.env` with `DATABASE_URL`, `SHADOW_DATABASE_URL` (MySQL), `JWT_SECRET`
 
 Paystack (giving **and** pledge redemptions) reads `PAYSTACK_SECRET_KEY`, optionally `PAYSTACK_BASE_URL`, the shared donor-borne fee schedule `PAYSTACK_FEE_PERCENT` / `PAYSTACK_FEE_CAP_MINOR_UNITS` / `PAYSTACK_FEE_FLAT_MINOR_UNITS`, and two optional post-payment landing pages: `PAYSTACK_GIVING_CALLBACK_URL` and `PAYSTACK_PLEDGE_CALLBACK_URL`. Both fall back to `Frontend_URL` (`/out/giving-complete`, `/out/pledge-complete`). Callback URLs are always resolved server-side from a fixed set — clients send `client: "web" | "mobile"`, never a URL, because accepting one would be an open redirect on a payment flow. Full shapes: `Frontend/docs/GIVING_OPTIONS_BACKEND_CONTRACT.md` and `Frontend/docs/PLEDGE_PAYMENTS_BACKEND_CONTRACT.md`.
 
+Marketplace fulfilment reads `MARKETPLACE_DELIVERY_ENABLED` (default `"true"`; `false`/`0`/`no`/`off` disables delivery), `MARKETPLACE_DELIVERY_FEE` (major units, default `25`) and `MARKETPLACE_PICKUP_LOCATION` (default `"Church office · after any service"`), via `src/modules/orders/marketplaceFulfilment.ts`. Exposed publicly at `GET /orders/delivery-config`. Shapes: `docs/MARKETPLACE_FULFILMENT_AND_OVERVIEW.md`.
+
 `npm test` runs `node:test` (via `ts-node/register/transpile-only`) over `src/**/*.test.ts` — pure-unit tests only, no DB. No linter or formatter is configured — do not fabricate `npm run lint`.
 
 ## Architecture

@@ -42,6 +42,15 @@ const protect = permissions.protect;
  *               cancellation_url:
  *                  type: string
  *                  example: "https://yourapp.com/cancel"
+ *               fulfilment_method:
+ *                 type: string
+ *                 enum: [pickup, delivery]
+ *                 default: pickup
+ *                 description: Optional. Omitted means pickup (older clients).
+ *               delivery_address:
+ *                 type: string
+ *                 example: "12 Ring Road, Accra"
+ *                 description: Required when fulfilment_method is delivery.
  *               billing:
  *                 type: object
  *                 properties:
@@ -70,7 +79,10 @@ const protect = permissions.protect;
  *       201:
  *         description: Order created successfully
  *       400:
- *         description: Failed to create order
+ *         description: >
+ *           Failed to create order (including delivery disabled or missing
+ *           delivery_address). total_amount is informational — the stored and
+ *           charged total is recomputed as sum(price_amount * quantity) + delivery_fee.
  */
 // No `protect` here: guest storefront checkout has no token. can_create_order_scoped
 // handles both the authenticated-member path and the anonymous-guest path itself.
@@ -717,6 +729,126 @@ orderRouter.post(
   "/create-for-member",
   [protect, permissions.can_manage_marketplace],
   orderController.createForMember,
+);
+
+/**
+ * @swagger
+ * /orders/delivery-config:
+ *   get:
+ *     summary: Public checkout fulfilment options (pickup / delivery)
+ *     description: No auth — guest checkout uses it too.
+ *     tags: [Orders]
+ *     responses:
+ *       200:
+ *         description: Delivery config
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message: { type: string, example: "Delivery config retrieved successfully" }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     delivery_enabled: { type: boolean, example: true }
+ *                     delivery_fee: { type: number, example: 25 }
+ *                     pickup_location: { type: string, example: "Church office · after any service" }
+ */
+orderRouter.get("/delivery-config", orderController.getDeliveryConfig);
+
+/**
+ * @swagger
+ * /orders/bulk-update-status:
+ *   put:
+ *     summary: Update payment and/or delivery status on many orders
+ *     description: >
+ *       Each order goes through the same rules as update-order (no
+ *       cancelled -> active, no failed -> anything, restock on cancel/fail).
+ *       Shipped/delivered require payment success; success is refused on a
+ *       cancelled order; no-op changes are skipped. Delivery changes notify
+ *       the member like update-delivery-status.
+ *     tags: [Orders]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [ids]
+ *             properties:
+ *               ids:
+ *                 type: array
+ *                 minItems: 1
+ *                 maxItems: 500
+ *                 items: { type: integer }
+ *                 example: [101, 102]
+ *               payment_status:
+ *                 type: string
+ *                 enum: [pending, success, failed]
+ *               delivery_status:
+ *                 type: string
+ *                 enum: [pending, shipped, delivered, cancelled]
+ *     responses:
+ *       200:
+ *         description: Per-order outcome
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message: { type: string, example: "Order statuses updated" }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     updated:
+ *                       type: array
+ *                       items: { type: integer }
+ *                     skipped:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           id: { type: integer }
+ *                           reason: { type: string }
+ *       400:
+ *         description: Invalid body
+ */
+orderRouter.put(
+  "/bulk-update-status",
+  [protect, permissions.can_manage_marketplace],
+  orderController.bulkUpdateStatus,
+);
+
+/**
+ * @swagger
+ * /orders/marketplace-overview:
+ *   get:
+ *     summary: Marketplace KPI overview (current month, 14-day trend, top products)
+ *     tags: [Orders]
+ *     parameters:
+ *       - in: query
+ *         name: market_id
+ *         schema: { type: integer }
+ *         required: false
+ *       - in: query
+ *         name: branch_id
+ *         schema: { type: integer }
+ *         required: false
+ *         description: Restrict to markets of this branch.
+ *     responses:
+ *       200:
+ *         description: >
+ *           { message, data: { period: { from, to }, revenue, paid_orders, orders,
+ *           cancelled, average_order, items_sold, to_fulfil, awaiting_payment,
+ *           low_stock_variants, trend: [{ date, revenue }], top_products:
+ *           [{ product_id, name, market_name, image_url, units, revenue }] } }
+ *       400:
+ *         description: Invalid market_id / branch_id
+ */
+orderRouter.get(
+  "/marketplace-overview",
+  [protect, permissions.can_view_marketplace],
+  orderController.marketplaceOverview,
 );
 
 export default orderRouter;
