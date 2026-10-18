@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
-import { OrderService, InsufficientStockError } from "./orderService";
+import { OrderService, InsufficientStockError, OrderConflictError } from "./orderService";
 import { isPaystackFailure } from "../../libs/paystack/paystackClient";
+import { getMarketplaceDeliveryConfig } from "./marketplaceFulfilment";
 
 const orderService = new OrderService();
 
@@ -342,7 +343,10 @@ export class OrderController {
         data: updatedOrder,
       });
     } catch (error: any) {
-      const status = error instanceof InsufficientStockError ? 409 : 400;
+      const status =
+        error instanceof InsufficientStockError || error instanceof OrderConflictError
+          ? 409
+          : 400;
       return res.status(status).json({
         message: error.message || "Failed to update order",
       });
@@ -430,6 +434,128 @@ export class OrderController {
         : 400;
       return res.status(status).json({
         message: error.message || "Failed to place order",
+      });
+    }
+  }
+
+  // Public: fulfilment options for checkout (guests included).
+  async getDeliveryConfig(_req: Request, res: Response) {
+    const config = getMarketplaceDeliveryConfig();
+    return res.status(200).json({
+      message: "Delivery config retrieved successfully",
+      data: {
+        delivery_enabled: config.delivery_enabled,
+        delivery_fee: config.delivery_fee,
+        pickup_location: config.pickup_location,
+      },
+    });
+  }
+
+  async bulkUpdateStatus(req: Request, res: Response) {
+    const { ids, payment_status, delivery_status } = (req.body ?? {}) as {
+      ids?: unknown;
+      payment_status?: unknown;
+      delivery_status?: unknown;
+    };
+
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res
+        .status(400)
+        .json({ message: "ids must be a non-empty array of order ids" });
+    }
+    if (ids.length > 500) {
+      return res
+        .status(400)
+        .json({ message: "Cannot update more than 500 orders at once" });
+    }
+    const orderIds = ids.map((value) => Number(value));
+    if (orderIds.some((value) => !Number.isInteger(value) || value <= 0)) {
+      return res
+        .status(400)
+        .json({ message: "Every id must be a positive integer" });
+    }
+    if (payment_status === undefined && delivery_status === undefined) {
+      return res.status(400).json({
+        message: "Provide payment_status and/or delivery_status",
+      });
+    }
+    if (
+      payment_status !== undefined &&
+      !["pending", "success", "failed"].includes(payment_status as string)
+    ) {
+      return res.status(400).json({
+        message: "payment_status must be pending, success, or failed",
+      });
+    }
+    if (
+      delivery_status !== undefined &&
+      !["pending", "shipped", "delivered", "cancelled"].includes(
+        delivery_status as string,
+      )
+    ) {
+      return res.status(400).json({
+        message:
+          "delivery_status must be pending, shipped, delivered, or cancelled",
+      });
+    }
+
+    try {
+      const actorUserId = Number((req as any)?.user?.id);
+      const result = await orderService.bulkUpdateStatus(
+        orderIds,
+        {
+          payment_status: payment_status as
+            | "pending"
+            | "success"
+            | "failed"
+            | undefined,
+          delivery_status: delivery_status as
+            | "pending"
+            | "shipped"
+            | "delivered"
+            | "cancelled"
+            | undefined,
+        },
+        Number.isInteger(actorUserId) && actorUserId > 0 ? actorUserId : null,
+      );
+      return res.status(200).json({
+        message: "Order statuses updated",
+        data: { updated: result.updated, skipped: result.skipped },
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        message: error.message || "Failed to update order statuses",
+      });
+    }
+  }
+
+  async marketplaceOverview(req: Request, res: Response) {
+    const parseOptionalId = (value: unknown): number | undefined | null => {
+      if (value === undefined || value === null || value === "") return undefined;
+      const parsed = Number(value);
+      return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+    };
+    const marketId = parseOptionalId(req.query.market_id);
+    const branchId = parseOptionalId(req.query.branch_id);
+    if (marketId === null) {
+      return res.status(400).json({ message: "market_id must be a positive integer" });
+    }
+    if (branchId === null) {
+      return res.status(400).json({ message: "branch_id must be a positive integer" });
+    }
+
+    try {
+      const overview = await orderService.getMarketplaceOverview({
+        market_id: marketId,
+        branch_id: branchId,
+      });
+      return res.status(200).json({
+        message: "Marketplace overview retrieved successfully",
+        data: overview,
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        message: error.message || "Failed to load marketplace overview",
       });
     }
   }

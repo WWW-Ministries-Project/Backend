@@ -314,7 +314,7 @@ export class MarketService {
         include: { event: true },
         orderBy: { created_at: "desc" },
       });
-      return markets.map((m) => this.convertToDto(m));
+      return Promise.all(markets.map((m) => this.convertToDto(m)));
     } catch (error: any) {
       throw new Error(`Failed to fetch markets by event: ${error.message}`);
     }
@@ -338,7 +338,7 @@ export class MarketService {
         include: { event: true },
         orderBy: { created_at: "desc" },
       });
-      return markets.map((m) => this.convertToDto(m));
+      return Promise.all(markets.map((m) => this.convertToDto(m)));
     } catch (error: any) {
       throw new Error(`Failed to fetch active markets: ${error.message}`);
     }

@@ -2046,20 +2046,23 @@ model product_stock {
 }
 
 model orders {
-  id                 Int              @id @default(autoincrement())
+  id                 Int               @id @default(autoincrement())
   order_number       String?
   total_amount       Float
   user_id            Int?
-  payment_status     payment_status   @default(pending)
-  delivery_status    delivery_status  @default(pending)
-  created_at         DateTime         @default(now())
-  updated_at         DateTime         @updatedAt
+  payment_status     payment_status    @default(pending)
+  delivery_status    delivery_status   @default(pending)
+  created_at         DateTime          @default(now())
+  updated_at         DateTime          @updatedAt
   reference          String
   deleted_at         DateTime?
   placed_by_staff_id Int?
+  fulfilment_method  fulfilment_method @default(pickup)
+  delivery_address   String?           @db.Text
+  delivery_fee       Float             @default(0)
   billing_details    billing_details?
   items              order_items[]
-  user               user?            @relation(fields: [user_id], references: [id])
+  user               user?             @relation(fields: [user_id], references: [id])
 
   @@index([user_id], map: "orders_user_id_fkey")
   @@index([reference], map: "orders_reference_idx")
@@ -2681,6 +2684,11 @@ enum delivery_status {
   shipped
   delivered
   cancelled
+}
+
+enum fulfilment_method {
+  pickup
+  delivery
 }
 
 enum appointment_status {
