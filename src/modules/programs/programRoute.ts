@@ -7,6 +7,7 @@ import { Permissions } from "../../middleWare/authorization";
 import { assessmentController } from "./lms/assessmentController";
 import { curriculumController } from "./lms/curriculumController";
 import { operationsController } from "./lms/operationsController";
+import { learnerController } from "./lms/learnerController";
 const permissions = new Permissions();
 const protect = permissions.protect;
 
@@ -289,5 +290,11 @@ programRouter.put("/library-item", design, operationsController.updateLibraryIte
 programRouter.delete("/library-item", design, operationsController.deleteLibraryItem);
 programRouter.post("/library/use", design, operationsController.useLibraryItem);
 programRouter.get("/lms-reports", design, operationsController.reports);
+
+// LMS: learner portal (signed-in member's own enrollments only)
+programRouter.get("/learner/overview", [protect], learnerController.overview);
+programRouter.get("/learner/sessions", [protect], learnerController.sessions);
+programRouter.get("/learner/announcements", [protect], learnerController.announcements);
+programRouter.get("/learner/submission", [protect], learnerController.submission);
 
 export default programRouter;
