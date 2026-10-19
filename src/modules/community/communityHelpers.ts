@@ -54,8 +54,6 @@ export const MAX_BODY_HTML_LENGTH = 20000;
 export const MAX_REPORT_DETAILS_LENGTH = 1000;
 export const MAX_IMAGES = 4;
 export const MAX_IMAGE_URL_LENGTH = 1024;
-/** Important posts newer than this are pinned to the top of the feed. */
-export const IMPORTANT_PIN_DAYS = 7;
 export const DEFAULT_PAGE_SIZE = 20;
 export const MAX_PAGE_SIZE = 50;
 export const MAX_MEMBER_SEARCH = 20;

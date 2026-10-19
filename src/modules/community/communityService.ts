@@ -13,7 +13,6 @@ import {
 import {
   AUDIENCES,
   COMMENT_REACTIONS,
-  IMPORTANT_PIN_DAYS,
   MAX_IMAGES,
   MAX_IMAGE_URL_LENGTH,
   MAX_MEMBER_SEARCH,
@@ -190,9 +189,8 @@ export const listFeed = async (viewer: Viewer, query: Record<string, unknown>) =
     conditions.push({ audience: "DEPARTMENT", department_id: departmentId });
   }
 
-  // Important posts from the last week are pinned above everything else.
-  const since = new Date(Date.now() - IMPORTANT_PIN_DAYS * 86_400_000);
-  const pinned: Prisma.community_postWhereInput = { is_important: true, created_at: { gte: since } };
+  // Pinned posts sit above everything else until a manager unpins them.
+  const pinned: Prisma.community_postWhereInput = { is_pinned: true };
   const pinnedWhere = { AND: [...conditions, pinned] };
   const restWhere = { AND: [...conditions, { NOT: pinned }] };
   const orderBy: Prisma.community_postOrderByWithRelationInput[] = [
@@ -268,10 +266,14 @@ export const createPost = async (viewer: Viewer, input: Record<string, unknown>)
   const body = parseBody(input.body);
   const audience = parseEnum<community_audience>(input.audience, AUDIENCES, "audience");
   const isImportant = parseBoolean(input.isImportant);
+  // Clients that predate isPinned only send isImportant, which used to pin.
+  const isPinned = input.isPinned === undefined ? isImportant : parseBoolean(input.isPinned);
+  // Absent means allowed, so existing clients keep today's behaviour.
+  const commentsEnabled = input.commentsEnabled === undefined ? true : parseBoolean(input.commentsEnabled);
   let isAnonymous = parseBoolean(input.isAnonymous);
   const imageUrls = parseImageUrls(input.imageUrls);
 
-  if ((type === "MESSAGE" || isImportant) && !viewer.canManage) {
+  if ((type === "MESSAGE" || isImportant || isPinned || !commentsEnabled) && !viewer.canManage) {
     throw new UnauthorizedError("Only Community managers can post church messages or important posts");
   }
 
@@ -325,6 +327,8 @@ export const createPost = async (viewer: Viewer, input: Record<string, unknown>)
       author_id: viewer.id,
       is_anonymous: isAnonymous,
       is_important: isImportant,
+      is_pinned: isPinned,
+      comments_enabled: commentsEnabled,
       branch_id: viewer.branchId,
       images: {
         create: imageUrls.map((url, position) => ({ url, position })),
@@ -334,6 +338,12 @@ export const createPost = async (viewer: Viewer, input: Record<string, unknown>)
       },
     },
   });
+
+  if (type === "MESSAGE") {
+    await prisma.community_moderation_log.create({
+      data: { actor_id: viewer.id, action: "POST_MESSAGE", post_id: created.id },
+    });
+  }
 
   notifyNewPost(created, viewer.name);
   notifyMentions({ post: created, writerName: viewer.name });
@@ -451,6 +461,9 @@ export const listCommentReactions = async (viewer: Viewer, commentId: unknown) =
 
 export const createComment = async (viewer: Viewer, postId: unknown, input: Record<string, unknown>) => {
   const post = await findVisiblePost(viewer, postId);
+  if (post.comments_enabled === false) {
+    throw new InputValidationError("Comments are turned off for this post");
+  }
   const body = parseBody(input.body);
   const isAnonymous = parseBoolean(input.isAnonymous);
 

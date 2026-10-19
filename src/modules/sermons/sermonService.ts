@@ -24,6 +24,7 @@ export type CreateSermonInput = {
   youtube_url: string;
   series_id?: number | null;
   tags?: string[];
+  preached_at?: string | null;
   branch_id?: number | null;
   created_by: number;
 };
@@ -34,6 +35,8 @@ export type UpdateSermonInput = {
   youtube_url?: string;
   series_id?: number | null;
   tags?: string[];
+  /** YYYY-MM-DD; null clears it, undefined leaves it untouched. */
+  preached_at?: string | null;
 };
 
 // Ascending, deliberately: a series is watched front-to-back. `position` is no
@@ -131,6 +134,22 @@ const resolveYoutube = async (url: string): Promise<ResolvedVideo> => {
     );
     return { video_id: videoId, title: videoId };
   }
+};
+
+// Accepts YYYY-MM-DD (or a full ISO string) and stores midnight UTC, which is
+// what a @db.Date column holds. Anything unparseable is a 400, not a silent null.
+const parsePreachedAt = (value: string | null | undefined): Date | null | undefined => {
+  if (value === undefined) return undefined;
+  if (value === null || String(value).trim() === "") return null;
+  const day = String(value).trim().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+    throw httpError("Enter the preached date as YYYY-MM-DD", 400);
+  }
+  const date = new Date(`${day}T00:00:00.000Z`);
+  if (Number.isNaN(date.getTime())) {
+    throw httpError("Enter the preached date as YYYY-MM-DD", 400);
+  }
+  return date;
 };
 
 const thumbnailForVideoId = (videoId: string | null): string | null =>
@@ -261,6 +280,7 @@ const createSermon = async (input: CreateSermonInput) => {
   // this create fails, and tags committed ahead of a failed insert would be
   // stranded in the vocabulary with no way to remove them.
   if (input.series_id) await assertSeriesExists(input.series_id);
+  const preachedAt = parsePreachedAt(input.preached_at) ?? null;
 
   const sermon = await prisma.$transaction(async (tx) => {
     const tagIds = await resolveTagIds(input.tags, tx);
@@ -272,6 +292,7 @@ const createSermon = async (input: CreateSermonInput) => {
         video_id: video.video_id,
         thumbnail_url: thumbnailForVideoId(video.video_id),
         series_id: input.series_id ?? null,
+        preached_at: preachedAt,
         branch_id: branchId,
         created_by: input.created_by,
         status: "DRAFT",
@@ -321,7 +342,9 @@ const listSermons = async (params: {
     prisma.sermon.findMany({
       where,
       include: sermonInclude,
-      orderBy: { created_at: "desc" },
+      // Newest preached first; sermons without a date fall back to when they
+      // were added (MySQL sorts NULLs last on DESC).
+      orderBy: [{ preached_at: "desc" }, { created_at: "desc" }],
       skip: params.skip ?? 0,
       // Capped: this route is member-accessible and each row hydrates its
       // series and tags.
@@ -358,6 +381,9 @@ const updateSermon = async (id: number, input: UpdateSermonInput) => {
   if (input.description !== undefined) {
     data.description = input.description?.trim() || null;
   }
+
+  const preachedAt = parsePreachedAt(input.preached_at);
+  if (preachedAt !== undefined) data.preached_at = preachedAt;
 
   // Only re-hit YouTube when the URL actually changed.
   if (input.youtube_url !== undefined) {

@@ -3036,6 +3036,8 @@ model sermon {
   branch_id     Int?
   created_by    Int
   published_at  DateTime?
+  /// Day the sermon was preached; may be in the future for planned sermons.
+  preached_at   DateTime?     @db.Date
   position      Int           @default(0)
   created_at    DateTime      @default(now())
   updated_at    DateTime      @updatedAt
@@ -3047,6 +3049,7 @@ model sermon {
 
   @@index([series_id])
   @@index([branch_id, status])
+  @@index([preached_at])
   @@index([created_by])
 }
 
@@ -3338,6 +3341,9 @@ enum community_moderation_action {
   REMOVE
   RESTORE
   WARN
+  PIN
+  UNPIN
+  POST_MESSAGE
 }
 
 /// A member's post to the church community. `author_id` is always the real
@@ -3352,6 +3358,11 @@ model community_post {
   author_id              Int
   is_anonymous           Boolean                    @default(false)
   is_important           Boolean                    @default(false)
+  /// Pinned by a Community manager; stays above the feed until unpinned.
+  /// Separate from is_important, which only auto-pins for a week and pushes.
+  is_pinned              Boolean                    @default(false)
+  /// False stops new comments; existing ones stay visible.
+  comments_enabled       Boolean                    @default(true)
   status                 community_content_status   @default(ACTIVE)
   branch_id              Int?
   deleted_at             DateTime?
@@ -3373,6 +3384,7 @@ model community_post {
 
   @@index([status, deleted_at, created_at])
   @@index([is_important, created_at])
+  @@index([is_pinned])
   @@index([audience, branch_id])
   @@index([author_id])
   @@index([department_id])

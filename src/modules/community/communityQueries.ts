@@ -298,6 +298,8 @@ export type CommunityPostDto = {
   };
   isAnonymous: boolean;
   isImportant: boolean;
+  isPinned: boolean;
+  commentsEnabled: boolean;
   isMine: boolean;
   author: PersonDto | null;
   images: string[];
@@ -370,6 +372,8 @@ export const buildPostDtos = async (
       },
       isAnonymous: row.is_anonymous,
       isImportant: row.is_important,
+      isPinned: row.is_pinned,
+      commentsEnabled: row.comments_enabled,
       isMine: row.author_id === viewer.id,
       author: row.is_anonymous ? null : toPerson(row.author),
       images: row.images.map((image) => image.url),
