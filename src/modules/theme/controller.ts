@@ -3,6 +3,10 @@ import { AnnualThemeService } from "./service";
 
 const annualThemeService = new AnnualThemeService();
 
+// `year` is unique, so a clash is the likeliest failure; say so plainly.
+const failureMessage = (error: any, fallback: string) =>
+  error?.code === "P2002" ? "There is already a theme for that year. Edit that one instead." : fallback;
+
 export class AnnualThemeController {
   async create(req: Request, res: Response) {
     try {
@@ -14,7 +18,7 @@ export class AnnualThemeController {
       });
     } catch (error: any) {
       return res.status(400).json({
-        message: "Failed to create annual theme",
+        message: failureMessage(error, "Failed to create annual theme"),
         error: error.message,
       });
     }
@@ -67,7 +71,7 @@ export class AnnualThemeController {
       });
     } catch (error: any) {
       return res.status(400).json({
-        message: "Failed to update annual theme",
+        message: failureMessage(error, "Failed to update annual theme"),
         error: error.message,
       });
     }

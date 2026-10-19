@@ -14,6 +14,12 @@ const router = Router();
 router.get("/active", [protect], controller.active);
 
 router.get("/", [protect, permissions.can_view_promotions], controller.list);
+// Before `/:id` routes for the same reason as `/active`.
+router.post(
+  "/reorder",
+  [protect, permissions.can_manage_promotions],
+  controller.reorder,
+);
 router.get(
   "/:id",
   [protect, permissions.can_view_promotions],
@@ -34,6 +40,11 @@ router.post(
   "/:id/publish",
   [protect, permissions.can_manage_promotions],
   controller.publish,
+);
+router.post(
+  "/:id/unpublish",
+  [protect, permissions.can_manage_promotions],
+  controller.unpublish,
 );
 router.post(
   "/:id/archive",

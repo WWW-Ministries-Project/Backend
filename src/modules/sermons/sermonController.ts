@@ -190,6 +190,7 @@ export class sermonController {
         youtube_url: body.youtube_url,
         series_id: toPositiveInt(body.series_id),
         tags: Array.isArray(body.tags) ? body.tags : [],
+        preached_at: body.preached_at ?? null,
         branch_id: body.branch_id ?? req.query?.branch_id ?? null,
         created_by: actorUserId,
       });
@@ -270,6 +271,7 @@ export class sermonController {
             ? undefined
             : toPositiveInt(body.series_id),
         tags: Array.isArray(body.tags) ? body.tags : undefined,
+        preached_at: body.preached_at,
       });
 
       return res.status(200).json({ message: "Sermon updated", data: sermon });

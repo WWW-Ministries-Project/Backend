@@ -52,5 +52,7 @@ communityRouter.post("/moderation/:kind/:id/remove", manager, controller.removeC
 communityRouter.post("/moderation/:kind/:id/restore", manager, controller.restoreContent);
 communityRouter.post("/moderation/:kind/:id/warn", manager, controller.warnAuthor);
 communityRouter.get("/admin/posts", moderator, controller.getAdminPosts);
+communityRouter.get("/admin/stats", moderator, controller.getAdminStats);
+communityRouter.post("/admin/posts/:id/pin", manager, controller.pinPost);
 
 export default communityRouter;

@@ -220,6 +220,27 @@ export const moderate = async (
   return { id, kind: kind === "posts" ? "POST" : "COMMENT", status, warned };
 };
 
+/** Pins or unpins a post above the feed (Community manager). */
+export const setPinned = async (viewer: Viewer, idParam: unknown, input: Record<string, unknown>) => {
+  const id = Number(idParam);
+  if (!Number.isInteger(id) || id <= 0) throw new NotFoundError("Post not found");
+  if (typeof input.pinned !== "boolean") throw new InputValidationError("pinned must be true or false");
+  const post = await prisma.community_post.findFirst({
+    where: { id, deleted_at: null },
+    select: { id: true, is_pinned: true },
+  });
+  if (!post) throw new NotFoundError("Post not found");
+  if (post.is_pinned === input.pinned) return { id, isPinned: post.is_pinned };
+
+  await prisma.$transaction([
+    prisma.community_post.update({ where: { id }, data: { is_pinned: input.pinned } }),
+    prisma.community_moderation_log.create({
+      data: { actor_id: viewer.id, action: input.pinned ? "PIN" : "UNPIN", post_id: id },
+    }),
+  ]);
+  return { id, isPinned: input.pinned };
+};
+
 /* ------------------------------------------------------------------ */
 /* Admin posts list                                                    */
 /* ------------------------------------------------------------------ */
@@ -238,7 +259,9 @@ export const listAdminPosts = async (viewer: Viewer, query: Record<string, unkno
     conditions.push({ status: parseEnum(query.status, CONTENT_STATUSES, "status") });
   }
   const q = typeof query.q === "string" ? query.q.trim() : "";
-  if (q) conditions.push({ body: { contains: q } });
+  // Matches the body or the real author's name. Anonymous posts can match by
+  // author too: this list already shows moderators the real author.
+  if (q) conditions.push({ OR: [{ body: { contains: q } }, { author: { name: { contains: q } } }] });
 
   const where = { AND: conditions };
   const [rows, total] = await prisma.$transaction([
@@ -266,8 +289,72 @@ export const listAdminPosts = async (viewer: Viewer, query: Record<string, unkno
 };
 
 /* ------------------------------------------------------------------ */
+/* Admin overview                                                      */
+/* ------------------------------------------------------------------ */
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Numbers for the four KPI tiles on the admin Community page. Weeks are a
+ *  rolling 7 days and the month a rolling 30, so the tiles never reset to 0
+ *  on a Monday or the 1st. */
+export const getAdminStats = async (now: Date = new Date()) => {
+  const weekAgo = new Date(now.getTime() - 7 * DAY_MS);
+  const monthAgo = new Date(now.getTime() - 30 * DAY_MS);
+  const live: Prisma.community_postWhereInput = {
+    deleted_at: null,
+    audience: { not: "ONLY_ME" },
+  };
+
+  const [postsThisWeek, churchMessagesThisWeek, prayerRequests, prayerReplies, pendingReports, removedPosts, removedComments] =
+    await prisma.$transaction([
+      prisma.community_post.count({ where: { ...live, created_at: { gte: weekAgo } } }),
+      prisma.community_post.count({ where: { ...live, type: "MESSAGE", created_at: { gte: weekAgo } } }),
+      prisma.community_post.count({ where: { ...live, type: "PRAYER", created_at: { gte: weekAgo } } }),
+      prisma.community_comment.count({
+        where: { deleted_at: null, post: { ...live, type: "PRAYER", created_at: { gte: weekAgo } } },
+      }),
+      prisma.community_report.findMany({
+        where: { status: "PENDING" },
+        select: { post_id: true, comment_id: true, created_at: true },
+        orderBy: { created_at: "asc" },
+        take: MAX_REPORTS_SCANNED,
+      }),
+      // Removals still in force that a moderator made in the window. The log
+      // dates the action; the status check drops ones restored since.
+      prisma.community_post.count({
+        where: { status: "REMOVED", moderation_logs: { some: { action: "REMOVE", comment_id: null, created_at: { gte: monthAgo } } } },
+      }),
+      prisma.community_comment.count({
+        where: { status: "REMOVED", moderation_logs: { some: { action: "REMOVE", created_at: { gte: monthAgo } } } },
+      }),
+    ]);
+
+  // The Reported tab groups reports per piece of content, so count targets,
+  // not report rows.
+  const pendingTargets = new Set(
+    pendingReports.map((r) => (r.comment_id !== null ? `COMMENT:${r.comment_id}` : `POST:${r.post_id}`)),
+  );
+
+  return {
+    postsThisWeek,
+    memberPostsThisWeek: postsThisWeek - churchMessagesThisWeek,
+    prayerRequestsThisWeek: prayerRequests,
+    prayerRepliesThisWeek: prayerReplies,
+    pendingReview: pendingTargets.size,
+    oldestPendingAt: pendingReports[0]?.created_at.toISOString() ?? null,
+    removedThisMonth: removedPosts + removedComments,
+  };
+};
+
+/* ------------------------------------------------------------------ */
 /* Audit log                                                           */
 /* ------------------------------------------------------------------ */
+
+const excerptOf = (body: string | null): string | null => {
+  if (!body) return null;
+  const text = body.replace(/<[^>]*>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim();
+  return text.length > 80 ? `${text.slice(0, 77)}…` : text;
+};
 
 export const listAuditLog = async (query: Record<string, unknown>) => {
   const { skip, take } = parsePaging(query);
@@ -283,6 +370,8 @@ export const listAuditLog = async (query: Record<string, unknown>) => {
         comment_id: true,
         created_at: true,
         actor: { select: { name: true } },
+        post: { select: { body: true, is_anonymous: true, author: { select: { name: true } } } },
+        comment: { select: { body: true, is_anonymous: true, author: { select: { name: true } } } },
       },
     }),
     prisma.community_moderation_log.count(),
@@ -296,6 +385,10 @@ export const listAuditLog = async (query: Record<string, unknown>) => {
       postId: row.post_id,
       commentId: row.comment_id,
       createdAt: row.created_at.toISOString(),
+      // The audit log is manager-only, so the real author is shown here the
+      // same way the reports queue shows it.
+      targetAuthorName: (row.comment ?? row.post)?.author.name ?? null,
+      targetExcerpt: excerptOf((row.comment ?? row.post)?.body ?? null),
     })),
     total,
   };

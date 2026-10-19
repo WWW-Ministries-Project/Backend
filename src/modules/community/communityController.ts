@@ -122,6 +122,14 @@ export const warnAuthor = async (req: Request, res: Response) =>
 export const getAdminPosts = async (req: Request, res: Response) =>
   list(res, await moderation.listAdminPosts(await viewerOf(req), req.query));
 
+export const pinPost = async (req: Request, res: Response) =>
+  ok(res, await moderation.setPinned(await viewerOf(req), req.params.id, req.body ?? {}), "Post updated");
+
+export const getAdminStats = async (req: Request, res: Response) => {
+  await viewerOf(req);
+  return ok(res, await moderation.getAdminStats());
+};
+
 export const getAuditLog = async (req: Request, res: Response) => {
   await viewerOf(req);
   return list(res, await moderation.listAuditLog(req.query));

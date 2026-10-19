@@ -18,6 +18,7 @@ router.post("/preview", view, c.preview);
 router.post("/audience/count", manage, c.audienceCount);
 router.get("/birthdays/upcoming", view, c.upcomingBirthdays);
 router.get("/stats", view, c.stats);
+router.get("/overview", view, c.overview);
 router.post("/dispatches", manage, c.createDispatch);
 router.get("/dispatches", view, c.listDispatches);
 router.get("/dispatches/:id", view, c.getDispatch);

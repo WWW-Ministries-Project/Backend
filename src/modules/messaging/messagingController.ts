@@ -28,6 +28,8 @@ export const messagingController = {
     res.json({ message: "Upcoming birthdays", data: await service.upcomingBirthdays(Number(req.query.days)) }),
   stats: async (req: Request, res: Response) =>
     res.json({ message: "Stats", data: await service.templateStats(Number(req.query.days)) }),
+  overview: async (req: Request, res: Response) =>
+    res.json({ message: "Overview", data: await service.overviewStats(Number(req.query.days)) }),
   createDispatch: async (req: Request, res: Response) =>
     res.status(201).json({ message: "Message created", data: await service.createGeneralDispatch(req.body, actorId(req)) }),
   listDispatches: async (req: Request, res: Response) => {

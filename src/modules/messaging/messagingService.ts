@@ -11,6 +11,7 @@ import { buildRecipientRows, insertRecipients } from "./recipients";
 import { findUsers, findVisitorPerson, parseAudience, resolveAudience } from "./audience";
 import { refreshDispatch, triggerDispatchProcessing } from "./worker";
 import {
+  Audience,
   Channels,
   hasAnyChannel,
   Person,
@@ -496,23 +497,123 @@ const toDispatchDto = (d: Prisma.message_dispatchGetPayload<{}>) => ({
   createdAt: d.created_at,
 });
 
+/** History filter chips on the admin Messaging page. "sent" includes QUEUED
+ *  (still sending); "failed" is any message with at least one failed send. */
+const DISPATCH_FILTERS: Record<string, Prisma.message_dispatchWhereInput> = {
+  all: {},
+  scheduled: { status: "SCHEDULED" },
+  sent: { status: { in: ["SENT", "QUEUED"] } },
+  failed: { status: { not: "SCHEDULED" }, recipients: { some: { status: "FAILED" } } },
+};
+
+/** "Whole church", one department's name, "Departments (3)" or "4 people". */
+const audienceLabelOf = (audience: unknown, departmentNames: Map<number, string>): string | null => {
+  if (!audience || typeof audience !== "object") return null;
+  const a = audience as Partial<Audience>;
+  if (a.scope === "CHURCH") return "Whole church";
+  if (a.scope === "DEPARTMENTS") {
+    const ids = Array.isArray(a.departmentIds) ? a.departmentIds : [];
+    if (ids.length === 1) return departmentNames.get(ids[0]) ?? "1 department";
+    return `Departments (${ids.length})`;
+  }
+  if (a.scope === "PEOPLE") {
+    const n = Array.isArray(a.userIds) ? a.userIds.length : 0;
+    return `${n} ${n === 1 ? "person" : "people"}`;
+  }
+  return null;
+};
+
 export const listDispatches = async (query: any) => {
   const kind = ["WELCOME", "BIRTHDAY", "GENERAL"].includes(String(query?.kind)) ? String(query.kind) : undefined;
+  const filterKey = String(query?.filter ?? "all");
+  const filter = DISPATCH_FILTERS[filterKey] ?? DISPATCH_FILTERS.all;
   const page = Math.min(Math.max(Math.trunc(Number(query?.page)) || 1, 1), 10000);
   const limit = Math.min(Math.max(Math.trunc(Number(query?.limit)) || 20, 1), 100);
-  const where: Prisma.message_dispatchWhereInput = kind ? { kind: kind as any } : {};
-  const [rows, total] = await Promise.all([
-    prisma.message_dispatch.findMany({ where, orderBy: { id: "desc" }, skip: (page - 1) * limit, take: limit }),
+  const base: Prisma.message_dispatchWhereInput = kind ? { kind: kind as any } : {};
+  const where: Prisma.message_dispatchWhereInput = { AND: [base, filter] };
+  const [rows, total, ...facetCounts] = await Promise.all([
+    prisma.message_dispatch.findMany({
+      where,
+      orderBy: { id: "desc" },
+      skip: (page - 1) * limit,
+      take: limit,
+    }),
     prisma.message_dispatch.count({ where }),
+    ...Object.values(DISPATCH_FILTERS).map((f) => prisma.message_dispatch.count({ where: { AND: [base, f] } })),
   ]);
+  const facets = Object.fromEntries(Object.keys(DISPATCH_FILTERS).map((key, i) => [key, facetCounts[i]]));
+
   const creatorIds = Array.from(new Set(rows.map((r) => r.created_by).filter((id): id is number => !!id)));
-  const creators = creatorIds.length
-    ? await prisma.user.findMany({ where: { id: { in: creatorIds } }, select: { id: true, name: true } })
-    : [];
+  const departmentIds = Array.from(
+    new Set(
+      rows.flatMap((r) => {
+        const a = r.audience as Partial<Audience> | null;
+        return a?.scope === "DEPARTMENTS" && Array.isArray(a.departmentIds) && a.departmentIds.length === 1
+          ? a.departmentIds
+          : [];
+      }),
+    ),
+  );
+  const [creators, departments] = await Promise.all([
+    creatorIds.length
+      ? prisma.user.findMany({ where: { id: { in: creatorIds } }, select: { id: true, name: true } })
+      : Promise.resolve([]),
+    departmentIds.length
+      ? prisma.department.findMany({ where: { id: { in: departmentIds } }, select: { id: true, name: true } })
+      : Promise.resolve([]),
+  ]);
   const names = new Map(creators.map((c) => [c.id, c.name]));
+  const departmentNames = new Map(departments.map((d) => [d.id, d.name]));
   return {
-    data: rows.map((r) => ({ ...toDispatchDto(r), createdByName: r.created_by ? names.get(r.created_by) ?? null : null })),
+    data: rows.map((r) => ({
+      ...toDispatchDto(r),
+      createdByName: r.created_by ? names.get(r.created_by) ?? null : null,
+      audienceLabel: audienceLabelOf(r.audience, departmentNames),
+    })),
+    facets,
+    // The web client's fetch wrapper only forwards `meta.status_counts`.
+    meta: { status_counts: facets },
     ...pageMeta(page, limit, total),
+  };
+};
+
+/** Cap on SMS rows read to count segments; past it the figure is a floor. */
+const MAX_SEGMENT_ROWS = 20000;
+
+/** KPI tiles on the admin Messaging page: one-off (GENERAL) messages only —
+ *  automatic messages report their own numbers on their template cards. */
+export const overviewStats = async (rawDays: number, now: Date = new Date()) => {
+  const days = Number.isInteger(rawDays) && rawDays > 0 ? Math.min(rawDays, 365) : 30;
+  const since = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+  const dispatchWhere: Prisma.message_dispatchWhereInput = {
+    kind: "GENERAL",
+    status: { in: ["QUEUED", "SENT", "FAILED"] },
+    created_at: { gte: since },
+  };
+  const [messagesSent, groups, smsRows] = await Promise.all([
+    prisma.message_dispatch.count({ where: dispatchWhere }),
+    prisma.message_recipient.groupBy({
+      by: ["status"],
+      where: { dispatch: dispatchWhere },
+      _count: { _all: true },
+    }),
+    prisma.message_recipient.findMany({
+      where: { dispatch: dispatchWhere, channel: "SMS", status: { in: ["SENT", "FAILED"] } },
+      select: { rendered_body: true },
+      take: MAX_SEGMENT_ROWS,
+    }),
+  ]);
+  const count = (status: string) => groups.find((g) => g.status === status)?._count._all ?? 0;
+  const delivered = count("SENT");
+  const failed = count("FAILED");
+  const smsSegmentsUsed = smsRows.reduce((sum, row) => sum + Math.max(1, smsSegments(row.rendered_body).segments), 0);
+  return {
+    days,
+    messagesSent,
+    delivered,
+    failed,
+    deliveryRate: delivered + failed ? Math.round((delivered * 1000) / (delivered + failed)) / 10 : null,
+    smsSegmentsUsed,
   };
 };
 

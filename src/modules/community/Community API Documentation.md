@@ -24,8 +24,9 @@ copied every published announcement into `community_post` (`legacy_announcement_
 - Anonymous posts and comments store the real `author_id`. Member endpoints return `author: null`
   (even to the author, who gets `isMine: true`). Moderation endpoints show the real author and write
   a `VIEW_ANON_AUTHOR` row to `community_moderation_log` each time.
-- Feed order: important posts created in the last 7 days first, then `created_at DESC`.
-  Reactions never affect order.
+- Feed order: pinned posts (`isPinned`) first, then `created_at DESC`. A post stays pinned until a
+  manager unpins it. `isImportant` no longer pins on its own; it only sends the high-priority push
+  and email. Reactions never affect order.
 - Images are uploaded first through `POST /upload` (multipart `file`, returns `{result:{link}}`);
   the post carries up to 4 of those URLs.
 
@@ -61,7 +62,7 @@ Envelope `{ message, data }`; lists `{ message, data, total }`; errors `{ messag
 | GET | `/community/feed` | `filter=all\|prayer\|testimony\|discussion\|department`, `departmentId?`, `skip`, `take` (20, max 50) | `CommunityPost[]`, `total` |
 | GET | `/community/departments` | — | `CommunityDepartment[]` (viewer's departments) |
 | GET | `/community/posts/:id` | — | `{ post, comments: CommunityComment[] }` |
-| POST | `/community/posts` | `{ type, body, audience, departmentId?, memberIds?, isAnonymous?, isImportant?, imageUrls? }` | 201 `CommunityPost` |
+| POST | `/community/posts` | `{ type, body, audience, departmentId?, memberIds?, isAnonymous?, isImportant?, isPinned?, commentsEnabled?, imageUrls? }` | 201 `CommunityPost`. `isPinned` defaults to `isImportant` (older clients keep pinning important posts); `commentsEnabled` defaults to `true`. Both manager-only. |
 | PUT | `/community/posts/:id` | `{ body }` (author or manager) | `CommunityPost` |
 | DELETE | `/community/posts/:id` | — (author or manager; soft delete) | `{ id }` |
 | POST | `/community/posts/:id/reactions` | `{ type }` — toggles | `ReactionSummary[]` |
@@ -90,7 +91,8 @@ Rules worth knowing:
   without a numeric member id becomes plain text). At most 5000 visible characters (markup
   excluded) and 20000 characters of HTML. Responses return the stored body as is; notification
   copy and a department's `latest.body` are flattened to plain text.
-- `type: MESSAGE` or `isImportant: true` without Community manage → **403**. That and the guest
+- `type: MESSAGE`, `isImportant`, `isPinned` or `commentsEnabled: false` without Community manage → **403**.
+- `POST /community/posts/:id/comments` on a post with comments turned off → **400**. That and the guest
   rule are the only 403s; business-rule rejections are 400 and content the viewer can't see is 404
   (the web dashboard leaves the page on any 403).
 - Editing or deleting someone else's post or comment without Community manage → 400.
@@ -129,7 +131,7 @@ type CommunityPost = {
     memberCount: number | null;                      // DEPARTMENT: dept size; SELECTED: recipients
     members: { id: number; name: string }[] | null;  // SELECTED, author only
   };
-  isAnonymous: boolean; isImportant: boolean; isMine: boolean;
+  isAnonymous: boolean; isImportant: boolean; isPinned: boolean; commentsEnabled: boolean; isMine: boolean;
   author: Person | null;                             // null when anonymous
   images: string[]; createdAt: string;
   reactions: ReactionSummary[];                      // all 5 types, always
@@ -164,8 +166,10 @@ type CommunityNotification = {
 | POST | `/community/moderation/:kind/:id/remove` | manage | `kind` = `posts` \| `comments`. Content → `REMOVED`, its reports → `REMOVED`. |
 | POST | `/community/moderation/:kind/:id/restore` | manage | Content → `ACTIVE`, its reports → `RESTORED`. |
 | POST | `/community/moderation/:kind/:id/warn` | manage | Marks the target's reports warned, sends `community.warning` to the real author. |
-| GET | `/community/admin/posts` | view | `type?`, `status?` (`ACTIVE`\|`REMOVED`), `q?`, `skip`, `take` → `(CommunityPost & { realAuthor: {id,name} })[]`, `total`. Excludes deleted posts. Audits each anonymous post. |
-| GET | `/community/moderation/audit-log` | manage | `skip`, `take` → `{ id, actorName, action, postId, commentId, createdAt }[]`, `total`. |
+| GET | `/community/admin/posts` | view | `type?`, `status?` (`ACTIVE`\|`REMOVED`), `q?` (body or real author name), `skip`, `take` → `(CommunityPost & { realAuthor: {id,name} })[]`, `total`. Excludes deleted posts. Audits each anonymous post. |
+| POST | `/community/admin/posts/:id/pin` | manage | `{ pinned: boolean }` → `{ id, isPinned }`. Writes a `PIN` / `UNPIN` audit row. |
+| GET | `/community/admin/stats` | view | `{ postsThisWeek, memberPostsThisWeek, prayerRequestsThisWeek, prayerRepliesThisWeek, pendingReview, oldestPendingAt, removedThisMonth }`. Rolling 7 / 30 days; `pendingReview` counts reported targets, not report rows. |
+| GET | `/community/moderation/audit-log` | manage | `skip`, `take` → `{ id, actorName, action, postId, commentId, createdAt, targetAuthorName, targetExcerpt }[]`, `total`. `action` adds `PIN`, `UNPIN` and `POST_MESSAGE` (a church message was posted). |
 
 Remove / restore / warn return `{ id, kind: "POST" | "COMMENT", status /* content status */, warned }`
 and each writes a `REMOVE` / `RESTORE` / `WARN` audit row.
