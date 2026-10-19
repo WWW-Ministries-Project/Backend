@@ -1,3 +1,4 @@
+import { parseOtherNumber } from "./otherNumber";
 import { prisma } from "../../Models/context";
 import { hashPassword, sendEmail } from "../../utils";
 import axios from "axios";
@@ -22,12 +23,13 @@ import {
 import { resolveBranchIdOrDefault } from "../branches/branchService";
 import { notificationService } from "../notifications/notificationService";
 
-// Optional department/position dates: return a valid Date or null.
-export const parseOptionalDate = (value: unknown): Date | null => {
-  if (value === undefined || value === null || value === "") return null;
-  const parsed = new Date(value as string);
-  return isNaN(parsed.getTime()) ? null : parsed;
-};
+import {
+  normalizeDepartmentPositions,
+  parseOptionalDate,
+} from "./departmentPositionUtils";
+import { buildMembershipStatusTimestampData } from "./membershipStatusTimestamps";
+
+export { parseOptionalDate };
 
 type MemberStatusTransitionTarget = "CONFIRMED" | "MEMBER";
 type MemberStatusValue = "UNCONFIRMED" | "CONFIRMED" | "MEMBER" | null;
@@ -177,16 +179,20 @@ export class UserService {
       source_visitor_id,
     } = userData;
 
-    const parsedSourceSoulWonId = Number(source_soul_won_id);
-    const sourceSoulWonId =
-      Number.isInteger(parsedSourceSoulWonId) && parsedSourceSoulWonId > 0
-        ? parsedSourceSoulWonId
-        : null;
-    const parsedSourceVisitorId = Number(source_visitor_id);
-    const sourceVisitorId =
-      Number.isInteger(parsedSourceVisitorId) && parsedSourceVisitorId > 0
-        ? parsedSourceVisitorId
-        : null;
+    // Absent/blank means "not a conversion"; anything else must be a real id,
+    // otherwise the member would be created without its source link.
+    const parseSourceId = (value: unknown, label: string): number | null => {
+      if (value === undefined || value === null || String(value).trim() === "") {
+        return null;
+      }
+      const parsed = Number(value);
+      if (!Number.isInteger(parsed) || parsed <= 0) {
+        throw new InputValidationError(`Invalid ${label}.`);
+      }
+      return parsed;
+    };
+    const sourceSoulWonId = parseSourceId(source_soul_won_id, "source_soul_won_id");
+    const sourceVisitorId = parseSourceId(source_visitor_id, "source_visitor_id");
 
     const isLoginUser =
       is_user === true || is_user === "true" || is_user === 1 || is_user === "1";
@@ -321,6 +327,13 @@ export class UserService {
       await roleEligibilityService.assertEligibleForPosition(departmentPositionId);
     }
 
+    // Validate before the user row exists so a bad payload can't leave a
+    // half-registered member behind.
+    const otherNumber = parseOtherNumber(userData?.contact_info);
+    if (Array.isArray(department_positions)) {
+      normalizeDepartmentPositions(department_positions);
+    }
+
     const userInfoCreateData: any = {
       title,
       first_name,
@@ -332,6 +345,7 @@ export class UserService {
       nationality,
       photo: picture?.src || "",
       primary_number,
+      other_number: otherNumber ?? null,
       country_code,
       member_since: member_since ? new Date(member_since) : null,
       email: userEmail,
@@ -366,10 +380,13 @@ export class UserService {
         is_user: isLoginUser,
         is_active: false,
         status,
+        ...buildMembershipStatusTimestampData(null, status),
         branch_id: await resolveBranchIdOrDefault(branch_id),
         department_id: departmentId,
         position_id: positionId,
         membership_type,
+        source_visitor_id: sourceVisitorId,
+        source_soul_won_id: sourceSoulWonId,
         user_info: {
           create: userInfoCreateData,
         },
@@ -606,12 +623,9 @@ export class UserService {
     }[],
   ) {
     return await prisma.department_positions.createMany({
-      data: department_positions.map((dp) => ({
+      data: normalizeDepartmentPositions(department_positions).map((dp) => ({
         user_id: userId,
-        department_id: Number(dp.department_id),
-        position_id: Number(dp.position_id),
-        start_date: parseOptionalDate(dp.start_date),
-        end_date: parseOptionalDate(dp.end_date),
+        ...dp,
       })),
       skipDuplicates: true,
     });
@@ -634,6 +648,7 @@ export class UserService {
               parent_id: parentObj.id,
               membership_type,
               status: parentObj.status,
+              ...buildMembershipStatusTimestampData(null, parentObj.status),
               user_info: {
                 create: {
                   title: child.title,
@@ -1272,12 +1287,17 @@ export class UserService {
     id: number,
     status: MemberStatusTransitionTarget,
   ) {
+    const previous = await prisma.user.findUnique({
+      where: { id },
+      select: { status: true, confirmed_at: true, functional_at: true },
+    });
     const updated = await prisma.user.update({
       where: {
         id,
       },
       data: {
         status,
+        ...buildMembershipStatusTimestampData(previous, status),
       },
       select: {
         name: true,

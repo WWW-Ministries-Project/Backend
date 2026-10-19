@@ -1023,6 +1023,17 @@ export class VisitorService {
       },
     });
 
+    // Record the member's origin. Set directly (not via registerUser's
+    // source_visitor_id) so re-converting an is_member visitor keeps working.
+    const newUserId = Number((newUser as any)?.parent?.id);
+    if (Number.isInteger(newUserId) && newUserId > 0) {
+      await prisma.user.update({
+        where: { id: newUserId },
+        data: { source_visitor_id: id },
+      });
+      (newUser as any).parent.source_visitor_id = id;
+    }
+
     return newUser;
   }
 }

@@ -7,7 +7,15 @@ import {
   comparePassword,
   hashPassword,
 } from "../../utils";
-import { UserService, parseOptionalDate } from "./userService";
+import { UserService } from "./userService";
+import {
+  NormalizedDepartmentPosition,
+  normalizeDepartmentPositions,
+} from "./departmentPositionUtils";
+import { buildMembershipStatusTimestampData } from "./membershipStatusTimestamps";
+import { buildMemberSource } from "./memberSource";
+import { computeEnrollmentProgress } from "./enrollmentProgress";
+import { parseOtherNumber } from "./otherNumber";
 import { CourseService } from "../programs/courseService";
 import { LifeCenterService } from "../lifeCenterMangement/lifeCenterService";
 // import { forgetPasswordTemplate } from "../../utils/mail_templates/forgot-password";
@@ -578,6 +586,17 @@ export const updateUser = async (req: Request, res: Response) => {
       );
     }
 
+    // `department_positions` present as an array (even empty) replaces the
+    // member's rows; absent leaves them untouched. Validated up front so a bad
+    // payload fails before anything is written.
+    const normalizedDepartmentPositions: NormalizedDepartmentPosition[] | null =
+      Array.isArray(department_positions)
+        ? normalizeDepartmentPositions(department_positions)
+        : null;
+
+    // undefined = absent (untouched), null = cleared; throws 400 when invalid.
+    const otherNumber = parseOtherNumber(contactInfoPayload);
+
     const normalizedGender = normalizeGenderValue(gender);
     const resolvedUserInfoGender =
       normalizedGender || userExists?.user_info?.gender || null;
@@ -619,6 +638,7 @@ export const updateUser = async (req: Request, res: Response) => {
       city,
       country_code,
       primary_number,
+      other_number: otherNumber,
       member_since: member_since ? new Date(member_since) : undefined,
     };
     const userInfoCreateData: any = {
@@ -637,6 +657,7 @@ export const updateUser = async (req: Request, res: Response) => {
       city,
       country_code,
       primary_number,
+      other_number: otherNumber ?? null,
       member_since: member_since ? new Date(member_since) : null,
     };
 
@@ -737,7 +758,12 @@ export const updateUser = async (req: Request, res: Response) => {
       ? nextNameParts.join(" ")
       : userExists?.name;
 
-    const updatedUser = await prisma.user.update({
+    const resolvedBranchId = await resolveBranchIdOrDefault(
+      branch_id ?? userExists?.branch_id,
+    );
+    // The profile row and the department rows are written in one transaction
+    // so a failed department write can't leave a half-saved member.
+    const userUpdate = prisma.user.update({
       where: { id: Number(user_id) },
       data: {
         name: nextDisplayName,
@@ -745,9 +771,13 @@ export const updateUser = async (req: Request, res: Response) => {
         is_user: nextIsUser,
         access_level_id: nextAccessLevelId,
         status: status || userExists?.status,
+        ...buildMembershipStatusTimestampData(
+          userExists,
+          status || userExists?.status,
+        ),
         position_id: Number(position_id) || userExists?.position_id,
         department_id: Number(department_id) || userExists?.department_id,
-        branch_id: await resolveBranchIdOrDefault(branch_id ?? userExists?.branch_id),
+        branch_id: resolvedBranchId,
         membership_type: membership_type || userExists?.membership_type,
         user_info: {
           upsert: {
@@ -766,17 +796,17 @@ export const updateUser = async (req: Request, res: Response) => {
     });
 
     let dep_posts, kids;
+    let updatedUser;
 
-    // Handle department_positions update
-    if (
-      Array.isArray(department_positions) &&
-      department_positions.length > 0
-    ) {
-      console.log("Stub: handle department updates here");
-      dep_posts = await updateDepartmentPositions(
-        Number(user_id),
-        department_positions,
-      );
+    if (normalizedDepartmentPositions) {
+      const [savedUser, , ...createdPositions] = await prisma.$transaction([
+        userUpdate,
+        ...departmentPositionWrites(Number(user_id), normalizedDepartmentPositions),
+      ]);
+      updatedUser = savedUser;
+      dep_posts = createdPositions;
+    } else {
+      updatedUser = await userUpdate;
     }
 
     void sessionChanged(
@@ -1070,44 +1100,26 @@ async function updateFamilyMembers(family: any[], primaryUser: any) {
   return updatedMembers;
 }
 
-// Helper to update department_positions
-async function updateDepartmentPositions(
+// Writes that replace a member's department rows: delete everything, then
+// re-create. Callers run them inside a transaction so a failed create rolls the
+// delete back. An empty array clears every row.
+function departmentPositionWrites(
   userId: number,
-  department_positions: {
-    department_id: any;
-    position_id: any;
-    start_date?: any;
-    end_date?: any;
-  }[],
+  rows: NormalizedDepartmentPosition[],
 ) {
-  const seenDepartmentIds = new Set<number>();
-  for (const dp of department_positions) {
-    const departmentId = parseInt(dp.department_id);
-    if (seenDepartmentIds.has(departmentId)) {
-      throw new InputValidationError(
-        `Duplicate department assignment: department_id ${dp.department_id} appears more than once in department_positions.`,
-      );
-    }
-    seenDepartmentIds.add(departmentId);
-  }
-
-  await prisma.department_positions.deleteMany({
-    where: { user_id: userId },
-  });
-  const created = await Promise.all(
-    department_positions.map((dp) =>
+  return [
+    prisma.department_positions.deleteMany({
+      where: { user_id: userId },
+    }),
+    ...rows.map((dp) =>
       prisma.department_positions.create({
         data: {
           user_id: userId,
-          department_id: parseInt(dp.department_id),
-          position_id: parseInt(dp.position_id),
-          start_date: parseOptionalDate(dp.start_date),
-          end_date: parseOptionalDate(dp.end_date),
+          ...dp,
         },
       }),
     ),
-  );
-  return created;
+  ] as const;
 }
 
 async function updateChildren(
@@ -1766,6 +1778,15 @@ const fetchUserDirectoryRelations = async (
         date_of_birth: true,
         marital_status: true,
         work_info_id: true,
+        gender: true,
+        city: true,
+        state_region: true,
+        nationality: true,
+        emergency_contact: {
+          select: {
+            name: true,
+          },
+        },
       },
     }),
     prisma.department_positions.findMany({
@@ -1855,6 +1876,11 @@ const fetchUserDirectoryRelations = async (
         member_since: info.member_since,
         date_of_birth: info.date_of_birth,
         marital_status: info.marital_status,
+        gender: info.gender ?? null,
+        city: info.city ?? null,
+        state_region: info.state_region ?? null,
+        nationality: info.nationality ?? null,
+        has_emergency_contact: Boolean(info.emergency_contact?.name?.trim()),
         work_info: info.work_info_id
           ? workInfoById.get(info.work_info_id) || null
           : null,
@@ -1893,8 +1919,128 @@ const maskExcludedListedUser = (user: any) => ({
   date_of_birth: null,
   marital_status: null,
   employment_status: null,
+  gender: null,
+  city: null,
+  state_region: null,
+  nationality: null,
+  has_emergency_contact: null,
+  children_count: null,
   is_restricted: true,
 });
+
+/**
+ * Children per user for one page of the member list: explicit CHILD links
+ * (either direction of family_relation) plus legacy `parent_id` children,
+ * de-duplicated the same way get-user builds `family`.
+ */
+const countChildrenByUserId = async (
+  userIds: number[],
+): Promise<Map<number, number>> => {
+  const childIdsByUser = new Map<number, Set<number>>();
+  if (!userIds.length) return new Map();
+
+  const [forwardChildren, reverseChildren, biologicalChildren] =
+    await Promise.all([
+      prisma.family_relation.findMany({
+        where: { user_id: { in: userIds }, relation: FAMILY_RELATION.CHILD },
+        select: { user_id: true, family_id: true },
+      }),
+      prisma.family_relation.findMany({
+        where: { family_id: { in: userIds }, relation: FAMILY_RELATION.PARENT },
+        select: { user_id: true, family_id: true },
+      }),
+      prisma.user.findMany({
+        where: { parent_id: { in: userIds } },
+        select: { id: true, parent_id: true },
+      }),
+    ]);
+
+  const add = (parentId: number | null, childId: number) => {
+    if (!parentId || parentId === childId) return;
+    const set = childIdsByUser.get(parentId) || new Set<number>();
+    set.add(childId);
+    childIdsByUser.set(parentId, set);
+  };
+
+  forwardChildren.forEach((row) => add(row.user_id, row.family_id));
+  reverseChildren.forEach((row) => add(row.family_id, row.user_id));
+  biologicalChildren.forEach((row) => add(row.parent_id, row.id));
+
+  return new Map(
+    Array.from(childIdsByUser.entries()).map(([id, set]) => [id, set.size]),
+  );
+};
+
+type MemberStatusCounts = {
+  all: number;
+  UNCONFIRMED: number;
+  CONFIRMED: number;
+  MEMBER: number;
+  inactive: number;
+};
+
+/** One grouped query over the request's filters minus status / is_active. */
+const buildMemberStatusCounts = async (
+  baseWhere: any,
+): Promise<MemberStatusCounts> => {
+  const groups = await prisma.user.groupBy({
+    by: ["status", "is_active"],
+    where: baseWhere,
+    _count: { _all: true },
+  });
+
+  const counts: MemberStatusCounts = {
+    all: 0,
+    UNCONFIRMED: 0,
+    CONFIRMED: 0,
+    MEMBER: 0,
+    inactive: 0,
+  };
+
+  for (const group of groups) {
+    const count = group._count?._all ?? 0;
+    counts.all += count;
+    if (group.is_active === false) {
+      counts.inactive += count;
+      continue;
+    }
+    if (group.is_active !== true) continue;
+    if (group.status === "CONFIRMED") counts.CONFIRMED += count;
+    else if (group.status === "MEMBER") counts.MEMBER += count;
+    else if (group.status === "UNCONFIRMED" || group.status === null) {
+      counts.UNCONFIRMED += count;
+    }
+  }
+
+  return counts;
+};
+
+type ListUsersSort = "name" | "newest" | "oldest";
+
+const resolveListUsersSort = (value: unknown): ListUsersSort => {
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return normalized === "newest" || normalized === "oldest"
+    ? normalized
+    : "name";
+};
+
+const buildListUsersOrderBy = (sort: ListUsersSort): any => {
+  if (sort === "newest") {
+    return [
+      { user_info: { member_since: { sort: "desc", nulls: "last" } } },
+      { created_at: "desc" },
+      { id: "desc" },
+    ];
+  }
+  if (sort === "oldest") {
+    return [
+      { user_info: { member_since: { sort: "asc", nulls: "last" } } },
+      { created_at: "asc" },
+      { id: "asc" },
+    ];
+  }
+  return { name: "asc" };
+};
 
 const flattenListedUsers = (data: any[]) => {
   return data.map(({ user_info, ...rest }) => {
@@ -1925,7 +2071,11 @@ export const ListUsers = async (req: Request, res: Response) => {
     ministry_worker,
     membership_type,
     status,
+    sort,
+    include_status_counts,
   } = req.query;
+  const listSort = resolveListUsersSort(sort);
+  const includeStatusCounts = include_status_counts === "true";
   const isUser =
     is_user === "true" || ministry_worker === "true" ? true : false;
   const resolvedTake =
@@ -1975,8 +2125,11 @@ export const ListUsers = async (req: Request, res: Response) => {
       });
     }
 
+    // status / is_active are kept out of `whereConditions` so status_counts
+    // can reuse every other filter.
+    const stageConditions: any[] = [];
     if (is_active !== undefined) {
-      whereConditions.push({
+      stageConditions.push({
         is_active:
           is_active === "true"
             ? true
@@ -2018,14 +2171,14 @@ export const ListUsers = async (req: Request, res: Response) => {
     }
     if (normalizedStatus) {
       if (normalizedStatus === "UNCONFIRMED") {
-        whereConditions.push({
+        stageConditions.push({
           OR: [{ status: "UNCONFIRMED" }, { status: null }],
         });
       } else if (
         normalizedStatus === "CONFIRMED" ||
         normalizedStatus === "MEMBER"
       ) {
-        whereConditions.push({ status: normalizedStatus });
+        stageConditions.push({ status: normalizedStatus });
       }
     }
     if (membership_type) {
@@ -2061,17 +2214,18 @@ export const ListUsers = async (req: Request, res: Response) => {
         ],
       });
     }
-    const whereFilter =
+    const baseWhere =
       whereConditions.length > 0 ? { AND: whereConditions } : undefined;
+    const allConditions = [...whereConditions, ...stageConditions];
+    const whereFilter =
+      allConditions.length > 0 ? { AND: allConditions } : undefined;
 
-    const [total, users] = await Promise.all([
+    const [total, users, statusCounts] = await Promise.all([
       prisma.user.count({ where: whereFilter }),
       prisma.user.findMany({
         skip,
         take: pageSize,
-        orderBy: {
-          name: "asc",
-        },
+        orderBy: buildListUsersOrderBy(listSort),
         where: whereFilter,
         select: {
           id: true,
@@ -2086,11 +2240,19 @@ export const ListUsers = async (req: Request, res: Response) => {
           membership_type: true,
           status: true,
           position_id: true,
+          confirmed_at: true,
+          functional_at: true,
+          source_visitor_id: true,
+          source_soul_won_id: true,
         },
       }),
+      includeStatusCounts
+        ? buildMemberStatusCounts(baseWhere)
+        : Promise.resolve(null),
     ]);
 
     const userIds = users.map((user) => user.id);
+    const childrenCountByUserId = await countChildrenByUserId(userIds);
     const primaryPositionIds = toUniquePositiveIds(
       users.map((user) => user.position_id),
     );
@@ -2136,8 +2298,14 @@ export const ListUsers = async (req: Request, res: Response) => {
         departmentNamesFromPositions[0] ||
         null;
 
+      const {
+        source_visitor_id: sourceVisitorId,
+        source_soul_won_id: sourceSoulWonId,
+        ...listedUser
+      } = user;
+
       return {
-        ...user,
+        ...listedUser,
         position: user.position_id
           ? positionById.get(user.position_id) || null
           : null,
@@ -2145,6 +2313,11 @@ export const ListUsers = async (req: Request, res: Response) => {
         department_id: primaryDepartmentId,
         department_name: primaryDepartmentName,
         branch_id: user.branch_id ?? null,
+        confirmed_at: user.confirmed_at ?? null,
+        functional_at: user.functional_at ?? null,
+        from_visitor: sourceVisitorId != null,
+        from_soul_won: sourceSoulWonId != null,
+        children_count: childrenCountByUserId.get(user.id) ?? 0,
         department_names: departmentNamesFromPositions,
         department_positions: departmentPositions.map((entry: any) => ({
           department_id: entry.department_id,
@@ -2164,6 +2337,7 @@ export const ListUsers = async (req: Request, res: Response) => {
       page_size: pageSize,
       total,
       totalPages: Math.ceil(total / pageSize),
+      ...(statusCounts ? { meta: { status_counts: statusCounts } } : {}),
       data: flattenListedUsers(usersWithDeptName).map((user) =>
         excludedMemberIdSet.has(user.id)
           ? maskExcludedListedUser(user)
@@ -2209,6 +2383,7 @@ export const ListUsersLight = async (req: Request, res: Response) => {
         name: true,
         email: true,
         is_user: true,
+        is_active: true,
         branch_id: true,
         position_id: true,
         access: {
@@ -2340,6 +2515,7 @@ export const ListUsersLight = async (req: Request, res: Response) => {
           name: user.name,
           email: user.email,
           ministry_worker: Boolean(user.is_user),
+          is_active: user.is_active ?? true,
           department:
             userDepartmentByUserId.get(user.id) || fallbackDepartment || null,
           position:
@@ -2469,12 +2645,35 @@ export const getUser = async (req: Request, res: Response) => {
         department: true,
         position: true,
         access: true,
+        source_visitor: {
+          select: {
+            id: true,
+            visitDate: true,
+            visits: { select: { date: true } },
+          },
+        },
+        source_soul_won: {
+          select: {
+            id: true,
+            date_won: true,
+            lifeCenter: { select: { name: true } },
+            wonBy: { select: { name: true } },
+          },
+        },
         enrollments: {
           select: {
             id: true,
             enrolledAt: true,
             completed: true,
             completedAt: true,
+            progress: {
+              select: {
+                topicId: true,
+                completed: true,
+                status: true,
+                topic: { select: { programId: true } },
+              },
+            },
             course: {
               select: {
                 cohort: {
@@ -2626,7 +2825,14 @@ export const getUser = async (req: Request, res: Response) => {
     /* =========================
        7️⃣ BUILD RESPONSE
     ========================== */
-    const { user_info, department_positions, enrollments, ...rest } = response;
+    const {
+      user_info,
+      department_positions,
+      enrollments,
+      source_visitor,
+      source_soul_won,
+      ...rest
+    } = response;
 
     const user: any = {
       ...(user_info || {}),
@@ -2671,8 +2877,41 @@ export const getUser = async (req: Request, res: Response) => {
       end_date: dp.end_date ?? null,
     }));
 
+    user.member_source = buildMemberSource(source_visitor, source_soul_won);
+
+    // One grouped query for every enrolled program's topic count (no N+1).
+    const enrolledProgramIds = toUniquePositiveIds(
+      (enrollments || []).map(
+        (enrollment: any) => enrollment.course?.cohort?.program?.id,
+      ),
+    );
+    const topicCountByProgramId = new Map<number, number>();
+    if (enrolledProgramIds.length > 0) {
+      const topicCounts = await prisma.topic.groupBy({
+        by: ["programId"],
+        where: { programId: { in: enrolledProgramIds } },
+        _count: { _all: true },
+      });
+      topicCounts.forEach((row) =>
+        topicCountByProgramId.set(row.programId, row._count._all),
+      );
+    }
+
     const enrolledPrograms = (enrollments || []).map((enrollment: any) => {
       const completed = Boolean(enrollment.completed);
+      const programId: number | null =
+        enrollment.course?.cohort?.program?.id ?? null;
+      const progress = computeEnrollmentProgress({
+        programId,
+        totalTopics: programId ? topicCountByProgramId.get(programId) ?? 0 : 0,
+        enrollmentCompleted: enrollment.completed,
+        progress: (enrollment.progress || []).map((row: any) => ({
+          topicId: row.topicId,
+          completed: row.completed,
+          status: row.status,
+          topicProgramId: row.topic?.programId ?? null,
+        })),
+      });
 
       return {
         enrollment_id: enrollment.id,
@@ -2695,6 +2934,9 @@ export const getUser = async (req: Request, res: Response) => {
           label: completed ? "COMPLETED" : "IN_PROGRESS",
           completed_at: enrollment.completedAt ?? null,
         },
+        progress_percent: progress.progress_percent,
+        completed_topics: progress.completed_topics,
+        total_topics: progress.total_topics,
       };
     });
 
@@ -2784,12 +3026,15 @@ const calculateStats = (users: any[]) => {
 export const statsUsers = async (req: Request, res: Response) => {
   try {
     const branchWhere = getBranchScopedWhere(req.query?.branch_id);
+    // `active_only=true` counts active members only; default counts everyone.
+    const activeWhere = req.query?.active_only === "true" ? { is_active: true } : {};
     const [onlineUsers, inhouseUsers] = await Promise.all([
       prisma.user_info.findMany({
         where: {
           user: {
             membership_type: "ONLINE",
             ...(branchWhere || {}),
+            ...activeWhere,
           },
         },
       }),
@@ -2798,6 +3043,7 @@ export const statsUsers = async (req: Request, res: Response) => {
           user: {
             membership_type: "IN_HOUSE",
             ...(branchWhere || {}),
+            ...activeWhere,
           },
         },
       }),
