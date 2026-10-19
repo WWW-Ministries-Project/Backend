@@ -20,6 +20,15 @@ const toPositiveInt = (value: unknown) => {
   return parsedValue;
 };
 
+const JOIN_REQUEST_NOTE_MAX_LENGTH = 500;
+
+/** Optional member note: trimmed, empty → null. Length is checked by the caller. */
+const normalizeJoinRequestNote = (value: unknown): string | null => {
+  if (value === undefined || value === null) return null;
+  const trimmed = String(value).trim();
+  return trimmed || null;
+};
+
 const getRequestUserId = (req: Request) =>
   toPositiveInt((req as any)?.user?.id);
 
@@ -186,6 +195,7 @@ export const listMyJoinRequests = async (req: Request, res: Response) => {
       decline_reason: true,
       start_date: true,
       instructions: true,
+      note: true,
       department: {
         select: {
           id: true,
@@ -222,6 +232,7 @@ export const listMyJoinRequests = async (req: Request, res: Response) => {
 export const createJoinRequest = async (req: Request, res: Response) => {
   const userId = getRequestUserId(req);
   const departmentId = toPositiveInt(req.body?.department_id);
+  const note = normalizeJoinRequestNote(req.body?.note);
 
   try {
     if (!userId) {
@@ -231,6 +242,12 @@ export const createJoinRequest = async (req: Request, res: Response) => {
       return res
         .status(400)
         .json({ message: "Department id is required", data: null });
+    }
+    if (note && note.length > JOIN_REQUEST_NOTE_MAX_LENGTH) {
+      return res.status(400).json({
+        message: `Note must be ${JOIN_REQUEST_NOTE_MAX_LENGTH} characters or fewer`,
+        data: null,
+      });
     }
 
     const department = await prisma.department.findUnique({
@@ -300,6 +317,7 @@ export const createJoinRequest = async (req: Request, res: Response) => {
         department_id: departmentId,
         branch_id: department.branch_id,
         status: "PENDING",
+        note,
       },
       select: { id: true },
     });
@@ -382,13 +400,27 @@ export const listJoinRequests = async (req: Request, res: Response) => {
         : "PENDING";
     const validStatuses = ["PENDING", "APPROVED", "DECLINED"];
     const branchWhere = getBranchScopedWhere(req.query?.branch_id);
+    // Optional `department_id` narrows within what the approver may see.
+    const requestedDepartmentId = toPositiveInt(req.query?.department_id);
+    if (
+      requestedDepartmentId &&
+      departmentScope &&
+      !departmentScope.includes(requestedDepartmentId)
+    ) {
+      return res.status(200).json({ message: "Success", data: [] });
+    }
+    const departmentWhere = requestedDepartmentId
+      ? { department_id: requestedDepartmentId }
+      : departmentScope
+        ? { department_id: { in: departmentScope } }
+        : {};
 
     const requests = await prisma.department_join_request.findMany({
       where: {
         ...(validStatuses.includes(statusFilter)
           ? { status: statusFilter as any }
           : {}),
-        ...(departmentScope ? { department_id: { in: departmentScope } } : {}),
+        ...departmentWhere,
         ...(branchWhere ?? {}),
       },
       orderBy: { requested_at: "desc" },
@@ -398,6 +430,10 @@ export const listJoinRequests = async (req: Request, res: Response) => {
         requested_at: true,
         decided_at: true,
         decline_reason: true,
+        note: true,
+        position_id: true,
+        start_date: true,
+        instructions: true,
         department: { select: { id: true, name: true } },
         user: {
           select: {
@@ -408,6 +444,24 @@ export const listJoinRequests = async (req: Request, res: Response) => {
         },
       },
     });
+
+    // No Prisma relation from a join request to its position — resolve by id.
+    const positionIds = Array.from(
+      new Set(
+        requests
+          .map((request) => request.position_id)
+          .filter((id): id is number => Boolean(id)),
+      ),
+    );
+    const positions = positionIds.length
+      ? await prisma.position.findMany({
+          where: { id: { in: positionIds } },
+          select: { id: true, name: true },
+        })
+      : [];
+    const positionNameById = new Map(
+      positions.map((position) => [position.id, position.name]),
+    );
 
     const data = requests.map((request) => ({
       id: request.id,
@@ -420,6 +474,13 @@ export const listJoinRequests = async (req: Request, res: Response) => {
       member_id: request.user?.id,
       member_name: request.user?.name,
       phone_number: request.user?.user_info?.primary_number ?? null,
+      note: request.note ?? null,
+      position_id: request.position_id ?? null,
+      position_name: request.position_id
+        ? (positionNameById.get(request.position_id) ?? null)
+        : null,
+      start_date: request.start_date ?? null,
+      instructions: request.instructions ?? null,
     }));
 
     return res.status(200).json({ message: "Success", data });

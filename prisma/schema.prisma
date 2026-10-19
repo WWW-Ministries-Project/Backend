@@ -35,6 +35,17 @@ model user {
   /// Where the account was created: null for dashboard-created records,
   /// "MOBILE_APP" for self-registration from the member app.
   registration_source                          String?
+  /// When the member reached CONFIRMED. Cleared if moved back to UNCONFIRMED.
+  confirmed_at                                 DateTime?
+  /// When the member reached MEMBER (functional member). Cleared if moved back.
+  functional_at                                DateTime?
+  /// Visitor record this member was converted from (null when not converted
+  /// from a visitor, or the visitor was deleted).
+  source_visitor_id                            Int?
+  /// Soul-won record this member was converted from.
+  source_soul_won_id                           Int?
+  source_visitor                               visitor?                                @relation("user_source_visitor", fields: [source_visitor_id], references: [id], onDelete: SetNull)
+  source_soul_won                              soul_won?                               @relation("user_source_soul_won", fields: [source_soul_won_id], references: [id], onDelete: SetNull)
   appointments                                 appointment[]
   asset_history                                asset_history[]
   assignment_submission                        assignment_submission[]
@@ -144,6 +155,8 @@ model user {
   @@index([name], map: "user_name_idx")
   @@index([branch_id], map: "user_branch_id_idx")
   @@index([is_guest], map: "user_is_guest_idx")
+  @@index([source_visitor_id], map: "user_source_visitor_id_idx")
+  @@index([source_soul_won_id], map: "user_source_soul_won_id_idx")
 }
 
 model branch {
@@ -406,6 +419,8 @@ model department_join_request {
   start_date     DateTime?
   instructions   String?
   decline_reason String?
+  /// Optional note from the member when requesting (max 500 chars).
+  note           String?             @db.Text
   decided_by     Int?
   decided_at     DateTime?
   branch_id      Int?
@@ -1753,6 +1768,7 @@ model visitor {
   notes              note[]
   prayerRequests     prayer_request[]
   visits             visit[]
+  converted_members  user[]           @relation("user_source_visitor")
 
   @@index([branch_id], map: "visitor_branch_id_idx")
 }
@@ -1879,6 +1895,7 @@ model soul_won {
   wonBy                        user                           @relation("user_soul_winner", fields: [wonById], references: [id], map: "soulwon_wonby_fkey")
   member                       user?                          @relation("soul_won_member", fields: [memberId], references: [id], map: "soulwon_member_fkey")
   life_center_meeting_attendee life_center_meeting_attendee[]
+  converted_members            user[]                         @relation("user_source_soul_won")
 
   @@index([lifeCenterId], map: "soulwon_lifecenter_fkey")
   @@index([wonById], map: "soulwon_wonby_fkey")

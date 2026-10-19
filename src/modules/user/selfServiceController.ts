@@ -473,7 +473,9 @@ export const approveMembershipRequest = async (req: Request, res: Response) => {
       }),
       prisma.user.update({
         where: { id: request.user_id },
-        data: { is_guest: false, status: null },
+        // Guests carry no stage stamps; clear defensively so the confirmation
+        // below stamps confirmed_at fresh.
+        data: { is_guest: false, status: null, confirmed_at: null, functional_at: null },
       }),
     ]);
 
