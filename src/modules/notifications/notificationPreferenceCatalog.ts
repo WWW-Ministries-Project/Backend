@@ -217,6 +217,20 @@ export const NOTIFICATION_PREFERENCE_OPTIONS: NotificationPreferenceOption[] = [
     availableChannels: ALL_CHANNELS,
   },
   {
+    type: "appointment.reminder",
+    title: "Appointment reminders",
+    description: "Reminders to reply to a request, before an appointment, and to record how it went.",
+    category: "Appointments",
+    availableChannels: ALL_CHANNELS,
+  },
+  {
+    type: "appointment.overdue",
+    title: "Unanswered appointment requests",
+    description: "Alerts when a request goes past its reply deadline or stays unanswered.",
+    category: "Appointments",
+    availableChannels: ALL_CHANNELS,
+  },
+  {
     type: "delivery.status_changed",
     title: "Delivery status changed",
     description: "Notify order owners when shipping or delivery status changes.",

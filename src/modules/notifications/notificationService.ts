@@ -97,6 +97,18 @@ export type CreateNotificationInput = {
    * post queued for hundreds of members can't hold up a ride being accepted.
    */
   bulk?: boolean;
+  /**
+   * Web/Expo push for the in-app row. Default true. False keeps the in-app
+   * row (bell) but sends no push.
+   */
+  sendPush?: boolean;
+  /**
+   * The caller (an admin-configured policy, e.g. the appointment
+   * notification matrix) decides email/SMS: `sendEmail`/`sendSms` are honoured
+   * unless the recipient explicitly turned that channel off for this type.
+   * Without it SMS also needs the recipient to have opted in.
+   */
+  channelsFromPolicy?: boolean;
 };
 
 type NotificationListArgs = {
@@ -1026,6 +1038,7 @@ const createInAppNotification = async (
     }
   }
 
+  const policyChannels = input.channelsFromPolicy === true;
   const shouldSendEmail =
     (input.sendEmail ?? true) && preference.emailEnabled;
   const recipientEmail = recipientUser.email?.trim() || "";
@@ -1063,7 +1076,9 @@ const createInAppNotification = async (
   }
 
   const shouldSendSms =
-    input.sendSms === true && preference.smsEnabled;
+    input.sendSms === true &&
+    (preference.smsEnabled ||
+      (policyChannels && !preference.hasStoredPreference));
   if (shouldSendSms) {
     const smsBody = String(input.smsBody || trimmedBody).trim();
     if (smsBody) {
@@ -1095,6 +1110,10 @@ const createInAppNotification = async (
   broadcastToUser(recipientUserId, "notification", payload);
   void sendUnreadCountToUser(recipientUserId);
   void updateUnreadBacklogMetric();
+
+  if (input.sendPush === false) {
+    return payload;
+  }
 
   enqueueNotificationDelivery(async () => {
     try {

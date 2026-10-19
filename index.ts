@@ -36,6 +36,7 @@ if (shouldRunBackgroundJobs) {
   require("./src/cron-jobs/rideReminderCron");
   require("./src/cron-jobs/messagingDispatchCron");
   require("./src/cron-jobs/messagingBirthdayCron");
+  require("./src/cron-jobs/appointmentNotificationCron");
 } else {
   logger.info("Background cron jobs are disabled for this process.");
 }

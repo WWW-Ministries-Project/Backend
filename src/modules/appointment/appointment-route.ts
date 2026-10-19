@@ -48,6 +48,18 @@ appointmentRouter.put(
   appointmentController.cancelOwnBooking,
 );
 
+// 4c. Booking actions (appointments redesign)
+// URL: POST /appointment/bookings/:id/actions
+// Body: { action: "accept" | "reopen" | "suggest" | "decline" | "cancel" |
+//   "complete" | "no_show" | "remind" | "reassign" | "confirm_proposal", ... }
+// `protect`-only: the person booked may act on their own booking; manage
+// (and manage-only actions) is checked in the action service.
+appointmentRouter.post(
+  "/bookings/:id/actions",
+  [protect],
+  appointmentController.bookingAction,
+);
+
 // 5. Delete booking appointment by id
 // URL: DELETE /appointment/bookings/:id
 appointmentRouter.delete(
@@ -99,6 +111,30 @@ appointmentRouter.get(
   "/availability/booking-options",
   [protect],
   appointmentController.getBookingOptions,
+);
+
+// 9c. Pause / resume new bookings for a person. Body: { paused: boolean }
+// URL: PUT /appointment/availability/staff/:userId/pause
+appointmentRouter.put(
+  "/availability/staff/:userId/pause",
+  [protect, permissions.can_manage_appointments_scoped],
+  appointmentController.setStaffPaused,
+);
+
+// 9d. Add time off for a person. Body: { from, to, note? } (YYYY-MM-DD, inclusive)
+// URL: POST /appointment/availability/staff/:userId/time-off
+appointmentRouter.post(
+  "/availability/staff/:userId/time-off",
+  [protect, permissions.can_manage_appointments_scoped],
+  appointmentController.createTimeOff,
+);
+
+// 9e. Remove a time-off entry
+// URL: DELETE /appointment/availability/time-off/:id
+appointmentRouter.delete(
+  "/availability/time-off/:id",
+  [protect, permissions.can_manage_appointments_scoped],
+  appointmentController.deleteTimeOff,
 );
 
 // 10. Update one availability slot by id
@@ -183,6 +219,24 @@ appointmentRouter.delete(
   "/reasons/:id",
   [protect, permissions.can_manage_appointment_settings],
   reasonController.remove,
+);
+
+// 15. Appointment rules + notification matrix (appointments redesign).
+// GET with view (any signed-in user passes the scoped view guard; members
+// need the cancel cutoff and booking rules too). PUT takes any subset and
+// returns the full object.
+// URL: GET /appointment/settings
+appointmentRouter.get(
+  "/settings",
+  [protect, permissions.can_view_appointments_scoped],
+  appointmentController.getSettings,
+);
+
+// URL: PUT /appointment/settings
+appointmentRouter.put(
+  "/settings",
+  [protect, permissions.can_manage_appointment_settings],
+  appointmentController.updateSettings,
 );
 
 export default appointmentRouter;
