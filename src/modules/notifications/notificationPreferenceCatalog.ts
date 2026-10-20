@@ -336,6 +336,34 @@ export const NOTIFICATION_PREFERENCE_OPTIONS: NotificationPreferenceOption[] = [
     availableChannels: ALL_CHANNELS,
   },
   {
+    type: "assets.stock_check_started",
+    title: "Stock check started",
+    description: "When you're asked to count the assets your department holds.",
+    category: "Assets",
+    availableChannels: ALL_CHANNELS,
+  },
+  {
+    type: "assets.stock_check_reminder",
+    title: "Stock check reminder",
+    description: "Reminders to finish your count, and recount requests.",
+    category: "Assets",
+    availableChannels: ALL_CHANNELS,
+  },
+  {
+    type: "assets.stock_check_submitted",
+    title: "Stock check count submitted",
+    description: "When a department submits its count for your review.",
+    category: "Assets",
+    availableChannels: IN_APP_AND_EMAIL_CHANNELS,
+  },
+  {
+    type: "assets.stock_check_cancelled",
+    title: "Stock check cancelled",
+    description: "When a stock check you were counting is cancelled.",
+    category: "Assets",
+    availableChannels: IN_APP_AND_EMAIL_CHANNELS,
+  },
+  {
     type: "requisition.approval_reminder",
     title: "Requisition approval reminder",
     description:

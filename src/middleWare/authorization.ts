@@ -1281,6 +1281,18 @@ export class Permissions {
       context.isPrivilegedUser &&
       hasActionPermission(context.permissions, "Asset", "view");
 
+    // What the asset redesign endpoints may do for this viewer.
+    (req as any).assetAccess = {
+      canViewAll,
+      canManage:
+        context.isPrivilegedUser &&
+        hasActionPermission(context.permissions, "Asset", "manage"),
+      canAdmin:
+        context.isPrivilegedUser &&
+        hasActionPermission(context.permissions, "Asset", "admin"),
+      departmentIds: [...context.departmentIds],
+    };
+
     if (canViewAll) {
       (req as any).assetScope = { mode: "all" };
       return next();

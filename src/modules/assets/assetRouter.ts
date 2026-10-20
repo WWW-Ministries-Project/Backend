@@ -8,6 +8,9 @@ import {
   updateAsset,
 } from "../assets/assetController";
 import { Permissions } from "../../middleWare/authorization";
+import { requestLogger } from "../../utils/loggers";
+import { wrapControllersWithLogger } from "../../utils/catchAsyncFunction";
+import { assetRedesignControllers } from "./assetRedesignController";
 const upload = multer({ dest: "uploads/" });
 const permissions = new Permissions();
 const protect = permissions.protect;
@@ -243,3 +246,37 @@ assetRouter.delete(
   [protect, permissions.can_delete_asset, upload.single("file")],
   deleteAsset,
 );
+
+/* -------------------------------------------------------------------------- */
+/*                 Assets redesign (docs/ASSETS_REDESIGN_FRONTEND_GUIDE.md)    */
+/* -------------------------------------------------------------------------- */
+
+const redesign = wrapControllersWithLogger(assetRedesignControllers, requestLogger);
+// Every route resolves the viewer's asset access first; services enforce
+// manage/admin and per-department counting rules on top.
+const view = [protect, permissions.can_view_assets_scoped];
+const manage = [protect, permissions.can_view_assets_scoped, permissions.can_manage_asset];
+
+assetRouter.get("/overview", view, redesign.assetOverviewHandler);
+assetRouter.get("/history", view, redesign.assetHistoryHandler);
+assetRouter.post("/save-asset", manage, redesign.saveAssetHandler);
+assetRouter.post("/update-status", manage, redesign.updateAssetStatusHandler);
+assetRouter.post("/restore", manage, redesign.restoreAssetsHandler);
+assetRouter.post("/confirm-lost", manage, redesign.confirmAssetLostHandler);
+assetRouter.post("/repair-requisition", manage, redesign.raiseRepairRequisitionHandler);
+assetRouter.post("/clear-repair-requisition", manage, redesign.clearRepairRequisitionHandler);
+
+assetRouter.get("/stock-checks", view, redesign.listStockChecksHandler);
+assetRouter.get("/stock-checks/detail", view, redesign.stockCheckDetailHandler);
+assetRouter.post("/stock-checks/start", manage, redesign.startStockCheckHandler);
+assetRouter.post("/stock-checks/cancel", manage, redesign.cancelStockCheckHandler);
+assetRouter.post("/stock-checks/mark", view, redesign.markStockCheckItemsHandler);
+assetRouter.post("/stock-checks/set-fix", manage, redesign.setStockCheckFixHandler);
+assetRouter.post("/stock-checks/add-extra", view, redesign.addStockCheckExtraHandler);
+assetRouter.post("/stock-checks/remove-extra", view, redesign.removeStockCheckExtraHandler);
+assetRouter.post("/stock-checks/submit", view, redesign.submitStockCheckDepartmentHandler);
+assetRouter.post("/stock-checks/reopen", view, redesign.reopenStockCheckDepartmentHandler);
+assetRouter.post("/stock-checks/remind", manage, redesign.remindStockCheckCountersHandler);
+assetRouter.post("/stock-checks/recount", manage, redesign.requestStockCheckRecountHandler);
+assetRouter.post("/stock-checks/mark-rest-missing", manage, redesign.markRestMissingHandler);
+assetRouter.post("/stock-checks/close", manage, redesign.closeStockCheckHandler);
