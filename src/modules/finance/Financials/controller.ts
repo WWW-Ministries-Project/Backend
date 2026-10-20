@@ -138,4 +138,41 @@ export class FinancialsController {
       return sendFinanceError(res, error);
     }
   }
+
+  async approve(req: Request, res: Response): Promise<Response> {
+    try {
+      const id = parseIdFromQuery(req);
+      const record = await financialsService.approve(id, (req as any).user?.id);
+      return res.status(200).json({ message: "Record approved", data: record });
+    } catch (error) {
+      return sendFinanceError(res, error);
+    }
+  }
+
+  async returnRecord(req: Request, res: Response): Promise<Response> {
+    try {
+      const id = parseIdFromQuery(req);
+      const record = await financialsService.returnRecord(
+        id,
+        String(req.body?.note ?? ""),
+        (req as any).user?.id,
+      );
+      return res.status(200).json({ message: "Record returned", data: record });
+    } catch (error) {
+      return sendFinanceError(res, error);
+    }
+  }
+
+  async autoAmounts(req: Request, res: Response): Promise<Response> {
+    try {
+      const data = await financialsService.autoAmounts(
+        String(req.query?.from ?? ""),
+        String(req.query?.to ?? ""),
+        req.query?.branch_id,
+      );
+      return res.status(200).json({ message: "Success", data });
+    } catch (error) {
+      return sendFinanceError(res, error);
+    }
+  }
 }

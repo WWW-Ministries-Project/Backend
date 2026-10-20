@@ -129,6 +129,27 @@ export class GivingContributionController {
     }
   }
 
+  async recheck(req: Request, res: Response): Promise<Response> {
+    try {
+      const references = Array.isArray(req.body?.references) ? req.body.references : [];
+      const result = await service.recheck(references);
+      return res.status(200).json({ message: "Checked with Paystack", ...result });
+    } catch (error) {
+      return sendFinanceError(res, error);
+    }
+  }
+
+  async nudge(req: Request, res: Response): Promise<Response> {
+    try {
+      const reference = String(req.body?.reference ?? "").trim();
+      if (!reference) throw new FinanceHttpError(422, "reference is required");
+      const data = await service.nudge(reference, (req as any).user?.id);
+      return res.status(200).json({ message: "Giver notified", data });
+    } catch (error) {
+      return sendFinanceError(res, error);
+    }
+  }
+
   async listAll(req: Request, res: Response): Promise<Response> {
     try {
       const pagination = parsePagination(req);

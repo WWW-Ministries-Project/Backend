@@ -28,21 +28,63 @@ type FinancialRecordRow = {
   submitted_at: Date | null;
   approved_by_user_id: number | null;
   approved_at: Date | null;
+  returned_by_user_id: number | null;
+  returned_at: Date | null;
+  return_note: string | null;
   branch_id: number | null;
 };
+
+const RECORD_SELECT = {
+  id: true,
+  periodDate: true,
+  payload: true,
+  createdAt: true,
+  updatedAt: true,
+  status: true,
+  created_by_user_id: true,
+  updated_by_user_id: true,
+  submitted_by_user_id: true,
+  submitted_at: true,
+  approved_by_user_id: true,
+  approved_at: true,
+  returned_by_user_id: true,
+  returned_at: true,
+  return_note: true,
+  branch_id: true,
+} satisfies Prisma.financialsSelect;
 
 type FinanceApprovalConfigRow = {
   id: number;
   finance_approver_user_id: number;
   is_active: boolean;
   notification_user_ids: number[];
+  tithe_percentage: number;
 };
 
 type FinanceApprovalConfigEntity = {
   finance_approver_user_id: number | null;
   notification_user_ids: number[];
   is_active: boolean;
+  tithe_percentage: number;
 };
+
+const DEFAULT_TITHE_PERCENTAGE = 10;
+
+/** Receipt totals the weekly record fills in from Giving and Pledges. Major units. */
+type FinanceAutoAmounts = {
+  from: string;
+  to: string;
+  online_giving: number;
+  online_giving_count: number;
+  pledges_redeemed: number;
+  pledges_redeemed_count: number;
+};
+
+// Mirrors ONLINE_REDEMPTION_METHOD in pledges/payments/service, kept local so
+// this module doesn't pull in the Paystack payment stack.
+const ONLINE_REDEMPTION_METHOD = "paystack";
+
+const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 type FinancialEntity = {
   id: string;
@@ -56,6 +98,11 @@ type FinancialEntity = {
   submittedAt: Date | null;
   approvedByUserId: number | null;
   approvedAt: Date | null;
+  createdByUserId: number | null;
+  updatedByUserId: number | null;
+  returnedByUserId: number | null;
+  returnedAt: Date | null;
+  returnNote: string | null;
   isEditable: boolean;
   notificationUserIds: number[];
   branch_id: number | null;
@@ -94,6 +141,7 @@ const mapConfigRow = (row: {
   id: number;
   finance_approver_user_id: number;
   is_active: boolean;
+  tithe_percentage?: Prisma.Decimal | number | null;
   notifications?: Array<{ user_id: number }>;
 } | null): FinanceApprovalConfigRow | null => {
   if (!row) return null;
@@ -102,6 +150,10 @@ const mapConfigRow = (row: {
     id: row.id,
     finance_approver_user_id: row.finance_approver_user_id,
     is_active: Boolean(row.is_active),
+    tithe_percentage:
+      row.tithe_percentage === null || row.tithe_percentage === undefined
+        ? DEFAULT_TITHE_PERCENTAGE
+        : Number(row.tithe_percentage),
     notification_user_ids: Array.from(
       new Set((row.notifications || []).map((item) => item.user_id)),
     ),
@@ -284,6 +336,11 @@ export class FinancialsService {
       submittedAt: financial.submitted_at,
       approvedByUserId: financial.approved_by_user_id,
       approvedAt: financial.approved_at,
+      createdByUserId: financial.created_by_user_id,
+      updatedByUserId: financial.updated_by_user_id,
+      returnedByUserId: financial.returned_by_user_id,
+      returnedAt: financial.returned_at,
+      returnNote: financial.return_note,
       isEditable: computeIsEditable({
         status,
         actorUserId,
@@ -301,6 +358,7 @@ export class FinancialsService {
       finance_approver_user_id: config?.finance_approver_user_id ?? null,
       notification_user_ids: config?.notification_user_ids ?? [],
       is_active: config?.is_active ?? true,
+      tithe_percentage: config?.tithe_percentage ?? DEFAULT_TITHE_PERCENTAGE,
     };
   }
 
@@ -321,6 +379,9 @@ export class FinancialsService {
         config_key: FINANCE_CONFIG_KEY,
         finance_approver_user_id: payload.finance_approver_user_id,
         is_active: payload.is_active !== false,
+        ...(payload.tithe_percentage !== undefined && {
+          tithe_percentage: new Prisma.Decimal(payload.tithe_percentage),
+        }),
         created_by_user_id: toPositiveInt(actorUserId),
         updated_by_user_id: toPositiveInt(actorUserId),
         notifications: {
@@ -332,6 +393,9 @@ export class FinancialsService {
       update: {
         finance_approver_user_id: payload.finance_approver_user_id,
         is_active: payload.is_active !== false,
+        ...(payload.tithe_percentage !== undefined && {
+          tithe_percentage: new Prisma.Decimal(payload.tithe_percentage),
+        }),
         updated_by_user_id: toPositiveInt(actorUserId),
         notifications: {
           deleteMany: {},
@@ -355,6 +419,7 @@ export class FinancialsService {
       finance_approver_user_id: config?.finance_approver_user_id ?? null,
       notification_user_ids: config?.notification_user_ids ?? [],
       is_active: config?.is_active ?? true,
+      tithe_percentage: config?.tithe_percentage ?? DEFAULT_TITHE_PERCENTAGE,
     };
   }
 
@@ -370,15 +435,16 @@ export class FinancialsService {
     const config = await this.ensureApprovalConfigReady(mutation.action);
     const periodDate = mutation.payload.metaData.periodDate;
 
+    const branchId = await resolveBranchIdOrDefault(mutation.branch_id);
     const existingForPeriod = await prisma.financials.findFirst({
-      where: { periodDate },
+      where: { periodDate, branch_id: branchId ?? null },
       select: { id: true },
     });
 
     if (existingForPeriod) {
       throw new FinanceHttpError(
         409,
-        `Financial record for period ${periodDate} already exists`,
+        `There is already a record for the week starting ${periodDate}. Open that one instead.`,
       );
     }
 
@@ -405,23 +471,9 @@ export class FinancialsService {
         submitted_at: mutation.action === "SAVE_AND_APPROVE" ? now : null,
         approved_by_user_id: nextStatus === "APPROVED" ? normalizedActorUserId : null,
         approved_at: nextStatus === "APPROVED" ? now : null,
-        branch_id: await resolveBranchIdOrDefault(mutation.branch_id),
+        branch_id: branchId,
       },
-      select: {
-        id: true,
-        periodDate: true,
-        payload: true,
-        createdAt: true,
-        updatedAt: true,
-        status: true,
-        created_by_user_id: true,
-        updated_by_user_id: true,
-        submitted_by_user_id: true,
-        submitted_at: true,
-        approved_by_user_id: true,
-        approved_at: true,
-        branch_id: true,
-      },
+      select: RECORD_SELECT,
     });
 
     const record = this.mapResponse(created, config, normalizedActorUserId);
@@ -492,21 +544,7 @@ export class FinancialsService {
         orderBy: { createdAt: "desc" },
         skip: pagination.skip,
         take: pagination.take,
-        select: {
-          id: true,
-          periodDate: true,
-          payload: true,
-          createdAt: true,
-          updatedAt: true,
-          status: true,
-          created_by_user_id: true,
-          updated_by_user_id: true,
-          submitted_by_user_id: true,
-          submitted_at: true,
-          approved_by_user_id: true,
-          approved_at: true,
-          branch_id: true,
-        },
+        select: RECORD_SELECT,
       }),
     ]);
 
@@ -527,21 +565,7 @@ export class FinancialsService {
       this.getFinanceApprovalConfig(),
       prisma.financials.findUnique({
         where: { id },
-        select: {
-          id: true,
-          periodDate: true,
-          payload: true,
-          createdAt: true,
-          updatedAt: true,
-          status: true,
-          created_by_user_id: true,
-          updated_by_user_id: true,
-          submitted_by_user_id: true,
-          submitted_at: true,
-          approved_by_user_id: true,
-          approved_at: true,
-          branch_id: true,
-        },
+        select: RECORD_SELECT,
       }),
     ]);
 
@@ -572,21 +596,7 @@ export class FinancialsService {
 
     const existing = await prisma.financials.findUnique({
       where: { id },
-      select: {
-        id: true,
-        periodDate: true,
-        payload: true,
-        createdAt: true,
-        updatedAt: true,
-        status: true,
-        created_by_user_id: true,
-        updated_by_user_id: true,
-          submitted_by_user_id: true,
-          submitted_at: true,
-          approved_by_user_id: true,
-          approved_at: true,
-          branch_id: true,
-        },
+      select: RECORD_SELECT,
       });
 
     if (!existing) {
@@ -599,9 +609,14 @@ export class FinancialsService {
       financeApproverUserId: config?.finance_approver_user_id ?? null,
     });
 
+    const targetBranchId =
+      mutation.branch_id !== undefined
+        ? await resolveBranchIdOrDefault(mutation.branch_id)
+        : existing.branch_id;
     const duplicateForPeriod = await prisma.financials.findFirst({
       where: {
         periodDate,
+        branch_id: targetBranchId ?? null,
         id: { not: id },
       },
       select: { id: true },
@@ -610,7 +625,7 @@ export class FinancialsService {
     if (duplicateForPeriod) {
       throw new FinanceHttpError(
         409,
-        `Financial record for period ${periodDate} already exists`,
+        `There is already a record for the week starting ${periodDate}. Open that one instead.`,
       );
     }
 
@@ -637,27 +652,14 @@ export class FinancialsService {
         submitted_at: mutation.action === "SAVE_AND_APPROVE" ? now : null,
         approved_by_user_id: nextStatus === "APPROVED" ? normalizedActorUserId : null,
         approved_at: nextStatus === "APPROVED" ? now : null,
-        ...(mutation.branch_id !== undefined
-          ? {
-              branch_id: await resolveBranchIdOrDefault(mutation.branch_id),
-            }
+        // A resubmission clears the approver's return note; a draft save keeps it
+        // so the preparer can still read what to fix.
+        ...(mutation.action === "SAVE_AND_APPROVE"
+          ? { returned_by_user_id: null, returned_at: null, return_note: null }
           : {}),
+        branch_id: targetBranchId,
       },
-      select: {
-        id: true,
-        periodDate: true,
-        payload: true,
-        createdAt: true,
-        updatedAt: true,
-        status: true,
-        created_by_user_id: true,
-        updated_by_user_id: true,
-        submitted_by_user_id: true,
-        submitted_at: true,
-        approved_by_user_id: true,
-        approved_at: true,
-        branch_id: true,
-      },
+      select: RECORD_SELECT,
     });
 
     const record = this.mapResponse(updated, config, normalizedActorUserId);
@@ -710,14 +712,183 @@ export class FinancialsService {
     };
   }
 
+  private async loadForReview(id: string, actorUserId?: number | null) {
+    const normalizedActorUserId = toPositiveInt(actorUserId);
+    if (!normalizedActorUserId) {
+      throw new FinanceHttpError(401, "Authenticated user is required");
+    }
+
+    const [config, existing] = await Promise.all([
+      this.getFinanceApprovalConfig(),
+      prisma.financials.findUnique({ where: { id }, select: RECORD_SELECT }),
+    ]);
+
+    if (!existing) {
+      throw new FinanceHttpError(404, "Financial record not found");
+    }
+
+    if (!config?.finance_approver_user_id || config.finance_approver_user_id !== normalizedActorUserId) {
+      throw new FinanceHttpError(403, "Only the finance approver can review submitted records.");
+    }
+
+    if (normalizeStatus(existing.status) !== "PENDING_APPROVAL") {
+      throw new FinanceHttpError(409, "This record isn't waiting for approval.");
+    }
+
+    return { config, existing, actorId: normalizedActorUserId };
+  }
+
+  /** The finance approver approves a submitted record as it stands. */
+  async approve(id: string, actorUserId?: number | null): Promise<FinancialEntity> {
+    const { config, existing, actorId } = await this.loadForReview(id, actorUserId);
+    const now = new Date();
+
+    const updated = await prisma.financials.update({
+      where: { id },
+      data: {
+        status: "APPROVED",
+        approved_by_user_id: actorId,
+        approved_at: now,
+        updated_by_user_id: actorId,
+        returned_by_user_id: null,
+        returned_at: null,
+        return_note: null,
+      },
+      select: RECORD_SELECT,
+    });
+
+    const recipients = Array.from(
+      new Set(
+        [existing.submitted_by_user_id, existing.created_by_user_id, ...config.notification_user_ids].filter(
+          (userId): userId is number => Boolean(userId) && userId !== actorId,
+        ),
+      ),
+    );
+
+    if (recipients.length) {
+      await notificationService.createManyInAppNotifications(
+        recipients.map((userId) => ({
+          type: "financial.approved",
+          title: "Weekly record approved",
+          body: `The weekly record for ${existing.periodDate} has been approved.`,
+          recipientUserId: userId,
+          actorUserId: actorId,
+          entityType: "financial",
+          entityId: id,
+          actionUrl: `/home/finance/${id}`,
+          priority: "HIGH",
+          sendEmail: true,
+        })),
+      );
+    }
+
+    return this.mapResponse(updated, config, actorId);
+  }
+
+  /** The finance approver sends a submitted record back as a draft with a note. */
+  async returnRecord(
+    id: string,
+    note: string,
+    actorUserId?: number | null,
+  ): Promise<FinancialEntity> {
+    const trimmed = String(note ?? "").trim();
+    if (!trimmed) {
+      throw new FinanceHttpError(422, "Say what needs to change.");
+    }
+
+    const { config, existing, actorId } = await this.loadForReview(id, actorUserId);
+    const now = new Date();
+
+    const updated = await prisma.financials.update({
+      where: { id },
+      data: {
+        status: "DRAFT",
+        submitted_by_user_id: null,
+        submitted_at: null,
+        updated_by_user_id: actorId,
+        returned_by_user_id: actorId,
+        returned_at: now,
+        return_note: trimmed.slice(0, 2000),
+      },
+      select: RECORD_SELECT,
+    });
+
+    const preparer = existing.submitted_by_user_id ?? existing.created_by_user_id;
+    if (preparer && preparer !== actorId) {
+      await notificationService.createInAppNotification({
+        type: "financial.returned",
+        title: "Weekly record returned",
+        body: `The weekly record for ${existing.periodDate} was returned: "${trimmed.slice(0, 160)}"`,
+        recipientUserId: preparer,
+        actorUserId: actorId,
+        entityType: "financial",
+        entityId: id,
+        actionUrl: `/home/finance/${id}`,
+        priority: "HIGH",
+        sendEmail: true,
+      });
+    }
+
+    return this.mapResponse(updated, config, actorId);
+  }
+
+  /**
+   * What a week's "Online giving" and "Pledges Redeemed" receipt lines should
+   * read. Online giving counts successful giving contributions by the day they
+   * were paid; pledges redeemed counts redemptions recorded by staff (online
+   * pledge payments settle into the pledge's own account, not the offering).
+   */
+  async autoAmounts(from: string, to: string, branchId?: unknown): Promise<FinanceAutoAmounts> {
+    if (!DAY_RE.test(from) || !DAY_RE.test(to) || from > to) {
+      throw new FinanceHttpError(422, "from and to must be YYYY-MM-DD, with from on or before to");
+    }
+
+    const range = {
+      gte: new Date(`${from}T00:00:00.000Z`),
+      lte: new Date(`${to}T23:59:59.999Z`),
+    };
+    const branchWhere = getBranchScopedWhere(branchId);
+
+    const [giving, redemptions] = await Promise.all([
+      prisma.givingContribution.aggregate({
+        where: { status: "success", paid_at: range, ...(branchWhere ?? {}) },
+        _sum: { amount: true },
+        _count: { _all: true },
+      }),
+      prisma.pledge_redemption.aggregate({
+        where: {
+          date: range,
+          method: { not: ONLINE_REDEMPTION_METHOD },
+          ...(branchWhere ? { pledger: { group: { pledge: branchWhere } } } : {}),
+        },
+        _sum: { amount: true },
+        _count: { _all: true },
+      }),
+    ]);
+
+    return {
+      from,
+      to,
+      online_giving: (giving._sum.amount ?? 0) / 100,
+      online_giving_count: giving._count._all,
+      pledges_redeemed: Number(redemptions._sum.amount ?? 0),
+      pledges_redeemed_count: redemptions._count._all,
+    };
+  }
+
   async delete(id: string): Promise<{ id: string; deleted: true }> {
     const existing = await prisma.financials.findUnique({
       where: { id },
-      select: { id: true },
+      select: { id: true, status: true },
     });
 
     if (!existing) {
       throw new FinanceHttpError(404, "Financial record not found");
+    }
+
+    // Submitted and approved weeks feed balances; only drafts can be deleted.
+    if (normalizeStatus(existing.status) !== "DRAFT") {
+      throw new FinanceHttpError(409, "Only draft records can be deleted.");
     }
 
     await prisma.financials.delete({ where: { id } });

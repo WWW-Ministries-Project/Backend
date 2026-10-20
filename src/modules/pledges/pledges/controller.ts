@@ -4,6 +4,7 @@ import {
   validatePledgeMutationPayload,
   validateSettlementAccount,
   sendPledgeError,
+  PledgeHttpError,
 } from "../common";
 
 const service = new PledgeService();
@@ -72,6 +73,21 @@ export const deletePledge = async (req: Request, res: Response) => {
   try {
     await service.remove(Number(req.query?.id));
     return res.status(200).json({ message: "Pledge deleted" });
+  } catch (e) {
+    return sendPledgeError(res, e);
+  }
+};
+
+export const remindPledgers = async (req: Request, res: Response) => {
+  try {
+    const pledgeId = Number(req.body?.pledge_id);
+    if (!pledgeId) throw new PledgeHttpError(400, "pledge_id is required");
+    const ids = Array.isArray(req.body?.pledger_ids)
+      ? req.body.pledger_ids.map(Number).filter((n: number) => Number.isInteger(n) && n > 0)
+      : undefined;
+    if (ids && ids.length === 0) throw new PledgeHttpError(400, "pledger_ids must list at least one pledger");
+    const data = await service.remind(pledgeId, ids, (req as any).user?.id);
+    return res.status(200).json({ message: "Reminders sent", data });
   } catch (e) {
     return sendPledgeError(res, e);
   }

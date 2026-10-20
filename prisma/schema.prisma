@@ -2421,7 +2421,9 @@ model financials {
   payload              String    @db.LongText
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
-  periodDate           String?   @unique
+  // One record per week per branch: YYYY-MM-DD of the week's first day.
+  // Records saved before the weekly redesign hold a YYYY-MM month key.
+  periodDate           String?
   status               String    @default("DRAFT")
   created_by_user_id   Int?
   updated_by_user_id   Int?
@@ -2429,9 +2431,14 @@ model financials {
   submitted_at         DateTime?
   approved_by_user_id  Int?
   approved_at          DateTime?
+  // Set when the finance approver sends a submitted record back as a draft.
+  returned_by_user_id  Int?
+  returned_at          DateTime?
+  return_note          String?   @db.Text
   branch_id            Int?
   branch               branch?   @relation(fields: [branch_id], references: [id])
 
+  @@unique([branch_id, periodDate], map: "financials_branch_id_periodDate_key")
   @@index([status], map: "financials_status_idx")
   @@index([branch_id], map: "financials_branch_id_idx")
   @@index([created_by_user_id], map: "financials_created_by_user_id_idx")
@@ -2445,6 +2452,8 @@ model finance_approval_config {
   config_key               String                                 @unique @default("FINANCE")
   finance_approver_user_id Int
   is_active                Boolean                                @default(true)
+  // Share of total receipts taken as tithe on new weekly records.
+  tithe_percentage         Decimal                                @default(10) @db.Decimal(5, 2)
   branch_id                Int?
   branch                   branch?                                @relation(fields: [branch_id], references: [id])
   created_by_user_id       Int?
@@ -3006,6 +3015,7 @@ model pledger {
   guest_name     String?
   guest_phone    String?
   pledged_amount Decimal             @db.Decimal(15, 2)
+  reminded_at    DateTime?
   group          pledge_group        @relation(fields: [group_id], references: [id], onDelete: Cascade)
   user           user?               @relation("pledger_user", fields: [user_id], references: [id])
   redemptions    pledge_redemption[]

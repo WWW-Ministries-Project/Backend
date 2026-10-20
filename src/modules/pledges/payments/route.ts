@@ -9,6 +9,7 @@ import {
   previewPledgeFee,
   retryPledgePayment,
   verifyPledgePayment,
+  creditPledgePayment,
 } from "./controller";
 
 const permissions = new Permissions();
@@ -273,4 +274,30 @@ pledgePaymentsRouter.get(
   "/verify-payment/:reference",
   [protect],
   verifyPledgePayment,
+);
+
+/**
+ * @swagger
+ * /pledges/credit-payment:
+ *   post:
+ *     summary: Record the redemption for a settled payment that wasn't credited
+ *     tags: [Pledge Payments]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               payment_id:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: The payment, now with redemption_id
+ */
+pledgePaymentsRouter.post(
+  "/credit-payment",
+  [protect, permissions.can_manage_pledges],
+  creditPledgePayment,
 );

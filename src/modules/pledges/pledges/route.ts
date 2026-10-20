@@ -6,6 +6,7 @@ import {
   getPledge,
   updatePledge,
   deletePledge,
+  remindPledgers,
 } from "./controller";
 
 const permissions = new Permissions();
@@ -17,3 +18,4 @@ pledgesRouter.get("/get-pledge", [protect, permissions.can_view_pledges], getPle
 pledgesRouter.post("/create-pledge", [protect, permissions.can_manage_pledges], createPledge);
 pledgesRouter.put("/update-pledge", [protect, permissions.can_manage_pledges], updatePledge);
 pledgesRouter.delete("/delete-pledge", [protect, permissions.can_delete_pledges], deletePledge);
+pledgesRouter.post("/remind-pledgers", [protect, permissions.can_manage_pledges], remindPledgers);
