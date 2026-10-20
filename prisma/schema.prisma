@@ -777,6 +777,19 @@ model request {
   updated_by_user_id      Int?
   updated_at              DateTime?
   branch_id               Int?
+  /// Date the requester needs the items by.
+  needed_by               DateTime?
+  /// Why it's needed. Approvers read this first.
+  purpose                 String?                           @db.Text
+  created_at              DateTime?                         @default(now())
+  /// When the requester signed and submitted it.
+  submitted_at            DateTime?
+  /// Last reminder sent to the current approver (manual or automatic).
+  last_reminder_at        DateTime?
+  /// Set on a draft created with "Revise as new draft".
+  revised_from_id         Int?
+  /// Server-written JSON list of events that have no other record (reminders, revisions).
+  history                 Json?
   attachmentsList         request_attachment[]
   branch                  branch?                           @relation(fields: [branch_id], references: [id])
   department              department                        @relation(fields: [department_id], references: [id])
@@ -796,6 +809,7 @@ model request {
   @@index([branch_id], map: "request_branch_id_idx")
   @@index([updated_by_user_id], map: "request_updated_by_user_id_idx")
   @@index([request_approval_status], map: "request_approval_status_idx")
+  @@index([revised_from_id], map: "request_revised_from_id_idx")
 }
 
 model event_reports {
@@ -1029,6 +1043,8 @@ model requisition_approval_configs {
   module                     RequisitionApprovalModule                   @unique
   is_active                  Boolean                                     @default(true)
   similar_item_lookback_days Int                                         @default(30)
+  /// Days an approver has to act before a requisition counts as overdue and is chased.
+  approval_reply_days        Int                                         @default(3)
   finance_approver_type      RequisitionApproverType?
   finance_position_id        Int?
   finance_user_id            Int?
@@ -1096,6 +1112,8 @@ model requisition_approval_instances {
   acted_by_user_id   Int?
   acted_at           DateTime?
   comment            String?
+  /// Typed full name the approver signed with.
+  signature          String?
   created_at         DateTime                          @default(now())
   updated_at         DateTime                          @default(now()) @updatedAt
   config             requisition_approval_configs      @relation(fields: [config_id], references: [id], onDelete: Cascade)

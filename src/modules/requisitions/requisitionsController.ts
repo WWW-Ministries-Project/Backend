@@ -14,6 +14,14 @@ import {
   getPreApprovalSimilarItems,
 } from "./requisition-service";
 import {
+  addRequisitionComment,
+  getRequisitionAnalytics,
+  getRequisitionOverview,
+  getRequisitionOverviewDetail,
+  recordRequisitionRevision,
+  sendRequisitionReminder,
+} from "./requisition-redesign";
+import {
   RequisitionApprovalActionPayload,
   RequisitionApprovalConfigPayload,
   RequisitionInterface,
@@ -31,6 +39,14 @@ export const createRequisitionHandler = async (req: Request, res: Response) => {
     requisitionData as RequisitionInterface,
     user,
   );
+
+  const revisedFromId = Number((requisitionData as any).revised_from_id);
+  if (revisedFromId > 0 && (createdRequisition as any)?.id) {
+    await recordRequisitionRevision(revisedFromId, {
+      id: (createdRequisition as any).id,
+      generated_id: (createdRequisition as any).generated_id,
+    });
+  }
 
   res.status(201).json({
     message: "Requisition created successfully",
@@ -172,4 +188,38 @@ export const deleteRequisitionHandler = async (req: Request, res: Response) => {
   res.status(201).json({
     message: "Operation successful",
   });
+};
+
+export const requisitionOverviewHandler = async (req: Request, res: Response) => {
+  const data = await getRequisitionOverview((req as any).user, {
+    scope: req.query.scope,
+    branch_id: req.query.branch_id,
+  });
+  res.status(200).json({ message: "Operation successful", data });
+};
+
+export const requisitionOverviewDetailHandler = async (req: Request, res: Response) => {
+  const data = await getRequisitionOverviewDetail(req.query.id, (req as any).user);
+  res.status(200).json({ message: "Operation successful", data });
+};
+
+export const sendRequisitionReminderHandler = async (req: Request, res: Response) => {
+  const data = await sendRequisitionReminder(req.body, (req as any).user);
+  res.status(200).json({ message: "Reminder sent", data });
+};
+
+export const requisitionAnalyticsHandler = async (req: Request, res: Response) => {
+  const data = await getRequisitionAnalytics((req as any).user, {
+    from: req.query.from,
+    to: req.query.to,
+    bucket: req.query.bucket,
+    department_id: req.query.department_id,
+    branch_id: req.query.branch_id,
+  });
+  res.status(200).json({ message: "Operation successful", data });
+};
+
+export const addRequisitionCommentHandler = async (req: Request, res: Response) => {
+  const data = await addRequisitionComment(req.body, (req as any).user);
+  res.status(201).json({ message: "Comment added", data });
 };

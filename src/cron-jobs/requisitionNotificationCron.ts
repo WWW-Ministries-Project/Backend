@@ -1,5 +1,6 @@
 import cron from "node-cron";
 import { processPendingRequisitionNotificationEvents } from "../modules/requisitions/requisition-approval-workflow";
+import { runRequisitionAutoReminders } from "../modules/requisitions/requisition-redesign";
 import { notificationService } from "../modules/notifications/notificationService";
 
 let isRequisitionNotificationJobRunning = false;
@@ -64,3 +65,42 @@ for (const cronExpression of REQUISITION_CRITICAL_JOB_CRONS) {
 }
 
 void processRequisitionNotificationEventsJob();
+
+let isRequisitionReminderJobRunning = false;
+
+/** Chases approvers who have held a requisition past the reply time. */
+export async function runRequisitionReminderJob() {
+  if (isRequisitionReminderJobRunning) {
+    return;
+  }
+
+  isRequisitionReminderJobRunning = true;
+  try {
+    const { sent } = await runRequisitionAutoReminders();
+    console.info("[INFO] Requisition approval reminders sent", { sent });
+  } catch (error: any) {
+    console.error(
+      "[ERROR] Requisition approval reminder job failed:",
+      error?.message || String(error),
+    );
+  } finally {
+    isRequisitionReminderJobRunning = false;
+  }
+}
+
+// Once a day, at 08:00 server time, so reminders land at the start of the day.
+const REQUISITION_REMINDER_DEFAULT_CRON = "0 8 * * *";
+const configuredReminderCron = process.env.REQUISITION_REMINDER_CRON?.trim();
+if (configuredReminderCron && !cron.validate(configuredReminderCron)) {
+  console.warn(
+    `[WARN] Invalid REQUISITION_REMINDER_CRON "${configuredReminderCron}"; using ${REQUISITION_REMINDER_DEFAULT_CRON}`,
+  );
+}
+const reminderCron =
+  configuredReminderCron && cron.validate(configuredReminderCron)
+    ? configuredReminderCron
+    : REQUISITION_REMINDER_DEFAULT_CRON;
+
+cron.schedule(reminderCron, async () => {
+  await runRequisitionReminderJob();
+});
