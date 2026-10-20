@@ -1,6 +1,6 @@
 import { Request, Response } from "express";
 import { PledgeHttpError, sendPledgeError } from "../common";
-import { PledgePaymentService } from "./service";
+import { PledgePaymentService, creditPaymentById } from "./service";
 import {
   parsePreviewAmount,
   parseReferenceQuery,
@@ -148,3 +148,14 @@ export const listPledgePayments = async (req: Request, res: Response) => {
 // verify against an undefined body and reject every genuine event. Pledge
 // payments are settled from there via paystackSettlement's reference-prefix
 // dispatch.
+
+export const creditPledgePayment = async (req: Request, res: Response) => {
+  try {
+    const id = String(req.body?.payment_id ?? "").trim();
+    if (!id) throw new PledgeHttpError(400, "payment_id is required");
+    const data = await creditPaymentById(id);
+    return res.status(200).json({ message: "Payment credited", data });
+  } catch (e) {
+    return sendPledgeError(res, e);
+  }
+};

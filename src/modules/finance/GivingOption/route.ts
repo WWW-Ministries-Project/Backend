@@ -529,6 +529,62 @@ givingOptionRouter.get(
 
 /**
  * @swagger
+ * /givingoption/contributions/recheck:
+ *   post:
+ *     summary: Ask Paystack for the latest status of unsettled contributions
+ *     tags: [Giving Options]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               references:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *     responses:
+ *       200:
+ *         description: The contributions after checking ({ data, checked, failed })
+ */
+givingOptionRouter.post(
+  "/contributions/recheck",
+  [protect, permissions.can_manage_giving],
+  contributionController.recheck,
+);
+
+/**
+ * @swagger
+ * /givingoption/contributions/nudge:
+ *   post:
+ *     summary: Invite a member whose gift failed or was abandoned to give again
+ *     tags: [Giving Options]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               reference:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Notified
+ *       409:
+ *         description: Gift succeeded, or the giver has no member account
+ */
+givingOptionRouter.post(
+  "/contributions/nudge",
+  [protect, permissions.can_manage_giving],
+  contributionController.nudge,
+);
+
+/**
+ * @swagger
  * /givingoption/verify/{reference}:
  *   get:
  *     summary: Verify and settle a payment on demand

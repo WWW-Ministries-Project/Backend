@@ -424,26 +424,30 @@ const creditRedemption = async (reference: string): Promise<void> => {
   }
 
   try {
-    const redemption = await prisma.pledge_redemption.create({
-      data: {
-        pledger_id: payment.pledger_id,
-        // Minor units back to the Decimal(15,2) the ledger stores.
-        amount: new Prisma.Decimal(payment.amount).dividedBy(100),
-        date: payment.paid_at ?? new Date(),
-        method: ONLINE_REDEMPTION_METHOD,
-        note: `Online payment ${reference}${
-          payment.channel ? ` via ${payment.channel}` : ""
-        }`,
-        recorded_by_user_id: payment.user_id ?? null,
-      },
-      select: { id: true },
-    });
+    // One transaction: a ledger row is never left without its payment link,
+    // so a retry (credit-payment) can't credit the pledger twice.
+    await prisma.$transaction(async (tx) => {
+      const redemption = await tx.pledge_redemption.create({
+        data: {
+          pledger_id: payment.pledger_id as number,
+          // Minor units back to the Decimal(15,2) the ledger stores.
+          amount: new Prisma.Decimal(payment.amount).dividedBy(100),
+          date: payment.paid_at ?? new Date(),
+          method: ONLINE_REDEMPTION_METHOD,
+          note: `Online payment ${reference}${
+            payment.channel ? ` via ${payment.channel}` : ""
+          }`,
+          recorded_by_user_id: payment.user_id ?? null,
+        },
+        select: { id: true },
+      });
 
-    // redemption_id is UNIQUE, so if a racing settle got here first this update
-    // fails rather than crediting the pledger twice.
-    await prisma.pledge_payment.update({
-      where: { id: payment.id },
-      data: { redemption_id: redemption.id },
+      // redemption_id is UNIQUE, so if a racing settle got here first this update
+      // fails and the transaction rolls the redemption back.
+      await tx.pledge_payment.update({
+        where: { id: payment.id },
+        data: { redemption_id: redemption.id },
+      });
     });
   } catch (error) {
     logger.error(
@@ -453,6 +457,37 @@ const creditRedemption = async (reference: string): Promise<void> => {
       { reference },
     );
   }
+};
+
+/**
+ * Finance staff credit a settled payment whose ledger entry was never written
+ * (the redemption insert failed after the charge settled). Idempotent: an
+ * already-credited payment is returned unchanged.
+ */
+export const creditPaymentById = async (paymentId: string) => {
+  const payment = await prisma.pledge_payment.findUnique({
+    where: { id: paymentId },
+    select: { id: true, reference: true, status: true, redemption_id: true, pledger_id: true },
+  });
+
+  if (!payment) throw new PledgeHttpError(404, "Payment not found");
+  if (payment.status !== "success") {
+    throw new PledgeHttpError(409, "Only successful payments can be credited.");
+  }
+  if (!payment.pledger_id) {
+    throw new PledgeHttpError(409, "The pledger on this payment was removed, so it can't be credited.");
+  }
+
+  if (!payment.redemption_id) await creditRedemption(payment.reference);
+
+  const after = await prisma.pledge_payment.findUnique({
+    where: { id: paymentId },
+    select: PAYMENT_SELECT,
+  });
+  if (!after?.redemption_id) {
+    throw new PledgeHttpError(500, "Couldn't record the redemption. Try again.");
+  }
+  return after;
 };
 
 export class PledgePaymentService {

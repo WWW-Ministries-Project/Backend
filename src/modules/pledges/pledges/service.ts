@@ -9,6 +9,10 @@ import {
   resolveBranchIdOrDefault,
 } from "../../branches/branchService";
 import { PledgeHttpError, type PledgeSettlementAccount } from "../common";
+import { notificationService } from "../../notifications/notificationService";
+import logger from "../../../utils/logger-config";
+
+const REMIND_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 
 const num = (d: Prisma.Decimal | null | undefined) => (d ? Number(d) : 0);
 
@@ -169,15 +173,44 @@ export class PledgeService {
       include: pledgeInclude,
       orderBy: { created_at: "desc" },
     });
-    const mapped = rows.map((p) => ({
-      id: p.id,
-      event: p.event,
-      title: p.title,
-      deadline: p.deadline,
-      callers: p.callers,
-      ...settlementSummary(p),
-      ...summarize(p),
-    }));
+    // Settled online payments with no ledger entry: the dashboard flags these
+    // so finance can credit them to the pledger.
+    const uncredited = rows.length
+      ? await prisma.pledge_payment.groupBy({
+          by: ["pledge_id"],
+          where: {
+            pledge_id: { in: rows.map((p) => p.id) },
+            status: "success",
+            redemption_id: null,
+          },
+          _count: { _all: true },
+        })
+      : [];
+    const uncreditedBy = new Map(uncredited.map((u) => [u.pledge_id, u._count._all]));
+
+    const mapped = rows.map((p) => {
+      const pledgers = p.groups.flatMap((g) => g.pledgers);
+      const withBalance = pledgers.filter(
+        (pl) =>
+          num(pl.pledged_amount) -
+            pl.redemptions.reduce((sum: number, r: any) => sum + num(r.amount), 0) >
+          0.0001,
+      ).length;
+      return {
+        id: p.id,
+        event: p.event,
+        title: p.title,
+        deadline: p.deadline,
+        target_amount: p.target_amount === null ? null : num(p.target_amount),
+        created_at: p.created_at,
+        callers: p.callers,
+        pledger_count: pledgers.length,
+        pledgers_with_balance: withBalance,
+        uncredited_payments: uncreditedBy.get(p.id) ?? 0,
+        ...settlementSummary(p),
+        ...summarize(p),
+      };
+    });
     return status ? mapped.filter((m) => m.status === status) : mapped;
   }
 
@@ -200,6 +233,7 @@ export class PledgeService {
           pledged_amount: num(pl.pledged_amount),
           redeemed,
           remaining: num(pl.pledged_amount) - redeemed,
+          reminded_at: pl.reminded_at,
           redemptions: pl.redemptions,
         };
       }),
@@ -365,5 +399,77 @@ export class PledgeService {
     await prisma.pledge_payment.deleteMany({ where: { pledge_id: id } });
 
     return prisma.pledge.delete({ where: { id } });
+  }
+
+  /**
+   * Reminds pledgers with a balance: an in-app notification, email and push to
+   * members. Guests have no account to reach, so they are counted and skipped.
+   * Pass pledger_ids to remind specific people; otherwise everyone with a balance.
+   */
+  async remind(pledgeId: number, pledgerIds: number[] | undefined, actorUserId?: number) {
+    const p = await prisma.pledge.findUnique({ where: { id: pledgeId }, include: pledgeInclude });
+    if (!p) throw new PledgeHttpError(404, "Pledge not found");
+
+    const wanted = pledgerIds?.length ? new Set(pledgerIds) : null;
+    const targets = p.groups
+      .flatMap((g) => g.pledgers)
+      .filter((pl) => !wanted || wanted.has(pl.id))
+      .map((pl) => ({
+        pl,
+        remaining:
+          num(pl.pledged_amount) -
+          pl.redemptions.reduce((sum: number, r: any) => sum + num(r.amount), 0),
+      }))
+      .filter((t) => t.remaining > 0.0001);
+
+    // A bulk reminder skips anyone reminded in the last day; naming a pledger
+    // explicitly always sends.
+    const cutoff = Date.now() - REMIND_COOLDOWN_MS;
+    const members = targets.filter((t) => t.pl.user_id);
+    const due = wanted ? members : members.filter((t) => !t.pl.reminded_at || t.pl.reminded_at.getTime() < cutoff);
+    const title = p.title || "your pledge";
+    const sent: number[] = [];
+
+    for (const { pl, remaining } of due) {
+      const ok = await notificationService
+        .createInAppNotification({
+          type: "pledge.balance_reminder",
+          title: "Pledge balance reminder",
+          body: `You have ${p.currency} ${remaining.toLocaleString("en-US", {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+          })} left on ${title}.${p.deadline ? ` Deadline ${p.deadline.toISOString().slice(0, 10)}.` : ""}`,
+          recipientUserId: pl.user_id as number,
+          actorUserId: actorUserId ?? null,
+          entityType: "pledge",
+          entityId: String(p.id),
+          actionUrl: "/member/pledges",
+          priority: "MEDIUM",
+          sendEmail: true,
+        })
+        .then(() => true)
+        .catch((error) => {
+          logger.warn(
+            `[pledge] reminder to pledger ${pl.id} failed: ${error instanceof Error ? error.message : String(error)}`,
+          );
+          return false;
+        });
+      if (ok) sent.push(pl.id);
+    }
+
+    if (sent.length) {
+      await prisma.pledger.updateMany({
+        where: { id: { in: sent } },
+        data: { reminded_at: new Date() },
+      });
+    }
+
+    return {
+      reminded: sent.length,
+      skipped_guests: targets.length - members.length,
+      skipped_recent: members.length - due.length,
+      failed: due.length - sent.length,
+      pledger_ids: sent,
+    };
   }
 }

@@ -84,6 +84,99 @@ financialsRouter.put(
   [protect, canManageFinancialsOrActAsApprover],
   controller.update,
 );
+/**
+ * @swagger
+ * /financials/approve-financial:
+ *   post:
+ *     summary: Finance approver approves a submitted weekly record
+ *     tags: [Financials]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Approved record
+ *       403:
+ *         description: Caller is not the finance approver
+ *       409:
+ *         description: Record is not waiting for approval
+ */
+financialsRouter.post(
+  "/approve-financial",
+  [protect, permissions.can_view_financials],
+  controller.approve,
+);
+/**
+ * @swagger
+ * /financials/return-financial:
+ *   post:
+ *     summary: Finance approver returns a submitted weekly record as a draft
+ *     tags: [Financials]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [note]
+ *             properties:
+ *               note:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Returned record (status DRAFT, return_note set)
+ */
+financialsRouter.post(
+  "/return-financial",
+  [protect, permissions.can_view_financials],
+  controller.returnRecord,
+);
+/**
+ * @swagger
+ * /financials/auto-amounts:
+ *   get:
+ *     summary: Online giving and pledges redeemed for one week (major units)
+ *     tags: [Financials]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: from
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: date
+ *       - in: query
+ *         name: to
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: date
+ *       - in: query
+ *         name: branch_id
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Totals for the week
+ */
+financialsRouter.get(
+  "/auto-amounts",
+  [protect, permissions.can_view_financials],
+  controller.autoAmounts,
+);
 financialsRouter.delete(
   "/delete-financial",
   [protect, permissions.can_delete_financials],
