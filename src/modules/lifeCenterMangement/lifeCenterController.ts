@@ -8,6 +8,7 @@ import {
   isLeaderReminderReason,
   isLifeCenterHttpError,
   parseDateBoundary,
+  utcDayBounds,
 } from "./lifeCenterHelpers";
 
 const lifeCenterService = new LifeCenterService();
@@ -603,8 +604,11 @@ export class LifeCenterController {
       let from: Date | undefined;
       let to: Date | undefined;
       try {
+        // from omitted = all time; to omitted = through today (UTC).
         from = parseDateBoundary(req.query?.from, "from");
-        to = parseDateBoundary(req.query?.to, "to");
+        to =
+          parseDateBoundary(req.query?.to, "to") ??
+          new Date(utcDayBounds(new Date()).end.getTime() - 1);
       } catch (error: any) {
         return res.status(400).json({ message: error.message });
       }

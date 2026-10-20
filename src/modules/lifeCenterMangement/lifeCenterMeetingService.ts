@@ -33,7 +33,6 @@ export type CreateMeetingInput = {
   currency: string;
   note?: string | null;
   createdById: number;
-  memberUserIds: number[];
   attendeeSoulWonIds: number[];
   firstTimerSoulWonIds: number[];
   newFirstTimers: NewFirstTimerInput[];
@@ -56,24 +55,10 @@ export const MEETING_INCLUDE = {
       },
     },
   },
-  members: {
-    select: {
-      userId: true,
-      user: {
-        select: {
-          id: true,
-          name: true,
-          life_center_member: {
-            select: { lifeCenterId: true, role: { select: { name: true } } },
-          },
-        },
-      },
-    },
-  },
   createdBy: { select: { id: true, name: true } },
 } satisfies Prisma.life_center_meetingInclude;
 
-export const NO_ATTENDEES_ERROR = "A meeting needs at least one member or first-timer.";
+export const NO_ATTENDEES_ERROR = "A meeting needs at least one attendee or first-timer.";
 export const DUPLICATE_MEETING_ERROR = "A meeting is already recorded for this date.";
 
 const uniqueIds = (ids: number[]) =>
@@ -90,9 +75,7 @@ export class LifeCenterMeetingService {
       ...uniqueIds(data.attendeeSoulWonIds),
       ...uniqueIds(data.firstTimerSoulWonIds),
     ]);
-    return (
-      uniqueIds(data.memberUserIds).length + souls.size + data.newFirstTimers.length
-    );
+    return souls.size + data.newFirstTimers.length;
   }
 
   private async loadCenter(tx: Prisma.TransactionClient, lifeCenterId: number) {
@@ -127,40 +110,6 @@ export class LifeCenterMeetingService {
       select: { id: true },
     });
     if (duplicate) throw new LifeCenterHttpError(409, DUPLICATE_MEETING_ERROR);
-  }
-
-  /**
-   * Members who came. They must belong to the center, except people already on
-   * this meeting (someone removed from the center keeps past attendance).
-   */
-  private async replaceMembers(
-    tx: Prisma.TransactionClient,
-    meetingId: number,
-    memberUserIds: number[],
-    centerMemberIds: number[],
-  ) {
-    const ids = uniqueIds(memberUserIds);
-    const existing = await tx.life_center_meeting_member.findMany({
-      where: { meetingId },
-      select: { userId: true },
-    });
-    const allowed = new Set<number>([
-      ...centerMemberIds,
-      ...existing.map((row) => row.userId),
-    ]);
-    if (ids.some((id) => !allowed.has(id))) {
-      throw new LifeCenterHttpError(
-        400,
-        "memberUserIds must be members of this life center",
-      );
-    }
-
-    await tx.life_center_meeting_member.deleteMany({ where: { meetingId } });
-    if (ids.length) {
-      await tx.life_center_meeting_member.createMany({
-        data: ids.map((userId) => ({ meetingId, userId })),
-      });
-    }
   }
 
   private async replaceAttendees(
@@ -259,12 +208,6 @@ export class LifeCenterMeetingService {
       const leader = center.life_center_member.find((m) =>
         isLeaderRoleName(m.role?.name),
       );
-      await this.replaceMembers(
-        tx,
-        meeting.id,
-        data.memberUserIds,
-        center.life_center_member.map((m) => m.userId),
-      );
       await this.replaceAttendees(tx, meeting.id, data, {
         city: cityFromLocation(center.meetingLocation),
         wonById: leader?.userId || actorId,
@@ -296,7 +239,7 @@ export class LifeCenterMeetingService {
     if (!existing) {
       throw new LifeCenterHttpError(404, "Meeting not found");
     }
-    // Attendee and member rows cascade with the meeting.
+    // Attendee rows cascade with the meeting.
     await prisma.life_center_meeting.delete({ where: { id } });
     return existing;
   }
