@@ -35,7 +35,6 @@ const CONTENT_TYPE_BY_FORMAT: Record<MeetingExportFormat, string> = {
 
 export type MeetingExportParams = {
   lifeCenterId: number;
-  createdById: number;
   from?: Date;
   to?: Date;
 };
@@ -162,7 +161,7 @@ export const parseExportFormat = (value: unknown): MeetingExportFormat => {
 export const buildMeetingExportPayload = async (
   params: MeetingExportParams,
 ): Promise<MeetingExportPayload> => {
-  const { lifeCenterId, createdById, from, to } = params;
+  const { lifeCenterId, from, to } = params;
 
   if (from && to && from.getTime() > to.getTime()) {
     throw new InputValidationError("from must not be after to");
@@ -183,7 +182,6 @@ export const buildMeetingExportPayload = async (
       // widen what the caller can already read in the list.
       where: {
         lifeCenterId,
-        createdById,
         ...(from || to ? { date: dateFilter } : {}),
       },
       include: {

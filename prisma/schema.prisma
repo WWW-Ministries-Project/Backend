@@ -102,6 +102,7 @@ model user {
   user_request_comments                        request_comments[]
   soul_won                                     soul_won[]                              @relation("user_soul_winner")
   life_center_meetings_created                 life_center_meeting[]                   @relation("life_center_meeting_created_by")
+  life_center_meeting_attendance               life_center_meeting_member[]            @relation("life_center_meeting_member_user")
   soul_won_membership                          soul_won?                               @relation("soul_won_member")
   access                                       access_level?                           @relation(fields: [access_level_id], references: [id])
   parent                                       user?                                   @relation("UserParent", fields: [parent_id], references: [id])
@@ -1977,6 +1978,10 @@ model life_center {
   meetingLocation     String
   meetingDays         String
   branch_id           Int?
+  /// Scheduled meetings are counted from this day.
+  createdAt           DateTime              @default(now())
+  /// Last remind-leader send (24h cooldown).
+  lastRemindedAt      DateTime?
   branch              branch?               @relation(fields: [branch_id], references: [id])
   life_center_member  life_center_member[]
   soul_won            soul_won[]            @relation("life_center_soul_won")
@@ -2038,9 +2043,24 @@ model life_center_meeting {
   lifeCenter life_center                    @relation(fields: [lifeCenterId], references: [id])
   createdBy  user                           @relation("life_center_meeting_created_by", fields: [createdById], references: [id])
   attendees  life_center_meeting_attendee[]
+  members    life_center_meeting_member[]
 
   @@index([lifeCenterId], map: "life_center_meeting_lifeCenterId_idx")
   @@index([createdById], map: "life_center_meeting_createdById_idx")
+}
+
+/// Members who came to a life center meeting. Keyed by user, so removing
+/// someone from a center keeps their past attendance.
+model life_center_meeting_member {
+  id        Int @id @default(autoincrement())
+  meetingId Int
+  userId    Int
+
+  meeting life_center_meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  user    user                @relation("life_center_meeting_member_user", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([meetingId, userId])
+  @@index([userId], map: "life_center_meeting_member_userId_idx")
 }
 
 model life_center_meeting_attendee {

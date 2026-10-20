@@ -52,6 +52,16 @@ lifeCenterRouter.get(
   lifeCenterController.getLifeCenterById,
 );
 lifeCenterRouter.get(
+  "/overview",
+  [protect, permissions.can_view_life_center_scoped],
+  lifeCenterController.getOverview,
+);
+lifeCenterRouter.post(
+  "/remind-leader",
+  [protect, permissions.can_manage_life_center],
+  lifeCenterController.remindLeader,
+);
+lifeCenterRouter.get(
   "/get-lifecenters",
   [protect, permissions.can_view_life_center_scoped],
   lifeCenterController.getAllLifeCenters,

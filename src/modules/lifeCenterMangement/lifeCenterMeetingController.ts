@@ -8,6 +8,18 @@ import {
   parseExportFormat,
   parseRangeBoundary,
 } from "./lifeCenterMeetingExportService";
+import {
+  LifeCenterScope,
+  isLifeCenterHttpError,
+  isMemberScope,
+  scopeAllows,
+  toDateKey,
+} from "./lifeCenterHelpers";
+
+const MAX_TAKE = 500;
+
+const idList = (raw: unknown): number[] =>
+  Array.isArray(raw) ? raw.map(Number) : [];
 
 const toPositiveInt = (value: unknown): number | undefined => {
   const n = Number(value);
@@ -54,29 +66,66 @@ const mapMeeting = (meeting: any) => ({
   id: meeting.id,
   lifeCenterId: meeting.lifeCenterId,
   date: meeting.date,
+  day: toDateKey(meeting.date),
   offeringAmount: meeting.offeringAmount,
   currency: meeting.currency,
   note: meeting.note,
   createdById: meeting.createdById,
   createdAt: meeting.createdAt,
+  created_by: meeting.createdBy
+    ? { id: meeting.createdBy.id, name: meeting.createdBy.name }
+    : null,
+  // role: the person's current role in this center, null if they've left it.
+  members: (meeting.members ?? []).map((row: any) => ({
+    user_id: row.userId,
+    name: row.user?.name ?? "",
+    role:
+      (row.user?.life_center_member ?? []).find(
+        (m: any) => m.lifeCenterId === meeting.lifeCenterId,
+      )?.role?.name ?? null,
+  })),
   attendees: (meeting.attendees ?? []).map(mapAttendee),
 });
 
+const sendError = (res: Response, error: any, fallbackStatus: number, message: string) => {
+  if (isLifeCenterHttpError(error)) {
+    return res.status(error.statusCode).json({ message: error.message });
+  }
+  return res.status(fallbackStatus).json({ message, error: error?.message });
+};
+
+const scopeOf = (req: Request): LifeCenterScope => (req as any).lifeCenterScope;
+
 const parseNewFirstTimers = (raw: unknown): NewFirstTimerInput[] => {
   if (!Array.isArray(raw)) return [];
-  return raw.map((entry: any) => ({
-    title: entry.title,
-    first_name: entry.first_name,
-    last_name: entry.last_name,
-    other_name: entry.other_name,
-    contact_number: entry.contact_number,
-    country_code: entry.country_code,
-    contact_email: entry.contact_email,
-    country: entry.country,
-    city: entry.city,
-    date_won: new Date(entry.date_won),
-    wonById: Number(entry.wonById),
-  }));
+  return raw.map((entry: any) => {
+    const dateWon = entry?.date_won ? new Date(entry.date_won) : undefined;
+    const wonById = Number(entry?.wonById);
+    return {
+      title: entry?.title || undefined,
+      first_name: String(entry?.first_name ?? "").trim(),
+      last_name: String(entry?.last_name ?? "").trim(),
+      other_name: entry?.other_name || undefined,
+      gender: entry?.gender || undefined,
+      contact_number: String(entry?.contact_number ?? "").trim(),
+      country_code: entry?.country_code || undefined,
+      contact_email: entry?.contact_email || undefined,
+      country: entry?.country ?? undefined,
+      city: entry?.city || undefined,
+      date_won:
+        dateWon && !Number.isNaN(dateWon.getTime()) ? dateWon : undefined,
+      wonById: Number.isInteger(wonById) && wonById > 0 ? wonById : undefined,
+    };
+  });
+};
+
+const validateNewFirstTimers = (list: NewFirstTimerInput[]): string | null => {
+  const missing = list.some(
+    (entry) => !entry.first_name || !entry.last_name || !entry.contact_number,
+  );
+  return missing
+    ? "Each new first-timer needs first_name, last_name and contact_number"
+    : null;
 };
 
 export class LifeCenterMeetingController {
@@ -92,6 +141,18 @@ export class LifeCenterMeetingController {
         return res.status(400).json({ message: validationError });
       }
 
+      if (!scopeAllows(scopeOf(req), lifeCenterId)) {
+        return res
+          .status(401)
+          .json({ message: "Not authorized to manage this life center" });
+      }
+
+      const newFirstTimers = parseNewFirstTimers(req.body?.newFirstTimers);
+      const firstTimerError = validateNewFirstTimers(newFirstTimers);
+      if (firstTimerError) {
+        return res.status(400).json({ message: firstTimerError });
+      }
+
       const createdById = Number((req as any).user?.id);
 
       const meeting = await lifeCenterMeetingService.createMeeting({
@@ -101,18 +162,17 @@ export class LifeCenterMeetingController {
         currency: req.body?.currency || "GHS",
         note: req.body?.note ?? null,
         createdById,
-        attendeeSoulWonIds: (req.body?.attendeeSoulWonIds ?? []).map(Number),
-        firstTimerSoulWonIds: (req.body?.firstTimerSoulWonIds ?? []).map(Number),
-        newFirstTimers: parseNewFirstTimers(req.body?.newFirstTimers),
+        memberUserIds: idList(req.body?.memberUserIds),
+        attendeeSoulWonIds: idList(req.body?.attendeeSoulWonIds),
+        firstTimerSoulWonIds: idList(req.body?.firstTimerSoulWonIds),
+        newFirstTimers,
       });
 
       return res
         .status(201)
         .json({ message: "Meeting created", data: mapMeeting(meeting) });
     } catch (error: any) {
-      return res
-        .status(400)
-        .json({ message: "Unable to create meeting", error: error.message });
+      return sendError(res, error, 400, "Unable to create meeting");
     }
   }
 
@@ -136,13 +196,25 @@ export class LifeCenterMeetingController {
         return res.status(404).json({ message: "Meeting not found" });
       }
 
-      const currentUserId = Number((req as any).user?.id);
-      const isPrivileged = (req as any).user?.user_category === "admin";
-      if (!isPrivileged && existing.createdById !== currentUserId) {
+      // Anyone whose scope covers both the meeting's center and the target
+      // center may edit it, not only the creator.
+      const scope = scopeOf(req);
+      if (
+        !scopeAllows(scope, existing.lifeCenterId) ||
+        !scopeAllows(scope, lifeCenterId)
+      ) {
         return res
           .status(401)
           .json({ message: "Not authorized to modify this meeting" });
       }
+
+      const newFirstTimers = parseNewFirstTimers(req.body?.newFirstTimers);
+      const firstTimerError = validateNewFirstTimers(newFirstTimers);
+      if (firstTimerError) {
+        return res.status(400).json({ message: firstTimerError });
+      }
+
+      const currentUserId = Number((req as any).user?.id);
 
       const meeting = await lifeCenterMeetingService.updateMeeting(
         id,
@@ -152,11 +224,10 @@ export class LifeCenterMeetingController {
           offeringAmount: String(req.body?.offeringAmount ?? "0"),
           currency: req.body?.currency || "GHS",
           note: req.body?.note ?? null,
-          attendeeSoulWonIds: (req.body?.attendeeSoulWonIds ?? []).map(Number),
-          firstTimerSoulWonIds: (req.body?.firstTimerSoulWonIds ?? []).map(
-            Number,
-          ),
-          newFirstTimers: parseNewFirstTimers(req.body?.newFirstTimers),
+          memberUserIds: idList(req.body?.memberUserIds),
+          attendeeSoulWonIds: idList(req.body?.attendeeSoulWonIds),
+          firstTimerSoulWonIds: idList(req.body?.firstTimerSoulWonIds),
+          newFirstTimers,
         },
         currentUserId,
       );
@@ -165,9 +236,7 @@ export class LifeCenterMeetingController {
         .status(200)
         .json({ message: "Meeting updated", data: mapMeeting(meeting) });
     } catch (error: any) {
-      return res
-        .status(400)
-        .json({ message: "Unable to update meeting", error: error.message });
+      return sendError(res, error, 400, "Unable to update meeting");
     }
   }
 
@@ -183,9 +252,7 @@ export class LifeCenterMeetingController {
         return res.status(404).json({ message: "Meeting not found" });
       }
 
-      const currentUserId = Number((req as any).user?.id);
-      const isPrivileged = (req as any).user?.user_category === "admin";
-      if (!isPrivileged && existing.createdById !== currentUserId) {
+      if (!scopeAllows(scopeOf(req), existing.lifeCenterId)) {
         return res
           .status(401)
           .json({ message: "Not authorized to delete this meeting" });
@@ -194,9 +261,7 @@ export class LifeCenterMeetingController {
       await lifeCenterMeetingService.deleteMeeting(id);
       return res.status(200).json({ message: "Meeting deleted" });
     } catch (error: any) {
-      return res
-        .status(400)
-        .json({ message: "Unable to delete meeting", error: error.message });
+      return sendError(res, error, 400, "Unable to delete meeting");
     }
   }
 
@@ -212,9 +277,7 @@ export class LifeCenterMeetingController {
         return res.status(404).json({ message: "Meeting not found" });
       }
 
-      const currentUserId = Number((req as any).user?.id);
-      const isPrivileged = (req as any).user?.user_category === "admin";
-      if (!isPrivileged && meeting.createdById !== currentUserId) {
+      if (!scopeAllows(scopeOf(req), meeting.lifeCenterId)) {
         return res
           .status(401)
           .json({ message: "Not authorized to view this meeting" });
@@ -232,12 +295,17 @@ export class LifeCenterMeetingController {
     try {
       const lifeCenterId = toPositiveInt(req.query?.lifeCenterId);
       const page = toPositiveInt(req.query?.page) ?? 1;
-      const take = toPositiveInt(req.query?.take) ?? 10;
-      const createdById = Number((req as any).user?.id);
+      const take = Math.min(toPositiveInt(req.query?.take) ?? 10, MAX_TAKE);
+      const scope = scopeOf(req);
+      if (lifeCenterId && !scopeAllows(scope, lifeCenterId)) {
+        return res
+          .status(401)
+          .json({ message: "Not authorized to view this life center's data" });
+      }
 
       const { total, meetings } = await lifeCenterMeetingService.getMeetings({
         lifeCenterId,
-        createdById,
+        lifeCenterIds: isMemberScope(scope) ? scope!.lifeCenterIds : undefined,
         skip: (page - 1) * take,
         take,
       });
@@ -277,7 +345,6 @@ export class LifeCenterMeetingController {
 
       const file = await exportMeetings({
         lifeCenterId,
-        createdById: Number((req as any).user?.id),
         from: parseRangeBoundary(req.query?.from, "from"),
         to: parseRangeBoundary(req.query?.to, "to"),
         format: parseExportFormat(req.query?.format),
