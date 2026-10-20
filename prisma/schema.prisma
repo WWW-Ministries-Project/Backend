@@ -47,6 +47,8 @@ model user {
   source_visitor                               visitor?                                @relation("user_source_visitor", fields: [source_visitor_id], references: [id], onDelete: SetNull)
   source_soul_won                              soul_won?                               @relation("user_source_soul_won", fields: [source_soul_won_id], references: [id], onDelete: SetNull)
   appointments                                 appointment[]
+  appointment_staff_profile                    appointment_staff_profile?
+  appointment_time_off                         appointment_time_off[]
   asset_history                                asset_history[]
   assignment_submission                        assignment_submission[]
   timeSlots                                    availability[]
@@ -2374,23 +2376,48 @@ model session_slot {
 }
 
 model appointment {
-  id          Int                @id @default(autoincrement())
-  fullName    String
-  email       String
-  phone       String
-  purpose     String
-  note        String?
-  date        DateTime
-  startTime   String
-  endTime     String
-  status      appointment_status @default(PENDING)
-  createdAt   DateTime           @default(now())
-  userId      Int
-  requesterId Int?
-  branch_id   Int?
-  branch      branch?            @relation(fields: [branch_id], references: [id])
-  user        user               @relation(fields: [userId], references: [id])
+  id                   Int                @id @default(autoincrement())
+  fullName             String
+  email                String
+  phone                String
+  purpose              String
+  note                 String?
+  date                 DateTime
+  startTime            String
+  endTime              String
+  status               appointment_status @default(PENDING)
+  createdAt            DateTime           @default(now())
+  userId               Int
+  requesterId          Int?
+  branch_id            Int?
+  /// The appointment_reason picked when booking; `purpose` keeps the label.
+  /// No FK, so deleting a reason never touches past bookings.
+  reasonId             Int?
+  /// First accept, suggest or decline by the person booked.
+  respondedAt          DateTime?
+  /// Last accept; `reopen` (undo) is allowed for 10 minutes after it.
+  acceptedAt           DateTime?
+  /// The slot suggested while RESCHEDULED.
+  proposedDate         DateTime?
+  proposedStartTime    String?
+  proposedEndTime      String?
+  declineReason        String?            @db.VarChar(120)
+  responseMessage      String?            @db.Text
+  /// Last time an admin reminded the person booked.
+  remindedAt           DateTime?
+  /// Server-written timeline: [{ at, text, tone }], oldest first.
+  history              Json?
+  /// Scheduled-job markers: each notification goes out once per booking.
+  nudgedAt             DateTime?
+  overdueNotifiedAt    DateTime?
+  unansweredNotifiedAt DateTime?
+  reminderSentAt       DateTime?
+  outcomePromptedAt    DateTime?
+  branch               branch?            @relation(fields: [branch_id], references: [id])
+  user                 user               @relation(fields: [userId], references: [id])
 
+  @@index([status, createdAt], map: "appointment_status_created_at_idx")
+  @@index([status, date], map: "appointment_status_date_idx")
   @@index([email])
   @@index([branch_id], map: "appointment_branch_id_idx")
   @@index([userId])
@@ -2411,6 +2438,47 @@ model appointment_reason {
   updated_at  DateTime @updatedAt
 
   @@index([is_active, sort_order])
+}
+
+// Per-person appointment settings for whoever takes bookings: the break
+// between sessions and a pause switch (no new bookings while paused).
+model appointment_staff_profile {
+  id             Int      @id @default(autoincrement())
+  user_id        Int      @unique
+  buffer_minutes Int      @default(0)
+  paused         Boolean  @default(false)
+  updated_at     DateTime @updatedAt
+  user           user     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+}
+
+// Days a person takes no new bookings. `from_date`/`to_date` are inclusive
+// church-calendar days. Bookings already in the period stay as they are.
+model appointment_time_off {
+  id         Int      @id @default(autoincrement())
+  user_id    Int
+  from_date  DateTime @db.Date
+  to_date    DateTime @db.Date
+  note       String?  @db.VarChar(255)
+  created_by Int?
+  created_at DateTime @default(now())
+  user       user     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id, to_date])
+}
+
+// Singleton (id = 1) holding the appointment rules and notification matrix.
+// No row means the defaults in appointment-settings.ts apply.
+model appointment_settings {
+  id                     Int      @id @default(1)
+  reply_deadline_hours   Int      @default(24)
+  unanswered_after_hours Int      @default(72)
+  min_notice_hours       Int      @default(12)
+  book_ahead_days        Int      @default(60)
+  reminder_hours         Int      @default(24)
+  cancel_cutoff_hours    Int      @default(12)
+  notifications          Json?
+  updated_by             Int?
+  updated_at             DateTime @updatedAt
 }
 
 model ai_conversation {
@@ -2711,7 +2779,11 @@ enum fulfilment_method {
 enum appointment_status {
   PENDING
   CONFIRMED
+  RESCHEDULED
+  DECLINED
   CANCELLED
+  COMPLETED
+  NO_SHOW
 }
 
 enum notification_priority {

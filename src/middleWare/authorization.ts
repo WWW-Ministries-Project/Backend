@@ -554,6 +554,59 @@ export const isSessionActive = (
 ): boolean => Boolean(snapshot) && snapshot?.currentUser?.is_active !== false;
 
 /**
+ * Whether a user may manage appointments, the same test as
+ * `can_manage_appointments_scoped`: a privileged user with Appointments manage
+ * who is not excluded from the given attendee. For controllers whose route is
+ * `protect`-only because members may also call them (booking actions, booking
+ * on someone's behalf).
+ */
+export const canUserManageAppointments = async (
+  userId: number,
+  attendeeId?: number | null,
+): Promise<boolean> => {
+  const snapshot = await getOrFetchAuthContextSnapshot(userId);
+  if (!snapshot || !isSessionActive(snapshot)) return false;
+  if (
+    !snapshot.isPrivilegedUser ||
+    !hasActionPermission(snapshot.permissions, "Appointments", "manage")
+  ) {
+    return false;
+  }
+  if (
+    attendeeId &&
+    resolveDomainExclusions(snapshot.permissions, "Appointments").includes(attendeeId)
+  ) {
+    return false;
+  }
+  return true;
+};
+
+/**
+ * Active privileged users holding `action` on a permission domain, resolved
+ * through PERMISSION_KEY_ALIASES like the route guards. Used to address
+ * "admins" of a domain (e.g. appointment overdue alerts).
+ */
+export const listUserIdsWithDomainPermission = async (
+  permissionType: string,
+  action: "view" | "manage" | "admin",
+): Promise<number[]> => {
+  const users = await prisma.user.findMany({
+    where: {
+      is_user: true,
+      access_level_id: { not: null },
+      NOT: { is_active: false },
+    },
+    select: { id: true, access: { select: { permissions: true } } },
+  });
+
+  return users
+    .filter((user) =>
+      hasActionPermission(user.access?.permissions, permissionType, action),
+    )
+    .map((user) => user.id);
+};
+
+/**
  * Drops a user's cached auth snapshot so the next request reloads permissions,
  * departments and active status. Called by the realtime session notifier
  * right after those change.
@@ -1118,16 +1171,24 @@ export class Permissions {
       toPositiveInt(req.query?.userId) ||
       toPositiveInt(req.query?.staffId) ||
       toPositiveInt(req.query?.attendeeId) ||
-      toPositiveInt(req.query?.attendee_id);
+      toPositiveInt(req.query?.attendee_id) ||
+      toPositiveInt(req.params?.userId);
 
     const bookingIdFromParams = toPositiveInt(req.params?.id);
     const bookingIdFromQuery = toPositiveInt(req.query?.id);
     const isAvailabilityPath = String(req.path || "").includes("availability");
+    const isTimeOffPath = String(req.path || "").includes("time-off");
 
     let targetAttendeeId = attendeeFromRequest;
 
     if (!targetAttendeeId && bookingIdFromParams) {
-      if (isAvailabilityPath) {
+      if (isTimeOffPath) {
+        const timeOff = await prisma.appointment_time_off.findUnique({
+          where: { id: bookingIdFromParams },
+          select: { user_id: true },
+        });
+        targetAttendeeId = timeOff?.user_id || null;
+      } else if (isAvailabilityPath) {
         const availability = await prisma.availability.findUnique({
           where: { id: bookingIdFromParams },
           select: { userId: true },
