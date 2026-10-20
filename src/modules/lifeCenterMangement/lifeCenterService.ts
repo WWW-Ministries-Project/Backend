@@ -23,8 +23,6 @@ import {
   demoteOtherLeaders,
 } from "./lifeCenterRoleAssignment";
 
-/** Meetings counted for a member's attendance (`attended` of `of`). */
-const ATTENDANCE_WINDOW = 10;
 /** recent_meetings per center in the overview. */
 const RECENT_MEETINGS = 8;
 
@@ -171,21 +169,7 @@ export class LifeCenterService {
 
     if (!raw) return null;
 
-    // Attendance over the center's last 10 meetings.
-    const lastMeetings = await prisma.life_center_meeting.findMany({
-      where: { lifeCenterId: id },
-      orderBy: [{ date: "desc" }, { id: "desc" }],
-      take: ATTENDANCE_WINDOW,
-      select: { members: { select: { userId: true } } },
-    });
-    const attendedBy = new Map<number, number>();
-    for (const meeting of lastMeetings) {
-      for (const row of meeting.members) {
-        attendedBy.set(row.userId, (attendedBy.get(row.userId) ?? 0) + 1);
-      }
-    }
-
-    // First meeting each soul came to (any attendance).
+    // Meetings each soul came to: count and first date.
     const soulIds = raw.soul_won.map((soul: any) => soul.id);
     const soulAttendance = soulIds.length
       ? await prisma.life_center_meeting_attendee.findMany({
@@ -194,7 +178,12 @@ export class LifeCenterService {
         })
       : [];
     const firstMeetingBySoul = new Map<number, Date>();
+    const meetingsAttendedBySoul = new Map<number, number>();
     for (const row of soulAttendance) {
+      meetingsAttendedBySoul.set(
+        row.soulWonId,
+        (meetingsAttendedBySoul.get(row.soulWonId) ?? 0) + 1,
+      );
       const current = firstMeetingBySoul.get(row.soulWonId);
       if (!current || row.meeting.date < current) {
         firstMeetingBySoul.set(row.soulWonId, row.meeting.date);
@@ -222,8 +211,6 @@ export class LifeCenterService {
           id: member.role.id,
           name: member.role.name,
         },
-        attended: attendedBy.get(member.user.id) ?? 0,
-        of: lastMeetings.length,
       })),
 
       soulsWon: raw.soul_won.map((soul: any) => ({
@@ -242,6 +229,7 @@ export class LifeCenterService {
           ? soul.date_won.toISOString().split("T")[0]
           : "",
         first_meeting_date: toDateKey(firstMeetingBySoul.get(soul.id)),
+        meetings_attended: meetingsAttendedBySoul.get(soul.id) ?? 0,
         wonById: soul.wonBy.id,
         wonByName: soul.wonBy.name,
         lifeCenterId: id,
@@ -279,11 +267,6 @@ export class LifeCenterService {
         })
       ).map((s) => s.id);
 
-      if (meetingIds.length) {
-        await tx.life_center_meeting_member.deleteMany({
-          where: { meetingId: { in: meetingIds } },
-        });
-      }
       if (meetingIds.length || soulIds.length) {
         await tx.life_center_meeting_attendee.deleteMany({
           where: {
@@ -612,7 +595,8 @@ export class LifeCenterService {
 
   /**
    * Everything the list page and analytics need in one call. `from`/`to`
-   * bound `meetings` and `souls`; center totals are all time.
+   * bound `meetings` and `souls` (either may be omitted = unbounded on that
+   * side); center totals are all time.
    */
   async getOverview(params: {
     branchId?: unknown;
@@ -665,7 +649,9 @@ export class LifeCenterService {
               id: true,
               lifeCenterId: true,
               date_won: true,
+              city: true,
               memberId: true,
+              wonBy: { select: { name: true } },
               _count: { select: { converted_members: true } },
             },
             orderBy: { date_won: "asc" },
@@ -706,13 +692,20 @@ export class LifeCenterService {
             date: true,
             offeringAmount: true,
             currency: true,
-            members: { select: { userId: true } },
-            attendees: { select: { soulWonId: true } },
+            attendees: { select: { soulWonId: true, isFirstTimer: true } },
           },
           orderBy: [{ date: "asc" }, { id: "asc" }],
         })
       : [];
     const detailById = new Map(details.map((d) => [d.id, d]));
+
+    const soulIdsWhere = (
+      attendees: { soulWonId: number; isFirstTimer: boolean }[],
+      firstTimer: boolean,
+    ) =>
+      attendees
+        .filter((row) => row.isFirstTimer === firstTimer)
+        .map((row) => row.soulWonId);
 
     const isConverted = (soul: (typeof souls)[number]) =>
       Boolean(soul.memberId) || soul._count.converted_members > 0;
@@ -749,8 +742,8 @@ export class LifeCenterService {
           last_meeting_date: recent.length ? toDateKey(recent[0].date) : null,
           recent_meetings: recent.map((m) => ({
             date: toDateKey(m.date) as string,
-            members: m.members.length,
-            first_timers: m.attendees.length,
+            attendees: m.attendees.filter((row) => !row.isFirstTimer).length,
+            first_timers: m.attendees.filter((row) => row.isFirstTimer).length,
           })),
         };
       }),
@@ -760,8 +753,8 @@ export class LifeCenterService {
           id: m.id,
           life_center_id: m.lifeCenterId,
           date: toDateKey(m.date) as string,
-          member_user_ids: m.members.map((row) => row.userId),
-          first_timer_ids: m.attendees.map((row) => row.soulWonId),
+          attendee_ids: soulIdsWhere(m.attendees, false),
+          first_timer_ids: soulIdsWhere(m.attendees, true),
           offering: Number(m.offeringAmount ?? 0),
           currency: m.currency,
         })),
@@ -772,6 +765,8 @@ export class LifeCenterService {
           life_center_id: s.lifeCenterId,
           date_won: toDateKey(s.date_won) as string,
           converted: isConverted(s),
+          won_by: s.wonBy?.name ?? null,
+          city: s.city ?? "",
         })),
     };
   }

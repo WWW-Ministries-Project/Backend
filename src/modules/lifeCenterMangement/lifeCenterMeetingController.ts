@@ -75,15 +75,6 @@ const mapMeeting = (meeting: any) => ({
   created_by: meeting.createdBy
     ? { id: meeting.createdBy.id, name: meeting.createdBy.name }
     : null,
-  // role: the person's current role in this center, null if they've left it.
-  members: (meeting.members ?? []).map((row: any) => ({
-    user_id: row.userId,
-    name: row.user?.name ?? "",
-    role:
-      (row.user?.life_center_member ?? []).find(
-        (m: any) => m.lifeCenterId === meeting.lifeCenterId,
-      )?.role?.name ?? null,
-  })),
   attendees: (meeting.attendees ?? []).map(mapAttendee),
 });
 
@@ -162,7 +153,6 @@ export class LifeCenterMeetingController {
         currency: req.body?.currency || "GHS",
         note: req.body?.note ?? null,
         createdById,
-        memberUserIds: idList(req.body?.memberUserIds),
         attendeeSoulWonIds: idList(req.body?.attendeeSoulWonIds),
         firstTimerSoulWonIds: idList(req.body?.firstTimerSoulWonIds),
         newFirstTimers,
@@ -224,7 +214,6 @@ export class LifeCenterMeetingController {
           offeringAmount: String(req.body?.offeringAmount ?? "0"),
           currency: req.body?.currency || "GHS",
           note: req.body?.note ?? null,
-          memberUserIds: idList(req.body?.memberUserIds),
           attendeeSoulWonIds: idList(req.body?.attendeeSoulWonIds),
           firstTimerSoulWonIds: idList(req.body?.firstTimerSoulWonIds),
           newFirstTimers,
