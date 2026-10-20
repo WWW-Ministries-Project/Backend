@@ -364,6 +364,13 @@ export const NOTIFICATION_PREFERENCE_OPTIONS: NotificationPreferenceOption[] = [
     availableChannels: IN_APP_AND_EMAIL_CHANNELS,
   },
   {
+    type: "life_center.leader_reminder",
+    title: "Life center meeting reminders",
+    description: "When you're asked to record or check on your life center's meetings.",
+    category: "Life Center",
+    availableChannels: IN_APP_AND_EMAIL_CHANNELS,
+  },
+  {
     type: "requisition.approval_reminder",
     title: "Requisition approval reminder",
     description:

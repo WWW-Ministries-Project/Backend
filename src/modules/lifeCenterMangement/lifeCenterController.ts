@@ -4,8 +4,46 @@ import {
   buildRoleEligibilityFailureResponse,
   isRoleEligibilityValidationError,
 } from "../settings/roleEligibilityService";
+import {
+  isLeaderReminderReason,
+  isLifeCenterHttpError,
+  parseDateBoundary,
+} from "./lifeCenterHelpers";
 
 const lifeCenterService = new LifeCenterService();
+
+const toPositiveInt = (value: unknown): number | undefined => {
+  const n = Number(value);
+  return Number.isInteger(n) && n > 0 ? n : undefined;
+};
+
+/** Optional leaderUserId: undefined when absent, null when invalid. */
+const parseLeaderUserId = (value: unknown): number | undefined | null => {
+  if (value === undefined || value === null || value === "") return undefined;
+  return toPositiveInt(value) ?? null;
+};
+
+/**
+ * Maps the errors shared by the life center writes; returns null for anything
+ * the caller should handle itself.
+ */
+const sendKnownError = (res: Response, error: any) => {
+  if (isLifeCenterHttpError(error)) {
+    return res.status(error.statusCode).json({ message: error.message });
+  }
+  if (isRoleEligibilityValidationError(error)) {
+    return res
+      .status(error.statusCode)
+      .json(buildRoleEligibilityFailureResponse(error));
+  }
+  if (error?.code === "P2003") {
+    return res.status(400).json({ message: "User or life center not found" });
+  }
+  if (error?.code === "P2025") {
+    return res.status(404).json({ message: "Record not found" });
+  }
+  return null;
+};
 
 const mapSoulWonResponse = (soul: any) => ({
   ...soul,
@@ -57,6 +95,10 @@ export class LifeCenterController {
   async createLifeCenter(req: Request, res: Response) {
     try {
       const { name, description, location, meeting_dates, branch_id } = req.body;
+      const leaderUserId = parseLeaderUserId(req.body?.leaderUserId);
+      if (leaderUserId === null) {
+        return res.status(400).json({ message: "leaderUserId must be a valid user id" });
+      }
 
       const meetingDays = Array.isArray(meeting_dates)
         ? meeting_dates.join(", ")
@@ -68,6 +110,7 @@ export class LifeCenterController {
         meetingLocation: location,
         meetingDays,
         branch_id,
+        leaderUserId,
       };
 
       const newLifeCenter = await lifeCenterService.create(data);
@@ -77,6 +120,7 @@ export class LifeCenterController {
         data: newLifeCenter,
       });
     } catch (error: any) {
+      if (sendKnownError(res, error)) return;
       return res.status(500).json({
         message: "Error creating life center",
         error: error.message,
@@ -140,6 +184,10 @@ export class LifeCenterController {
       }
 
       const { name, description, location, meeting_dates, branch_id } = req.body;
+      const leaderUserId = parseLeaderUserId(req.body?.leaderUserId);
+      if (leaderUserId === null) {
+        return res.status(400).json({ message: "leaderUserId must be a valid user id" });
+      }
 
       const meetingDays = Array.isArray(meeting_dates)
         ? meeting_dates.join(", ")
@@ -151,6 +199,7 @@ export class LifeCenterController {
         meetingLocation: location,
         meetingDays,
         branch_id,
+        leaderUserId,
       };
 
       const updatedLifeCenter = await lifeCenterService.updateLifeCenter(
@@ -163,6 +212,7 @@ export class LifeCenterController {
         data: updatedLifeCenter,
       });
     } catch (error: any) {
+      if (sendKnownError(res, error)) return;
       return res.status(500).json({
         message: "Error updating Life Center",
         error: error.message,
@@ -172,12 +222,16 @@ export class LifeCenterController {
 
   async deleteLifeCenter(req: Request, res: Response) {
     try {
-      const { id } = req.query;
-      await lifeCenterService.deleteLifeCenter(Number(id));
+      const id = toPositiveInt(req.query?.id);
+      if (!id) {
+        return res.status(400).json({ message: "Invalid Life Center ID" });
+      }
+      await lifeCenterService.deleteLifeCenter(id);
       return res
         .status(200)
         .json({ message: "Life center deleted successfully" });
     } catch (error: any) {
+      if (sendKnownError(res, error)) return;
       return res
         .status(500)
         .json({ message: "Error deleting life center", error: error.message });
@@ -198,17 +252,12 @@ export class LifeCenterController {
 
       res.status(201).json(member);
     } catch (error: any) {
-      if (isRoleEligibilityValidationError(error)) {
-        return res
-          .status(error.statusCode)
-          .json(buildRoleEligibilityFailureResponse(error));
-      }
-
-      if (error.code === "P2002") {
+      if (error?.code === "P2002") {
         return res
           .status(400)
           .json({ message: "Member already exists in this Life Center" });
       }
+      if (sendKnownError(res, error)) return;
 
       return res.status(500).json({ error: error.message });
     }
@@ -228,11 +277,7 @@ export class LifeCenterController {
 
       res.status(201).json({ message: "Operation successfull", data: member });
     } catch (error: any) {
-      if (isRoleEligibilityValidationError(error)) {
-        return res
-          .status(error.statusCode)
-          .json(buildRoleEligibilityFailureResponse(error));
-      }
+      if (sendKnownError(res, error)) return;
 
       res.status(500).json({ error: error.message });
     }
@@ -548,6 +593,67 @@ export class LifeCenterController {
     } catch (error: any) {
       return res.status(500).json({
         message: "Error updating soul won record",
+        error: error.message,
+      });
+    }
+  }
+
+  async getOverview(req: Request, res: Response) {
+    try {
+      let from: Date | undefined;
+      let to: Date | undefined;
+      try {
+        from = parseDateBoundary(req.query?.from, "from");
+        to = parseDateBoundary(req.query?.to, "to");
+      } catch (error: any) {
+        return res.status(400).json({ message: error.message });
+      }
+      const rawLifeCenterId = req.query?.lifeCenterId;
+      const lifeCenterId = toPositiveInt(rawLifeCenterId);
+      if (rawLifeCenterId !== undefined && rawLifeCenterId !== "" && !lifeCenterId) {
+        return res.status(400).json({ message: "lifeCenterId must be a valid id" });
+      }
+
+      const data = await lifeCenterService.getOverview({
+        branchId: req.query?.branch_id,
+        scope: (req as any).lifeCenterScope,
+        lifeCenterId,
+        from,
+        to,
+      });
+      return res.status(200).json({ message: "Operation successful", data });
+    } catch (error: any) {
+      if (sendKnownError(res, error)) return;
+      return res.status(500).json({
+        message: "Error fetching life center overview",
+        error: error.message,
+      });
+    }
+  }
+
+  async remindLeader(req: Request, res: Response) {
+    try {
+      const lifeCenterId = toPositiveInt(req.body?.lifeCenterId);
+      if (!lifeCenterId) {
+        return res.status(400).json({ message: "lifeCenterId is required" });
+      }
+      const reason = req.body?.reason;
+      if (!isLeaderReminderReason(reason)) {
+        return res.status(400).json({
+          message: "reason must be one of overdue, irregular, attendance",
+        });
+      }
+
+      const data = await lifeCenterService.remindLeader(
+        lifeCenterId,
+        reason,
+        toPositiveInt((req as any).user?.id),
+      );
+      return res.status(200).json({ message: "Reminder sent", data });
+    } catch (error: any) {
+      if (sendKnownError(res, error)) return;
+      return res.status(500).json({
+        message: "Error sending reminder",
         error: error.message,
       });
     }
