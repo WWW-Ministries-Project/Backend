@@ -336,6 +336,14 @@ export const NOTIFICATION_PREFERENCE_OPTIONS: NotificationPreferenceOption[] = [
     availableChannels: ALL_CHANNELS,
   },
   {
+    type: "requisition.approval_reminder",
+    title: "Requisition approval reminder",
+    description:
+      "Remind the current approver when a requisition has waited past the reply time.",
+    category: "Requisitions",
+    availableChannels: ALL_CHANNELS,
+  },
+  {
     type: "requisition.comment_added",
     title: "Requisition comment added",
     description: "Notify participants when a new approval comment is posted.",

@@ -28,6 +28,7 @@ type RequisitionApprovalConfigResponse = {
   requester_user_ids: number[];
   notification_user_ids: number[];
   similar_item_lookback_days: number;
+  approval_reply_days: number;
   approvers: Array<{
     order: number;
     type: RequisitionApproverType;
@@ -49,6 +50,8 @@ type NormalizedConfigPayload = {
   requesterUserIds: number[];
   notificationUserIds: number[];
   similarItemLookbackDays: number;
+  /** Undefined keeps the stored value, so older clients that omit it don't reset it. */
+  approvalReplyDays?: number;
   approvers: NormalizedApproverStep[];
   isActive: boolean;
 };
@@ -97,6 +100,8 @@ const SUPPORTED_APPROVAL_MODULES: RequisitionApprovalModule[] = [
 const REQUISITION_PERMISSION_KEYS = ["Requisition", "Requisitions"];
 const REQUISITION_MANAGE_PERMISSION_VALUES = ["Can_Manage", "Super_Admin"];
 const DEFAULT_SIMILAR_ITEM_LOOKBACK_DAYS = 30;
+export const DEFAULT_APPROVAL_REPLY_DAYS = 3;
+const MAX_APPROVAL_REPLY_DAYS = 30;
 const MAX_NOTIFICATION_RECIPIENTS = 50;
 const NOTIFICATION_EVENT_RETRY_LIMIT = 5;
 const NOTIFICATION_EVENT_BATCH_SIZE = 5;
@@ -161,7 +166,7 @@ const normalizePermissionPayload = (
   return null;
 };
 
-const hasRequisitionManagePermission = (
+export const hasRequisitionManagePermission = (
   permissions: Prisma.JsonValue | null | undefined,
 ): boolean => {
   const normalizedPermissions = normalizePermissionPayload(permissions);
@@ -524,6 +529,21 @@ const parseSimilarItemLookbackDays = (value: unknown): number => {
   return parsed;
 };
 
+const parseApprovalReplyDays = (value: unknown): number | undefined => {
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+
+  const parsed = toPositiveInt(value);
+  if (!parsed || parsed > MAX_APPROVAL_REPLY_DAYS) {
+    throw new InputValidationError(
+      `approval_reply_days must be a whole number from 1 to ${MAX_APPROVAL_REPLY_DAYS}`,
+    );
+  }
+
+  return parsed;
+};
+
 const parseApprovers = (value: unknown): NormalizedApproverStep[] => {
   if (!Array.isArray(value) || !value.length) {
     throw new InputValidationError("approvers must be a non-empty array");
@@ -660,6 +680,7 @@ const normalizeConfigPayload = (
   const similarItemLookbackDays = parseSimilarItemLookbackDays(
     payload.similar_item_lookback_days,
   );
+  const approvalReplyDays = parseApprovalReplyDays(payload.approval_reply_days);
   const approvers = parseApprovers(payload.approvers);
 
   let isActive = true;
@@ -676,6 +697,7 @@ const normalizeConfigPayload = (
     requesterUserIds,
     notificationUserIds,
     similarItemLookbackDays,
+    approvalReplyDays,
     approvers,
     isActive,
   };
@@ -765,6 +787,7 @@ const mapConfigResponse = (config: {
   module: RequisitionApprovalModule;
   is_active: boolean;
   similar_item_lookback_days: number;
+  approval_reply_days?: number | null;
   requesters: Array<{ user_id: number }>;
   notifications?: Array<{ user_id: number }>;
   steps: Array<{
@@ -796,6 +819,8 @@ const mapConfigResponse = (config: {
       (notification) => notification.user_id,
     ),
     similar_item_lookback_days: similarItemLookbackDays,
+    approval_reply_days:
+      toPositiveInt(config.approval_reply_days) || DEFAULT_APPROVAL_REPLY_DAYS,
     approvers: config.steps.map((step) => ({
       order: step.step_order,
       type: step.step_type,
@@ -1224,12 +1249,17 @@ export const upsertRequisitionApprovalConfig = async (
         update: {
           is_active: normalizedPayload.isActive,
           similar_item_lookback_days: normalizedPayload.similarItemLookbackDays,
+          ...(normalizedPayload.approvalReplyDays !== undefined && {
+            approval_reply_days: normalizedPayload.approvalReplyDays,
+          }),
           updated_by: actorUserId,
         },
         create: {
           module: normalizedPayload.module,
           is_active: normalizedPayload.isActive,
           similar_item_lookback_days: normalizedPayload.similarItemLookbackDays,
+          approval_reply_days:
+            normalizedPayload.approvalReplyDays ?? DEFAULT_APPROVAL_REPLY_DAYS,
           created_by: actorUserId,
           updated_by: actorUserId,
         },
@@ -1417,6 +1447,7 @@ export const buildRequisitionApprovalSnapshotTx = async (
     },
     data: {
       request_approval_status: RequestApprovalStatus.Awaiting_HOD_Approval,
+      submitted_at: new Date(),
     },
   });
 
@@ -1462,6 +1493,7 @@ export const validateApprovalActionPayload = (
   requisitionId: number;
   action: ApprovalAction;
   comment?: string;
+  signature?: string;
 } => {
   if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
     throw new InputValidationError("Invalid payload");
@@ -1474,11 +1506,13 @@ export const validateApprovalActionPayload = (
 
   const action = parseApprovalAction(payload.action);
   const comment = toTrimmedOptionalString(payload.comment);
+  const signature = toTrimmedOptionalString(payload.user_sign);
 
   return {
     requisitionId,
     action,
     ...(comment && { comment }),
+    ...(signature && { signature: signature.slice(0, 191) }),
   };
 };
 
@@ -2194,8 +2228,9 @@ export const processRequisitionApprovalAction = async (args: {
   actorUserId: number;
   action: ApprovalAction;
   comment?: string;
+  signature?: string;
 }): Promise<RequisitionApprovalActionResult> => {
-  const { requisitionId, actorUserId, action, comment } = args;
+  const { requisitionId, actorUserId, action, comment, signature } = args;
 
   const runAction = async (): Promise<RequisitionApprovalActionResult> =>
     prisma.$transaction(async (tx) => {
@@ -2269,6 +2304,7 @@ export const processRequisitionApprovalAction = async (args: {
         acted_by_user_id: actorUserId,
         acted_at: new Date(),
         ...(comment !== undefined && { comment }),
+        ...(signature !== undefined && { signature }),
       };
 
       const createFinalDecisionNotificationEventTx = async (

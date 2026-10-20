@@ -11,6 +11,7 @@ import {
 import {
   calculateTotalCost,
   checkPermissions,
+  parseNeededBy,
   getApprovalData,
   updateDataPayload,
   updateRequestReturnValue,
@@ -47,6 +48,25 @@ import {
 const UPLOADS_DIR = path.resolve(process.cwd(), "uploads");
 const DEFAULT_SIMILAR_ITEM_LOOKBACK_DAYS = 30;
 
+const toOptionalPositiveInt = (value: unknown): number | null => {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+};
+
+/** A revision must point at the requester's own rejected requisition. */
+const resolveRevisedFromId = async (value: unknown, actorUserId: number) => {
+  const parentId = toOptionalPositiveInt(value);
+  if (!parentId) return null;
+  const parent = await prisma.request.findUnique({
+    where: { id: parentId },
+    select: { user_id: true, request_approval_status: true },
+  });
+  if (!parent || parent.user_id !== actorUserId || parent.request_approval_status !== RequestApprovalStatus.REJECTED) {
+    throw new InputValidationError("Only your own rejected requisitions can be revised");
+  }
+  return parentId;
+};
+
 const encodeRequisitionIdForRoute = (requisitionId: number): string =>
   Buffer.from(String(requisitionId), "utf8").toString("base64");
 
@@ -55,6 +75,8 @@ const buildRequisitionActionUrl = (requisitionId: number): string =>
 
 const REQUISITION_CHANGED_FIELD_LABELS: Record<string, string> = {
   request_date: "request date",
+  needed_by: "needed-by date",
+  purpose: "reason",
   department_id: "department",
   event_id: "event",
   currency: "currency",
@@ -237,6 +259,8 @@ const buildChangedFields = (args: {
     request_approval_status: RequestApprovalStatus;
     currency: string;
     user_sign: string | null;
+    needed_by?: Date | null;
+    purpose?: string | null;
   };
   hasProductsChange: boolean;
   hasAttachmentsChange: boolean;
@@ -253,6 +277,23 @@ const buildChangedFields = (args: {
     ) {
       changedFields.push("request_date");
     }
+  }
+
+  if (incomingData.needed_by !== undefined) {
+    const nextNeededBy = incomingData.needed_by ? new Date(incomingData.needed_by) : null;
+    if (
+      (nextNeededBy === null || !Number.isNaN(nextNeededBy.getTime())) &&
+      !areDatesEqual(nextNeededBy, existingRequest.needed_by ?? null)
+    ) {
+      changedFields.push("needed_by");
+    }
+  }
+
+  if (
+    incomingData.purpose !== undefined &&
+    String(incomingData.purpose ?? "").trim() !== String(existingRequest.purpose ?? "").trim()
+  ) {
+    changedFields.push("purpose");
   }
 
   if (
@@ -563,7 +604,7 @@ const shouldSubmitOnCreate = (data: RequisitionInterface): boolean => {
   return hasExplicitSubmitFlag || hasSubmittedStatus;
 };
 
-const notifyRequisitionCommentParticipants = async (args: {
+export const notifyRequisitionCommentParticipants = async (args: {
   requisitionId: number;
   actorUserId: number;
   comment: string;
@@ -899,6 +940,7 @@ const applyLegacySubmissionTx = async (
     where: { id: payload.requestId },
     data: {
       request_approval_status: requestApprovalStatus,
+      submitted_at: new Date(),
     },
   });
 
@@ -1063,6 +1105,9 @@ export const createRequisition = async (
     requisition_date: new Date(data.request_date as string),
     request_approval_status: RequestApprovalStatus.Draft,
     currency: data.currency,
+    needed_by: parseNeededBy(data.needed_by) ?? null,
+    purpose: data.purpose ? String(data.purpose).trim() : null,
+    revised_from_id: await resolveRevisedFromId(data.revised_from_id, actorUserId),
 
     // Create the products related to the request
     products: data.products?.length
@@ -1267,6 +1312,7 @@ export const updateRequisition = async (
       actorUserId: token_user_id,
       action,
       ...(updateInput.comment && { comment: updateInput.comment }),
+      signature: updateInput.user_sign?.trim().slice(0, 191),
     });
 
     const approvalChangedFields = Array.from(
@@ -1393,6 +1439,8 @@ export const updateRequisition = async (
       request_approval_status: findRequest.request_approval_status,
       currency: findRequest.currency,
       user_sign: findRequest.user_sign,
+      needed_by: findRequest.needed_by,
+      purpose: findRequest.purpose,
     },
     hasProductsChange,
     hasAttachmentsChange,
@@ -1913,6 +1961,7 @@ export const actionRequisitionApproval = async (
       actorUserId,
       action: validated.action,
       comment: validated.comment,
+      signature: validated.signature,
     });
   } catch (error) {
     const isMissingWorkflowTables = isMissingWorkflowTablesError(error);

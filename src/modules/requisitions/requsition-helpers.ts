@@ -4,7 +4,7 @@ import {
   RequisitionInterface,
   RequestedItem,
 } from "../../interfaces/requisitions-interface";
-import { UnauthorizedError } from "../../utils/custom-error-handlers";
+import { InputValidationError, UnauthorizedError } from "../../utils/custom-error-handlers";
 
 export const mapProducts = (products: RequestedItem[] = []) =>
   products
@@ -84,6 +84,17 @@ export const checkPermissions = (user: any, requisitionUserId: number) => {
   return { isHOD, isPastor, isMember };
 };
 
+/** needed_by: YYYY-MM-DD, null to clear, undefined to leave alone. */
+export const parseNeededBy = (value: unknown): Date | null | undefined => {
+  if (value === undefined) return undefined;
+  if (value === null || value === "") return null;
+  const text = String(value).slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text) || Number.isNaN(new Date(text).getTime())) {
+    throw new InputValidationError("needed_by must be a date (YYYY-MM-DD)");
+  }
+  return new Date(text);
+};
+
 export const updateDataPayload = (
   data: Partial<RequisitionInterface>,
   isMember: boolean,
@@ -135,6 +146,9 @@ export const updateDataPayload = (
       : undefined,
     request_approval_status: requestApprovalStatus,
     currency: data.currency,
+    needed_by: parseNeededBy(data.needed_by),
+    purpose:
+      data.purpose === undefined ? undefined : String(data.purpose ?? "").trim() || null,
     products: hasProductsPayload ? productsPayload : undefined,
     attachmentsList: hasAttachmentsPayload ? attachmentsPayload : undefined,
   };

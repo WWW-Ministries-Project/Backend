@@ -14,6 +14,11 @@ import {
   deleteRequisitionHandler,
   userRequisitionsHandler,
   staffRequestHandler,
+  requisitionOverviewHandler,
+  requisitionOverviewDetailHandler,
+  sendRequisitionReminderHandler,
+  requisitionAnalyticsHandler,
+  addRequisitionCommentHandler,
 } from "./requisitionsController";
 
 import { Permissions } from "../../middleWare/authorization";
@@ -37,6 +42,11 @@ const requisitionControllers = {
   deleteRequisitionHandler,
   userRequisitionsHandler,
   staffRequestHandler,
+  requisitionOverviewHandler,
+  requisitionOverviewDetailHandler,
+  sendRequisitionReminderHandler,
+  requisitionAnalyticsHandler,
+  addRequisitionCommentHandler,
 };
 
 // Wrap controllers with logger
@@ -104,4 +114,33 @@ requisitionRouter.get(
   "/staff-requisition",
   [permissions.protect, permissions.can_manage_requisitions],
   wrappedControllers.staffRequestHandler,
+);
+
+// Redesign: overview list (scope=mine|all, scoped in the service), drawer
+// detail, manual reminders and analytics. See
+// docs/REQUISITIONS_REDESIGN_FRONTEND_GUIDE.md.
+requisitionRouter.get(
+  "/overview",
+  [permissions.protect],
+  wrappedControllers.requisitionOverviewHandler,
+);
+requisitionRouter.get(
+  "/overview-detail",
+  [permissions.protect],
+  wrappedControllers.requisitionOverviewDetailHandler,
+);
+requisitionRouter.post(
+  "/send-reminder",
+  [permissions.protect, permissions.can_manage_requisitions],
+  wrappedControllers.sendRequisitionReminderHandler,
+);
+requisitionRouter.get(
+  "/analytics",
+  [permissions.protect],
+  wrappedControllers.requisitionAnalyticsHandler,
+);
+requisitionRouter.post(
+  "/add-comment",
+  [permissions.protect],
+  wrappedControllers.addRequisitionCommentHandler,
 );
