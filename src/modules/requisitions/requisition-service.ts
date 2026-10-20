@@ -1067,8 +1067,10 @@ const processLegacyRequisitionApprovalAction = async (args: {
  * Generates the next request ID.
  * @returns {Promise<string>} The next request ID in the format "RQ-0001"
  */
-export const generateRequestId = async (): Promise<string> => {
-  const lastRequest = await prisma.request.findFirst({
+export const generateRequestId = async (
+  client: Prisma.TransactionClient = prisma,
+): Promise<string> => {
+  const lastRequest = await client.request.findFirst({
     orderBy: { id: "desc" },
   });
 
@@ -1077,20 +1079,23 @@ export const generateRequestId = async (): Promise<string> => {
 };
 
 /**
- * Creates a new requisition in the database.
- * @param {RequisitionInterface} data The data for the new requisition.
- * @returns {Promise<RequisitionInterface>} The newly created requisition.
+ * Creates (and, when asked, submits) a requisition inside the caller's
+ * transaction. The caller commits, then calls
+ * triggerRequisitionNotificationEventProcessing() when `submitted` is true.
+ * Used by createRequisition and by Assets to raise several repair
+ * requisitions all-or-nothing.
  */
-export const createRequisition = async (
+export const createRequisitionTx = async (
+  tx: Prisma.TransactionClient,
   data: RequisitionInterface,
   user: any,
-) => {
+): Promise<{ id: number; requestId: string; submitted: boolean }> => {
   if (!data.request_date) {
     throw new InputValidationError("Request date is required.");
   }
 
   const actorUserId = getAuthenticatedUserId(user);
-  const requestId = await generateRequestId();
+  const requestId = await generateRequestId(tx);
   const shouldSubmit = shouldSubmitOnCreate(data);
   const normalizedEventId = normalizeCreateEventId((data as any).event_id);
   await ensureSelectedEventTypeExists(normalizedEventId);
@@ -1135,7 +1140,7 @@ export const createRequisition = async (
 
   let shouldTriggerNotificationProcessing = false;
 
-  const createdRequest = await prisma.$transaction(async (tx) => {
+  const createdRequest = await (async () => {
     await validateRequesterIsNotConfiguredApproverTx(tx, {
       requesterId: actorUserId,
       fallbackDepartmentId: data.department_id,
@@ -1184,13 +1189,27 @@ export const createRequisition = async (
     }
 
     return request;
-  });
+  })();
 
-  if (shouldTriggerNotificationProcessing) {
+  return { id: createdRequest.id, requestId, submitted: shouldTriggerNotificationProcessing };
+};
+
+/**
+ * Creates a new requisition in the database.
+ * @param {RequisitionInterface} data The data for the new requisition.
+ * @returns {Promise<RequisitionInterface>} The newly created requisition.
+ */
+export const createRequisition = async (
+  data: RequisitionInterface,
+  user: any,
+) => {
+  const created = await prisma.$transaction((tx) => createRequisitionTx(tx, data, user));
+
+  if (created.submitted) {
     triggerRequisitionNotificationEventProcessing();
   }
 
-  return getRequisition(createdRequest.id, user);
+  return getRequisition(created.id, user);
 };
 
 /**

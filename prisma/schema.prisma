@@ -474,7 +474,7 @@ model access_level {
 }
 
 model assets {
-  id                  Int           @id @default(autoincrement())
+  id                  Int                      @id @default(autoincrement())
   name                String
   date_assigned       DateTime?
   date_purchased      DateTime?
@@ -486,27 +486,130 @@ model assets {
   photo               String?
   created_by          Int?
   updated_by          Int?
-  created_at          DateTime      @default(now())
+  created_at          DateTime                 @default(now())
   department_assigned Int?
   branch_id           Int?
   asset_id            String?
-  assigned_to         department?   @relation(fields: [department_assigned], references: [id])
-  branch              branch?       @relation(fields: [branch_id], references: [id])
+  /// sound | music | media | furniture | appliance | vehicle | other
+  category            String?                  @db.VarChar(32)
+  /// When the current status (or holder) started.
+  status_since        DateTime?
+  /// Fault, repairer or loss details for the current status.
+  status_note         String?                  @db.Text
+  lost_confirmed_at   DateTime?
+  last_counted_at     DateTime?
+  repair_request_id   Int?
+  assigned_to         department?              @relation(fields: [department_assigned], references: [id])
+  branch              branch?                  @relation(fields: [branch_id], references: [id])
+  repair_request      request?                 @relation("AssetRepairRequest", fields: [repair_request_id], references: [id], onDelete: SetNull)
+  history             asset_history[]
+  stock_check_items   asset_stock_check_item[]
 
   @@index([department_assigned], map: "assets_department_assigned_fkey")
   @@index([branch_id], map: "assets_branch_id_idx")
+  @@index([repair_request_id])
 }
 
 model asset_history {
-  id            Int          @id @default(autoincrement())
+  id            Int           @id @default(autoincrement())
   title         String
   description   String?
-  status_update asset_status
+  status_update asset_status?
   update_date   DateTime
   userId        Int?
-  related_user  user?        @relation(fields: [userId], references: [id])
+  asset_id      Int?
+  /// neutral | info | success | warning | danger
+  tone          String?       @db.VarChar(16)
+  related_user  user?         @relation(fields: [userId], references: [id])
+  asset         assets?       @relation(fields: [asset_id], references: [id], onDelete: Cascade)
 
   @@index([userId], map: "asset_history_userId_fkey")
+  @@index([asset_id, update_date])
+}
+
+/// A reconciliation round: counters mark what they physically find, the
+/// administrator settles differences, closing applies them to the register.
+model asset_stock_check {
+  id                  Int                            @id @default(autoincrement())
+  name                String
+  /// null = all departments
+  scope_department_id Int?
+  scope_store_only    Boolean                        @default(false)
+  scope_category      String?                        @db.VarChar(32)
+  status              asset_stock_check_status       @default(OPEN)
+  started_at          DateTime                       @default(now())
+  due_date            DateTime
+  closed_at           DateTime?
+  created_by          Int?
+  closed_by           Int?
+  branch_id           Int?
+  items               asset_stock_check_item[]
+  extras              asset_stock_check_extra[]
+  departments         asset_stock_check_department[]
+
+  @@index([status])
+  @@index([branch_id])
+}
+
+model asset_stock_check_item {
+  id                     Int               @id @default(autoincrement())
+  check_id               Int
+  asset_id               Int
+  /// Department the register expected it with; null = the store.
+  expected_department_id Int?
+  /// found | elsewhere | damaged | missing | atrepair | back
+  result                 String?           @db.VarChar(16)
+  /// For elsewhere: where it was found (null with found_in_store = store).
+  found_department_id    Int?
+  found_in_store         Boolean           @default(false)
+  /// Administrator's decision for a difference (move, return, needs, ...).
+  fix                    String?           @db.VarChar(16)
+  counted_at             DateTime?
+  counted_by             Int?
+  counted_by_name        String?
+  check                  asset_stock_check @relation(fields: [check_id], references: [id], onDelete: Cascade)
+  asset                  assets            @relation(fields: [asset_id], references: [id], onDelete: Cascade)
+
+  @@unique([check_id, asset_id])
+  @@index([asset_id])
+}
+
+model asset_stock_check_extra {
+  id                  Int               @id @default(autoincrement())
+  check_id            Int
+  name                String
+  category            String?           @db.VarChar(32)
+  found_department_id Int?
+  found_in_store      Boolean           @default(false)
+  note                String?           @db.Text
+  /// add | ignore
+  fix                 String            @default("add") @db.VarChar(16)
+  recorded_at         DateTime          @default(now())
+  recorded_by         Int?
+  recorded_by_name    String?
+  created_asset_id    Int?
+  check               asset_stock_check @relation(fields: [check_id], references: [id], onDelete: Cascade)
+
+  @@index([check_id])
+}
+
+/// Per-department sign-off. department_key 0 = the store (unassigned items).
+model asset_stock_check_department {
+  id                Int               @id @default(autoincrement())
+  check_id          Int
+  department_key    Int
+  submitted_at      DateTime?
+  submitted_by      Int?
+  submitted_by_name String?
+  reminded_at       DateTime?
+  check             asset_stock_check @relation(fields: [check_id], references: [id], onDelete: Cascade)
+
+  @@unique([check_id, department_key])
+}
+
+enum asset_stock_check_status {
+  OPEN
+  CLOSED
 }
 
 model event_act {
@@ -801,6 +904,7 @@ model request {
   products                requested_item[]                  @relation("ProductRequest")
   approval_instances      requisition_approval_instances[]
   notification_events     requisition_notification_events[]
+  repair_assets           assets[]                          @relation("AssetRepairRequest")
 
   @@index([user_id], map: "request_user_id_fkey")
   @@index([department_id], map: "request_department_id_fkey")
@@ -2727,6 +2831,7 @@ enum asset_status {
   NOT_FIXABLE
   OUT_OF_REPAIRS
   LOST_OR_STOLEN
+  NEEDS_REPAIR
 }
 
 enum family_relation_type {
