@@ -93,3 +93,12 @@ test("reminder reasons", () => {
   assert.equal(isLeaderReminderReason("late"), false);
   assert.equal(isLeaderReminderReason(1), false);
 });
+
+test("existing role names map to the built-in roles", () => {
+  assert.equal(builtInRoleKey("CENTER LEADER"), "leader");
+  assert.equal(builtInRoleKey("Life_Center-Leader"), "leader");
+  assert.equal(builtInRoleKey("Leader"), "leader");
+  assert.equal(builtInRoleKey("Assistant center leader"), "assistant");
+  assert.equal(builtInRoleKey("Center member"), "member");
+  assert.equal(builtInRoleKey("Secretary"), null);
+});
