@@ -1843,7 +1843,7 @@ export const getPreApprovalSimilarItems = async (
       ri.quantity AS quantity,
       r.id AS requisition_id,
       r.request_id AS generated_id,
-      r.requisition_date AS request_date,
+      COALESCE(r.submitted_at, r.requisition_date) AS request_date,
       requester.name AS requester_name,
       r.request_approval_status AS status
     FROM \`requested_product_item\` ri
@@ -1852,12 +1852,13 @@ export const getPreApprovalSimilarItems = async (
     LEFT JOIN \`user\` requester
       ON requester.id = r.user_id
     WHERE
-      (
-        r.requisition_date >= ${lookbackStartDate}
-        OR r.id = ${parsedRequisitionId}
-      )
+      -- Other requisitions only: the one being reviewed must not match
+      -- itself, and unsubmitted drafts aren't requests yet.
+      r.id <> ${parsedRequisitionId}
+      AND r.request_approval_status <> 'Draft'
+      AND COALESCE(r.submitted_at, r.requisition_date) >= ${lookbackStartDate}
       AND LOWER(TRIM(ri.name)) IN (${Prisma.join(normalizedCurrentItemNames)})
-    ORDER BY r.requisition_date DESC, r.id DESC, ri.id DESC
+    ORDER BY request_date DESC, r.id DESC, ri.id DESC
   `);
 
   for (const row of matchRows) {
