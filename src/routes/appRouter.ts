@@ -39,6 +39,7 @@ import joinRequestRouter from "../modules/departmentJoinRequests/joinRequestRout
 import rideRouter from "../modules/rides/rideRoute";
 import communityRouter from "../modules/community/communityRoute";
 import messagingRouter from "../modules/messaging/messagingRoute";
+import { departmentReportRouter } from "../modules/departmentReports/departmentReportRoute";
 import { FollowUPController } from "../modules/visitorManagement/followUpController";
 import { Permissions } from "../middleWare/authorization";
 dotenv.config();
@@ -61,6 +62,7 @@ appRouter.use("/event", eventRouter);
 appRouter.use("/promotions", promotionRouter);
 appRouter.use("/sermons", sermonRouter);
 appRouter.use("/event-reports", eventReportRouter);
+appRouter.use("/department-reports", departmentReportRouter);
 appRouter.use("/requisitions", requisitionRouter);
 appRouter.use("/program", programRouter);
 appRouter.use("/visitor", visitorRouter);

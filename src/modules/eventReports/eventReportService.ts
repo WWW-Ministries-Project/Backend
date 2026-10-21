@@ -19,10 +19,13 @@ import {
 } from "docx";
 import { resolve } from "path";
 import {
+  AppError,
   InputValidationError,
   NotFoundError,
   ResourceDuplicationError,
+  UnauthorizedError,
 } from "../../utils/custom-error-handlers";
+import { userHasDomainPermission } from "../../middleWare/authorization";
 import { prisma } from "../../Models/context";
 import {
   buildAttendanceVisitorCountsMap,
@@ -578,7 +581,7 @@ const createEventReportTx = async (
       data: {
         event_id: args.eventId,
         event_date: toUtcDayDate(args.eventDate),
-        status: EventReportStatus.DRAFT,
+        status: EventReportStatus.PENDING_FINAL,
         created_by: args.actorUserId,
         updated_by: args.actorUserId,
         branch_id: args.branchId ?? null,
@@ -1728,6 +1731,14 @@ export const generateEventReport = async (
       branchId: event.branch_id,
     });
 
+    await tx.event_report_activity.create({
+      data: {
+        event_report_id: report.id,
+        action: "GENERATED",
+        actor_user_id: actorUserId,
+      },
+    });
+
     return {
       data: {
         id: report.id,
@@ -1744,7 +1755,9 @@ export const getEventReportDetail = async (
   query: {
     event_id?: unknown;
     event_date?: unknown;
+    branch_id?: unknown;
   },
+  user?: any,
 ) => {
   const eventId = toPositiveInt(query.event_id);
   if (!eventId) {
@@ -1752,13 +1765,50 @@ export const getEventReportDetail = async (
   }
 
   const eventDate = parseEventDateString(query.event_date);
+  const viewerUserId = toPositiveInt(user?.id);
+  const branchWhere = getBranchScopedWhere(query.branch_id);
 
   // Read-only — run on the shared client, not inside a transaction.
-  return {
-    data: await buildEventReportDetailDataTx(prisma, {
-      eventId,
-      eventDate,
+  const detail = await buildEventReportDetailDataTx(prisma, {
+    eventId,
+    eventDate,
+  });
+
+  const [eventMeta, reportRow, availableReports] = await Promise.all([
+    loadEventMetaTx(prisma, eventId),
+    // Branch-gated like the sign-off actions: outside the caller's branches
+    // the report is "not found" (the detail built above is discarded).
+    findEventReportWorkflowRowTx(prisma, eventId, eventDate, query.branch_id, true),
+    prisma.event_reports.findMany({
+      where: {
+        event_id: eventId,
+        // Legacy rows without a branch stay visible, matching the actions.
+        ...(branchWhere ? { OR: [branchWhere, { branch_id: null }] } : {}),
+      },
+      orderBy: { event_date: "desc" },
+      select: { event_date: true },
     }),
+  ]);
+
+  if (!reportRow) {
+    throw new NotFoundError("Event report not found");
+  }
+
+  const workflow = await buildEventReportWorkflow(reportRow, viewerUserId);
+
+  return {
+    data: {
+      ...detail,
+      event_type: eventMeta?.event_type ?? null,
+      start_time: eventMeta?.start_time ?? null,
+      end_time: eventMeta?.end_time ?? null,
+      location: eventMeta?.location ?? null,
+      generated_at: reportRow.created_at.toISOString(),
+      available_dates: Array.from(
+        new Set(availableReports.map((row) => toYmdDateString(row.event_date))),
+      ),
+      ...workflow,
+    },
   };
 };
 
@@ -1823,7 +1873,7 @@ export const getEventReportOverview = async (query: {
     where: {
       event_id: eventId || undefined,
       ...(branchWhere || {}),
-      status: status ? (status as EventReportStatus) : undefined,
+      status: resolveOverviewStatusFilter(status),
       event_date:
         fromDate || toDate
           ? {
@@ -1857,9 +1907,14 @@ export const getEventReportOverview = async (query: {
       updated_at: true,
       event: {
         select: {
+          event_type: true,
+          location: true,
+          start_time: true,
+          end_time: true,
           event: {
             select: {
               event_name: true,
+              event_type: true,
             },
           },
         },
@@ -1867,17 +1922,37 @@ export const getEventReportOverview = async (query: {
     },
   });
 
-  const data = reports.map((report) => ({
-    id: report.id,
-    event_id: report.event_id,
-    event_name: report.event?.event?.event_name || "Unknown Event",
-    event_date: toYmdDateString(report.event_date),
-    report_status: report.status,
-    status: report.status,
-    generated_at: report.created_at.toISOString(),
-    created_at: report.created_at.toISOString(),
-    updated_at: report.updated_at.toISOString(),
-  }));
+  const metricsMap = await buildOverviewMetricsMap(
+    prisma,
+    reports.slice(0, OVERVIEW_ENRICHMENT_LIMIT).map((report) => ({
+      event_id: report.event_id,
+      event_date: toYmdDateString(report.event_date),
+    })),
+  );
+
+  const data = reports.map((report) => {
+    const eventDate = toYmdDateString(report.event_date);
+    const metrics = metricsMap.get(`${report.event_id}:${eventDate}`);
+
+    return {
+      id: report.id,
+      event_id: report.event_id,
+      event_name: report.event?.event?.event_name || "Unknown Event",
+      event_date: eventDate,
+      report_status: report.status,
+      status: report.status,
+      generated_at: report.created_at.toISOString(),
+      created_at: report.created_at.toISOString(),
+      updated_at: report.updated_at.toISOString(),
+      event_type: report.event?.event_type ?? report.event?.event?.event_type ?? null,
+      location: report.event?.location ?? null,
+      start_time: report.event?.start_time ?? null,
+      end_time: report.event?.end_time ?? null,
+      status_label: getEventReportStatusLabel(report.status),
+      total_attendance: metrics ? metrics.total_attendance : null,
+      workers_present_pct: metrics ? metrics.workers_present_pct : null,
+    };
+  });
 
   return {
     data,
@@ -1941,5 +2016,617 @@ export const generateServiceSummaryReport = async (
     buffer: await generatePdfBufferFromHtml(html),
     contentType: "application/pdf",
     fileName: `${fileBaseName}.pdf`,
+  };
+};
+
+// ---------------------------------------------------------------------------
+// Report workflow: status labels, sign-off actions, trail and comments.
+// ---------------------------------------------------------------------------
+
+const OVERVIEW_ENRICHMENT_LIMIT = 300;
+
+const PENDING_REPORT_STATUSES: EventReportStatus[] = [
+  EventReportStatus.DRAFT,
+  EventReportStatus.PENDING_FINAL,
+];
+
+const EVENT_REPORT_STATUS_LABELS: Record<EventReportStatus, string> = {
+  [EventReportStatus.DRAFT]: "Pending approval",
+  [EventReportStatus.PENDING_FINAL]: "Pending approval",
+  [EventReportStatus.APPROVED]: "Approved",
+  [EventReportStatus.REJECTED]: "Returned",
+};
+
+const getEventReportStatusLabel = (status: EventReportStatus): string =>
+  EVENT_REPORT_STATUS_LABELS[status] || status;
+
+/**
+ * Accepts the raw enum values (older clients) plus the UI labels
+ * ("pending" / "pending_approval", "returned", "approved").
+ */
+const resolveOverviewStatusFilter = (
+  status: string | null,
+): EventReportStatus | { in: EventReportStatus[] } | undefined => {
+  if (!status) {
+    return undefined;
+  }
+
+  const upper = status.toUpperCase();
+  // New reports are created PENDING_FINAL; older clients filtering on DRAFT
+  // mean "not yet signed off", so keep returning both.
+  if (upper === EventReportStatus.DRAFT || upper === EventReportStatus.PENDING_FINAL) {
+    return { in: PENDING_REPORT_STATUSES };
+  }
+  if ((Object.values(EventReportStatus) as string[]).includes(upper)) {
+    return upper as EventReportStatus;
+  }
+
+  const normalized = status.toLowerCase().replace(/[\s-]+/g, "_");
+  if (normalized === "pending" || normalized === "pending_approval") {
+    return { in: PENDING_REPORT_STATUSES };
+  }
+  if (normalized === "returned") {
+    return EventReportStatus.REJECTED;
+  }
+
+  throw new InputValidationError("Unknown report status filter");
+};
+
+const loadEventMetaTx = (tx: ApprovalWorkflowTx, eventId: number) =>
+  tx.event_mgt
+    .findUnique({
+      where: { id: eventId },
+      select: {
+        event_type: true,
+        location: true,
+        start_time: true,
+        end_time: true,
+        event: { select: { event_type: true } },
+      },
+    })
+    .then((event) =>
+      event
+        ? {
+            event_type: event.event_type ?? event.event?.event_type ?? null,
+            location: event.location ?? null,
+            start_time: event.start_time ?? null,
+            end_time: event.end_time ?? null,
+          }
+        : null,
+    );
+
+const EVENT_REPORT_WORKFLOW_SELECT = {
+  id: true,
+  event_id: true,
+  event_date: true,
+  status: true,
+  branch_id: true,
+  created_by: true,
+  created_at: true,
+  final_acted_by_user_id: true,
+  final_acted_at: true,
+} as const;
+
+type EventReportWorkflowRow = {
+  id: number;
+  event_id: number;
+  event_date: Date;
+  status: EventReportStatus;
+  branch_id: number | null;
+  created_by: number;
+  created_at: Date;
+  final_acted_by_user_id: number | null;
+  final_acted_at: Date | null;
+};
+
+const findEventReportWorkflowRowTx = (
+  tx: ApprovalWorkflowTx,
+  eventId: number,
+  eventDate: string,
+  branchValue?: unknown,
+  enforceBranch = false,
+): Promise<EventReportWorkflowRow | null> => {
+  const { start, end } = getUtcDayBounds(eventDate);
+  const branchWhere = enforceBranch ? getBranchScopedWhere(branchValue) : undefined;
+
+  return tx.event_reports.findFirst({
+    where: {
+      event_id: eventId,
+      event_date: { gte: start, lt: end },
+      // Legacy rows without a branch stay reachable from any branch.
+      ...(branchWhere ? { OR: [branchWhere, { branch_id: null }] } : {}),
+    },
+    select: EVENT_REPORT_WORKFLOW_SELECT,
+  });
+};
+
+const loadUserNamesTx = async (
+  tx: ApprovalWorkflowTx,
+  ids: Array<number | null | undefined>,
+): Promise<Map<number, string>> => {
+  const userIds = uniquePositiveIds(ids.filter((id): id is number => typeof id === "number"));
+  if (!userIds.length) {
+    return new Map();
+  }
+
+  const users = await tx.user.findMany({
+    where: { id: { in: userIds } },
+    select: { id: true, name: true },
+  });
+
+  return new Map(users.map((user) => [user.id, user.name]));
+};
+
+type EventReportPermissions = {
+  can_approve: boolean;
+  can_return: boolean;
+  can_resubmit: boolean;
+  can_comment: boolean;
+};
+
+const canSignOffEventReports = async (userId: number): Promise<boolean> => {
+  const [reportsAdmin, eventsAdmin] = await Promise.all([
+    userHasDomainPermission(userId, "Reports", "admin"),
+    userHasDomainPermission(userId, "Events", "admin"),
+  ]);
+  return reportsAdmin || eventsAdmin;
+};
+
+const computeEventReportPermissions = async (
+  userId: number | null,
+  status: EventReportStatus,
+): Promise<EventReportPermissions> => {
+  if (!userId) {
+    return {
+      can_approve: false,
+      can_return: false,
+      can_resubmit: false,
+      can_comment: false,
+    };
+  }
+
+  const [canSignOff, eventsManage, eventsView, reportsView] = await Promise.all([
+    canSignOffEventReports(userId),
+    userHasDomainPermission(userId, "Events", "manage"),
+    userHasDomainPermission(userId, "Events", "view"),
+    userHasDomainPermission(userId, "Reports", "view"),
+  ]);
+
+  const isPending = PENDING_REPORT_STATUSES.includes(status);
+
+  return {
+    can_approve: isPending && canSignOff,
+    can_return: isPending && canSignOff,
+    can_resubmit: status === EventReportStatus.REJECTED && eventsManage,
+    can_comment: eventsView,
+  };
+};
+
+const buildEventReportWorkflow = async (
+  report: EventReportWorkflowRow,
+  viewerUserId: number | null,
+) => {
+  const [activity, comments, permissions] = await Promise.all([
+    prisma.event_report_activity.findMany({
+      where: { event_report_id: report.id },
+      orderBy: [{ created_at: "asc" }, { id: "asc" }],
+      select: { action: true, actor_user_id: true, note: true, created_at: true },
+    }),
+    prisma.event_report_comments.findMany({
+      where: { event_report_id: report.id },
+      orderBy: [{ created_at: "asc" }, { id: "asc" }],
+      select: { id: true, author_user_id: true, body: true, created_at: true },
+    }),
+    computeEventReportPermissions(viewerUserId, report.status),
+  ]);
+
+  const names = await loadUserNamesTx(prisma, [
+    report.created_by,
+    report.final_acted_by_user_id,
+    ...activity.map((row) => row.actor_user_id),
+    ...comments.map((row) => row.author_user_id),
+  ]);
+  const nameOf = (id: number | null | undefined) =>
+    id ? names.get(id) ?? null : null;
+
+  const trail = activity.map((row) => ({
+    action: row.action,
+    who: nameOf(row.actor_user_id),
+    when: row.created_at.toISOString(),
+    note: row.note ?? null,
+  }));
+
+  // Reports generated before the activity log existed: synthesize the entry.
+  if (!activity.some((row) => row.action === "GENERATED")) {
+    trail.unshift({
+      action: "GENERATED",
+      who: nameOf(report.created_by),
+      when: report.created_at.toISOString(),
+      note: null,
+    });
+  }
+
+  return {
+    report: {
+      id: report.id,
+      status: report.status,
+      status_label: getEventReportStatusLabel(report.status),
+      generated_at: report.created_at.toISOString(),
+      generated_by_name: nameOf(report.created_by),
+      acted_at: report.final_acted_at ? report.final_acted_at.toISOString() : null,
+      acted_by_name: nameOf(report.final_acted_by_user_id),
+    },
+    trail,
+    comments: comments.map((row) => ({
+      id: row.id,
+      author: nameOf(row.author_user_id),
+      when: row.created_at.toISOString(),
+      text: row.body,
+    })),
+    permissions,
+  };
+};
+
+/**
+ * Overview metrics for many reports at once: church attendance total (incl.
+ * visitors) and workers-present %, matching the detail endpoint's
+ * church_attendance.total_attendance and department_summary.attendance_percentage.
+ */
+const buildOverviewMetricsMap = async (
+  tx: ApprovalWorkflowTx,
+  rows: Array<{ event_id: number; event_date: string }>,
+) => {
+  const result = new Map<
+    string,
+    { total_attendance: number; workers_present_pct: number }
+  >();
+  if (!rows.length) {
+    return result;
+  }
+
+  const keyOf = (eventId: number, date: string) => `${eventId}:${date}`;
+  const wantedKeys = new Set(rows.map((row) => keyOf(row.event_id, row.event_date)));
+  const eventIds = uniquePositiveIds(rows.map((row) => row.event_id));
+  const sortedDates = rows.map((row) => row.event_date).sort();
+  const rangeStart = toUtcDayDate(sortedDates[0]);
+  const rangeEnd = getUtcDayBounds(sortedDates[sortedDates.length - 1]).end;
+
+  const [summaries, excludedUserIds, departments] = await Promise.all([
+    tx.event_attendance_summary.findMany({
+      where: {
+        event_mgt_id: { in: eventIds },
+        date: { gte: rangeStart, lt: rangeEnd },
+      },
+      orderBy: { date: "desc" },
+      select: {
+        event_mgt_id: true,
+        date: true,
+        adultMale: true,
+        adultFemale: true,
+        childrenMale: true,
+        childrenFemale: true,
+        youthMale: true,
+        youthFemale: true,
+      },
+    }),
+    getEventReportExcludedUserIds(tx),
+    tx.department.findMany({ select: { id: true } }),
+  ]);
+
+  // Same pick as the detail endpoint: the latest summary of the day.
+  const summaryByKey = new Map<string, (typeof summaries)[number]>();
+  for (const summary of summaries) {
+    const key = keyOf(summary.event_mgt_id, toYmdDateString(summary.date));
+    if (wantedKeys.has(key) && !summaryByKey.has(key)) {
+      summaryByKey.set(key, summary);
+    }
+  }
+
+  const visitorLookups = rows.map((row) => ({
+    eventId: row.event_id,
+    date:
+      summaryByKey.get(keyOf(row.event_id, row.event_date))?.date ||
+      toUtcDayDate(row.event_date),
+  }));
+
+  const [visitorCountsByKey, membersByDepartment, attendanceRows] = await Promise.all([
+    buildAttendanceVisitorCountsMap(visitorLookups, tx),
+    getDepartmentMembersByDepartmentTx(
+      tx,
+      new Set(departments.map((department) => department.id)),
+      excludedUserIds,
+    ),
+    tx.event_attendance.findMany({
+      where: {
+        event_id: { in: eventIds },
+        ...(excludedUserIds.size
+          ? { user_id: { notIn: Array.from(excludedUserIds) } }
+          : {}),
+        created_at: { gte: rangeStart, lt: rangeEnd },
+      },
+      select: { event_id: true, user_id: true, created_at: true },
+    }),
+  ]);
+
+  // A worker counts once per department they belong to, like the detail view.
+  const departmentCountByUser = new Map<number, number>();
+  let totalMembers = 0;
+  for (const members of membersByDepartment.values()) {
+    totalMembers += members.size;
+    for (const userId of members.keys()) {
+      departmentCountByUser.set(userId, (departmentCountByUser.get(userId) || 0) + 1);
+    }
+  }
+
+  const attendeesByKey = new Map<string, Set<number>>();
+  for (const row of attendanceRows) {
+    const key = keyOf(row.event_id, toYmdDateString(row.created_at));
+    if (!wantedKeys.has(key)) {
+      continue;
+    }
+    const bucket = attendeesByKey.get(key) || new Set<number>();
+    bucket.add(row.user_id);
+    attendeesByKey.set(key, bucket);
+  }
+
+  for (const [index, row] of rows.entries()) {
+    const key = keyOf(row.event_id, row.event_date);
+    const summary = summaryByKey.get(key);
+    const visitorCounts = getAttendanceVisitorCountsForRecord(
+      visitorCountsByKey,
+      row.event_id,
+      visitorLookups[index].date,
+    );
+
+    let presentMembers = 0;
+    for (const userId of attendeesByKey.get(key) || []) {
+      presentMembers += departmentCountByUser.get(userId) || 0;
+    }
+
+    result.set(key, {
+      total_attendance:
+        Number(summary?.adultMale || 0) +
+        Number(summary?.adultFemale || 0) +
+        Number(summary?.childrenMale || 0) +
+        Number(summary?.childrenFemale || 0) +
+        Number(summary?.youthMale || 0) +
+        Number(summary?.youthFemale || 0) +
+        visitorCounts.total.total,
+      workers_present_pct:
+        totalMembers > 0
+          ? Number(((presentMembers / totalMembers) * 100).toFixed(1))
+          : 0,
+    });
+  }
+
+  return result;
+};
+
+type EventReportActionPayload = {
+  event_id?: unknown;
+  event_date?: unknown;
+  branch_id?: unknown;
+  note?: unknown;
+  text?: unknown;
+};
+
+const parseActionTarget = (payload: EventReportActionPayload, user: any) => {
+  const eventId = toPositiveInt(payload?.event_id);
+  if (!eventId) {
+    throw new InputValidationError("event_id must be a positive integer");
+  }
+
+  const actorUserId = toPositiveInt(user?.id);
+  if (!actorUserId) {
+    throw new InputValidationError("Authenticated user not found");
+  }
+
+  return {
+    eventId,
+    eventDate: parseEventDateString(payload?.event_date),
+    actorUserId,
+  };
+};
+
+const loadActionReportTx = async (
+  tx: ApprovalWorkflowTx,
+  eventId: number,
+  eventDate: string,
+  branchValue: unknown,
+) => {
+  const report = await findEventReportWorkflowRowTx(
+    tx,
+    eventId,
+    eventDate,
+    branchValue,
+    true,
+  );
+  if (!report) {
+    throw new NotFoundError("Event report not found");
+  }
+  return report;
+};
+
+/**
+ * Moves a report between statuses only if it is still in one of `from`, so two
+ * people acting at once cannot both win.
+ */
+const transitionEventReportTx = async (
+  tx: ApprovalWorkflowTx,
+  args: {
+    report: EventReportWorkflowRow;
+    from: EventReportStatus[];
+    to: EventReportStatus;
+    actorUserId: number;
+    finalActed: "set" | "clear";
+    conflictMessage: string;
+  },
+) => {
+  const now = new Date();
+  const updated = await tx.event_reports.updateMany({
+    where: { id: args.report.id, status: { in: args.from } },
+    data: {
+      status: args.to,
+      updated_by: args.actorUserId,
+      final_acted_by_user_id: args.finalActed === "set" ? args.actorUserId : null,
+      final_acted_at: args.finalActed === "set" ? now : null,
+    },
+  });
+
+  if (!updated.count) {
+    throw new AppError(args.conflictMessage, 409);
+  }
+};
+
+const assertCanSignOff = async (userId: number) => {
+  if (!(await canSignOffEventReports(userId))) {
+    throw new UnauthorizedError("Not authorized to sign off event reports");
+  }
+};
+
+const respondWithWorkflow = async (
+  eventId: number,
+  eventDate: string,
+  viewerUserId: number,
+) => {
+  const report = await findEventReportWorkflowRowTx(prisma, eventId, eventDate);
+  if (!report) {
+    throw new NotFoundError("Event report not found");
+  }
+  return {
+    data: {
+      event_id: eventId,
+      event_date: eventDate,
+      ...(await buildEventReportWorkflow(report, viewerUserId)),
+    },
+  };
+};
+
+export const approveEventReport = async (
+  payload: EventReportActionPayload,
+  user: any,
+) => {
+  const { eventId, eventDate, actorUserId } = parseActionTarget(payload, user);
+  await assertCanSignOff(actorUserId);
+
+  await runEventReportTransaction(async (tx) => {
+    const report = await loadActionReportTx(tx, eventId, eventDate, payload?.branch_id);
+    await transitionEventReportTx(tx, {
+      report,
+      from: PENDING_REPORT_STATUSES,
+      to: EventReportStatus.APPROVED,
+      actorUserId,
+      finalActed: "set",
+      conflictMessage: "This report is not awaiting approval",
+    });
+    await tx.event_report_activity.create({
+      data: {
+        event_report_id: report.id,
+        action: "APPROVED",
+        actor_user_id: actorUserId,
+      },
+    });
+  });
+
+  return respondWithWorkflow(eventId, eventDate, actorUserId);
+};
+
+export const returnEventReport = async (
+  payload: EventReportActionPayload,
+  user: any,
+) => {
+  const { eventId, eventDate, actorUserId } = parseActionTarget(payload, user);
+  const note = typeof payload?.note === "string" ? payload.note.trim() : "";
+  if (!note) {
+    throw new InputValidationError("A note is required when returning a report");
+  }
+  await assertCanSignOff(actorUserId);
+
+  await runEventReportTransaction(async (tx) => {
+    const report = await loadActionReportTx(tx, eventId, eventDate, payload?.branch_id);
+    await transitionEventReportTx(tx, {
+      report,
+      from: PENDING_REPORT_STATUSES,
+      to: EventReportStatus.REJECTED,
+      actorUserId,
+      finalActed: "set",
+      conflictMessage: "This report is not awaiting approval",
+    });
+    await tx.event_report_activity.create({
+      data: {
+        event_report_id: report.id,
+        action: "RETURNED",
+        actor_user_id: actorUserId,
+        note,
+      },
+    });
+    await tx.event_report_comments.create({
+      data: {
+        event_report_id: report.id,
+        author_user_id: actorUserId,
+        body: note,
+      },
+    });
+  });
+
+  return respondWithWorkflow(eventId, eventDate, actorUserId);
+};
+
+export const resubmitEventReport = async (
+  payload: EventReportActionPayload,
+  user: any,
+) => {
+  const { eventId, eventDate, actorUserId } = parseActionTarget(payload, user);
+
+  await runEventReportTransaction(async (tx) => {
+    const report = await loadActionReportTx(tx, eventId, eventDate, payload?.branch_id);
+    await transitionEventReportTx(tx, {
+      report,
+      from: [EventReportStatus.REJECTED],
+      to: EventReportStatus.PENDING_FINAL,
+      actorUserId,
+      finalActed: "clear",
+      conflictMessage: "Only returned reports can be resubmitted",
+    });
+    await tx.event_report_activity.create({
+      data: {
+        event_report_id: report.id,
+        action: "RESUBMITTED",
+        actor_user_id: actorUserId,
+      },
+    });
+  });
+
+  return respondWithWorkflow(eventId, eventDate, actorUserId);
+};
+
+export const commentOnEventReport = async (
+  payload: EventReportActionPayload,
+  user: any,
+) => {
+  const { eventId, eventDate, actorUserId } = parseActionTarget(payload, user);
+  const text = typeof payload?.text === "string" ? payload.text.trim() : "";
+  if (!text) {
+    throw new InputValidationError("Comment text is required");
+  }
+
+  const report = await loadActionReportTx(prisma, eventId, eventDate, payload?.branch_id);
+  const comment = await prisma.event_report_comments.create({
+    data: {
+      event_report_id: report.id,
+      author_user_id: actorUserId,
+      body: text,
+    },
+    select: { id: true, author_user_id: true, body: true, created_at: true },
+  });
+  const names = await loadUserNamesTx(prisma, [comment.author_user_id]);
+
+  return {
+    data: {
+      id: comment.id,
+      author: names.get(comment.author_user_id) ?? null,
+      when: comment.created_at.toISOString(),
+      text: comment.body,
+    },
   };
 };

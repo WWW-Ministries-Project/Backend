@@ -1,6 +1,10 @@
 import { Request, Response } from "express";
 import {
+  approveEventReport,
+  commentOnEventReport,
   generateEventReport,
+  resubmitEventReport,
+  returnEventReport,
   generateServiceSummaryReport,
   getEventReportDetail,
   getEventReportOverview,
@@ -78,7 +82,7 @@ export const getEventReportDetailHandler = async (
   req: Request,
   res: Response,
 ) => {
-  const data = await getEventReportDetail(req.query);
+  const data = await getEventReportDetail(req.query, (req as any).user);
   res.status(200).json({
     message: "Operation successful",
     ...data,
@@ -96,4 +100,37 @@ export const generateServiceSummaryReportHandler = async (
   res.setHeader("Content-Type", file.contentType);
   res.setHeader("Content-Disposition", `attachment; filename=\"${file.fileName}\"`);
   res.status(200).send(file.buffer);
+};
+
+/** Sign-off (Reports admin or Events admin; checked in the service). */
+export const approveEventReportHandler = async (req: Request, res: Response) => {
+  const data = await approveEventReport(
+    { ...req.query, ...req.body },
+    (req as any).user,
+  );
+  res.status(200).json({ message: "Report approved", ...data });
+};
+
+export const returnEventReportHandler = async (req: Request, res: Response) => {
+  const data = await returnEventReport(
+    { ...req.query, ...req.body },
+    (req as any).user,
+  );
+  res.status(200).json({ message: "Report returned", ...data });
+};
+
+export const resubmitEventReportHandler = async (req: Request, res: Response) => {
+  const data = await resubmitEventReport(
+    { ...req.query, ...req.body },
+    (req as any).user,
+  );
+  res.status(200).json({ message: "Report resubmitted", ...data });
+};
+
+export const commentOnEventReportHandler = async (req: Request, res: Response) => {
+  const data = await commentOnEventReport(
+    { ...req.query, ...req.body },
+    (req as any).user,
+  );
+  res.status(201).json({ message: "Comment added", ...data });
 };
