@@ -25,7 +25,10 @@ import { notificationService } from "../notifications/notificationService";
 
 type RequisitionApprovalConfigResponse = {
   module: RequisitionApprovalModule;
+  /** Configured requesters plus everyone whose role can manage Requisition. */
   requester_user_ids: number[];
+  /** Only the requesters picked in the config (what a client should save back). */
+  configured_requester_user_ids: number[];
   notification_user_ids: number[];
   similar_item_lookback_days: number;
   approval_reply_days: number;
@@ -847,6 +850,7 @@ const mapConfigResponse = (config: {
   return {
     module: config.module,
     requester_user_ids: requesterUserIds,
+    configured_requester_user_ids: configuredRequesterIds,
     notification_user_ids: (config.notifications || []).map(
       (notification) => notification.user_id,
     ),

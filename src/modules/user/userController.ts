@@ -1,5 +1,6 @@
 import e, { Request, Response } from "express";
 import JWT from "jsonwebtoken";
+import { randomBytes } from "crypto";
 import * as dotenv from "dotenv";
 import { prisma } from "../../Models/context";
 import {
@@ -3691,32 +3692,37 @@ export const sendEmailToAllUsers = async (req: Request, res: Response) => {
 
 
 /**
- * Emails a link to set a new password. Accounts that never had a password get
- * the 7-day welcome link; others the 15-minute reset link.
+ * Emails a link to set a new password: the 7-day welcome link for an account
+ * that was just turned on, else the 15-minute reset link. An account with no
+ * password gets a random one first, because the reset endpoint needs a stored
+ * hash to check the link against.
  */
-const sendPasswordLinkTo = async (user: {
-  id: number;
-  name: string;
-  email: string | null;
-  password: string | null;
-}) => {
+const sendPasswordLinkTo = async (
+  user: { id: number; name: string; email: string | null; password: string | null },
+  welcome: boolean,
+) => {
   if (!isRealEmail(user.email)) return false;
 
-  const invite = !user.password;
+  let password = user.password;
+  if (!password) {
+    password = await hashPassword(randomBytes(24).toString("hex"));
+    await prisma.user.update({ where: { id: user.id }, data: { password } });
+  }
+
   const token = JWT.sign(
     { id: user.id, email: user.email },
-    JWT_SECRET + user.password,
-    { expiresIn: invite ? "7d" : "15m" },
+    JWT_SECRET + password,
+    { expiresIn: welcome ? "7d" : "15m" },
   );
   const mailDetails = {
     user_name: user.name,
     link: `${process.env.Frontend_URL}/reset-password/?id=${user.id}&token=${token}`,
-    expiration: invite ? "7days" : "15mins",
+    expiration: welcome ? "7days" : "15mins",
   };
   await sendEmail(
-    invite ? userActivatedTemplate(mailDetails) : forgetPasswordTemplate(mailDetails),
+    welcome ? userActivatedTemplate(mailDetails) : forgetPasswordTemplate(mailDetails),
     user.email as string,
-    invite ? "Set your password" : "Reset Password",
+    welcome ? "Set your password" : "Reset Password",
   );
   return true;
 };
@@ -3736,7 +3742,7 @@ export const sendResetLink = async (req: Request, res: Response) => {
     if (!user) {
       return res.status(404).json({ message: "User not found", data: null });
     }
-    if (!(await sendPasswordLinkTo(user))) {
+    if (!(await sendPasswordLinkTo(user, false))) {
       return res.status(400).json({
         message: "This user has no email address to send the link to",
         data: null,
@@ -3744,7 +3750,7 @@ export const sendResetLink = async (req: Request, res: Response) => {
     }
     return res.status(200).json({
       message: "Password link sent",
-      data: { user_id: user.id, email: user.email, expires_in: user.password ? "15m" : "7d" },
+      data: { user_id: user.id, email: user.email, expires_in: "15m" },
     });
   } catch (error: any) {
     return res.status(500).json({ message: "Operation Failed", data: error?.message ?? null });
@@ -3795,17 +3801,21 @@ export const giveAccess = async (req: Request, res: Response) => {
       });
     }
 
-    if (!user.is_user) {
+    const newAccount = !user.is_user;
+    if (newAccount) {
       await roleEligibilityService.assertEligible("ministry_worker", userId);
+    }
+    // Grant first: if it fails the member is not left as an admin with no role.
+    await setBranchGrants([userId], [branchId], accessLevelId);
+    if (newAccount) {
       await prisma.user.update({
         where: { id: userId },
         data: { is_user: true, is_active: true },
       });
     }
-    await setBranchGrants([userId], [branchId], accessLevelId);
     void sessionChanged([userId], ["permissions", "profile"]);
 
-    const invited = sendInvite ? await sendPasswordLinkTo(user) : false;
+    const invited = sendInvite ? await sendPasswordLinkTo(user, newAccount) : false;
 
     return res.status(200).json({
       message: "Access given",

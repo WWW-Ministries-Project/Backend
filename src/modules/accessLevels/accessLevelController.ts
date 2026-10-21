@@ -49,6 +49,8 @@ const OPTIONAL_PERMISSION_KEYS = [
   "Sermons",
   "Promotions",
   "Messaging",
+  "Membership_Management",
+  "AI",
 ];
 
 const ALLOWED_SCOPE_VALUES = new Set(["assigned_departments"]);
@@ -88,6 +90,9 @@ const PERMISSION_KEY_NORMALIZER: Record<string, string> = {
   Promotions: "Promotions",
   Promotion: "Promotions",
   Messaging: "Messaging",
+  Membership_Management: "Membership_Management",
+  "Membership Management": "Membership_Management",
+  AI: "AI",
 };
 
 const ALLOWED_PERMISSION_KEYS = [
@@ -1056,8 +1061,8 @@ export const deleteAccessLevel = async (req: Request, res: Response) => {
     // nobody is left without access.
     const reassignTo = toPositiveInt(req.query?.reassign_to);
     if (reassignTo && reassignTo !== Number(id)) {
-      const target = await prisma.access_level.findUnique({
-        where: { id: reassignTo },
+      const target = await prisma.access_level.findFirst({
+        where: { id: reassignTo, deleted: false },
         select: { id: true },
       });
       if (!target) {
