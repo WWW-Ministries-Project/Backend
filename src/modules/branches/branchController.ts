@@ -51,12 +51,47 @@ export const listBranches = async (_req: Request, res: Response) => {
 
   const branches = await prisma.branch.findMany({
     orderBy: [{ is_default: "desc" }, { name: "asc" }],
-    include: branchInclude,
+    include: { ...branchInclude, _count: { select: { users: true } } },
   });
 
   return res.status(200).json({
     message: "Branches fetched successfully",
-    data: branches.map(mapBranch),
+    data: branches.map(({ _count, ...branch }) => ({
+      ...mapBranch(branch),
+      member_count: _count.users,
+    })),
+  });
+};
+
+/** Makes one branch the default: new sign-ups and records without a branch land there. */
+export const setDefaultBranch = async (req: Request, res: Response) => {
+  const id = parseBranchId(req.body?.id ?? req.query?.id);
+  if (!id) {
+    return res.status(400).json({ message: "Branch id is required", data: null });
+  }
+
+  if (!isBranchAllowed(getBranchScope(), id)) {
+    return res.status(403).json({
+      code: "BRANCH_FORBIDDEN",
+      message: BRANCH_FORBIDDEN_MESSAGE,
+      data: null,
+    });
+  }
+
+  const branch = await prisma.branch.findUnique({ where: { id }, select: { id: true } });
+  if (!branch) {
+    return res.status(404).json({ message: "Branch not found", data: null });
+  }
+
+  const [, , updated] = await prisma.$transaction([
+    prisma.branch.updateMany({ where: { is_default: true, NOT: { id } }, data: { is_default: false } }),
+    prisma.branch.update({ where: { id }, data: { is_default: true } }),
+    prisma.branch.findUniqueOrThrow({ where: { id }, include: branchInclude }),
+  ]);
+
+  return res.status(200).json({
+    message: "Default branch updated",
+    data: mapBranch(updated),
   });
 };
 

@@ -25,7 +25,10 @@ import { notificationService } from "../notifications/notificationService";
 
 type RequisitionApprovalConfigResponse = {
   module: RequisitionApprovalModule;
+  /** Configured requesters plus everyone whose role can manage Requisition. */
   requester_user_ids: number[];
+  /** Only the requesters picked in the config (what a client should save back). */
+  configured_requester_user_ids: number[];
   notification_user_ids: number[];
   similar_item_lookback_days: number;
   approval_reply_days: number;
@@ -35,6 +38,12 @@ type RequisitionApprovalConfigResponse = {
     position_id?: number;
     user_id?: number;
   }>;
+  /** EVENT_REPORT only: who signs off the financial section. */
+  finance_approver?: {
+    type: RequisitionApproverType;
+    position_id?: number;
+    user_id?: number;
+  } | null;
   is_active: boolean;
 };
 
@@ -53,6 +62,8 @@ type NormalizedConfigPayload = {
   /** Undefined keeps the stored value, so older clients that omit it don't reset it. */
   approvalReplyDays?: number;
   approvers: NormalizedApproverStep[];
+  /** EVENT_REPORT only; always null for REQUISITION. */
+  financeApprover: NormalizedApproverStep | null;
   isActive: boolean;
 };
 
@@ -662,6 +673,22 @@ const parseApprovers = (value: unknown): NormalizedApproverStep[] => {
   return parsed.sort((a, b) => a.order - b.order);
 };
 
+const parseFinanceApprover = (
+  value: unknown,
+  module: RequisitionApprovalModule,
+): NormalizedApproverStep | null => {
+  if (module !== EVENT_REPORT_MODULE || value === undefined || value === null) {
+    return null;
+  }
+
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new InputValidationError("finance_approver must be an object when provided");
+  }
+
+  const [step] = parseApprovers([{ ...(value as Record<string, unknown>), order: 1 }]);
+  return step;
+};
+
 const normalizeConfigPayload = (
   payload: RequisitionApprovalConfigPayload,
 ): NormalizedConfigPayload => {
@@ -682,6 +709,7 @@ const normalizeConfigPayload = (
   );
   const approvalReplyDays = parseApprovalReplyDays(payload.approval_reply_days);
   const approvers = parseApprovers(payload.approvers);
+  const financeApprover = parseFinanceApprover(payload.finance_approver, module);
 
   let isActive = true;
   if (payload.is_active !== undefined) {
@@ -699,6 +727,7 @@ const normalizeConfigPayload = (
     similarItemLookbackDays,
     approvalReplyDays,
     approvers,
+    financeApprover,
     isActive,
   };
 };
@@ -707,7 +736,10 @@ const verifyConfigReferences = async (
   tx: ApprovalWorkflowTx,
   payload: NormalizedConfigPayload,
 ): Promise<void> => {
-  const specificApproverUserIds = payload.approvers
+  const allSteps = payload.financeApprover
+    ? [...payload.approvers, payload.financeApprover]
+    : payload.approvers;
+  const specificApproverUserIds = allSteps
     .map((step) => step.userId)
     .filter((id): id is number => Number.isInteger(id));
 
@@ -753,7 +785,7 @@ const verifyConfigReferences = async (
 
   const positionIdsToCheck = Array.from(
     new Set(
-      payload.approvers
+      allSteps
         .map((step) => step.positionId)
         .filter((id): id is number => Number.isInteger(id)),
     ),
@@ -788,6 +820,9 @@ const mapConfigResponse = (config: {
   is_active: boolean;
   similar_item_lookback_days: number;
   approval_reply_days?: number | null;
+  finance_approver_type?: RequisitionApproverType | null;
+  finance_position_id?: number | null;
+  finance_user_id?: number | null;
   requesters: Array<{ user_id: number }>;
   notifications?: Array<{ user_id: number }>;
   steps: Array<{
@@ -815,6 +850,7 @@ const mapConfigResponse = (config: {
   return {
     module: config.module,
     requester_user_ids: requesterUserIds,
+    configured_requester_user_ids: configuredRequesterIds,
     notification_user_ids: (config.notifications || []).map(
       (notification) => notification.user_id,
     ),
@@ -827,6 +863,17 @@ const mapConfigResponse = (config: {
       ...(step.position_id !== null && { position_id: step.position_id }),
       ...(step.user_id !== null && { user_id: step.user_id }),
     })),
+    ...(config.module === EVENT_REPORT_MODULE && {
+      finance_approver: config.finance_approver_type
+        ? {
+            type: config.finance_approver_type,
+            ...(config.finance_position_id && {
+              position_id: config.finance_position_id,
+            }),
+            ...(config.finance_user_id && { user_id: config.finance_user_id }),
+          }
+        : null,
+    }),
     is_active: config.is_active,
   };
 };
@@ -1237,6 +1284,14 @@ export const upsertRequisitionApprovalConfig = async (
   actorUserId?: number,
 ): Promise<RequisitionApprovalConfigResponse> => {
   const normalizedPayload = normalizeConfigPayload(payload);
+  const financeColumns =
+    normalizedPayload.module === EVENT_REPORT_MODULE
+      ? {
+          finance_approver_type: normalizedPayload.financeApprover?.type ?? null,
+          finance_position_id: normalizedPayload.financeApprover?.positionId ?? null,
+          finance_user_id: normalizedPayload.financeApprover?.userId ?? null,
+        }
+      : {};
 
   const runUpsert = async () =>
     prisma.$transaction(async (tx) => {
@@ -1252,6 +1307,7 @@ export const upsertRequisitionApprovalConfig = async (
           ...(normalizedPayload.approvalReplyDays !== undefined && {
             approval_reply_days: normalizedPayload.approvalReplyDays,
           }),
+          ...financeColumns,
           updated_by: actorUserId,
         },
         create: {
@@ -1260,6 +1316,7 @@ export const upsertRequisitionApprovalConfig = async (
           similar_item_lookback_days: normalizedPayload.similarItemLookbackDays,
           approval_reply_days:
             normalizedPayload.approvalReplyDays ?? DEFAULT_APPROVAL_REPLY_DAYS,
+          ...financeColumns,
           created_by: actorUserId,
           updated_by: actorUserId,
         },

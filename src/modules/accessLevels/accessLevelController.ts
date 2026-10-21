@@ -49,6 +49,8 @@ const OPTIONAL_PERMISSION_KEYS = [
   "Sermons",
   "Promotions",
   "Messaging",
+  "Membership_Management",
+  "AI",
 ];
 
 const ALLOWED_SCOPE_VALUES = new Set(["assigned_departments"]);
@@ -88,6 +90,9 @@ const PERMISSION_KEY_NORMALIZER: Record<string, string> = {
   Promotions: "Promotions",
   Promotion: "Promotions",
   Messaging: "Messaging",
+  Membership_Management: "Membership_Management",
+  "Membership Management": "Membership_Management",
+  AI: "AI",
 };
 
 const ALLOWED_PERMISSION_KEYS = [
@@ -532,6 +537,7 @@ export const createAccessLevel = async (req: Request, res: Response) => {
         description,
         created_by,
         permissions: JSON.stringify(normalizedPermissions),
+        updated_at: new Date(),
       },
     });
 
@@ -554,6 +560,8 @@ export const createAccessLevel = async (req: Request, res: Response) => {
         name: true,
         description: true,
         permissions: true,
+        created_at: true,
+        updated_at: true,
         users_assigned: {
           select: {
             id: true,
@@ -645,12 +653,16 @@ export const updateAccessLevel = async (req: Request, res: Response) => {
         description,
         created_by,
         permissions: permissionsForUpdate,
+        updated_at: new Date(),
+        updated_by: toPositiveInt((req as any).user?.id) ?? undefined,
       },
       select: {
         id: true,
         name: true,
         description: true,
         permissions: true,
+        created_at: true,
+        updated_at: true,
         users_assigned: {
           select: {
             id: true,
@@ -700,6 +712,8 @@ export const listAllAccessLevel = async (req: Request, res: Response) => {
         name: true,
         description: true,
         permissions: true,
+        created_at: true,
+        updated_at: true,
         users_assigned: {
           select: {
             id: true,
@@ -742,6 +756,8 @@ export const getAccessLevel = async (req: Request, res: Response) => {
         name: true,
         description: true,
         permissions: true,
+        created_at: true,
+        updated_at: true,
         users_assigned: {
           select: {
             id: true,
@@ -838,6 +854,8 @@ const ACCESS_LEVEL_DETAIL_SELECT = {
   name: true,
   description: true,
   permissions: true,
+  created_at: true,
+  updated_at: true,
   users_assigned: {
     select: {
       id: true,
@@ -863,10 +881,12 @@ const parseUserIdList = (value: unknown): number[] | null => {
 
 export const listAssignableUsers = async (req: Request, res: Response) => {
   try {
+    // Settings > Users also lists deactivated accounts.
+    const includeInactive = String(req.query?.include_inactive ?? "") === "true";
     const users = await prisma.user.findMany({
       where: {
         is_user: true,
-        OR: [{ is_active: true }, { is_active: null }],
+        ...(!includeInactive && { OR: [{ is_active: true }, { is_active: null }] }),
       },
       orderBy: {
         name: "asc",
@@ -876,6 +896,10 @@ export const listAssignableUsers = async (req: Request, res: Response) => {
         name: true,
         email: true,
         member_id: true,
+        is_active: true,
+        branch_id: true,
+        last_active_at: true,
+        branch: { select: { name: true } },
         user_info: {
           select: {
             first_name: true,
@@ -903,6 +927,10 @@ export const listAssignableUsers = async (req: Request, res: Response) => {
         ? { id: user.access.id, name: user.access.name }
         : null,
       branch_access: grantsByUser.get(user.id) ?? [],
+      is_active: user.is_active !== false,
+      home_branch_id: user.branch_id,
+      home_branch_name: user.branch?.name ?? null,
+      last_active_at: user.last_active_at,
     }));
 
     return res.status(200).json({ message: "Operation successful", data });
@@ -1029,6 +1057,30 @@ export const deleteAccessLevel = async (req: Request, res: Response) => {
   }
   try {
     const holders = await usersWithAccessLevel(Number(id));
+    // Optionally move everyone holding this role to another one first, so
+    // nobody is left without access.
+    const reassignTo = toPositiveInt(req.query?.reassign_to);
+    if (reassignTo && reassignTo !== Number(id)) {
+      const target = await prisma.access_level.findFirst({
+        where: { id: reassignTo, deleted: false },
+        select: { id: true },
+      });
+      if (!target) {
+        return res
+          .status(400)
+          .json({ message: "The role to move people to doesn't exist", data: null });
+      }
+      await prisma.$transaction([
+        prisma.user_branch_access.updateMany({
+          where: { access_level_id: Number(id) },
+          data: { access_level_id: reassignTo },
+        }),
+        prisma.user.updateMany({
+          where: { access_level_id: Number(id) },
+          data: { access_level_id: reassignTo },
+        }),
+      ]);
+    }
     const unAssign = await prisma.user.updateMany({
       where: {
         access_level_id: Number(id),

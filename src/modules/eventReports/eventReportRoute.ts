@@ -4,8 +4,10 @@ import {
   generateEventReportHandler,
   generateServiceSummaryReportHandler,
   getEventReportDetailHandler,
+  getEventReportApprovalConfigHandler,
   getEventReportOverviewHandler,
   listEligibleEventReportsHandler,
+  saveEventReportApprovalConfigHandler,
 } from "./eventReportController";
 
 export const eventReportRouter = Router();
@@ -40,4 +42,16 @@ eventReportRouter.post(
   "/generate-service-summary",
   [protect, permissions.can_view_events],
   generateServiceSummaryReportHandler,
+);
+
+eventReportRouter.get(
+  "/get-approval-config",
+  [protect, permissions.can_view_events],
+  getEventReportApprovalConfigHandler,
+);
+
+eventReportRouter.post(
+  "/upsert-approval-config",
+  [protect, permissions.can_manage_events],
+  saveEventReportApprovalConfigHandler,
 );

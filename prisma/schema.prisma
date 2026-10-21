@@ -39,6 +39,8 @@ model user {
   confirmed_at                                 DateTime?
   /// When the member reached MEMBER (functional member). Cleared if moved back.
   functional_at                                DateTime?
+  /// When the user last signed in or opened the app (updated at most every few minutes).
+  last_active_at                               DateTime?
   /// Visitor record this member was converted from (null when not converted
   /// from a visitor, or the visitor was deleted).
   source_visitor_id                            Int?

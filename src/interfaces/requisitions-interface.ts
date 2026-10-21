@@ -82,6 +82,8 @@ export interface RequisitionApprovalConfigPayload {
   notification_user_ids?: number[];
   similar_item_lookback_days?: number;
   approval_reply_days?: number;
+  /** EVENT_REPORT only: who signs off the financial section. */
+  finance_approver?: Omit<RequisitionApprovalConfigApprover, "order"> | null;
   is_active?: boolean;
 }
 
