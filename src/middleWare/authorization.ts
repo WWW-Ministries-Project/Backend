@@ -66,6 +66,11 @@ const PERMISSION_KEY_ALIASES: Record<string, string[]> = {
   // fallback: bulk SMS costs money, so it is never inherited from Community.
   // The 20261010120000_messaging migration grants it to full admins.
   Messaging: ["Messaging"],
+  // Department reports and the executive summary. View reads them; admin is
+  // leadership sign-off (approve, return, decide on requests). Falls back to
+  // Settings so existing administrators keep access without a data migration.
+  // Mirrors DOMAIN_FALLBACKS in the Frontend's src/utils/accessControl.ts.
+  Reports: ["Reports", "Settings", "Access_rights", "Access rights"],
 };
 
 const parsePermissionsObject = (permissions: any): Record<string, any> => {
@@ -718,6 +723,23 @@ export const canUserManageAppointments = async (
     return false;
   }
   return true;
+};
+
+/**
+ * Whether an active privileged user holds `action` on a permission domain in
+ * any branch they can access. For controllers whose required domain depends on
+ * the request (e.g. each department report reads a different module).
+ */
+export const userHasDomainPermission = async (
+  userId: number,
+  permissionType: string,
+  action: "view" | "manage" | "admin",
+): Promise<boolean> => {
+  const snapshot = await getOrFetchAuthContextSnapshot(userId);
+  if (!snapshot || !isSessionActive(snapshot) || !snapshot.isPrivilegedUser) {
+    return false;
+  }
+  return hasActionPermission(snapshot.permissions, permissionType, action);
 };
 
 /**
@@ -2340,6 +2362,19 @@ export class Permissions {
     "Pledges",
     "admin",
     "Not authorized to delete pledges",
+  );
+
+  // Reports (department reports, executive summary)
+  can_view_reports = this.checkPermission(
+    "Reports",
+    "view",
+    "Not authorized to view reports",
+  );
+
+  can_admin_reports = this.checkPermission(
+    "Reports",
+    "admin",
+    "Not authorized to sign off reports",
   );
 
   // Settings

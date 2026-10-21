@@ -484,15 +484,15 @@ model position {
 }
 
 model access_level {
-  id             Int       @id @default(autoincrement())
-  name           String    @unique
+  id             Int                  @id @default(autoincrement())
+  name           String               @unique
   description    String?
-  permissions    String?   @db.LongText
+  permissions    String?              @db.LongText
   created_by     Int?
   updated_by     Int?
   deleted_at     DateTime?
-  deleted        Boolean   @default(false)
-  created_at     DateTime? @default(now())
+  deleted        Boolean              @default(false)
+  created_at     DateTime?            @default(now())
   updated_at     DateTime?
   users_assigned user[]
   branch_access  user_branch_access[]
@@ -966,6 +966,8 @@ model event_reports {
   viewers                  event_report_viewers[]
   final_approval_instances event_report_final_approval_instances[]
   notification_events      event_report_notification_events[]
+  comments                 event_report_comments[]
+  activity                 event_report_activity[]
 
   @@unique([event_id, event_date])
   @@index([event_id])
@@ -3887,4 +3889,122 @@ model message_recipient {
   @@unique([dispatch_id, channel, recipient_key])
   @@index([status, next_attempt_at])
   @@index([user_id])
+}
+
+// ---------------------------------------------------------------------------
+// Event report sign-off: leadership comments and an activity trail. User ids
+// are plain columns (no relation) so the large `user` model stays untouched.
+// ---------------------------------------------------------------------------
+
+model event_report_comments {
+  id              Int           @id @default(autoincrement())
+  event_report_id Int
+  author_user_id  Int
+  body            String        @db.Text
+  created_at      DateTime      @default(now())
+  event_report    event_reports @relation(fields: [event_report_id], references: [id], onDelete: Cascade)
+
+  @@index([event_report_id])
+}
+
+model event_report_activity {
+  id              Int           @id @default(autoincrement())
+  event_report_id Int
+  action          String        @db.VarChar(64)
+  actor_user_id   Int?
+  note            String?       @db.Text
+  created_at      DateTime      @default(now())
+  event_report    event_reports @relation(fields: [event_report_id], references: [id], onDelete: Cascade)
+
+  @@index([event_report_id])
+}
+
+// ---------------------------------------------------------------------------
+// Department reports: one row per report (membership, visitors, events,
+// attendance, assets, finance, lifecenters) per period per branch. Numbers are
+// computed live; these tables hold only the human workflow around them.
+// branch_key 0 means "All branches".
+// ---------------------------------------------------------------------------
+
+enum DepartmentReportStatus {
+  DRAFT
+  SUBMITTED
+  RETURNED
+  APPROVED
+}
+
+enum DepartmentReportRequestOutcome {
+  APPROVED
+  RESPONDED
+}
+
+model department_reports {
+  id                   Int                          @id @default(autoincrement())
+  report_key           String                       @db.VarChar(32)
+  period_type          String                       @db.VarChar(16)
+  period_key           String                       @db.VarChar(32)
+  period_start         DateTime
+  period_end           DateTime
+  branch_key           Int                          @default(0)
+  status               DepartmentReportStatus       @default(DRAFT)
+  wins                 String?                      @db.Text
+  challenges           String?                      @db.Text
+  plans                String?                      @db.Text
+  testimonies          String?                      @db.Text
+  prepared_by_user_id  Int?
+  submitted_by_user_id Int?
+  submitted_at         DateTime?
+  acted_by_user_id     Int?
+  approved_at          DateTime?
+  returned_at          DateTime?
+  created_at           DateTime                     @default(now())
+  updated_at           DateTime                     @default(now()) @updatedAt
+  comments             department_report_comments[]
+  activity             department_report_activity[]
+  requests             department_report_requests[]
+
+  @@unique([report_key, period_type, period_key, branch_key], map: "dept_report_period_uk")
+  @@index([period_type, period_key])
+  @@index([status])
+}
+
+model department_report_comments {
+  id             Int                @id @default(autoincrement())
+  report_id      Int
+  author_user_id Int
+  body           String             @db.Text
+  created_at     DateTime           @default(now())
+  report         department_reports @relation(fields: [report_id], references: [id], onDelete: Cascade)
+
+  @@index([report_id])
+}
+
+model department_report_activity {
+  id            Int                @id @default(autoincrement())
+  report_id     Int
+  action        String             @db.VarChar(64)
+  actor_user_id Int?
+  note          String?            @db.Text
+  created_at    DateTime           @default(now())
+  report        department_reports @relation(fields: [report_id], references: [id], onDelete: Cascade)
+
+  @@index([report_id])
+}
+
+model department_report_requests {
+  id                 Int                             @id @default(autoincrement())
+  report_id          Int
+  position           Int                             @default(0)
+  body               String                          @db.Text
+  needs_decision     Boolean                         @default(true)
+  outcome            DepartmentReportRequestOutcome?
+  response           String?                         @db.Text
+  decided_by_user_id Int?
+  decided_at         DateTime?
+  created_at         DateTime                        @default(now())
+  updated_at         DateTime                        @default(now()) @updatedAt
+  report             department_reports              @relation(fields: [report_id], references: [id], onDelete: Cascade)
+
+  @@index([report_id])
+  @@index([needs_decision, outcome])
 }
