@@ -28,10 +28,20 @@ export const normalizeRoleName = (name: unknown): string =>
     .replace(/\s+/g, " ")
     .trim();
 
+/**
+ * Names each built-in role already goes by in the data (normalized). Churches
+ * created "CENTER LEADER" before the redesign; it is the same role as Leader.
+ */
+export const LIFE_CENTER_ROLE_ALIASES: Record<BuiltInRoleKey, string[]> = {
+  leader: ["leader", "center leader", "life center leader", "lifecenter leader", "centre leader", "life centre leader"],
+  assistant: ["assistant leader", "assistant center leader", "assistant life center leader", "assistant centre leader"],
+  member: ["member", "center member", "life center member", "centre member"],
+};
+
 export const builtInRoleKey = (name: unknown): BuiltInRoleKey | null => {
   const normalized = normalizeRoleName(name);
-  for (const key of Object.keys(LIFE_CENTER_ROLE_NAMES) as BuiltInRoleKey[]) {
-    if (normalizeRoleName(LIFE_CENTER_ROLE_NAMES[key]) === normalized) return key;
+  for (const key of Object.keys(LIFE_CENTER_ROLE_ALIASES) as BuiltInRoleKey[]) {
+    if (LIFE_CENTER_ROLE_ALIASES[key].includes(normalized)) return key;
   }
   return null;
 };
