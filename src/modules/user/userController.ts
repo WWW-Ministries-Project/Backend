@@ -48,6 +48,12 @@ import { InputValidationError } from "../../utils/custom-error-handlers";
 import { Prisma } from "@prisma/client";
 import { buildPrismaError } from "../../middleWare/errorHandler";
 import { sessionChanged, sessionRevoked } from "../realtime/realtimeSession";
+import {
+  assertCanGrantInBranches,
+  listUserBranchGrants,
+  setBranchGrants,
+} from "../accessLevels/branchAccessService";
+import { BranchAccessError } from "../branches/branchService";
 import { sessionReasonsForUserUpdate } from "../realtime/sessionNotifier";
 import {
   getBranchScopedWhere,
@@ -1459,6 +1465,25 @@ export const issueSessionTokenForUser = async (userId: number) => {
   return existance ? signSessionToken(existance) : null;
 };
 
+const LAST_ACTIVE_THROTTLE_MS = 5 * 60 * 1000;
+
+/** Records that the user is using the app. Fire-and-forget; written at most every 5 minutes. */
+const touchLastActive = (userId: number) => {
+  const now = new Date();
+  void prisma.user
+    .updateMany({
+      where: {
+        id: userId,
+        OR: [
+          { last_active_at: null },
+          { last_active_at: { lt: new Date(now.getTime() - LAST_ACTIVE_THROTTLE_MS) } },
+        ],
+      },
+      data: { last_active_at: now },
+    })
+    .catch(() => undefined);
+};
+
 export const login = async (req: Request, res: Response) => {
   const { email, password } = req.body;
   try {
@@ -1499,6 +1524,7 @@ export const login = async (req: Request, res: Response) => {
 
     if (await comparePassword(String(password || ""), existance.password)) {
       const token = await signSessionToken(existance);
+      touchLastActive(existance.id);
 
       return res
         .status(200)
@@ -3448,6 +3474,7 @@ export const currentuser = async (req: Request, res: Response) => {
     if (!Number.isInteger(authenticatedUserId) || authenticatedUserId <= 0) {
       return res.status(401).json({ message: "Unauthorized" });
     }
+    touchLastActive(authenticatedUserId);
 
     const user = await prisma.user.findUnique({
       where: { id: authenticatedUserId },
@@ -3659,5 +3686,146 @@ export const sendEmailToAllUsers = async (req: Request, res: Response) => {
     return res
       .status(500)
       .json({ message: "Failed to send emails", data: error?.message });
+  }
+};
+
+
+/**
+ * Emails a link to set a new password. Accounts that never had a password get
+ * the 7-day welcome link; others the 15-minute reset link.
+ */
+const sendPasswordLinkTo = async (user: {
+  id: number;
+  name: string;
+  email: string | null;
+  password: string | null;
+}) => {
+  if (!isRealEmail(user.email)) return false;
+
+  const invite = !user.password;
+  const token = JWT.sign(
+    { id: user.id, email: user.email },
+    JWT_SECRET + user.password,
+    { expiresIn: invite ? "7d" : "15m" },
+  );
+  const mailDetails = {
+    user_name: user.name,
+    link: `${process.env.Frontend_URL}/reset-password/?id=${user.id}&token=${token}`,
+    expiration: invite ? "7days" : "15mins",
+  };
+  await sendEmail(
+    invite ? userActivatedTemplate(mailDetails) : forgetPasswordTemplate(mailDetails),
+    user.email as string,
+    invite ? "Set your password" : "Reset Password",
+  );
+  return true;
+};
+
+/** POST /user/send-reset-link { user_id } — an admin emails someone a password link. */
+export const sendResetLink = async (req: Request, res: Response) => {
+  const userId = Number(req.body?.user_id);
+  if (!Number.isInteger(userId) || userId <= 0) {
+    return res.status(400).json({ message: "user_id is required", data: null });
+  }
+
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, name: true, email: true, password: true },
+    });
+    if (!user) {
+      return res.status(404).json({ message: "User not found", data: null });
+    }
+    if (!(await sendPasswordLinkTo(user))) {
+      return res.status(400).json({
+        message: "This user has no email address to send the link to",
+        data: null,
+      });
+    }
+    return res.status(200).json({
+      message: "Password link sent",
+      data: { user_id: user.id, email: user.email, expires_in: user.password ? "15m" : "7d" },
+    });
+  } catch (error: any) {
+    return res.status(500).json({ message: "Operation Failed", data: error?.message ?? null });
+  }
+};
+
+/**
+ * POST /user/give-access { user_id, branch_id, access_level_id, send_invite? }
+ * Lets a member sign in to the admin app: turns on their account, gives them
+ * a role in one branch and optionally emails them a link to set a password.
+ */
+export const giveAccess = async (req: Request, res: Response) => {
+  const userId = Number(req.body?.user_id);
+  const branchId = Number(req.body?.branch_id);
+  const accessLevelId = Number(req.body?.access_level_id);
+  const sendInvite = req.body?.send_invite !== false;
+
+  if (![userId, branchId, accessLevelId].every((id) => Number.isInteger(id) && id > 0)) {
+    return res.status(400).json({
+      message: "user_id, branch_id and access_level_id are required",
+      data: null,
+    });
+  }
+
+  try {
+    assertCanGrantInBranches([branchId]);
+
+    const [user, branch, level] = await Promise.all([
+      prisma.user.findUnique({
+        where: { id: userId },
+        select: { id: true, name: true, email: true, password: true, is_user: true },
+      }),
+      prisma.branch.findUnique({ where: { id: branchId }, select: { id: true } }),
+      prisma.access_level.findUnique({
+        where: { id: accessLevelId },
+        select: { id: true, deleted: true },
+      }),
+    ]);
+    if (!user) return res.status(404).json({ message: "Member not found", data: null });
+    if (!branch) return res.status(404).json({ message: "Branch not found", data: null });
+    if (!level || level.deleted) {
+      return res.status(404).json({ message: "Role not found", data: null });
+    }
+    if (sendInvite && !isRealEmail(user.email)) {
+      return res.status(400).json({
+        message: "This member has no email address, so they can't sign in yet",
+        data: null,
+      });
+    }
+
+    if (!user.is_user) {
+      await roleEligibilityService.assertEligible("ministry_worker", userId);
+      await prisma.user.update({
+        where: { id: userId },
+        data: { is_user: true, is_active: true },
+      });
+    }
+    await setBranchGrants([userId], [branchId], accessLevelId);
+    void sessionChanged([userId], ["permissions", "profile"]);
+
+    const invited = sendInvite ? await sendPasswordLinkTo(user) : false;
+
+    return res.status(200).json({
+      message: "Access given",
+      data: {
+        user_id: userId,
+        invited,
+        branch_access: await listUserBranchGrants(userId),
+      },
+    });
+  } catch (error: any) {
+    if (error instanceof BranchAccessError) {
+      return res
+        .status(403)
+        .json({ message: error.message, data: null, code: "BRANCH_FORBIDDEN" });
+    }
+    if (isRoleEligibilityValidationError(error)) {
+      return res
+        .status(error.statusCode)
+        .json(buildRoleEligibilityFailureResponse(error));
+    }
+    return res.status(500).json({ message: "Operation Failed", data: error?.message ?? null });
   }
 };

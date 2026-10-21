@@ -4,6 +4,7 @@ import {
   deleteBranch,
   getBranchDeleteImpact,
   listBranches,
+  setDefaultBranch,
   updateBranch,
 } from "./branchController";
 import { Permissions } from "../../middleWare/authorization";
@@ -24,6 +25,11 @@ branchRouter.put(
   "/update-branch",
   [permissions.protect, permissions.can_manage_settings],
   updateBranch,
+);
+branchRouter.put(
+  "/set-default-branch",
+  [permissions.protect, permissions.can_manage_settings],
+  setDefaultBranch,
 );
 branchRouter.get(
   "/delete-impact",

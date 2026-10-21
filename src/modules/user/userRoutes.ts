@@ -30,6 +30,8 @@ import {
   updateUserPasswordToDefault,
   sendEmailToAllUsers,
   filterUsersInfo,
+  giveAccess,
+  sendResetLink,
 } from "../user/userController";
 import {
   approveMembershipRequest,
@@ -117,6 +119,16 @@ userRouter.put(
   updateUser,
 );
 
+userRouter.post(
+  "/give-access",
+  [protect, permissions.can_manage_access],
+  giveAccess,
+);
+userRouter.post(
+  "/send-reset-link",
+  [protect, permissions.can_manage_member_details],
+  sendResetLink,
+);
 userRouter.put(
   "/update-user-status",
   [protect, permissions.can_manage_member_details],

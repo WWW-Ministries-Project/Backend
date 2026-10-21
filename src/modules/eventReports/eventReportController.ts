@@ -6,6 +6,40 @@ import {
   getEventReportOverview,
   listEligibleEventReports,
 } from "./eventReportService";
+import {
+  getApprovalConfigByModule,
+  upsertRequisitionApprovalConfig,
+} from "../requisitions/requisition-approval-workflow";
+
+/** Event report sign-off settings. Stored with the requisition approval configs. */
+export const getEventReportApprovalConfigHandler = async (
+  _req: Request,
+  res: Response,
+) => {
+  const data = await getApprovalConfigByModule("EVENT_REPORT");
+  res.status(200).json({
+    message: "Operation successful",
+    data,
+  });
+};
+
+export const saveEventReportApprovalConfigHandler = async (
+  req: Request,
+  res: Response,
+) => {
+  const data = await upsertRequisitionApprovalConfig(
+    {
+      ...req.body,
+      module: "EVENT_REPORT",
+      requester_user_ids: [],
+    },
+    (req as any).user?.id,
+  );
+  res.status(200).json({
+    message: "Saved successfully",
+    data,
+  });
+};
 
 export const listEligibleEventReportsHandler = async (
   req: Request,
