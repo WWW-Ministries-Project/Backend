@@ -5,6 +5,13 @@ import {
   normalizeBranchListItem,
   parseBranchId,
 } from "./branchService";
+import {
+  BRANCH_FORBIDDEN_MESSAGE,
+  getBranchScope,
+  isBranchAllowed,
+} from "./branchScope";
+import { setBranchGrants } from "../accessLevels/branchAccessService";
+import { sessionChanged } from "../realtime/realtimeSession";
 
 const mapBranch = (branch: {
   id: number;
@@ -111,6 +118,26 @@ export const createBranch = async (req: Request, res: Response) => {
     include: branchInclude,
   });
 
+  // An admin limited to some branches keeps their current role in the branch
+  // they just created; otherwise they could not see it.
+  const scope = getBranchScope();
+  const creatorId = Number((req as any).user?.id);
+  if (scope?.allowedBranchIds && Number.isInteger(creatorId) && creatorId > 0) {
+    const sourceBranchId = scope.activeBranchId ?? scope.allowedBranchIds[0];
+    const sourceGrant = sourceBranchId
+      ? await prisma.user_branch_access.findUnique({
+          where: {
+            user_id_branch_id: { user_id: creatorId, branch_id: sourceBranchId },
+          },
+          select: { access_level_id: true },
+        })
+      : null;
+    if (sourceGrant) {
+      await setBranchGrants([creatorId], [created.id], sourceGrant.access_level_id);
+      void sessionChanged([creatorId], ["permissions"]);
+    }
+  }
+
   return res.status(200).json({
     message: "Branch created successfully",
     data: mapBranch(created),
@@ -119,6 +146,11 @@ export const createBranch = async (req: Request, res: Response) => {
 
 export const updateBranch = async (req: Request, res: Response) => {
   const branchId = parseBranchId(req.body?.id ?? req.query?.id);
+  if (branchId && !isBranchAllowed(getBranchScope(), branchId)) {
+    return res
+      .status(403)
+      .json({ message: BRANCH_FORBIDDEN_MESSAGE, data: null, code: "BRANCH_FORBIDDEN" });
+  }
   const name = String(req.body?.name ?? "").trim();
   const description =
     readOptionalString(req.body?.description);
@@ -264,6 +296,11 @@ const describeBlockers = (blockers: BranchDeleteBlocker[]) => {
 
 export const getBranchDeleteImpact = async (req: Request, res: Response) => {
   const branchId = parseBranchId(req.query?.id);
+  if (branchId && !isBranchAllowed(getBranchScope(), branchId)) {
+    return res
+      .status(403)
+      .json({ message: BRANCH_FORBIDDEN_MESSAGE, data: null, code: "BRANCH_FORBIDDEN" });
+  }
 
   if (!branchId) {
     return res.status(400).json({ message: "Branch id is required", data: null });
@@ -293,6 +330,11 @@ export const getBranchDeleteImpact = async (req: Request, res: Response) => {
 
 export const deleteBranch = async (req: Request, res: Response) => {
   const branchId = parseBranchId(req.query?.id);
+  if (branchId && !isBranchAllowed(getBranchScope(), branchId)) {
+    return res
+      .status(403)
+      .json({ message: BRANCH_FORBIDDEN_MESSAGE, data: null, code: "BRANCH_FORBIDDEN" });
+  }
 
   if (!branchId) {
     return res.status(400).json({

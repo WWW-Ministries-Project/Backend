@@ -21,7 +21,12 @@ export const { sessionChanged, sessionRevoked } = createSessionNotifier({
 /** Users currently holding an access level. Read BEFORE a delete or an unassign. */
 export const usersWithAccessLevel = async (accessLevelId: number): Promise<number[]> => {
   const rows = await prisma.user.findMany({
-    where: { access_level_id: accessLevelId },
+    where: {
+      OR: [
+        { access_level_id: accessLevelId },
+        { branch_access: { some: { access_level_id: accessLevelId } } },
+      ],
+    },
     select: { id: true },
   });
   return rows.map((row) => row.id);

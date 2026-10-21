@@ -2,6 +2,7 @@ import "express-async-errors";
 import express, { Request as ExpressRequest } from "express";
 import * as dotenv from "dotenv";
 import cors from "cors";
+import { branchScopeContext } from "./src/modules/branches/branchScope";
 import { appRouter } from "./src/routes/appRouter";
 import logger from "./src/utils/logger-config";
 import { PAYSTACK_WEBHOOK_PATH } from "./src/libs/paystack/paystackWebhook";
@@ -68,6 +69,7 @@ app.use(
   }),
 );
 app.use(express.urlencoded({ extended: true, limit: "25mb" }));
+app.use(branchScopeContext);
 app.use(logRequests);
 app.use(responseMessageEnhancer);
 app.use(appRouter);
