@@ -809,6 +809,13 @@ export const updateUser = async (req: Request, res: Response) => {
       updatedUser = await userUpdate;
     }
 
+    // Losing admin sign-in removes their role in every branch.
+    if (!nextIsUser && userExists?.is_user) {
+      await prisma.user_branch_access.deleteMany({
+        where: { user_id: updatedUser.id },
+      });
+    }
+
     void sessionChanged(
       [updatedUser.id],
       sessionReasonsForUserUpdate(userExists, updatedUser, Boolean(dep_posts)),
@@ -1303,6 +1310,17 @@ const SESSION_USER_SELECT = {
   is_active: true,
   is_user: true,
   access_level_id: true,
+  branch_id: true,
+  branch_access: {
+    where: { access_level: { deleted: false } },
+    orderBy: { branch_id: "asc" as const },
+    select: {
+      branch_id: true,
+      access_level_id: true,
+      branch: { select: { name: true } },
+      access_level: { select: { name: true, permissions: true } },
+    },
+  },
   membership_type: true,
   is_guest: true,
   status: true,
@@ -1363,14 +1381,34 @@ export const buildSessionClaims = async (existance: any) => {
   );
 
   const ministry_worker = Boolean(existance.is_user);
+  const grants: any[] = Array.isArray(existance.branch_access)
+    ? existance.branch_access
+    : [];
+  // Admin access comes from per-branch roles; no role in any branch = member.
   const user_category =
-    ministry_worker && Boolean(existance.access_level_id)
-      ? "admin"
-      : "member";
+    ministry_worker && grants.length > 0 ? "admin" : "member";
+  // The token carries the home-branch role (or the first one); clients switch
+  // to the active branch's permissions using `branch_access` from current-user.
+  const homeGrant =
+    grants.find((grant) => grant.branch_id === existance.branch_id) ??
+    grants[0];
   const tokenPermissions =
     user_category === "admin"
-      ? parsePermissionsObject(existance.access?.permissions) || {}
+      ? parsePermissionsObject(
+          homeGrant?.access_level?.permissions ?? existance.access?.permissions,
+        ) || {}
       : null;
+  // Names only: per-branch permission maps would push the JWT past the
+  // cookie size limit, so current-user sends those.
+  const branch_access =
+    user_category === "admin"
+      ? grants.map((grant) => ({
+          branch_id: grant.branch_id,
+          branch_name: grant.branch?.name ?? "",
+          access_level_id: grant.access_level_id,
+          access_level_name: grant.access_level?.name ?? "",
+        }))
+      : [];
 
   const life_center_leader: boolean = await checkIfLifeCenterLeader(
     existance.id,
@@ -1397,6 +1435,8 @@ export const buildSessionClaims = async (existance: any) => {
     member_since: existance.user_info?.member_since || null,
     is_guest: Boolean(existance.is_guest),
     status: existance.status ?? null,
+    branch_id: existance.branch_id ?? null,
+    branch_access,
   };
 };
 
@@ -3482,9 +3522,28 @@ export const currentuser = async (req: Request, res: Response) => {
       .map((dept) => departmentById.get(dept.department_id)?.name ?? null)
       .filter((value): value is string => Boolean(value));
 
+    const branchAccess =
+      claims?.user_category === "admin"
+        ? (sessionUser?.branch_access ?? []).map((grant: any) => ({
+            branch_id: grant.branch_id,
+            branch_name: grant.branch?.name ?? "",
+            access_level_id: grant.access_level_id,
+            access_level_name: grant.access_level?.name ?? "",
+            permissions: parsePermissionsObject(grant.access_level?.permissions),
+          }))
+        : [];
+    const homeBranch = user.branch_id
+      ? await prisma.branch.findUnique({
+          where: { id: user.branch_id },
+          select: { id: true, name: true },
+        })
+      : null;
+
     const data = {
       permissions: claims?.permissions ?? null,
       user_category: claims?.user_category ?? null,
+      branch_access: branchAccess,
+      branch_name: homeBranch?.name ?? null,
       ministry_worker: claims?.ministry_worker ?? false,
       department_positions: claims?.department_positions ?? [],
       life_center_leader: claims?.life_center_leader ?? false,

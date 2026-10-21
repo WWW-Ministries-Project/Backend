@@ -112,6 +112,7 @@ model user {
   branch_id                                    Int?
   branch                                       branch?                                 @relation(fields: [branch_id], references: [id])
   pastor_in_charge_branches                    branch[]                                @relation("branch_pastor_in_charge")
+  branch_access                                user_branch_access[]
   department                                   user_departments?
   department_join_requests                     department_join_request[]               @relation("JoinRequestUser")
   decided_join_requests                        department_join_request[]               @relation("JoinRequestDecider")
@@ -200,8 +201,29 @@ model branch {
   sermon_series            sermon_series[]
   sermons                  sermon[]
   community_posts          community_post[]
+  user_access              user_branch_access[]
 
   @@index([pastor_in_charge_id], map: "branch_pastor_in_charge_id_idx")
+}
+
+/// The branches an admin may work in, with the role (access level) that
+/// applies in each one. Roles are global; grants are per branch. An admin with
+/// no rows has no admin access. `user.access_level_id` mirrors one grant so
+/// older code paths that only read it keep working.
+model user_branch_access {
+  id              Int          @id @default(autoincrement())
+  user_id         Int
+  branch_id       Int
+  access_level_id Int
+  created_at      DateTime     @default(now())
+  updated_at      DateTime     @updatedAt
+  user            user         @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  branch          branch       @relation(fields: [branch_id], references: [id], onDelete: Cascade)
+  access_level    access_level @relation(fields: [access_level_id], references: [id], onDelete: Cascade)
+
+  @@unique([user_id, branch_id], map: "user_branch_access_user_id_branch_id_key")
+  @@index([branch_id], map: "user_branch_access_branch_id_idx")
+  @@index([access_level_id], map: "user_branch_access_access_level_id_idx")
 }
 
 model system_notification_settings {
@@ -471,6 +493,7 @@ model access_level {
   created_at     DateTime? @default(now())
   updated_at     DateTime?
   users_assigned user[]
+  branch_access  user_branch_access[]
 }
 
 model assets {
