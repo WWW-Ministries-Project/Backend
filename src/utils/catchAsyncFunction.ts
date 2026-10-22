@@ -3,6 +3,10 @@ import e, { Request, Response, NextFunction } from "express";
 import { AppError, InputValidationError } from "./custom-error-handlers";
 import { StatusCodes } from "http-status-codes";
 import { Prisma } from "@prisma/client";
+import {
+  DATABASE_UNAVAILABLE_ERROR,
+  isDatabaseUnavailableError,
+} from "../middleWare/errorHandler";
 
 const development =
   process.env.NODE_ENV === "development" || process.env.NODE_ENV === "test";
@@ -76,6 +80,13 @@ const handleError = (
       status: "error",
       statusCode: error.statusCode,
       message: error.message,
+    });
+  }
+
+  if (isDatabaseUnavailableError(error)) {
+    return res.status(DATABASE_UNAVAILABLE_ERROR.statusCode).json({
+      status: "error",
+      ...DATABASE_UNAVAILABLE_ERROR,
     });
   }
 
