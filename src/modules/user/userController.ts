@@ -55,6 +55,7 @@ import {
   setBranchGrants,
 } from "../accessLevels/branchAccessService";
 import { BranchAccessError } from "../branches/branchService";
+import { resolveWorkspaces } from "../workspaces/workspaceKeys";
 import { sessionReasonsForUserUpdate } from "../realtime/sessionNotifier";
 import {
   getBranchScopedWhere,
@@ -1325,7 +1326,7 @@ const SESSION_USER_SELECT = {
       branch_id: true,
       access_level_id: true,
       branch: { select: { name: true } },
-      access_level: { select: { name: true, permissions: true } },
+      access_level: { select: { name: true, permissions: true, workspaces: true } },
     },
   },
   membership_type: true,
@@ -3558,6 +3559,10 @@ export const currentuser = async (req: Request, res: Response) => {
             access_level_id: grant.access_level_id,
             access_level_name: grant.access_level?.name ?? "",
             permissions: parsePermissionsObject(grant.access_level?.permissions),
+            workspaces: resolveWorkspaces(
+              grant.access_level?.workspaces,
+              grant.access_level?.permissions,
+            ).workspaces,
           }))
         : [];
     const homeBranch = user.branch_id

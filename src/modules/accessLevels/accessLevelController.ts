@@ -11,6 +11,7 @@ import {
   setBranchGrants,
   syncLegacyAccessLevel,
 } from "./branchAccessService";
+import { normalizeWorkspaces, resolveWorkspaces } from "../workspaces/workspaceKeys";
 
 const ALLOWED_PERMISSION_VALUES = new Set([
   "Can_View",
@@ -255,6 +256,7 @@ const enrichAccessLevelWithExclusions = async (payload: any) => {
       ...row,
       permissions: parsedPermissions || row?.permissions,
       exclusion_users: exclusionUsers,
+      ...resolveWorkspaces(row?.workspaces, parsedPermissions || row?.permissions),
     };
   });
 
@@ -479,6 +481,16 @@ const attachBranchGrants = async (payload: any) => {
   return payload;
 };
 
+const INVALID_WORKSPACES_MESSAGE =
+  "workspaces must be an array of: prelate, admin, finance, hod, generic.";
+
+/**
+ * Reads an optional `workspaces` body field. `undefined` = leave unchanged,
+ * `null` = invalid (400), otherwise the canonical list to store.
+ */
+const parseWorkspacesInput = (value: unknown) =>
+  value === undefined ? undefined : normalizeWorkspaces(value);
+
 const branchErrorResponse = (res: Response, error: unknown) =>
   error instanceof BranchAccessError
     ? res.status(403).json({ message: error.message, data: null, code: "BRANCH_FORBIDDEN" })
@@ -496,6 +508,10 @@ export const createAccessLevel = async (req: Request, res: Response) => {
           "Invalid permissions payload. Ensure all permission keys are present with valid access levels.",
         data: null,
       });
+    }
+    const workspaces = parseWorkspacesInput(req.body?.workspaces);
+    if (workspaces === null) {
+      return res.status(400).json({ message: INVALID_WORKSPACES_MESSAGE, data: null });
     }
 
     if (assigned_users !== undefined && !Array.isArray(assigned_users)) {
@@ -537,6 +553,7 @@ export const createAccessLevel = async (req: Request, res: Response) => {
         description,
         created_by,
         permissions: JSON.stringify(normalizedPermissions),
+        ...(workspaces ? { workspaces } : {}),
         updated_at: new Date(),
       },
     });
@@ -560,6 +577,7 @@ export const createAccessLevel = async (req: Request, res: Response) => {
         name: true,
         description: true,
         permissions: true,
+        workspaces: true,
         created_at: true,
         updated_at: true,
         users_assigned: {
@@ -610,6 +628,10 @@ export const updateAccessLevel = async (req: Request, res: Response) => {
     const permissionsForUpdate = normalizedPermissions
       ? JSON.stringify(normalizedPermissions)
       : undefined;
+    const workspaces = parseWorkspacesInput(req.body?.workspaces);
+    if (workspaces === null) {
+      return res.status(400).json({ message: INVALID_WORKSPACES_MESSAGE, data: null });
+    }
 
     if (assigned_users !== undefined && !Array.isArray(assigned_users)) {
       return res.status(400).json({
@@ -653,6 +675,7 @@ export const updateAccessLevel = async (req: Request, res: Response) => {
         description,
         created_by,
         permissions: permissionsForUpdate,
+        workspaces,
         updated_at: new Date(),
         updated_by: toPositiveInt((req as any).user?.id) ?? undefined,
       },
@@ -661,6 +684,7 @@ export const updateAccessLevel = async (req: Request, res: Response) => {
         name: true,
         description: true,
         permissions: true,
+        workspaces: true,
         created_at: true,
         updated_at: true,
         users_assigned: {
@@ -701,6 +725,40 @@ export const updateAccessLevel = async (req: Request, res: Response) => {
   }
 };
 
+/** PUT access/access-level-workspaces — saves only the role's Home workspaces. */
+export const updateAccessLevelWorkspaces = async (req: Request, res: Response) => {
+  const id = toPositiveInt(req.body?.id ?? req.query?.id);
+  if (!id) {
+    return res.status(400).json({ message: "A valid access level id is required.", data: null });
+  }
+  const workspaces = normalizeWorkspaces(req.body?.workspaces);
+  if (!workspaces) {
+    return res.status(400).json({ message: INVALID_WORKSPACES_MESSAGE, data: null });
+  }
+  const existing = await prisma.access_level.findUnique({
+    where: { id },
+    select: { id: true },
+  });
+  if (!existing) {
+    return res.status(404).json({ message: "Access level not found", data: null });
+  }
+  await prisma.access_level.update({
+    where: { id },
+    data: {
+      workspaces,
+      updated_at: new Date(),
+      updated_by: toPositiveInt((req as any).user?.id) ?? undefined,
+    },
+  });
+  void usersWithAccessLevel(id)
+    .then((holders) => sessionChanged(holders, ["permissions"]))
+    .catch(() => undefined);
+  return res.status(200).json({
+    message: "Operation successful",
+    data: { id, workspaces, workspaces_default: false },
+  });
+};
+
 export const listAllAccessLevel = async (req: Request, res: Response) => {
   try {
     const data = await prisma.access_level.findMany({
@@ -712,6 +770,7 @@ export const listAllAccessLevel = async (req: Request, res: Response) => {
         name: true,
         description: true,
         permissions: true,
+        workspaces: true,
         created_at: true,
         updated_at: true,
         users_assigned: {
@@ -756,6 +815,7 @@ export const getAccessLevel = async (req: Request, res: Response) => {
         name: true,
         description: true,
         permissions: true,
+        workspaces: true,
         created_at: true,
         updated_at: true,
         users_assigned: {

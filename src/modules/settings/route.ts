@@ -1,6 +1,7 @@
 import { Router } from "express";
 import attendanceTimingSettingsController from "./attendanceTimingSettingsController";
 import eventReportExclusionController from "./eventReportExclusionController";
+import reportConfigController from "./reportConfigController";
 import roleEligibilityController from "./roleEligibilityController";
 import systemNotificationSettingsController from "./systemNotificationSettingsController";
 import { Permissions } from "../../middleWare/authorization";
@@ -31,6 +32,18 @@ settingsRouter.post(
   "/upsert-event-report-exclusions",
   [protect, permissions.can_manage_settings],
   eventReportExclusionController.replace,
+);
+
+settingsRouter.get(
+  "/report-config",
+  [protect, permissions.can_view_settings],
+  reportConfigController.getConfig,
+);
+
+settingsRouter.post(
+  "/upsert-report-config",
+  [protect, permissions.can_manage_settings],
+  reportConfigController.upsertConfig,
 );
 
 settingsRouter.get(

@@ -2,6 +2,7 @@ import { DepartmentReportStatus, Prisma } from "@prisma/client";
 
 import { prisma } from "../../Models/context";
 import {
+  getUserDepartmentAccess,
   listUserIdsWithDomainPermission,
   userHasDomainPermission,
 } from "../../middleWare/authorization";
@@ -11,9 +12,12 @@ import {
   NotFoundError,
   UnauthorizedError,
 } from "../../utils/custom-error-handlers";
-import { getBranchScope } from "../branches/branchScope";
-import { assertBranchAccessible, parseBranchId } from "../branches/branchService";
+import { getBranchScope, isBranchAllowed } from "../branches/branchScope";
+import { assertBranchAccessible, getBranchScopedWhere, parseBranchId } from "../branches/branchService";
 import { notificationService } from "../notifications/notificationService";
+import { loadReportConfig, ReportConfig } from "../settings/reportConfigService";
+import { buildDepartmentAttendance, DepartmentRef } from "./aggregators/departmentAttendance";
+import { DEPT_ATT_PREFIX, deptAttKey, dueOnDayAfter, parseDeptAttKey } from "./departmentAttendanceKey";
 import {
   defaultPeriodKey,
   dueDate,
@@ -34,6 +38,7 @@ import {
   KpiDTO,
   PeriodType,
   ReportBodyDTO,
+  ReportBuilder,
   ReportContext,
   ReportKey,
   ReportResult,
@@ -51,13 +56,16 @@ export interface Viewer {
   /** Can see member names inside reports. */
   seesNames: boolean;
   domains: Record<string, { view: boolean; manage: boolean }>;
+  /** Departments access (department attendance reports). */
+  departments: { view: boolean; manage: boolean; assignedOnly: boolean; departmentIds: number[] };
 }
 
 export const loadViewer = async (userId: number): Promise<Viewer> => {
-  const [reportsView, reportsAdmin, seesNames, ...domainChecks] = await Promise.all([
+  const [reportsView, reportsAdmin, seesNames, departments, ...domainChecks] = await Promise.all([
     userHasDomainPermission(userId, "Reports", "view"),
     userHasDomainPermission(userId, "Reports", "admin"),
     userHasDomainPermission(userId, "Members", "view"),
+    getUserDepartmentAccess(userId),
     ...REPORTS.flatMap((r) => [
       userHasDomainPermission(userId, r.domain, "view"),
       userHasDomainPermission(userId, r.domain, "manage"),
@@ -65,20 +73,157 @@ export const loadViewer = async (userId: number): Promise<Viewer> => {
   ]);
   const domains: Viewer["domains"] = {};
   REPORTS.forEach((r, i) => {
-    domains[r.key] = { view: domainChecks[i * 2], manage: domainChecks[i * 2 + 1] };
+    domains[r.key] = { view: Boolean(domainChecks[i * 2]), manage: Boolean(domainChecks[i * 2 + 1]) };
   });
-  return { userId, reportsView, reportsAdmin, seesNames, domains };
+  return {
+    userId,
+    reportsView: Boolean(reportsView),
+    reportsAdmin: Boolean(reportsAdmin),
+    seesNames: Boolean(seesNames),
+    departments: departments as Viewer["departments"],
+    domains,
+  };
 };
 
-const canView = (viewer: Viewer, key: ReportKey) =>
-  viewer.reportsView || viewer.domains[key]?.view;
-const isHod = (viewer: Viewer, key: ReportKey) => Boolean(viewer.domains[key]?.manage);
+/* -------------------------------------------------------------------------- */
+/*                                   Targets                                  */
+/* -------------------------------------------------------------------------- */
 
-const requireDefinition = (raw: unknown) => {
-  const def = REPORT_MAP.get(String(raw || "") as ReportKey);
-  if (!def) throw new NotFoundError("Report not found");
-  return def;
+interface Person {
+  id: number;
+  name: string;
+}
+
+/** The department responsible for a report (Settings › Reports, or the report's own department). */
+export interface ReportOwner {
+  department_id: number;
+  department_name: string;
+  head: Person | null;
+}
+
+/**
+ * A report the workflow can act on: one of the church-wide reports, or a
+ * department's own attendance report (`dept_att:<id>`).
+ */
+export interface Target {
+  key: string;
+  area: string;
+  name: string;
+  hod_role: string;
+  cadence: string;
+  build: ReportBuilder;
+  /** Set for church-wide reports. */
+  church: ReportDefinition | null;
+  /** Set for department attendance reports. */
+  department: DepartmentRef | null;
+  owner: ReportOwner | null;
+  /** Head of the responsible department: prepares, edits and submits. */
+  head: Person | null;
+  /** Day of the month after the period the report is due; null = the usual five days. */
+  dueDay: number | null;
+}
+
+const DEPT_SELECT = {
+  id: true,
+  name: true,
+  branch_id: true,
+  department_head_info: { select: { id: true, name: true } },
+} satisfies Prisma.departmentSelect;
+
+type DeptRow = Prisma.departmentGetPayload<{ select: typeof DEPT_SELECT }>;
+
+const ownerOf = (dept: DeptRow): ReportOwner => ({
+  department_id: dept.id,
+  department_name: dept.name,
+  head: dept.department_head_info ? { id: dept.department_head_info.id, name: dept.department_head_info.name } : null,
+});
+
+const churchTarget = (def: ReportDefinition, owner: ReportOwner | null): Target => ({
+  key: def.key,
+  area: def.area,
+  name: def.name,
+  hod_role: def.hod_role,
+  cadence: def.cadence,
+  build: def.build,
+  church: def,
+  department: null,
+  owner,
+  head: owner?.head ?? null,
+  dueDay: null,
+});
+
+const deptTarget = (dept: DeptRow, dueDay: number): Target => {
+  const owner = ownerOf(dept);
+  const ref: DepartmentRef = { id: dept.id, name: dept.name, branch_id: dept.branch_id ?? null };
+  return {
+    key: deptAttKey(dept.id),
+    area: dept.name,
+    name: `${dept.name} attendance report`,
+    hod_role: `${dept.name} head`,
+    cadence: "Monthly",
+    build: buildDepartmentAttendance(ref),
+    church: null,
+    department: ref,
+    owner,
+    head: owner.head,
+    dueDay,
+  };
 };
+
+/** Church-wide report targets with their configured owners. */
+const churchTargets = async (config: ReportConfig, defs: ReportDefinition[] = REPORTS) => {
+  const ids = Array.from(
+    new Set(defs.map((d) => config.owners[d.key]).filter((id): id is number => Boolean(id))),
+  );
+  const depts = ids.length
+    ? await prisma.department.findMany({ where: { id: { in: ids } }, select: DEPT_SELECT })
+    : [];
+  const byId = new Map(depts.map((d) => [d.id, d]));
+  return defs.map((def) => {
+    const dept = byId.get(config.owners[def.key] ?? 0);
+    return churchTarget(def, dept ? ownerOf(dept) : null);
+  });
+};
+
+const resolveTarget = async (raw: unknown, config?: ReportConfig): Promise<Target> => {
+  const key = String(raw || "").trim();
+  const def = REPORT_MAP.get(key as ReportKey);
+  const cfg = config ?? (await loadReportConfig());
+  if (def) return (await churchTargets(cfg, [def]))[0];
+  const departmentId = parseDeptAttKey(key);
+  if (departmentId && !cfg.dept_attendance.disabled_department_ids.includes(departmentId)) {
+    const dept = await prisma.department.findUnique({ where: { id: departmentId }, select: DEPT_SELECT });
+    if (dept) return deptTarget(dept, cfg.dept_attendance.due_day);
+  }
+  throw new NotFoundError("Report not found");
+};
+
+const isHead = (viewer: Viewer, t: Target) => Boolean(t.head && t.head.id === viewer.userId);
+
+const departmentInScope = (dept: DepartmentRef) =>
+  dept.branch_id == null || isBranchAllowed(getBranchScope(), dept.branch_id);
+
+const departmentsAllow = (viewer: Viewer, dept: DepartmentRef, action: "view" | "manage") => {
+  const access = viewer.departments;
+  if (!access[action]) return false;
+  if (access.assignedOnly && !access.departmentIds.includes(dept.id)) return false;
+  return departmentInScope(dept);
+};
+
+const canView = (viewer: Viewer, t: Target) => {
+  if (isHead(viewer, t)) return true;
+  if (t.church) return Boolean(viewer.reportsView || viewer.domains[t.church.key]?.view);
+  return Boolean(t.department && ((viewer.reportsView && departmentInScope(t.department)) || departmentsAllow(viewer, t.department, "view")));
+};
+
+/** The head of department role: edit commentary and submit. */
+const canPrepare = (viewer: Viewer, t: Target) => {
+  if (isHead(viewer, t)) return true;
+  if (t.church) return Boolean(viewer.domains[t.church.key]?.manage);
+  return Boolean(t.department && departmentsAllow(viewer, t.department, "manage"));
+};
+
+const dueFor = (t: Target, range: PeriodRange) => (t.dueDay ? dueOnDayAfter(range, t.dueDay) : dueDate(range));
 
 /* -------------------------------------------------------------------------- */
 /*                               Context + cache                              */
@@ -100,6 +245,18 @@ export const readSelection = (source: Record<string, unknown>): Selection => {
   const branchId = parseBranchId(source.branch_id) ?? getBranchScope()?.activeBranchId ?? null;
   if (branchId) assertBranchAccessible(branchId);
   return { range, branchId, branchKey: branchId ?? 0 };
+};
+
+/**
+ * Department attendance reports are monthly and belong to their department,
+ * not a branch selection, so their workflow row always uses branch_key 0.
+ */
+const selectionFor = (t: Target, source: Record<string, unknown>): Selection => {
+  if (!t.department) return readSelection(source);
+  const type = String(source.period_type || "MONTHLY").toUpperCase();
+  if (type !== "MONTHLY") throw new InputValidationError("Department attendance reports are monthly only");
+  const key = String(source.period_key || "") || defaultPeriodKey("MONTHLY", new Date());
+  return { range: parsePeriod("MONTHLY", key), branchId: null, branchKey: 0 };
 };
 
 const visibleBranches = async () => {
@@ -134,10 +291,12 @@ const buildContext = async (range: PeriodRange, branchId: number | null): Promis
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const cache = new Map<string, { at: number; value: Promise<ReportResult> }>();
 
-/** Runs a report builder, sharing results for five minutes per scope. */
-const computeReport = (def: ReportDefinition, range: PeriodRange, branchId: number | null) => {
+/** Runs a report builder, sharing results for five minutes per scope. Also used by Home workspaces. */
+export const computeReport = (def: { key: string; build: ReportBuilder }, range: PeriodRange, branchId: number | null) => {
   const allowed = getBranchScope()?.allowedBranchIds;
-  const key = [def.key, range.type, range.key, branchId ?? "all", allowed ? allowed.join(",") : "*"].join("|");
+  // A department's own report doesn't depend on the caller's branches.
+  const scopeKey = def.key.startsWith(DEPT_ATT_PREFIX) ? "*" : allowed ? allowed.join(",") : "*";
+  const key = [def.key, range.type, range.key, branchId ?? "all", scopeKey].join("|");
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.value;
   const value = (async () => def.build(await buildContext(range, branchId)))();
@@ -151,7 +310,7 @@ const computeReport = (def: ReportDefinition, range: PeriodRange, branchId: numb
 };
 
 /** A builder failure must not take down the whole summary. */
-const safeCompute = async (def: ReportDefinition, range: PeriodRange, branchId: number | null) => {
+const safeCompute = async (def: { key: string; build: ReportBuilder }, range: PeriodRange, branchId: number | null) => {
   try {
     return { result: await computeReport(def, range, branchId), failed: false };
   } catch (error) {
@@ -160,17 +319,26 @@ const safeCompute = async (def: ReportDefinition, range: PeriodRange, branchId: 
   }
 };
 
-const redact = (body: ReportBodyDTO, viewer: Viewer): ReportBodyDTO => {
-  if (viewer.seesNames) return body;
+/** Department attendance tables whose first column is a member's name. */
+const NAMED_TABLES = new Set(["dpt-members"]);
+
+const redact = (body: ReportBodyDTO, seesNames: boolean): ReportBodyDTO => {
+  if (seesNames) return body;
   return {
     ...body,
     sections: body.sections.map((s) =>
       s.kind === "list"
         ? { ...s, items: s.items.map((it) => (it.pii ? { ...it, title: "Name hidden" } : it)) }
-        : s,
+        : s.kind === "table" && NAMED_TABLES.has(s.id)
+          ? { ...s, rows: s.rows.map((r) => ({ ...r, keys: undefined, cells: [{ text: "Name hidden" }, ...r.cells.slice(1)] })) }
+          : s,
     ),
   };
 };
+
+/** Member names: Members view, or — on a department's own report — its head or Departments view. */
+const seesNamesOn = (viewer: Viewer, t: Target) =>
+  viewer.seesNames || Boolean(t.department && (isHead(viewer, t) || departmentsAllow(viewer, t.department, "view")));
 
 /* -------------------------------------------------------------------------- */
 /*                                  Workflow                                  */
@@ -199,7 +367,7 @@ const workflowInclude = {
 
 type WorkflowRow = Prisma.department_reportsGetPayload<{ include: typeof workflowInclude }>;
 
-const findWorkflow = (key: ReportKey, sel: Selection) =>
+const findWorkflow = (key: string, sel: Selection) =>
   prisma.department_reports.findUnique({
     where: {
       report_key_period_type_period_key_branch_key: {
@@ -212,7 +380,7 @@ const findWorkflow = (key: ReportKey, sel: Selection) =>
     include: workflowInclude,
   });
 
-const ensureWorkflow = async (key: ReportKey, sel: Selection) => {
+const ensureWorkflow = async (key: string, sel: Selection) => {
   const existing = await findWorkflow(key, sel);
   if (existing) return existing;
   try {
@@ -243,18 +411,20 @@ const namesOf = async (ids: (number | null | undefined)[]) => {
 };
 
 const periodEnded = (range: PeriodRange, now = new Date()) => range.to <= now;
-const isOverdue = (status: DepartmentReportStatus, range: PeriodRange, now = new Date()) =>
-  status === "DRAFT" && now > dueDate(range);
+const isOverdue = (status: DepartmentReportStatus, due: Date, now = new Date()) =>
+  status === "DRAFT" && now > due;
 
 const serializeWorkflow = (
-  def: ReportDefinition,
+  def: Target,
   sel: Selection,
   row: WorkflowRow | null,
-  names: Map<number, string>,
+  rawNames: Map<number, string>,
 ) => {
   const status: DepartmentReportStatus = row?.status ?? "DRAFT";
-  const due = dueDate(sel.range);
-  const preparedId = row?.submitted_by_user_id ?? row?.prepared_by_user_id ?? null;
+  const due = dueFor(def, sel.range);
+  // The responsible head prepares it until someone writes the commentary.
+  const preparedId = row?.submitted_by_user_id ?? row?.prepared_by_user_id ?? def.head?.id ?? null;
+  const names = def.head && !rawNames.has(def.head.id) ? new Map(rawNames).set(def.head.id, def.head.name) : rawNames;
   const trail: { action: string; who: string; when: string | null; note: string | null; done: boolean }[] = [];
   if (periodEnded(sel.range)) {
     trail.push({ action: "Draft pre-filled from system data", who: "System", when: sel.range.to.toISOString(), note: null, done: true });
@@ -283,7 +453,7 @@ const serializeWorkflow = (
     id: row?.id ?? null,
     status,
     status_label: STATUS_LABEL[status],
-    overdue: isOverdue(status, sel.range),
+    overdue: isOverdue(status, due),
     due_date: isoDate(due),
     submitted_at: row?.submitted_at?.toISOString() ?? null,
     approved_at: row?.approved_at?.toISOString() ?? null,
@@ -327,10 +497,13 @@ const workflowNameIds = (row: WorkflowRow | null) =>
       ]
     : [];
 
-const permissionsFor = (viewer: Viewer, def: ReportDefinition, status: DepartmentReportStatus, sel: Selection) => {
-  // Mirrors loadForWrite: branch-limited callers can't write the church-wide report.
-  const writable = !(sel.branchKey === 0 && getBranchScope()?.allowedBranchIds);
-  const hod = writable && isHod(viewer, def.key);
+/** Mirrors loadForWrite: branch-limited callers can't write the church-wide report. */
+const writableFor = (t: Target, sel: Selection) =>
+  Boolean(t.department) || !(sel.branchKey === 0 && getBranchScope()?.allowedBranchIds);
+
+const permissionsFor = (viewer: Viewer, def: Target, status: DepartmentReportStatus, sel: Selection) => {
+  const writable = writableFor(def, sel);
+  const hod = writable && canPrepare(viewer, def);
   const leader = writable && viewer.reportsAdmin;
   const editable = status === "DRAFT" || status === "RETURNED";
   return {
@@ -350,7 +523,7 @@ const branchName = async (branchId: number | null) => {
   return branch?.name || "Branch";
 };
 
-const periodPayload = (sel: Selection) => {
+const periodPayload = (sel: Selection, t?: Target) => {
   const prev = previousRange(sel.range);
   const yoy = yoyRange(sel.range);
   return {
@@ -360,7 +533,7 @@ const periodPayload = (sel: Selection) => {
     from: isoDate(sel.range.from),
     to: isoDate(new Date(sel.range.to.getTime() - 86_400_000)),
     in_progress: !periodEnded(sel.range),
-    due_date: isoDate(dueDate(sel.range)),
+    due_date: isoDate(t ? dueFor(t, sel.range) : dueDate(sel.range)),
     prev_label: prev.label,
     yoy_label: yoy.label,
   };
@@ -371,28 +544,30 @@ const periodPayload = (sel: Selection) => {
 /* -------------------------------------------------------------------------- */
 
 export const getReport = async (viewer: Viewer, query: Record<string, unknown>) => {
-  const def = requireDefinition(query.report_key);
-  if (!canView(viewer, def.key)) throw new UnauthorizedError("Not authorized to view this report");
-  const sel = readSelection(query);
+  const def = await resolveTarget(query.report_key);
+  if (!canView(viewer, def)) throw new UnauthorizedError("Not authorized to view this report");
+  const sel = selectionFor(def, query);
 
   const [computed, row, branch] = await Promise.all([
     sel.range.from <= new Date()
       ? safeCompute(def, sel.range, sel.branchId)
       : Promise.resolve({ result: { body: { ...emptyBody(), empty: true }, facts: {} }, failed: false }),
     findWorkflow(def.key, sel),
-    branchName(sel.branchId),
+    // A department's own report shows the department's branch.
+    branchName(def.department ? def.department.branch_id : sel.branchId),
   ]);
   const names = await namesOf(workflowNameIds(row));
   const workflow = serializeWorkflow(def, sel, row, names);
+  const seesNames = seesNamesOn(viewer, def);
 
   return {
     meta: { key: def.key, area: def.area, name: def.name, hod_role: def.hod_role, cadence: def.cadence },
-    period: periodPayload(sel),
+    period: periodPayload(sel, def),
     period_options: periodOptions(sel.range.type, new Date()),
-    branch: { id: sel.branchId, name: branch },
+    branch: { id: def.department ? def.department.branch_id : sel.branchId, name: branch },
     workflow,
     permissions: permissionsFor(viewer, def, workflow.status, sel),
-    body: { ...redact(computed.result.body, viewer), restricted: !viewer.seesNames },
+    body: { ...redact(computed.result.body, seesNames), restricted: !seesNames },
     failed: computed.failed,
   };
 };
@@ -400,49 +575,99 @@ export const getReport = async (viewer: Viewer, query: Record<string, unknown>) 
 const headlineOf = (body: ReportBodyDTO): KpiDTO[] =>
   body.headline.map((i) => body.kpis[i]).filter((k): k is KpiDTO => Boolean(k));
 
+/** Builds a few reports at a time so many departments can't exhaust the connection pool. */
+const computeInBatches = async (targets: Target[], sel: Selection, size = 4) => {
+  const out: Awaited<ReturnType<typeof safeCompute>>[] = [];
+  for (let i = 0; i < targets.length; i += size) {
+    out.push(...(await Promise.all(targets.slice(i, i + size).map((t) => safeCompute(t, sel.range, sel.branchId)))));
+  }
+  return out;
+};
+
+/** Department attendance reports the viewer may read under the selected branch. */
+const departmentAttendanceTargets = async (viewer: Viewer, sel: Selection, config: ReportConfig) => {
+  if (sel.range.type !== "MONTHLY") return [];
+  const disabled = config.dept_attendance.disabled_department_ids;
+  const depts = await prisma.department.findMany({
+    where: {
+      ...(getBranchScopedWhere(sel.branchId) || {}),
+      ...(disabled.length ? { id: { notIn: disabled } } : {}),
+    },
+    select: DEPT_SELECT,
+    orderBy: { name: "asc" },
+  });
+  return depts.map((d) => deptTarget(d, config.dept_attendance.due_day)).filter((t) => canView(viewer, t));
+};
+
 export const listReports = async (viewer: Viewer, query: Record<string, unknown>) => {
   const sel = readSelection(query);
-  const defs = REPORTS.filter((d) => canView(viewer, d.key));
-  const [computed, rows, branch] = await Promise.all([
-    Promise.all(defs.map((d) => safeCompute(d, sel.range, sel.branchId))),
+  const config = await loadReportConfig();
+  const [church, deptTargets] = await Promise.all([
+    churchTargets(config).then((list) => list.filter((t) => canView(viewer, t))),
+    departmentAttendanceTargets(viewer, sel, config),
+  ]);
+  // Department reports are per department, never per branch selection.
+  const deptSel: Selection = { range: sel.range, branchId: null, branchKey: 0 };
+  const [computed, deptComputed, rows, branch] = await Promise.all([
+    Promise.all(church.map((d) => safeCompute(d, sel.range, sel.branchId))),
+    computeInBatches(deptTargets, deptSel),
     prisma.department_reports.findMany({
-      where: { period_type: sel.range.type, period_key: sel.range.key, branch_key: sel.branchKey },
+      where: {
+        period_type: sel.range.type,
+        period_key: sel.range.key,
+        OR: [
+          { branch_key: sel.branchKey },
+          ...(deptTargets.length ? [{ branch_key: 0, report_key: { in: deptTargets.map((t) => t.key) } }] : []),
+        ],
+      },
       include: workflowInclude,
     }),
     branchName(sel.branchId),
   ]);
-  const byKey = new Map(rows.map((r) => [r.report_key, r]));
+  const byKey = new Map(
+    rows
+      .filter((r) => (r.report_key.startsWith(DEPT_ATT_PREFIX) ? r.branch_key === 0 : r.branch_key === sel.branchKey))
+      .map((r) => [r.report_key, r]),
+  );
   const names = await namesOf(rows.flatMap(workflowNameIds));
+
+  const item = (def: Target, itemSel: Selection, result: Awaited<ReturnType<typeof safeCompute>>) => {
+    const row = byKey.get(def.key) || null;
+    const workflow = serializeWorkflow(def, itemSel, row, names);
+    const body = result.result.body;
+    return {
+      key: def.key,
+      area: def.area,
+      name: def.name,
+      hod_role: def.hod_role,
+      cadence: def.cadence,
+      owner: def.owner,
+      status: workflow.status,
+      status_label: workflow.status_label,
+      overdue: workflow.overdue,
+      due_date: workflow.due_date,
+      submitted_at: workflow.submitted_at,
+      approved_at: workflow.approved_at,
+      returned_at: workflow.returned_at,
+      prepared_by: workflow.prepared_by,
+      health: body.health,
+      headline: headlineOf(body),
+      failed: result.failed,
+      permissions: permissionsFor(viewer, def, workflow.status, itemSel),
+    };
+  };
 
   return {
     period: periodPayload(sel),
     period_options: periodOptions(sel.range.type, new Date()),
     branch: { id: sel.branchId, name: branch },
-    viewer: { is_leadership: viewer.reportsAdmin, hod_of: defs.filter((d) => isHod(viewer, d.key)).map((d) => d.key) },
-    reports: defs.map((def, i) => {
-      const row = byKey.get(def.key) || null;
-      const workflow = serializeWorkflow(def, sel, row, names);
-      const body = computed[i].result.body;
-      return {
-        key: def.key,
-        area: def.area,
-        name: def.name,
-        hod_role: def.hod_role,
-        cadence: def.cadence,
-        status: workflow.status,
-        status_label: workflow.status_label,
-        overdue: workflow.overdue,
-        due_date: workflow.due_date,
-        submitted_at: workflow.submitted_at,
-        approved_at: workflow.approved_at,
-        returned_at: workflow.returned_at,
-        prepared_by: workflow.prepared_by,
-        health: body.health,
-        headline: headlineOf(body),
-        failed: computed[i].failed,
-        permissions: permissionsFor(viewer, def, workflow.status, sel),
-      };
-    }),
+    viewer: {
+      is_leadership: viewer.reportsAdmin,
+      hod_of: [...church, ...deptTargets].filter((d) => canPrepare(viewer, d)).map((d) => d.key),
+    },
+    reports: church.map((def, i) => item(def, sel, computed[i])),
+    department_attendance: deptTargets.map((def, i) => item(def, deptSel, deptComputed[i])),
+    department_attendance_due_day: config.dept_attendance.due_day,
   };
 };
 
@@ -458,7 +683,7 @@ const notify = async (
   type: string,
   title: string,
   body: string,
-  def: ReportDefinition,
+  def: Target,
   sel: Selection,
   dedupe: string,
 ) => {
@@ -484,18 +709,21 @@ const notify = async (
   }
 };
 
-const hodRecipients = async (def: ReportDefinition, row: WorkflowRow) => {
+/** Whoever worked on it; else the responsible head; else everyone with manage on its module. */
+const hodRecipients = async (def: Target, row: WorkflowRow) => {
   const direct = [row.submitted_by_user_id, row.prepared_by_user_id].filter((id): id is number => Boolean(id));
-  return direct.length ? direct : listUserIdsWithDomainPermission(def.domain, "manage");
+  if (direct.length) return direct;
+  if (def.head) return [def.head.id];
+  return listUserIdsWithDomainPermission(def.church ? def.church.domain : "Departments", "manage");
 };
 
 const loadForWrite = async (viewer: Viewer, body: Record<string, unknown>) => {
-  const def = requireDefinition(body.report_key);
-  if (!canView(viewer, def.key)) throw new UnauthorizedError("Not authorized to view this report");
-  const sel = readSelection(body);
+  const def = await resolveTarget(body.report_key);
+  if (!canView(viewer, def)) throw new UnauthorizedError("Not authorized to view this report");
+  const sel = selectionFor(def, body);
   // Someone limited to some branches sees only their branches' numbers under
   // "All branches", so they must not write to the church-wide report.
-  if (sel.branchKey === 0 && getBranchScope()?.allowedBranchIds) {
+  if (!writableFor(def, sel)) {
     throw new UnauthorizedError("Pick your branch to work on this report");
   }
   const row = await ensureWorkflow(def.key, sel);
@@ -516,7 +744,7 @@ const transition = async (
     await extra(tx);
   });
 
-const reread = async (viewer: Viewer, def: ReportDefinition, sel: Selection) =>
+const reread = async (viewer: Viewer, def: Target, sel: Selection) =>
   getReport(viewer, {
     report_key: def.key,
     period_type: sel.range.type,
@@ -526,7 +754,7 @@ const reread = async (viewer: Viewer, def: ReportDefinition, sel: Selection) =>
 
 export const saveCommentary = async (viewer: Viewer, body: Record<string, unknown>) => {
   const { def, sel, row } = await loadForWrite(viewer, body);
-  if (!isHod(viewer, def.key)) throw new UnauthorizedError("Only the head of department can edit this commentary");
+  if (!canPrepare(viewer, def)) throw new UnauthorizedError("Only the head of department can edit this commentary");
   if (row.status !== "DRAFT" && row.status !== "RETURNED") {
     throw new AppError("This report is locked while leadership reviews it", 409);
   }
@@ -572,7 +800,7 @@ export const saveCommentary = async (viewer: Viewer, body: Record<string, unknow
 
 export const submitReport = async (viewer: Viewer, body: Record<string, unknown>) => {
   const { def, sel, row } = await loadForWrite(viewer, body);
-  if (!isHod(viewer, def.key)) throw new UnauthorizedError("Only the head of department can submit this report");
+  if (!canPrepare(viewer, def)) throw new UnauthorizedError("Only the head of department can submit this report");
   if (row.status !== "DRAFT" && row.status !== "RETURNED") throw new AppError("This report has already been submitted", 409);
   if (!periodEnded(sel.range)) throw new InputValidationError("This period has not finished yet. Submit it once the period closes.");
 
@@ -674,13 +902,14 @@ export const sendReminder = async (viewer: Viewer, body: Record<string, unknown>
   if (!viewer.reportsAdmin) throw new UnauthorizedError("Not authorized to send reminders");
   const { def, sel, row } = await loadForWrite(viewer, body);
   if (row.status !== "DRAFT" && row.status !== "RETURNED") throw new AppError("This report is already submitted", 409);
-  const recipients = await hodRecipients(def, row);
+  // Reminders go to the responsible head when one is set.
+  const recipients = def.head ? [def.head.id] : await hodRecipients(def, row);
   await notify(
     recipients,
     viewer.userId,
     "department_report.reminder",
     `${def.name} is due`,
-    `The ${def.name.toLowerCase()} for ${sel.range.label} was due on ${longDate(dueDate(sel.range))}. Check the numbers, add your commentary and submit.`,
+    `The ${def.name.toLowerCase()} for ${sel.range.label} was due on ${longDate(dueFor(def, sel.range))}. Check the numbers, add your commentary and submit.`,
     def,
     sel,
     `dept-report:${row.id}:reminder:${isoDate(new Date())}`,
@@ -705,13 +934,15 @@ export const decideRequest = async (viewer: Viewer, body: Record<string, unknown
   if (report.status !== "SUBMITTED" && report.status !== "APPROVED") {
     throw new AppError("Leadership can decide once the report is submitted", 409);
   }
-  if (report.branch_key === 0 && getBranchScope()?.allowedBranchIds) {
+  const def = await resolveTarget(report.report_key);
+  if (def.department) {
+    if (!departmentInScope(def.department)) throw new UnauthorizedError("Not authorized for this branch");
+  } else if (report.branch_key === 0 && getBranchScope()?.allowedBranchIds) {
     throw new UnauthorizedError("Not authorized for the church-wide report");
   }
   if (report.branch_key && getBranchScope()?.allowedBranchIds && !getBranchScope()!.allowedBranchIds!.includes(report.branch_key)) {
     throw new UnauthorizedError("Not authorized for this branch");
   }
-  const def = requireDefinition(report.report_key);
 
   await prisma.$transaction([
     prisma.department_report_requests.update({
@@ -762,11 +993,13 @@ export const executiveSummary = async (viewer: Viewer, query: Record<string, unk
   }
   const sel = readSelection({ ...query, period_type: type });
   const now = new Date();
+  const targets = await churchTargets(await loadReportConfig());
 
   const [computed, rows, branch] = await Promise.all([
-    Promise.all(REPORTS.map((d) => safeCompute(d, sel.range, sel.branchId))),
+    Promise.all(targets.map((d) => safeCompute(d, sel.range, sel.branchId))),
     prisma.department_reports.findMany({
-      where: { period_type: sel.range.type, period_key: sel.range.key },
+      // Church-wide reports only; department attendance reports aren't summarised.
+      where: { period_type: sel.range.type, period_key: sel.range.key, report_key: { in: REPORTS.map((r) => r.key) } },
       include: workflowInclude,
     }),
     branchName(sel.branchId),
@@ -776,7 +1009,7 @@ export const executiveSummary = async (viewer: Viewer, query: Record<string, unk
   const names = await namesOf(scoped.flatMap(workflowNameIds));
   const result = (key: ReportKey) => computed[REPORTS.findIndex((d) => d.key === key)].result;
 
-  const reports = REPORTS.map((def, i) => {
+  const reports = targets.map((def, i) => {
     const row = byKey.get(def.key) || null;
     return { def, row, workflow: serializeWorkflow(def, sel, row, names), body: computed[i].result.body, failed: computed[i].failed };
   });
@@ -786,7 +1019,7 @@ export const executiveSummary = async (viewer: Viewer, query: Record<string, unk
   (["act", "watch"] as const).forEach((severity) =>
     ordered.forEach((r) => {
       const f = r.body.flags.find((x) => x.severity === severity);
-      if (f) top.push({ key: r.def.key, area: r.def.area, flag: f });
+      if (f) top.push({ key: r.def.key as ReportKey, area: r.def.area, flag: f });
     }),
   );
 
@@ -797,13 +1030,14 @@ export const executiveSummary = async (viewer: Viewer, query: Record<string, unk
     .filter((row) => row.status === "SUBMITTED" || row.status === "APPROVED")
     .flatMap((row) => row.requests.filter((q) => q.needs_decision).map((q) => ({ row, q })))
     .map(({ row, q }) => {
-      const def = REPORT_MAP.get(row.report_key as ReportKey)!;
+      const def = targets.find((t) => t.key === row.report_key)!;
       const author = row.submitted_by_user_id || row.prepared_by_user_id;
+      const fallback = def.head?.name || def.hod_role;
       return {
         id: q.id,
         report_key: def.key,
         text: q.body,
-        from: `${author ? names.get(author) || def.hod_role : def.hod_role} · ${def.area}`,
+        from: `${author ? names.get(author) || fallback : fallback} · ${def.area}`,
         outcome: q.outcome,
         response: q.response,
       };
