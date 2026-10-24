@@ -4,6 +4,7 @@ import {
   createAccessLevel,
   listAllAccessLevel,
   updateAccessLevel,
+  updateAccessLevelWorkspaces,
   assignAccessLevelToUser,
   deleteAccessLevel,
   getAccessLevel,
@@ -26,6 +27,11 @@ accessRouter.put(
   "/update-access-level",
   [permissions.protect, permissions.can_manage_access],
   updateAccessLevel,
+);
+accessRouter.put(
+  "/access-level-workspaces",
+  [permissions.protect, permissions.can_manage_access],
+  updateAccessLevelWorkspaces,
 );
 accessRouter.put(
   "/assign_access_to_user",

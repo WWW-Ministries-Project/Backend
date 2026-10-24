@@ -228,7 +228,7 @@ const resolveDomainExclusions = (permissions: any, permissionType: string) => {
   return [];
 };
 
-const resolveDomainScope = (permissions: any, permissionType: string) => {
+export const resolveDomainScope = (permissions: any, permissionType: string) => {
   const parsedPermissions = parsePermissionsObject(permissions);
   if (Object.keys(parsedPermissions).length === 0) {
     return null;
@@ -274,7 +274,7 @@ const resolveDomainScope = (permissions: any, permissionType: string) => {
   return null;
 };
 
-const hasActionPermission = (
+export const hasActionPermission = (
   permissions: any,
   permissionType: string,
   action: "view" | "manage" | "admin",
@@ -730,6 +730,27 @@ export const canUserManageAppointments = async (
  * any branch they can access. For controllers whose required domain depends on
  * the request (e.g. each department report reads a different module).
  */
+/**
+ * Like `userHasDomainPermission`, but follows the branch rule used by route
+ * guards: with a branch selected that branch's role decides; with none, view
+ * needs the right in any branch and manage/admin in every branch.
+ */
+export const userHasBranchDomainPermission = async (
+  userId: number,
+  permissionType: string,
+  action: "view" | "manage" | "admin",
+  branchId: number | null,
+): Promise<boolean> => {
+  const snapshot = await getOrFetchAuthContextSnapshot(userId);
+  if (!snapshot || !isSessionActive(snapshot)) return false;
+  return hasScopedActionPermission(
+    snapshot,
+    { allowedBranchIds: null, activeBranchId: branchId },
+    permissionType,
+    action,
+  );
+};
+
 export const userHasDomainPermission = async (
   userId: number,
   permissionType: string,
@@ -740,6 +761,26 @@ export const userHasDomainPermission = async (
     return false;
   }
   return hasActionPermission(snapshot.permissions, permissionType, action);
+};
+
+/**
+ * A user's Departments access for checks made in services: view / manage in
+ * any branch, and whether the role is limited to `assigned_departments` (then
+ * only `departmentIds` — the departments the user belongs to — count).
+ */
+export const getUserDepartmentAccess = async (
+  userId: number,
+): Promise<{ view: boolean; manage: boolean; assignedOnly: boolean; departmentIds: number[] }> => {
+  const snapshot = await getOrFetchAuthContextSnapshot(userId);
+  if (!snapshot || !isSessionActive(snapshot) || !snapshot.isPrivilegedUser) {
+    return { view: false, manage: false, assignedOnly: false, departmentIds: [] };
+  }
+  return {
+    view: hasActionPermission(snapshot.permissions, "Departments", "view"),
+    manage: hasActionPermission(snapshot.permissions, "Departments", "manage"),
+    assignedOnly: resolveDomainScope(snapshot.permissions, "Departments") === "assigned_departments",
+    departmentIds: snapshot.departmentIds,
+  };
 };
 
 /**

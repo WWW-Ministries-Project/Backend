@@ -488,6 +488,8 @@ model access_level {
   name           String               @unique
   description    String?
   permissions    String?              @db.LongText
+  /// Home workspace keys (prelate | admin | finance | hod | generic). NULL = derive from permissions.
+  workspaces     Json?
   created_by     Int?
   updated_by     Int?
   deleted_at     DateTime?
@@ -4007,4 +4009,20 @@ model department_report_requests {
 
   @@index([report_id])
   @@index([needs_decision, outcome])
+}
+
+/// Settings › General configuration › Reports. One row (id 1): which
+/// department is responsible for each church-wide department report, and the
+/// department attendance report settings.
+/// Contract: Frontend/docs/WORKSPACES_AND_REPORT_CONFIG_BACKEND_CONTRACT.md
+model report_config {
+  id                                      Int      @id
+  /// { [report_key]: department_id | null }
+  owners                                  Json?
+  dept_attendance_due_day                 Int      @default(5)
+  /// number[] of department ids that get no department attendance report.
+  dept_attendance_disabled_department_ids Json?
+  updated_by_user_id                      Int?
+  created_at                              DateTime @default(now())
+  updated_at                              DateTime @default(now()) @updatedAt
 }
