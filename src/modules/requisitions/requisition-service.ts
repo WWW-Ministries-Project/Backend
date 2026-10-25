@@ -1,7 +1,7 @@
 import Joi from "joi";
 import fs from "fs/promises";
 import path from "path";
-import { prisma } from "../../Models/context";
+import { prisma, type PrismaTx } from "../../Models/context";
 import {
   RequisitionPreApprovalSimilarItemsResponse,
   RequisitionApprovalActionPayload,
@@ -41,9 +41,18 @@ import {
 } from "./requisition-approval-workflow";
 import { notificationService } from "../notifications/notificationService";
 import {
+  assertBranchAccessible,
   getBranchScopedWhere,
   resolveBranchIdOrDefault,
 } from "../branches/branchService";
+import {
+  canRequisition,
+  requisitionActionNotRevoked,
+  requisitionRank,
+  requisitionVisibleWhere,
+  scopeCoversRequisition,
+  toRequisitionViewer,
+} from "./requisition-access";
 
 const UPLOADS_DIR = path.resolve(process.cwd(), "uploads");
 const DEFAULT_SIMILAR_ITEM_LOOKBACK_DAYS = 30;
@@ -446,24 +455,27 @@ const getAuthenticatedUserId = (user: any): number => {
   return actorUserId;
 };
 
-const hasRequisitionManagePermission = (user: any): boolean => {
-  const permissions = parsePermissionObject(user?.permissions);
-  const permissionValue =
-    permissions?.Requisition || permissions?.Requisitions || null;
+/** Approved or already paid out: the requisition is closed for good. */
+const isApprovedStatus = (status: RequestApprovalStatus) =>
+  status === RequestApprovalStatus.APPROVED || status === RequestApprovalStatus.DISBURSED;
 
-  return (
-    permissionValue === "Can_Manage" || permissionValue === "Super_Admin"
-  );
-};
-
-const ensureRequisitionAccess = (user: any, requisitionOwnerId: number) => {
-  const actorUserId = getAuthenticatedUserId(user);
-  if (
-    actorUserId !== requisitionOwnerId &&
-    !hasRequisitionManagePermission(user)
-  ) {
+/**
+ * Raising for a department: the viewer's own departments, or any department
+ * with `Requisition.raise_for_any_department`. A role with Requisition access
+ * and `raise` switched off can't raise at all; otherwise the chain's
+ * requester list decides at submission.
+ */
+export const ensureCanRaiseForDepartment = (user: any, departmentId: unknown) => {
+  const viewer = toRequisitionViewer(user);
+  if (!requisitionActionNotRevoked(viewer, "raise")) {
+    throw new UnauthorizedError("Your role doesn't allow raising requisitions");
+  }
+  const parsed = Number(departmentId);
+  if (!Number.isInteger(parsed) || parsed <= 0) return;
+  if (canRequisition(viewer, "raise_for_any_department")) return;
+  if (!viewer.departmentIds.includes(parsed) && !viewer.ledDepartmentIds.includes(parsed)) {
     throw new UnauthorizedError(
-      "You do not have permission to access this requisition",
+      "You can only raise requisitions for departments you belong to",
     );
   }
 };
@@ -980,7 +992,7 @@ const processLegacyRequisitionApprovalAction = async (args: {
     }
 
     if (
-      requisition.request_approval_status === RequestApprovalStatus.APPROVED ||
+      isApprovedStatus(requisition.request_approval_status) ||
       requisition.request_approval_status === RequestApprovalStatus.REJECTED
     ) {
       throw new InputValidationError("Requisition is already closed");
@@ -1068,7 +1080,7 @@ const processLegacyRequisitionApprovalAction = async (args: {
  * @returns {Promise<string>} The next request ID in the format "RQ-0001"
  */
 export const generateRequestId = async (
-  client: Prisma.TransactionClient = prisma,
+  client: PrismaTx | Prisma.TransactionClient = prisma,
 ): Promise<string> => {
   const lastRequest = await client.request.findFirst({
     orderBy: { id: "desc" },
@@ -1203,6 +1215,7 @@ export const createRequisition = async (
   data: RequisitionInterface,
   user: any,
 ) => {
+  ensureCanRaiseForDepartment(user, data.department_id);
   const created = await prisma.$transaction((tx) => createRequisitionTx(tx, data, user));
 
   if (created.submitted) {
@@ -1289,8 +1302,13 @@ export const updateRequisition = async (
     throw new NotFoundError("Requisition not found");
   }
 
+  assertBranchAccessible(findRequest.branch_id);
+
+  const viewer = toRequisitionViewer(user);
   const actorIsRequester = token_user_id === findRequest.user_id;
-  const actorHasManagePermission = hasRequisitionManagePermission(user);
+  // What "manage" meant before scopes: a Manage role, within its scope.
+  const actorHasManagePermission =
+    requisitionRank(viewer) >= 2 && scopeCoversRequisition(viewer, findRequest);
   let isHOD = false;
   let isPastor = false;
   let isMember = false;
@@ -1307,15 +1325,34 @@ export const updateRequisition = async (
     approvalInstances.find(
       (instance) => instance.status === RequisitionApprovalInstanceStatus.PENDING,
     ) || null;
+  // `override_step` lets a role decide or edit the current step for the
+  // assigned approver (never on the actor's own requisition).
+  const actorOverridesStep =
+    Boolean(currentPendingApprovalInstance) &&
+    !actorIsRequester &&
+    canRequisition(viewer, "override_step") &&
+    scopeCoversRequisition(viewer, findRequest);
   const actorIsCurrentPendingApprover =
-    currentPendingApprovalInstance?.approver_user_id === token_user_id;
+    currentPendingApprovalInstance?.approver_user_id === token_user_id ||
+    actorOverridesStep;
   const isClosedRequisition =
-    findRequest.request_approval_status === RequestApprovalStatus.APPROVED ||
+    isApprovedStatus(findRequest.request_approval_status) ||
     findRequest.request_approval_status === RequestApprovalStatus.REJECTED;
   const isSignedAction = Boolean(updateInput.user_sign?.trim());
 
+  if (
+    actorIsRequester &&
+    updateInput.department_id !== undefined &&
+    Number(updateInput.department_id) !== findRequest.department_id
+  ) {
+    ensureCanRaiseForDepartment(user, updateInput.department_id);
+  }
+
   if (hasApprovalWorkflow && !actorIsRequester && isSignedAction) {
-    if (!actorIsCurrentPendingApprover) {
+    if (
+      !actorIsCurrentPendingApprover ||
+      (!actorOverridesStep && !requisitionActionNotRevoked(viewer, "approve"))
+    ) {
       throw new UnauthorizedError(
         "Only the current pending approver can approve or reject this requisition",
       );
@@ -1330,6 +1367,7 @@ export const updateRequisition = async (
       requisitionId: data.id,
       actorUserId: token_user_id,
       action,
+      allowOverride: actorOverridesStep,
       ...(updateInput.comment && { comment: updateInput.comment }),
       signature: updateInput.user_sign?.trim().slice(0, 191),
     });
@@ -1382,7 +1420,10 @@ export const updateRequisition = async (
       if (isClosedRequisition) {
         throw new InputValidationError("Requisition is already closed");
       }
-    } else if (actorIsCurrentPendingApprover) {
+    } else if (
+      actorIsCurrentPendingApprover &&
+      (actorOverridesStep || requisitionActionNotRevoked(viewer, "edit_as_approver"))
+    ) {
       if (isClosedRequisition) {
         throw new InputValidationError("Requisition is already closed");
       }
@@ -1646,6 +1687,9 @@ export const deleteRequisition = async (id: any, user: any) => {
     select: {
       id: true,
       user_id: true,
+      department_id: true,
+      branch_id: true,
+      request_approval_status: true,
       attachmentsList: {
         select: {
           URL: true,
@@ -1658,7 +1702,26 @@ export const deleteRequisition = async (id: any, user: any) => {
     throw new NotFoundError(`Requisition with ID ${id} not found.`);
   }
 
-  ensureRequisitionAccess(user, requisition.user_id);
+  assertBranchAccessible(requisition.branch_id);
+
+  // Approved and disbursed requisitions are the record of what was spent.
+  if (isApprovedStatus(requisition.request_approval_status)) {
+    throw new InputValidationError("Approved requisitions can't be deleted");
+  }
+
+  const viewer = toRequisitionViewer(user);
+  const ownDraftOrClosed =
+    requisition.user_id === viewer.userId &&
+    (requisition.request_approval_status === RequestApprovalStatus.Draft ||
+      requisition.request_approval_status === RequestApprovalStatus.REJECTED);
+  const mayDelete = ownDraftOrClosed
+    ? requisitionActionNotRevoked(viewer, "delete_own_draft")
+    : canRequisition(viewer, "delete") && scopeCoversRequisition(viewer, requisition);
+  if (!mayDelete) {
+    throw new UnauthorizedError(
+      "You do not have permission to delete this requisition",
+    );
+  }
 
   const attachmentUrls = requisition.attachmentsList.map(
     (attachment) => attachment.URL,
@@ -1682,14 +1745,11 @@ export const deleteRequisition = async (id: any, user: any) => {
 };
 
 export const listRequisition = async (user: any, branchId?: unknown) => {
-  const actorUserId = getAuthenticatedUserId(user);
-  if (hasRequisitionManagePermission(user)) {
-    return getRequisitionSummaryFromRequests(getBranchScopedWhere(branchId));
-  }
-
+  getAuthenticatedUserId(user);
+  const viewer = toRequisitionViewer(user);
   return getRequisitionSummaryFromRequests({
     ...(getBranchScopedWhere(branchId) || {}),
-    user_id: actorUserId,
+    ...requisitionVisibleWhere(viewer),
   });
 };
 
@@ -1767,8 +1827,11 @@ type SimilarItemMatchRow = {
 
 export const getPreApprovalSimilarItems = async (
   requisitionId: unknown,
-  days?: unknown,
+  days: unknown,
+  user: any,
 ): Promise<RequisitionPreApprovalSimilarItemsResponse> => {
+  await ensureCanActOnCurrentStep(requisitionId, user, { readOnly: true });
+
   const parsedRequisitionId = Number(requisitionId);
   if (!Number.isInteger(parsedRequisitionId) || parsedRequisitionId <= 0) {
     throw new InputValidationError("requisition_id must be a positive integer");
@@ -1964,6 +2027,74 @@ export const submitRequisition = async (requisitionId: unknown, user: any) => {
   return getRequisition(parsedId, user);
 };
 
+/**
+ * Approver-only endpoints (approval action, similar-items check): the caller
+ * holds the requisition's current step, or `Requisition.override_step` within
+ * their scope. A role with Requisition access and `approve` switched off can't
+ * act even on its own step. Returns whether the caller acts by override.
+ */
+export const ensureCanActOnCurrentStep = async (
+  requisitionId: unknown,
+  user: any,
+  options: { readOnly?: boolean } = {},
+): Promise<{ allowOverride: boolean }> => {
+  const parsedId = Number(requisitionId);
+  if (!Number.isInteger(parsedId) || parsedId <= 0) {
+    throw new InputValidationError("requisition_id must be a positive integer");
+  }
+  const viewer = toRequisitionViewer(user);
+
+  const requisition = await prisma.request.findUnique({
+    where: { id: parsedId },
+    select: { id: true, user_id: true, department_id: true, branch_id: true },
+  });
+  if (!requisition) {
+    throw new NotFoundError("Requisition not found");
+  }
+  assertBranchAccessible(requisition.branch_id);
+
+  let currentApproverId: number | null = null;
+  try {
+    const pending = await prisma.requisition_approval_instances.findFirst({
+      where: { request_id: parsedId, status: RequisitionApprovalInstanceStatus.PENDING },
+      orderBy: { step_order: "asc" },
+      select: { approver_user_id: true },
+    });
+    currentApproverId = pending?.approver_user_id ?? null;
+  } catch (error) {
+    if (!isMissingWorkflowTablesError(error)) throw error;
+    // Legacy approvals (no workflow tables) decide by role in the service.
+    return { allowOverride: false };
+  }
+
+  if (currentApproverId === viewer.userId) {
+    if (!requisitionActionNotRevoked(viewer, "approve")) {
+      throw new UnauthorizedError("Your role doesn't allow approving requisitions");
+    }
+    return { allowOverride: false };
+  }
+
+  if (
+    requisition.user_id !== viewer.userId &&
+    canRequisition(viewer, "override_step") &&
+    scopeCoversRequisition(viewer, requisition)
+  ) {
+    return { allowOverride: true };
+  }
+
+  // Reading (similar items) is also open to Manage roles within their scope,
+  // as the old manage guard allowed.
+  if (
+    options.readOnly &&
+    requisitionRank(viewer) >= 2 &&
+    scopeCoversRequisition(viewer, requisition)
+  ) {
+    return { allowOverride: false };
+  }
+
+  throw new UnauthorizedError("You are not the assigned approver for the current step");
+};
+
 export const actionRequisitionApproval = async (
   payload: RequisitionApprovalActionPayload,
   user: any,
@@ -1974,6 +2105,10 @@ export const actionRequisitionApproval = async (
   }
 
   const validated = validateApprovalActionPayload(payload);
+  const { allowOverride } = await ensureCanActOnCurrentStep(
+    validated.requisitionId,
+    user,
+  );
 
   try {
     await processRequisitionApprovalAction({
@@ -1982,6 +2117,7 @@ export const actionRequisitionApproval = async (
       action: validated.action,
       comment: validated.comment,
       signature: validated.signature,
+      allowOverride,
     });
   } catch (error) {
     const isMissingWorkflowTables = isMissingWorkflowTablesError(error);
@@ -2018,8 +2154,11 @@ export const actionRequisitionApproval = async (
 };
 
 export const getStaffRequisition = async (user: any, branchId?: unknown) => {
+  // Every submitted requisition the viewer's scope reaches (the whole branch
+  // for a branch-scoped role), plus those with a step assigned to them.
   return getRequisitionSummaryFromRequests({
     ...(getBranchScopedWhere(branchId) || {}),
+    ...requisitionVisibleWhere(toRequisitionViewer(user)),
     request_approval_status: {
       not: RequestApprovalStatus.Draft,
     },
@@ -2116,9 +2255,11 @@ export const getRequisition = async (id: any, user: any) => {
       response.approval_instances,
     );
 
+    assertBranchAccessible(response.branch_id);
+
     if (
       actorUserId !== response.user_id &&
-      !hasRequisitionManagePermission(user) &&
+      !scopeCoversRequisition(toRequisitionViewer(user), response) &&
       !canAccessByApprovalParticipation
     ) {
       throw new UnauthorizedError(

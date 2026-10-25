@@ -1,6 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../Models/context";
-import { canUserManageAppointments } from "../../middleWare/authorization";
+import type { RequestAccess } from "../../middleWare/authorization";
 import {
   AppError,
   InputValidationError,
@@ -38,11 +38,17 @@ import {
   toNotifiableBooking,
   validateBookingWindow,
 } from "./appointment-service";
+import {
+  BOOKING_ACTION_PERMISSION,
+  canActForOthers,
+} from "./appointment-access";
+import { assertBranchAccessible } from "../branches/branchService";
 
 /*
   POST /appointment/bookings/:id/actions — the redesign's booking state
   machine. The person booked may act on their own booking; remind, reassign
-  and confirm_proposal need appointment manage permission. Each action runs
+  and confirm_proposal, and acting on anyone else's booking, need the
+  matching Appointments action (BOOKING_ACTION_PERMISSION). Each action runs
   in a transaction that locks the booking row, re-checks its state, writes
   the change plus a history line, then sends the notifications set for its
   event. Wrong-state and rule errors are 400s with toast-ready messages.
@@ -151,24 +157,31 @@ export async function performBookingAction(
   id: number,
   callerId: number,
   body: unknown,
+  access: RequestAccess | null,
 ) {
   const parsed = parseActionBody(body);
   const rule = ACTION_RULES[parsed.action as AppointmentAction];
+  const permission = BOOKING_ACTION_PERMISSION[parsed.action];
 
   const initial = await prisma.appointment.findUnique({
     where: { id },
-    select: { userId: true },
+    select: { userId: true, branch_id: true },
   });
   if (!initial) {
     throw new NotFoundError("We couldn't find that appointment. It may have been deleted.");
   }
 
-  const canManage = await canUserManageAppointments(callerId, initial.userId);
+  // The person booked acts on their own booking without a role; anyone else
+  // needs the action (Manage by default) on a booking in their branches.
+  const canManage = canActForOthers(access, permission, initial.userId);
   if (rule.manageOnly && !canManage) {
     throw new AppError("Only appointment managers can do that.", 403);
   }
   if (!canManage && initial.userId !== callerId) {
     throw new AppError("You can only act on appointments booked with you.", 403);
+  }
+  if (initial.userId !== callerId) {
+    assertBranchAccessible(initial.branch_id);
   }
 
   let newAttendee: { id: number; name: string } | null = null;
@@ -180,7 +193,7 @@ export async function performBookingAction(
     if (!person || person.is_active === false) {
       throw new NotFoundError("We couldn't find that person.");
     }
-    if (!(await canUserManageAppointments(callerId, person.id))) {
+    if (!canActForOthers(access, "reassign", person.id)) {
       throw new AppError("You can't assign appointments to that person.", 403);
     }
     newAttendee = { id: person.id, name: person.name };

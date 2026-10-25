@@ -5,6 +5,8 @@ import { verifyPaystackSignature } from "../../../libs/paystack/paystackWebhook"
 import logger from "../../../utils/logger-config";
 import { FinanceHttpError, parsePagination, sendFinanceError } from "../common";
 import { GivingContributionService } from "./contributionService";
+import { getRequestAccess } from "../../../middleWare/authorization";
+import { actionAllowed } from "../../../permissions/access";
 import {
   parseContributionFilters,
   parsePreviewAmount,
@@ -156,7 +158,13 @@ export class GivingContributionController {
       const filters = parseContributionFilters(
         req.query as Record<string, unknown>,
       );
-      const result = await service.listAll(pagination, filters);
+      const result = await service.listAll(pagination, filters, {
+        showDonor: actionAllowed(
+          getRequestAccess(req)?.permissions ?? {},
+          "Giving",
+          "view_donor_details",
+        ),
+      });
 
       return res
         .status(200)

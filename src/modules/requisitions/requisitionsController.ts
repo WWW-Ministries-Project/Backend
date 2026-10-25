@@ -18,9 +18,11 @@ import {
   getRequisitionAnalytics,
   getRequisitionOverview,
   getRequisitionOverviewDetail,
+  markRequisitionDisbursed,
   recordRequisitionRevision,
   sendRequisitionReminder,
 } from "./requisition-redesign";
+import { requisitionUserFrom } from "./requisition-access";
 import {
   RequisitionApprovalActionPayload,
   RequisitionApprovalConfigPayload,
@@ -33,7 +35,7 @@ import {
 
 export const createRequisitionHandler = async (req: Request, res: Response) => {
   const requisitionData: Partial<RequisitionInterface> = req.body;
-  const user = (req as any).user;
+  const user = requisitionUserFrom(req);
 
   const createdRequisition = await createRequisition(
     requisitionData as RequisitionInterface,
@@ -59,7 +61,7 @@ export const saveRequisitionApprovalConfigHandler = async (
   res: Response,
 ) => {
   const payload = req.body as RequisitionApprovalConfigPayload;
-  const user = (req as any).user;
+  const user = requisitionUserFrom(req);
 
   const response = await saveRequisitionApprovalConfig(payload, user?.id);
   res.status(200).json({
@@ -82,7 +84,7 @@ export const getRequisitionApprovalConfigHandler = async (
 export const updateRequisitionHandler = async (req: Request, res: Response) => {
   const requisitionData: Partial<RequisitionInterface> = req.body;
 
-  const user = (req as any).user;
+  const user = requisitionUserFrom(req);
 
   const updatedRequisition = await updateRequisition(
     requisitionData as RequisitionInterface,
@@ -95,7 +97,7 @@ export const updateRequisitionHandler = async (req: Request, res: Response) => {
 };
 
 export const submitRequisitionHandler = async (req: Request, res: Response) => {
-  const user = (req as any).user;
+  const user = requisitionUserFrom(req);
   const requisitionId =
     req.body?.requisition_id || req.body?.id || req.query?.id;
   const response = await submitRequisition(requisitionId, user);
@@ -111,7 +113,7 @@ export const requisitionApprovalActionHandler = async (
   res: Response,
 ) => {
   const payload = req.body as RequisitionApprovalActionPayload;
-  const user = (req as any).user;
+  const user = requisitionUserFrom(req);
 
   const response = await actionRequisitionApproval(payload, user);
   res.status(200).json({
@@ -127,7 +129,11 @@ export const preApprovalSimilarItemsHandler = async (
   const requisitionId = req.query?.requisition_id;
   const days = req.query?.days;
 
-  const response = await getPreApprovalSimilarItems(requisitionId, days);
+  const response = await getPreApprovalSimilarItems(
+    requisitionId,
+    days,
+    requisitionUserFrom(req),
+  );
   res.status(200).json({
     message: "Operation successful",
     data: response,
@@ -135,7 +141,7 @@ export const preApprovalSimilarItemsHandler = async (
 };
 
 export const listRequisitionHandler = async (req: Request, res: Response) => {
-  const user = (req as any).user;
+  const user = requisitionUserFrom(req);
   const requisitions = await listRequisition(user, req.query?.branch_id);
   res.status(200).json({
     message: "Requisitions retrieved successfully",
@@ -144,7 +150,7 @@ export const listRequisitionHandler = async (req: Request, res: Response) => {
 };
 
 export const userRequisitionsHandler = async (req: Request, res: Response) => {
-  const user = (req as any).user;
+  const user = requisitionUserFrom(req);
   const response = await getmyRequisition(user, req.query?.branch_id);
   res.status(201).json({
     message: "Operation successful",
@@ -154,7 +160,7 @@ export const userRequisitionsHandler = async (req: Request, res: Response) => {
 
 export const getRequisitionHandler = async (req: Request, res: Response) => {
   const { id } = req.query;
-  const user = (req as any).user;
+  const user = requisitionUserFrom(req);
 
   const response = await getRequisition(id, user);
   res.status(201).json({
@@ -164,7 +170,7 @@ export const getRequisitionHandler = async (req: Request, res: Response) => {
 };
 
 export const staffRequestHandler = async (req: Request, res: Response) => {
-  const user = (req as any).user;
+  const user = requisitionUserFrom(req);
 
   if (!user) {
     throw new NotFoundError("User not found");
@@ -179,7 +185,7 @@ export const staffRequestHandler = async (req: Request, res: Response) => {
 };
 export const deleteRequisitionHandler = async (req: Request, res: Response) => {
   const { id } = req.query;
-  const user = (req as any).user;
+  const user = requisitionUserFrom(req);
 
   if (!id) {
     throw new InputValidationError("Requisition ID is required");
@@ -191,7 +197,7 @@ export const deleteRequisitionHandler = async (req: Request, res: Response) => {
 };
 
 export const requisitionOverviewHandler = async (req: Request, res: Response) => {
-  const data = await getRequisitionOverview((req as any).user, {
+  const data = await getRequisitionOverview(requisitionUserFrom(req), {
     scope: req.query.scope,
     branch_id: req.query.branch_id,
   });
@@ -199,17 +205,17 @@ export const requisitionOverviewHandler = async (req: Request, res: Response) =>
 };
 
 export const requisitionOverviewDetailHandler = async (req: Request, res: Response) => {
-  const data = await getRequisitionOverviewDetail(req.query.id, (req as any).user);
+  const data = await getRequisitionOverviewDetail(req.query.id, requisitionUserFrom(req));
   res.status(200).json({ message: "Operation successful", data });
 };
 
 export const sendRequisitionReminderHandler = async (req: Request, res: Response) => {
-  const data = await sendRequisitionReminder(req.body, (req as any).user);
+  const data = await sendRequisitionReminder(req.body, requisitionUserFrom(req));
   res.status(200).json({ message: "Reminder sent", data });
 };
 
 export const requisitionAnalyticsHandler = async (req: Request, res: Response) => {
-  const data = await getRequisitionAnalytics((req as any).user, {
+  const data = await getRequisitionAnalytics(requisitionUserFrom(req), {
     from: req.query.from,
     to: req.query.to,
     bucket: req.query.bucket,
@@ -220,6 +226,11 @@ export const requisitionAnalyticsHandler = async (req: Request, res: Response) =
 };
 
 export const addRequisitionCommentHandler = async (req: Request, res: Response) => {
-  const data = await addRequisitionComment(req.body, (req as any).user);
+  const data = await addRequisitionComment(req.body, requisitionUserFrom(req));
   res.status(201).json({ message: "Comment added", data });
+};
+
+export const markRequisitionDisbursedHandler = async (req: Request, res: Response) => {
+  const data = await markRequisitionDisbursed(req.body, requisitionUserFrom(req));
+  res.status(200).json({ message: "Requisition marked disbursed", data });
 };

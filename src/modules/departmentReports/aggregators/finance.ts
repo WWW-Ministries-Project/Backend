@@ -416,7 +416,12 @@ export const buildFinance: ReportBuilder = async (ctx) => {
   const isGhs = (c: string | null | undefined) => !c || c.toUpperCase() === "GHS";
   const ghsRequests = requests.filter((r) => isGhs(r.currency));
   const otherCurrency = requests.length - ghsRequests.length;
-  const approvedReqs = requests.filter((r) => r.request_approval_status === RequestApprovalStatus.APPROVED);
+  // Disbursed requisitions were approved first.
+  const approvedReqs = requests.filter(
+    (r) =>
+      r.request_approval_status === RequestApprovalStatus.APPROVED ||
+      r.request_approval_status === RequestApprovalStatus.DISBURSED,
+  );
   const rejectedReqs = requests.filter((r) => r.request_approval_status === RequestApprovalStatus.REJECTED);
   const approveDays = approvedReqs
     .map((r) => {

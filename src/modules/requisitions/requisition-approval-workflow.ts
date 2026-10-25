@@ -2286,8 +2286,13 @@ export const processRequisitionApprovalAction = async (args: {
   action: ApprovalAction;
   comment?: string;
   signature?: string;
+  /**
+   * The actor holds `Requisition.override_step`: they may decide the current
+   * step on the assigned approver's behalf (never on their own requisition).
+   */
+  allowOverride?: boolean;
 }): Promise<RequisitionApprovalActionResult> => {
-  const { requisitionId, actorUserId, action, comment, signature } = args;
+  const { requisitionId, actorUserId, action, comment, signature, allowOverride } = args;
 
   const runAction = async (): Promise<RequisitionApprovalActionResult> =>
     prisma.$transaction(async (tx) => {
@@ -2308,7 +2313,10 @@ export const processRequisitionApprovalAction = async (args: {
         throw new NotFoundError("Requisition not found");
       }
 
-      if (request.request_approval_status === RequestApprovalStatus.APPROVED) {
+      if (
+        request.request_approval_status === RequestApprovalStatus.APPROVED ||
+        request.request_approval_status === RequestApprovalStatus.DISBURSED
+      ) {
         throw new InputValidationError("Requisition is already approved");
       }
 
@@ -2338,7 +2346,11 @@ export const processRequisitionApprovalAction = async (args: {
         );
       }
 
-      if (currentPendingStep.approver_user_id !== actorUserId) {
+      const overriding =
+        currentPendingStep.approver_user_id !== actorUserId &&
+        Boolean(allowOverride) &&
+        request.user_id !== actorUserId;
+      if (currentPendingStep.approver_user_id !== actorUserId && !overriding) {
         throw new UnauthorizedError(
           "You are not the assigned approver for the current step",
         );

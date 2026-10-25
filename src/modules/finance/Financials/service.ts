@@ -9,11 +9,17 @@ import {
   type FinancialMutationPayload,
 } from "../common";
 import { notificationService } from "../../notifications/notificationService";
-import { userHasMinimumDomainAccess } from "../../../utils/permissionResolver";
 import {
+  hasActionPermission,
+  userHasBranchDomainPermission,
+} from "../../../middleWare/authorization";
+import { actionAllowed, isLegacyRole } from "../../../permissions/access";
+import {
+  assertBranchAccessible,
   getBranchScopedWhere,
   resolveBranchIdOrDefault,
 } from "../../branches/branchService";
+import { getBranchScope } from "../../branches/branchScope";
 
 type FinancialRecordRow = {
   id: string;
@@ -160,21 +166,43 @@ const mapConfigRow = (row: {
   };
 };
 
+/** Live permissions of the caller; `undefined` when the caller isn't known. */
+type ActorPermissions = Record<string, any> | undefined;
+
+/**
+ * Drafts are editable by whoever prepares records. A submitted record can be
+ * corrected by the approver while reviewing it; an approved one only with
+ * `Financials.edit_approved` (an on-purpose action).
+ */
 const computeIsEditable = (args: {
   status: FinanceApprovalStatus;
   actorUserId?: number | null;
   financeApproverUserId?: number | null;
+  permissions?: ActorPermissions;
 }): boolean => {
   if (args.status === "DRAFT") {
     return true;
   }
 
+  if (actionAllowed(args.permissions, "Financials", "edit_approved")) {
+    return true;
+  }
+
   return Boolean(
-    args.actorUserId &&
+    args.status === "PENDING_APPROVAL" &&
+      args.actorUserId &&
       args.financeApproverUserId &&
       args.actorUserId === args.financeApproverUserId,
   );
 };
+
+/** A record the actor prepared or submitted; they may never approve it. */
+const isOwnRecord = (
+  record: { created_by_user_id: number | null; submitted_by_user_id: number | null },
+  actorUserId: number,
+): boolean =>
+  record.created_by_user_id === actorUserId ||
+  record.submitted_by_user_id === actorUserId;
 
 export class FinancialsService {
   private serializePayload(payload: FinancialPayload): string {
@@ -228,11 +256,6 @@ export class FinancialsService {
       select: {
         id: true,
         is_active: true,
-        access: {
-          select: {
-            permissions: true,
-          },
-        },
       },
     });
 
@@ -255,16 +278,22 @@ export class FinancialsService {
       );
     }
 
-    const invalidPermissionUserIds = users
-      .filter(
-        (user) =>
-          !userHasMinimumDomainAccess(
-            user.access?.permissions,
-            "Financials",
-            "view",
-          ),
-      )
-      .map((user) => user.id);
+    // Live per-branch roles, not the old single-role column.
+    const activeBranchId = getBranchScope()?.activeBranchId ?? null;
+    const permissionChecks = await Promise.all(
+      users.map(async (user) => ({
+        id: user.id,
+        allowed: await userHasBranchDomainPermission(
+          user.id,
+          "Financials",
+          "view",
+          activeBranchId,
+        ),
+      })),
+    );
+    const invalidPermissionUserIds = permissionChecks
+      .filter((check) => !check.allowed)
+      .map((check) => check.id);
 
     if (invalidPermissionUserIds.length > 0) {
       throw new FinanceHttpError(
@@ -296,29 +325,52 @@ export class FinancialsService {
     existingRecord: FinancialRecordRow;
     actorUserId: number;
     financeApproverUserId: number | null;
+    permissions?: ActorPermissions;
   }) {
     const currentStatus = normalizeStatus(args.existingRecord.status);
-    if (currentStatus === "DRAFT") {
-      return;
-    }
-
     if (
-      args.financeApproverUserId &&
-      args.actorUserId === args.financeApproverUserId
+      computeIsEditable({
+        status: currentStatus,
+        actorUserId: args.actorUserId,
+        financeApproverUserId: args.financeApproverUserId,
+        permissions: args.permissions,
+      })
     ) {
       return;
     }
 
     throw new FinanceHttpError(
       403,
-      "Only the configured finance approver can edit submitted or approved financial records.",
+      currentStatus === "APPROVED"
+        ? "Approved records can't be changed without the right to edit approved records."
+        : "Only the configured finance approver can edit submitted financial records.",
     );
+  }
+
+  /** Which save the caller may make: drafts need `create_draft`, submitting needs `submit`. */
+  private ensureCanSave(
+    action: FinanceSaveAction,
+    permissions: ActorPermissions,
+    isFinanceApprover: boolean,
+  ) {
+    // The approver could always open and fix records; keep that.
+    if (isFinanceApprover || permissions === undefined) return;
+    const needed = action === "SAVE_DRAFT" ? "create_draft" : "submit";
+    if (!actionAllowed(permissions, "Financials", needed)) {
+      throw new FinanceHttpError(
+        403,
+        action === "SAVE_DRAFT"
+          ? "Not authorized to save financial drafts"
+          : "Not authorized to submit financial records",
+      );
+    }
   }
 
   private mapResponse(
     financial: FinancialRecordRow,
     workflowConfig: FinanceApprovalConfigRow | null,
     actorUserId?: number | null,
+    permissions?: ActorPermissions,
   ): FinancialEntity {
     const status = normalizeStatus(financial.status);
     const financeApproverUserId = workflowConfig?.finance_approver_user_id ?? null;
@@ -345,6 +397,7 @@ export class FinancialsService {
         status,
         actorUserId,
         financeApproverUserId,
+        permissions,
       }),
       notificationUserIds,
       branch_id: financial.branch_id,
@@ -365,7 +418,48 @@ export class FinancialsService {
   async upsertApprovalConfig(
     payload: FinanceApprovalConfigPayload,
     actorUserId?: number | null,
+    permissions?: ActorPermissions,
   ): Promise<FinanceApprovalConfigEntity> {
+    const normalizedActorUserId = toPositiveInt(actorUserId);
+    const current = await this.getFinanceApprovalConfig();
+
+    if (permissions !== undefined) {
+      const sameIds = (a: number[], b: number[]) =>
+        JSON.stringify([...new Set(a)].sort()) === JSON.stringify([...new Set(b)].sort());
+      const approvalChanged =
+        !current ||
+        current.finance_approver_user_id !== payload.finance_approver_user_id ||
+        !sameIds(current.notification_user_ids, payload.notification_user_ids) ||
+        current.is_active !== (payload.is_active !== false);
+      // Roles saved before actions keep changing the tithe rate with Manage.
+      const canConfigure =
+        actionAllowed(permissions, "Financials", "configure") ||
+        (isLegacyRole(permissions) &&
+          hasActionPermission(permissions, "Financials", "manage"));
+      if (
+        approvalChanged &&
+        !actionAllowed(permissions, "Financials", "configure_approvals")
+      ) {
+        throw new FinanceHttpError(403, "Not authorized to change who approves financial records");
+      }
+      if (!approvalChanged && !canConfigure) {
+        throw new FinanceHttpError(403, "Not authorized to change finance configuration");
+      }
+    }
+
+    // Nobody can make themselves the approver of the records they configure.
+    if (
+      normalizedActorUserId &&
+      payload.finance_approver_user_id === normalizedActorUserId
+    ) {
+      if (current?.finance_approver_user_id !== normalizedActorUserId) {
+        throw new FinanceHttpError(
+          422,
+          "You can't make yourself the finance approver. Ask another administrator to choose you.",
+        );
+      }
+    }
+
     await this.validateFinanceAccessUsers([
       payload.finance_approver_user_id,
       ...payload.notification_user_ids,
@@ -426,6 +520,7 @@ export class FinancialsService {
   async create(
     mutation: FinancialMutationPayload,
     actorUserId?: number | null,
+    permissions?: ActorPermissions,
   ): Promise<FinancialSaveResult> {
     const normalizedActorUserId = toPositiveInt(actorUserId);
     if (!normalizedActorUserId) {
@@ -451,13 +546,12 @@ export class FinancialsService {
     const isFinanceApprover =
       Boolean(config?.finance_approver_user_id) &&
       normalizedActorUserId === config?.finance_approver_user_id;
+    this.ensureCanSave(mutation.action, permissions, isFinanceApprover);
     const now = new Date();
+    // A new record is always the actor's own, so it never approves itself,
+    // not even when the approver prepares it.
     const nextStatus: FinanceApprovalStatus =
-      mutation.action === "SAVE_DRAFT"
-        ? "DRAFT"
-        : isFinanceApprover
-          ? "APPROVED"
-          : "PENDING_APPROVAL";
+      mutation.action === "SAVE_DRAFT" ? "DRAFT" : "PENDING_APPROVAL";
 
     const created = await prisma.financials.create({
       data: {
@@ -469,31 +563,12 @@ export class FinancialsService {
         submitted_by_user_id:
           mutation.action === "SAVE_AND_APPROVE" ? normalizedActorUserId : null,
         submitted_at: mutation.action === "SAVE_AND_APPROVE" ? now : null,
-        approved_by_user_id: nextStatus === "APPROVED" ? normalizedActorUserId : null,
-        approved_at: nextStatus === "APPROVED" ? now : null,
         branch_id: branchId,
       },
       select: RECORD_SELECT,
     });
 
-    const record = this.mapResponse(created, config, normalizedActorUserId);
-
-    if (nextStatus === "APPROVED" && config?.notification_user_ids.length) {
-      await notificationService.createManyInAppNotifications(
-        config.notification_user_ids.map((userId) => ({
-          type: "financial.approved",
-          title: "Financial record approved",
-          body: `A financial record for ${periodDate} has been approved.`,
-          recipientUserId: userId,
-          actorUserId: normalizedActorUserId,
-          entityType: "financial",
-          entityId: created.id,
-          actionUrl: `/home/finance/${created.id}`,
-          priority: "HIGH",
-          sendEmail: true,
-        })),
-      );
-    }
+    const record = this.mapResponse(created, config, normalizedActorUserId, permissions);
 
     if (
       nextStatus === "PENDING_APPROVAL" &&
@@ -517,11 +592,7 @@ export class FinancialsService {
     return {
       record,
       triggeredAction:
-        nextStatus === "APPROVED"
-          ? "APPROVED"
-          : nextStatus === "PENDING_APPROVAL"
-            ? "APPROVAL_REQUESTED"
-            : "DRAFT_SAVED",
+        nextStatus === "PENDING_APPROVAL" ? "APPROVAL_REQUESTED" : "DRAFT_SAVED",
       config,
     };
   }
@@ -530,6 +601,7 @@ export class FinancialsService {
     pagination: { skip: number; take: number },
     actorUserId?: number | null,
     branchId?: unknown,
+    permissions?: ActorPermissions,
   ): Promise<{
     data: FinancialEntity[];
     total: number;
@@ -551,7 +623,7 @@ export class FinancialsService {
     return {
       total,
       data: financials.map((financial) =>
-        this.mapResponse(financial, config, actorUserId),
+        this.mapResponse(financial, config, actorUserId, permissions),
       ),
     };
   }
@@ -560,6 +632,7 @@ export class FinancialsService {
     id: string,
     actorUserId?: number | null,
     branchId?: unknown,
+    permissions?: ActorPermissions,
   ): Promise<FinancialEntity> {
     const [config, existing] = await Promise.all([
       this.getFinanceApprovalConfig(),
@@ -573,18 +646,20 @@ export class FinancialsService {
       throw new FinanceHttpError(404, "Financial record not found");
     }
 
+    assertBranchAccessible(existing.branch_id);
     const branchWhere = getBranchScopedWhere(branchId);
     if (branchId !== undefined && branchWhere?.branch_id !== existing.branch_id) {
       throw new FinanceHttpError(404, "Financial record not found");
     }
 
-    return this.mapResponse(existing, config, actorUserId);
+    return this.mapResponse(existing, config, actorUserId, permissions);
   }
 
   async update(
     id: string,
     mutation: FinancialMutationPayload,
     actorUserId?: number | null,
+    permissions?: ActorPermissions,
   ): Promise<FinancialSaveResult> {
     const normalizedActorUserId = toPositiveInt(actorUserId);
     if (!normalizedActorUserId) {
@@ -603,10 +678,12 @@ export class FinancialsService {
       throw new FinanceHttpError(404, "Financial record not found");
     }
 
+    assertBranchAccessible(existing.branch_id);
     this.ensureCanEditRecord({
       existingRecord: existing,
       actorUserId: normalizedActorUserId,
       financeApproverUserId: config?.finance_approver_user_id ?? null,
+      permissions,
     });
 
     const targetBranchId =
@@ -632,11 +709,22 @@ export class FinancialsService {
     const isFinanceApprover =
       Boolean(config?.finance_approver_user_id) &&
       normalizedActorUserId === config?.finance_approver_user_id;
+    this.ensureCanSave(mutation.action, permissions, isFinanceApprover);
     const now = new Date();
+    // The approver may correct a record someone else submitted and approve it
+    // in the same save; a record they prepared or submitted themselves goes
+    // back to waiting for approval.
+    const approvesOnSave =
+      mutation.action === "SAVE_AND_APPROVE" &&
+      isFinanceApprover &&
+      normalizeStatus(existing.status) === "PENDING_APPROVAL" &&
+      !isOwnRecord(existing, normalizedActorUserId) &&
+      (permissions === undefined ||
+        actionAllowed(permissions, "Financials", "approve"));
     const nextStatus: FinanceApprovalStatus =
       mutation.action === "SAVE_DRAFT"
         ? "DRAFT"
-        : isFinanceApprover
+        : approvesOnSave
           ? "APPROVED"
           : "PENDING_APPROVAL";
 
@@ -647,9 +735,19 @@ export class FinancialsService {
         periodDate,
         status: nextStatus,
         updated_by_user_id: normalizedActorUserId,
+        // Approving on save keeps the original submitter on the record.
         submitted_by_user_id:
-          mutation.action === "SAVE_AND_APPROVE" ? normalizedActorUserId : null,
-        submitted_at: mutation.action === "SAVE_AND_APPROVE" ? now : null,
+          mutation.action === "SAVE_AND_APPROVE"
+            ? approvesOnSave
+              ? existing.submitted_by_user_id ?? normalizedActorUserId
+              : normalizedActorUserId
+            : null,
+        submitted_at:
+          mutation.action === "SAVE_AND_APPROVE"
+            ? approvesOnSave
+              ? existing.submitted_at ?? now
+              : now
+            : null,
         approved_by_user_id: nextStatus === "APPROVED" ? normalizedActorUserId : null,
         approved_at: nextStatus === "APPROVED" ? now : null,
         // A resubmission clears the approver's return note; a draft save keeps it
@@ -662,7 +760,7 @@ export class FinancialsService {
       select: RECORD_SELECT,
     });
 
-    const record = this.mapResponse(updated, config, normalizedActorUserId);
+    const record = this.mapResponse(updated, config, normalizedActorUserId, permissions);
 
     if (nextStatus === "APPROVED" && config?.notification_user_ids.length) {
       await notificationService.createManyInAppNotifications(
@@ -713,6 +811,8 @@ export class FinancialsService {
   }
 
   private async loadForReview(id: string, actorUserId?: number | null) {
+    // The route requires `Financials.approve`; the chain (the configured
+    // approver) decides who, and nobody reviews a record of their own.
     const normalizedActorUserId = toPositiveInt(actorUserId);
     if (!normalizedActorUserId) {
       throw new FinanceHttpError(401, "Authenticated user is required");
@@ -727,8 +827,17 @@ export class FinancialsService {
       throw new FinanceHttpError(404, "Financial record not found");
     }
 
+    assertBranchAccessible(existing.branch_id);
+
     if (!config?.finance_approver_user_id || config.finance_approver_user_id !== normalizedActorUserId) {
       throw new FinanceHttpError(403, "Only the finance approver can review submitted records.");
+    }
+
+    if (isOwnRecord(existing, normalizedActorUserId)) {
+      throw new FinanceHttpError(
+        403,
+        "You can't review a record you prepared or submitted. Ask another finance approver to review it.",
+      );
     }
 
     if (normalizeStatus(existing.status) !== "PENDING_APPROVAL") {
@@ -739,7 +848,11 @@ export class FinancialsService {
   }
 
   /** The finance approver approves a submitted record as it stands. */
-  async approve(id: string, actorUserId?: number | null): Promise<FinancialEntity> {
+  async approve(
+    id: string,
+    actorUserId?: number | null,
+    permissions?: ActorPermissions,
+  ): Promise<FinancialEntity> {
     const { config, existing, actorId } = await this.loadForReview(id, actorUserId);
     const now = new Date();
 
@@ -782,7 +895,7 @@ export class FinancialsService {
       );
     }
 
-    return this.mapResponse(updated, config, actorId);
+    return this.mapResponse(updated, config, actorId, permissions);
   }
 
   /** The finance approver sends a submitted record back as a draft with a note. */
@@ -790,6 +903,7 @@ export class FinancialsService {
     id: string,
     note: string,
     actorUserId?: number | null,
+    permissions?: ActorPermissions,
   ): Promise<FinancialEntity> {
     const trimmed = String(note ?? "").trim();
     if (!trimmed) {
@@ -829,7 +943,7 @@ export class FinancialsService {
       });
     }
 
-    return this.mapResponse(updated, config, actorId);
+    return this.mapResponse(updated, config, actorId, permissions);
   }
 
   /**
@@ -879,12 +993,14 @@ export class FinancialsService {
   async delete(id: string): Promise<{ id: string; deleted: true }> {
     const existing = await prisma.financials.findUnique({
       where: { id },
-      select: { id: true, status: true },
+      select: { id: true, status: true, branch_id: true },
     });
 
     if (!existing) {
       throw new FinanceHttpError(404, "Financial record not found");
     }
+
+    assertBranchAccessible(existing.branch_id);
 
     // Submitted and approved weeks feed balances; only drafts can be deleted.
     if (normalizeStatus(existing.status) !== "DRAFT") {

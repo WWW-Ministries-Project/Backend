@@ -2,9 +2,16 @@ import { Request, Response } from "express";
 import { assetSchema } from "../../utils";
 import { prisma } from "../../Models/context";
 import {
-  getBranchScopedWhere,
+  assertBranchAccessible,
+  BranchAccessError,
   resolveBranchIdOrDefault,
 } from "../branches/branchService";
+import { accessOf, assetScopeWhere, assetWriteWhere } from "./asset-redesign";
+
+const forbidden = (res: Response, error: unknown) =>
+  error instanceof BranchAccessError
+    ? res.status(403).json({ message: error.message, data: null })
+    : null;
 
 export const createAsset = async (req: any, res: any) => {
   try {
@@ -29,6 +36,13 @@ export const createAsset = async (req: any, res: any) => {
       parseInt(department_assigned) === 0
         ? null
         : parseInt(department_assigned);
+
+    const scoped = accessOf(req).manageDepartmentIds;
+    if (scoped !== null && (!departmentId || !scoped.includes(departmentId))) {
+      return res
+        .status(403)
+        .json({ message: "You can only manage assets in your departments." });
+    }
 
     if (
       date_purchased != null &&
@@ -89,12 +103,14 @@ export const updateAsset = async (req: any, res: Response) => {
     assetSchema.validate(req.body);
     const user_id = req.user?.id;
 
-    // Check Existance
-    const existing = await prisma.assets.findUnique({
+    // Check Existance (inside the caller's branches and departments)
+    const existing = await prisma.assets.findFirst({
       where: {
         id: Number(id),
+        ...assetWriteWhere(accessOf(req), undefined),
       },
     });
+    if (existing) assertBranchAccessible(existing.branch_id);
     if (!existing) {
       return res
         .status(409)
@@ -130,6 +146,7 @@ export const updateAsset = async (req: any, res: Response) => {
       updatedAsset,
     });
   } catch (error) {
+    if (forbidden(res, error)) return;
     return res
       .status(500)
       .json({ message: "Something Went Wrong", data: error });
@@ -138,19 +155,7 @@ export const updateAsset = async (req: any, res: Response) => {
 export const listAssets = async (req: Request, res: Response) => {
   try {
     const { page = 1, take = 10 }: any = req.query;
-    const assetScope = (req as any).assetScope;
-
-    const whereFilter: any = {};
-    Object.assign(whereFilter, getBranchScopedWhere(req.query?.branch_id) || {});
-    if (
-      assetScope?.mode === "department" &&
-      Array.isArray(assetScope?.departmentIds) &&
-      assetScope.departmentIds.length > 0
-    ) {
-      whereFilter.department_assigned = {
-        in: assetScope.departmentIds,
-      };
-    }
+    const whereFilter: any = assetScopeWhere(accessOf(req), req.query?.branch_id);
 
     const total = await prisma.assets.count({
       where: Object.keys(whereFilter).length ? whereFilter : undefined,
@@ -186,21 +191,10 @@ export const listAssets = async (req: Request, res: Response) => {
 export const getAsset = async (req: Request, res: Response) => {
   try {
     const { id } = req.query;
-    const assetScope = (req as any).assetScope;
     const whereFilter: any = {
       id: Number(id),
+      ...assetScopeWhere(accessOf(req), req.query?.branch_id),
     };
-    Object.assign(whereFilter, getBranchScopedWhere(req.query?.branch_id) || {});
-
-    if (
-      assetScope?.mode === "department" &&
-      Array.isArray(assetScope?.departmentIds) &&
-      assetScope.departmentIds.length > 0
-    ) {
-      whereFilter.department_assigned = {
-        in: assetScope.departmentIds,
-      };
-    }
 
     const assetsList = await prisma.assets.findFirst({
       where: whereFilter,
@@ -224,6 +218,12 @@ export const deleteAsset = async (req: Request, res: Response) => {
   try {
     const { id } = req.query;
     if (!id) return res.status(400).json({ message: "Asset ID not provided" });
+    const existing = await prisma.assets.findFirst({
+      where: { id: Number(id), ...assetWriteWhere(accessOf(req), undefined) },
+      select: { branch_id: true },
+    });
+    if (!existing) return res.status(404).json({ message: "Asset not found" });
+    assertBranchAccessible(existing.branch_id);
     const deletedAsset = await prisma.assets.delete({
       where: {
         id: Number(id),
@@ -233,6 +233,7 @@ export const deleteAsset = async (req: Request, res: Response) => {
       .status(200)
       .json({ message: "Asset deleted successfully", deletedAsset });
   } catch (error: any) {
+    if (forbidden(res, error)) return;
     return res
       .status(500)
       .json({ message: "Something Went Wrong", data: error });

@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import { ProgramService } from "./programService";
+import { somProgramIds } from "./somAccess";
 
 const programService = new ProgramService();
 export class ProgramController {
@@ -138,7 +139,9 @@ export class ProgramController {
   async getAllProgramsFullDetailsWithEnrollments(req: Request, res: Response) {
     try {
       const programs =
-        await programService.getAllProgramsWithEnrolledMembersAndCompletion();
+        await programService.getAllProgramsWithEnrolledMembersAndCompletion(
+          await somProgramIds(req),
+        );
       return res.status(200).json({ data: programs });
     } catch (error: any) {
       return res.status(500).json({
@@ -343,8 +346,14 @@ export class ProgramController {
   async getProgramsByinstructor(req: Request, res: Response) {
     try {
       const { instructorId } = req.query;
+      // Without the whole school, instructors only see their own classes.
+      const ownOnly = (req as any).somScope?.manageAll === false;
+      const me = Number((req as any).user?.id);
+      if (ownOnly && instructorId !== undefined && Number(instructorId) !== me) {
+        return res.status(403).json({ message: "You can only see the programs you teach", data: null });
+      }
       const programs = await programService.getProgramsByInstructor(
-        Number(instructorId),
+        ownOnly ? me : Number(instructorId),
       );
       return res
         .status(200)

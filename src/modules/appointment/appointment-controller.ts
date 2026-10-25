@@ -5,7 +5,8 @@ import {
   SlotUnavailableError,
 } from "./appointment-service";
 import { notificationService } from "../notifications/notificationService";
-import { canUserManageAppointments } from "../../middleWare/authorization";
+import { getRequestAccess } from "../../middleWare/authorization";
+import { canActForOthers } from "./appointment-access";
 import {
   AppError,
   InputValidationError,
@@ -221,23 +222,29 @@ export class AppointmentController {
         return res.status(401).json({ error: "Unauthorized user" });
       }
 
-      // Booking for someone else or confirming straight away needs manage;
-      // the service enforces it. Notifications follow the settings matrix.
-      const wantsManagerOptions =
-        (req.body?.requesterId !== undefined &&
-          Number(req.body.requesterId) !== requesterId) ||
-        String(req.body?.status ?? "").toUpperCase() === "CONFIRMED";
-      const canManage = wantsManagerOptions
-        ? await canUserManageAppointments(
-            requesterId,
-            Number(
-              req.body?.userId ??
-                req.body?.staffId ??
-                req.body?.attendeeId ??
-                req.body?.attendee_id,
-            ) || null,
-          )
-        : false;
+      // Booking for someone else needs `book_for_others`; confirming
+      // straight away answers for the person booked, so it needs `respond`
+      // on others' bookings unless that person is the caller. Both read the
+      // live, active-branch role (`withAccess` on the route); the service
+      // enforces the result. Notifications follow the settings matrix.
+      const access = getRequestAccess(req);
+      const attendeeId =
+        Number(
+          req.body?.userId ??
+            req.body?.staffId ??
+            req.body?.attendeeId ??
+            req.body?.attendee_id,
+        ) || null;
+      const forSomeoneElse =
+        req.body?.requesterId !== undefined &&
+        Number(req.body.requesterId) !== requesterId;
+      const confirmNow = String(req.body?.status ?? "").toUpperCase() === "CONFIRMED";
+      const canManage =
+        (forSomeoneElse || confirmNow) &&
+        (!forSomeoneElse || canActForOthers(access, "book_for_others", attendeeId)) &&
+        (!confirmNow ||
+          attendeeId === requesterId ||
+          canActForOthers(access, "respond", attendeeId));
 
       const newBooking = await AppointmentService.createAppointment(
         req.body,
@@ -587,7 +594,7 @@ export class AppointmentController {
       return res.status(401).json({ error: "Unauthorized user" });
     }
     const id = parsePositiveIdParam(req.params.id, "Booking ID");
-    const data = await performBookingAction(id, callerId, req.body);
+    const data = await performBookingAction(id, callerId, req.body, getRequestAccess(req));
     res.status(200).json({ message: "Appointment updated", data });
   }
 

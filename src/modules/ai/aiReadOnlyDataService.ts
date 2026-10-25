@@ -11,6 +11,8 @@ import {
 import { Dirent, promises as fs } from "fs";
 import path from "path";
 import { prisma } from "../../Models/context";
+import { userHasBranchDomainPermission } from "../../middleWare/authorization";
+import { getBranchScope } from "../branches/branchScope";
 import {
   AI_MODULE_QUERY_CONTRACTS,
   AiModuleName,
@@ -104,6 +106,38 @@ type AttendanceTimingAggregate = {
   timing_records: AttendanceTimingDetail[];
 };
 
+/**
+ * The permission domain each AI module reads. A query runs only when the
+ * person asking can already view that domain in the active branch, so the
+ * assistant never shows them data they couldn't open themselves.
+ */
+const MODULE_DOMAIN: Record<string, string[]> = {
+  user: ["Members"],
+  department: ["Departments"],
+  position: ["Positions"],
+  access: ["Access_rights"],
+  upload: ["Settings"],
+  assets: ["Asset"],
+  // Attendance timing and lookups read Church_Attendance as well as events.
+  event: ["Events", "Church_Attendance"],
+  requisitions: ["Requisition"],
+  program: ["School_of_ministry"],
+  visitor: ["Visitors"],
+  lifecenter: ["Life Center"],
+  device: ["Church_Attendance"],
+  market: ["Marketplace"],
+  product: ["Marketplace"],
+  orders: ["Marketplace"],
+  theme: ["Theme"],
+  appointment: ["Appointments"],
+  receiptconfig: ["Financials"],
+  paymentconfig: ["Financials"],
+  bankaccountconfig: ["Financials"],
+  tithebreakdownconfig: ["Financials"],
+  financials: ["Financials"],
+  ai: ["AI"],
+};
+
 export class AiReadOnlyDataServiceError extends Error {
   status_code: number;
 
@@ -128,6 +162,27 @@ export class AiReadOnlyDataService {
     return [contract];
   }
 
+  private async assertCanRead(moduleName: string, actorId: number | undefined) {
+    const domains = MODULE_DOMAIN[moduleName];
+    const branchId = getBranchScope()?.activeBranchId ?? null;
+    const allowed =
+      !!actorId &&
+      !!domains &&
+      (
+        await Promise.all(
+          domains.map((domain) =>
+            userHasBranchDomainPermission(actorId as number, domain, "view", branchId),
+          ),
+        )
+      ).every(Boolean);
+    if (!allowed) {
+      throw new AiReadOnlyDataServiceError(
+        `You don't have access to ${moduleName} data, so the assistant can't read it for you.`,
+        403,
+      );
+    }
+  }
+
   async executeQuery(params: QueryExecutionInput): Promise<QueryExecutionResult> {
     const contract = getModuleContract(params.module);
     if (!contract) {
@@ -144,6 +199,8 @@ export class AiReadOnlyDataService {
         400,
       );
     }
+
+    await this.assertCanRead(contract.module, params.actorId);
 
     const input = this.normalizeInput(params.input);
     const limit = this.parseLimit(input.limit);

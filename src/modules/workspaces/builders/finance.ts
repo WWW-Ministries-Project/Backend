@@ -16,6 +16,7 @@
 import { RequestApprovalStatus } from "@prisma/client";
 import { prisma } from "../../../Models/context";
 import { getBranchScopedWhere, getRelationBranchScopedWhere } from "../../branches/branchService";
+import { switchedOffEverywhere } from "../access";
 import type { BarRow, Kpi, NeedsItem, QueueItem, WorkspaceBuilder, WorkspaceContext } from "../types";
 import { deltaPct, runWidgets, trailingPeriods } from "../widgetKit";
 import {
@@ -101,7 +102,7 @@ export const buildFinance: WorkspaceBuilder = async (ctx: WorkspaceContext) => {
     const rows = await prisma.request.findMany({
       where: {
         ...bw,
-        request_approval_status: RequestApprovalStatus.APPROVED,
+        request_approval_status: { in: [RequestApprovalStatus.APPROVED, RequestApprovalStatus.DISBURSED] },
         OR: [{ approval_instances: { some: { acted_at: { gte: windowFrom } } } }, { updated_at: { gte: windowFrom } }],
       },
       select: {
@@ -331,30 +332,38 @@ export const buildFinance: WorkspaceBuilder = async (ctx: WorkspaceContext) => {
       },
     ],
     [
-      // Not gated: requisitions are the caller's own approval steps; weekly
-      // records only show for Financials managers or the configured approver.
+      // Not gated: requisitions are the caller's own approval steps (hidden when
+      // the role switches Requisition.approve off); weekly records only show to
+      // the configured approver with Financials.approve, never their own.
       "f-q",
       null,
       async () => {
-        const [cfg, canManage] = await Promise.all([
+        const [cfg, canApprove, grants] = await Promise.all([
           prisma.finance_approval_config.findUnique({
             where: { config_key: "FINANCE" },
             select: { finance_approver_user_id: true },
           }),
-          ctx.can("Financials", "manage"),
+          ctx.action("Financials", "approve"),
+          ctx.grants(),
         ]);
-        const canApproveRecords = canManage || cfg?.finance_approver_user_id === ctx.userId;
+        const canApproveRecords = canApprove && cfg?.finance_approver_user_id === ctx.userId;
+        const canApproveRequisitions = !switchedOffEverywhere(grants, "Requisition", "approve");
 
         const [recordRows, reqRows, replyDays] = await Promise.all([
           canApproveRecords
             ? prisma.financials.findMany({
-                where: { ...bw, status: "PENDING_APPROVAL" },
+                where: {
+                  ...bw,
+                  status: "PENDING_APPROVAL",
+                  OR: [{ submitted_by_user_id: null }, { NOT: { submitted_by_user_id: ctx.userId } }],
+                },
                 select: { ...weeklyRecordSelect, branch: { select: { name: true } } },
                 orderBy: { submitted_at: "asc" },
                 take: 20,
               })
             : Promise.resolve([]),
-          prisma.request.findMany({
+          (canApproveRequisitions
+            ? prisma.request.findMany({
             where: {
               ...bw,
               request_approval_status: {
@@ -365,7 +374,8 @@ export const buildFinance: WorkspaceBuilder = async (ctx: WorkspaceContext) => {
             select: requisitionSelect,
             orderBy: { submitted_at: "asc" },
             take: 20,
-          }) as Promise<RequisitionRow[]>,
+          })
+            : Promise.resolve([])) as Promise<RequisitionRow[]>,
           requisitionReplyDays(),
         ]);
 

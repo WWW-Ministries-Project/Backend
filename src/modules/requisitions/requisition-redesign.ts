@@ -11,12 +11,19 @@ import {
   NotFoundError,
   UnauthorizedError,
 } from "../../utils/custom-error-handlers";
-import { getBranchScopedWhere } from "../branches/branchService";
+import { assertBranchAccessible, getBranchScopedWhere } from "../branches/branchService";
 import { notificationService } from "../notifications/notificationService";
+import { DEFAULT_APPROVAL_REPLY_DAYS } from "./requisition-approval-workflow";
 import {
-  DEFAULT_APPROVAL_REPLY_DAYS,
-  hasRequisitionManagePermission,
-} from "./requisition-approval-workflow";
+  canRequisition,
+  requisitionActionNotRevoked,
+  requisitionCapabilities,
+  requisitionRank,
+  requisitionVisibleWhere,
+  scopeCoversRequisition,
+  seesWholeBranch,
+  toRequisitionViewer,
+} from "./requisition-access";
 import { getRequisition, notifyRequisitionCommentParticipants } from "./requisition-service";
 
 /**
@@ -38,7 +45,7 @@ type HistoryTone = "neutral" | "info" | "success" | "warning" | "danger";
 
 type StoredHistoryEntry = {
   at: string;
-  type: "reminder" | "revised_as" | "revised_from";
+  type: "reminder" | "revised_as" | "revised_from" | "disbursed";
   actor_user_id?: number | null;
   actor_name?: string | null;
   approver_name?: string | null;
@@ -79,6 +86,8 @@ export type OverviewRow = {
   last_reminder_at: string | null;
   revised_from: { id: number; generated_id: string } | null;
   revised_to: { id: number; generated_id: string } | null;
+  /** Set once an approved requisition is marked disbursed (status stays APPROVED; raw_status is DISBURSED). */
+  disbursed: { at: string; by: { id: number; name: string } | null } | null;
   attachment_count: number;
   comment_count: number;
   steps: OverviewStep[];
@@ -89,7 +98,7 @@ const iso = (value: Date | null | undefined) => (value ? value.toISOString() : n
 const toStatus = (raw: RequestApprovalStatus): RequisitionStatus =>
   raw === RequestApprovalStatus.Draft
     ? "DRAFT"
-    : raw === RequestApprovalStatus.APPROVED
+    : raw === RequestApprovalStatus.APPROVED || raw === RequestApprovalStatus.DISBURSED
       ? "APPROVED"
       : raw === RequestApprovalStatus.REJECTED
         ? "REJECTED"
@@ -103,7 +112,8 @@ const actorIdOf = (user: any): number => {
   return id;
 };
 
-const isManager = (user: any) => hasRequisitionManagePermission(user?.permissions);
+/** A Manage role (what `is_manager` has always meant to clients). */
+const isManager = (user: any) => requisitionRank(toRequisitionViewer(user)) >= 2;
 
 const parseHistory = (value: Prisma.JsonValue | null | undefined): StoredHistoryEntry[] =>
   Array.isArray(value) ? (value as unknown as StoredHistoryEntry[]) : [];
@@ -185,6 +195,9 @@ const loadStepLookups = async (requests: OverviewRequest[]) => {
       if (instance.position_id) positionIds.add(instance.position_id);
     }),
   );
+  requests.forEach((request) => {
+    if (request.disbursed_by_user_id) userIds.add(request.disbursed_by_user_id);
+  });
 
   const [users, positions] = await Promise.all([
     userIds.size
@@ -325,6 +338,17 @@ const buildRows = async (requests: OverviewRequest[]): Promise<OverviewRow[]> =>
       last_reminder_at: iso(request.last_reminder_at),
       revised_from: request.revised_from_id ? links.parents.get(request.revised_from_id) || null : null,
       revised_to: links.children.get(request.id) || null,
+      disbursed: request.disbursed_at
+        ? {
+            at: request.disbursed_at.toISOString(),
+            by: request.disbursed_by_user_id
+              ? {
+                  id: request.disbursed_by_user_id,
+                  name: lookups.users.get(request.disbursed_by_user_id)?.name || "Unknown",
+                }
+              : null,
+          }
+        : null,
       attachment_count: request._count.attachmentsList,
       comment_count: request._count.request_comments,
       steps,
@@ -340,8 +364,9 @@ const buildRows = async (requests: OverviewRequest[]): Promise<OverviewRow[]> =>
  * GET /requisitions/overview?scope=mine|all&branch_id=
  *
  * mine: everything the viewer raised, drafts included.
- * all: managers see every submitted requisition; approvers see the submitted
- * requisitions that include a step assigned to them (waiting, current or done).
+ * all: the submitted requisitions the viewer's Requisition scope reaches
+ * (whole branch, departments they lead, or their own), plus those that include
+ * a step assigned to them (waiting, current or done).
  */
 export const getRequisitionOverview = async (
   user: any,
@@ -349,6 +374,7 @@ export const getRequisitionOverview = async (
 ) => {
   const viewerId = actorIdOf(user);
   const manager = isManager(user);
+  const viewer = toRequisitionViewer(user);
   const scope = query.scope === "mine" ? "mine" : "all";
   const branchWhere = getBranchScopedWhere(query.branch_id) || {};
 
@@ -358,7 +384,7 @@ export const getRequisitionOverview = async (
       : {
           ...branchWhere,
           request_approval_status: { not: RequestApprovalStatus.Draft },
-          ...(manager ? {} : { approval_instances: { some: { approver_user_id: viewerId } } }),
+          ...requisitionVisibleWhere(viewer),
         };
 
   const [requests, assignedCount, settings] = await Promise.all([
@@ -374,6 +400,7 @@ export const getRequisitionOverview = async (
       user_id: viewerId,
       is_manager: manager,
       is_approver: assignedCount > 0 || configuredStepsAssigned,
+      can: requisitionCapabilities(viewer),
     },
     reply_days: settings.replyDays,
     lookback_days: settings.lookbackDays,
@@ -471,6 +498,8 @@ const buildHistory = (
       });
     } else if (entry.type === "revised_as") {
       out.push({ at: entry.at, text: `Revised as new draft ${entry.generated_id}`, tone: "info" });
+    } else if (entry.type === "disbursed") {
+      out.push({ at: entry.at, text: `Marked disbursed by ${entry.actor_name || "someone"}`, tone: "success" });
     }
   });
 
@@ -617,11 +646,12 @@ const pendingStepOf = async (requisitionId: number) => {
   return { pending: instances[index], previousActedAt: index > 0 ? instances[index - 1].acted_at : null };
 };
 
-/** POST /requisitions/send-reminder { requisition_id } — managers only. */
+/** POST /requisitions/send-reminder { requisition_id } — `Requisition.send_reminders`, within scope. */
 export const sendRequisitionReminder = async (payload: { requisition_id?: unknown }, user: any) => {
   const actorUserId = actorIdOf(user);
-  if (!isManager(user)) {
-    throw new UnauthorizedError("Only requisition managers can send reminders");
+  const viewer = toRequisitionViewer(user);
+  if (!canRequisition(viewer, "send_reminders")) {
+    throw new UnauthorizedError("Your role doesn't allow sending requisition reminders");
   }
 
   const requisitionId = Number(payload?.requisition_id);
@@ -638,10 +668,17 @@ export const sendRequisitionReminder = async (payload: { requisition_id?: unknow
       submitted_at: true,
       requisition_date: true,
       last_reminder_at: true,
+      user_id: true,
+      department_id: true,
+      branch_id: true,
       user: { select: { name: true } },
     },
   });
   if (!request) throw new NotFoundError("Requisition not found");
+  assertBranchAccessible(request.branch_id);
+  if (!scopeCoversRequisition(viewer, request)) {
+    throw new UnauthorizedError("You do not have permission to access this requisition");
+  }
   if (toStatus(request.request_approval_status) !== "PENDING") {
     throw new InputValidationError("Only requisitions in approval can be chased");
   }
@@ -700,7 +737,12 @@ export const runRequisitionAutoReminders = async (now: Date = new Date()) => {
       status: RequisitionApprovalInstanceStatus.PENDING,
       request: {
         request_approval_status: {
-          notIn: [RequestApprovalStatus.Draft, RequestApprovalStatus.APPROVED, RequestApprovalStatus.REJECTED],
+          notIn: [
+            RequestApprovalStatus.Draft,
+            RequestApprovalStatus.APPROVED,
+            RequestApprovalStatus.DISBURSED,
+            RequestApprovalStatus.REJECTED,
+          ],
         },
       },
     },
@@ -865,11 +907,12 @@ export const getRequisitionAnalytics = async (
   query: { from?: unknown; to?: unknown; bucket?: unknown; department_id?: unknown; branch_id?: unknown },
 ) => {
   const viewerId = actorIdOf(user);
-  const manager = isManager(user);
-  if (!manager) {
-    const assigned = await prisma.requisition_approval_instances.count({ where: { approver_user_id: viewerId } });
-    if (!assigned) throw new UnauthorizedError("Not authorized to view requisition analytics");
+  const viewer = toRequisitionViewer(user);
+  // The route requires Requisition view; the scope decides which rows count.
+  if (requisitionRank(viewer) < 1) {
+    throw new UnauthorizedError("Not authorized to view requisition analytics");
   }
+  const manager = seesWholeBranch(viewer);
 
   const now = new Date();
   const from = parseDay(query.from, "from") || new Date(Date.UTC(now.getUTCFullYear(), 0, 1));
@@ -889,10 +932,11 @@ export const getRequisitionAnalytics = async (
 
   const departmentId = Number(query.department_id);
   const departmentWhere = Number.isInteger(departmentId) && departmentId > 0 ? { department_id: departmentId } : {};
-  // Approvers who aren't managers only see requisitions that pass through their steps.
+  // Roles narrower than the whole branch see their scope plus the
+  // requisitions that pass through their steps.
   const branchWhere: Prisma.requestWhereInput = {
     ...(getBranchScopedWhere(query.branch_id) || {}),
-    ...(manager ? {} : { approval_instances: { some: { approver_user_id: viewerId } } }),
+    ...requisitionVisibleWhere(viewer),
   };
   const pendingStatuses = [RequestApprovalStatus.Awaiting_HOD_Approval, RequestApprovalStatus.Awaiting_Executive_Pastor_Approval];
 
@@ -1114,6 +1158,9 @@ export const addRequisitionComment = async (
   user: any,
 ) => {
   const actorUserId = actorIdOf(user);
+  if (!requisitionActionNotRevoked(toRequisitionViewer(user), "comment")) {
+    throw new UnauthorizedError("Your role doesn't allow commenting on requisitions");
+  }
   const requisitionId = Number(payload?.requisition_id);
   if (!Number.isInteger(requisitionId) || requisitionId <= 0) {
     throw new InputValidationError("requisition_id must be a positive integer");
@@ -1137,4 +1184,105 @@ export const addRequisitionComment = async (
   );
 
   return { id: created.id, created_at: created.created_at.toISOString() };
+};
+
+/* -------------------------------------------------------------------------- */
+/*                                  Disbursement                              */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * POST /requisitions/mark-disbursed { requisition_id }
+ * Records that an approved requisition has been paid out (or its items handed
+ * over): APPROVED -> DISBURSED with who and when. Needs
+ * `Requisition.mark_disbursed` (route) and the requisition within the role's
+ * scope; the requester can't mark their own.
+ */
+export const markRequisitionDisbursed = async (
+  payload: { requisition_id?: unknown },
+  user: any,
+) => {
+  const actorUserId = actorIdOf(user);
+  const viewer = toRequisitionViewer(user);
+  if (!canRequisition(viewer, "mark_disbursed")) {
+    throw new UnauthorizedError("Your role doesn't allow marking requisitions disbursed");
+  }
+  const requisitionId = Number(payload?.requisition_id);
+  if (!Number.isInteger(requisitionId) || requisitionId <= 0) {
+    throw new InputValidationError("requisition_id must be a positive integer");
+  }
+
+  const request = await prisma.request.findUnique({
+    where: { id: requisitionId },
+    select: {
+      id: true,
+      request_id: true,
+      user_id: true,
+      department_id: true,
+      branch_id: true,
+      request_approval_status: true,
+    },
+  });
+  if (!request) throw new NotFoundError("Requisition not found");
+  assertBranchAccessible(request.branch_id);
+  if (!scopeCoversRequisition(viewer, request)) {
+    throw new UnauthorizedError("You do not have permission to access this requisition");
+  }
+  if (request.user_id === actorUserId) {
+    throw new UnauthorizedError("Someone else has to mark your own requisition disbursed");
+  }
+  if (request.request_approval_status === RequestApprovalStatus.DISBURSED) {
+    throw new InputValidationError("This requisition is already marked disbursed");
+  }
+  if (request.request_approval_status !== RequestApprovalStatus.APPROVED) {
+    throw new InputValidationError("Only approved requisitions can be marked disbursed");
+  }
+
+  const actor = await prisma.user.findUnique({ where: { id: actorUserId }, select: { name: true } });
+  const now = new Date();
+
+  await prisma.$transaction(async (tx) => {
+    // Guard against a concurrent mark: only an APPROVED row moves.
+    const moved = await tx.request.updateMany({
+      where: { id: requisitionId, request_approval_status: RequestApprovalStatus.APPROVED },
+      data: {
+        request_approval_status: RequestApprovalStatus.DISBURSED,
+        disbursed_by_user_id: actorUserId,
+        disbursed_at: now,
+      },
+    });
+    if (!moved.count) {
+      throw new InputValidationError("This requisition is already marked disbursed");
+    }
+    await appendHistoryTx(tx, requisitionId, {
+      at: now.toISOString(),
+      type: "disbursed",
+      actor_user_id: actorUserId,
+      actor_name: actor?.name || null,
+    });
+  });
+
+  await notificationService
+    .createManyInAppNotifications([
+      {
+        type: "requisition.disbursed",
+        title: "Requisition disbursed",
+        body: `${request.request_id} has been marked disbursed by ${actor?.name || "the finance team"}.`,
+        recipientUserId: request.user_id,
+        actorUserId,
+        entityType: "REQUISITION",
+        entityId: String(requisitionId),
+        actionUrl: `/home/requests/${Buffer.from(String(requisitionId), "utf8").toString("base64")}`,
+        priority: "MEDIUM",
+        dedupeKey: `requisition:${requisitionId}:disbursed`,
+      },
+    ])
+    .catch((error: any) =>
+      console.error("[ERROR] Requisition disbursed notification failed", error?.message || String(error)),
+    );
+
+  return {
+    requisition_id: requisitionId,
+    raw_status: RequestApprovalStatus.DISBURSED,
+    disbursed: { at: now.toISOString(), by: { id: actorUserId, name: actor?.name || "Unknown" } },
+  };
 };

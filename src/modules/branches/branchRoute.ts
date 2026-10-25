@@ -8,27 +8,35 @@ import {
   updateBranch,
 } from "./branchController";
 import { Permissions } from "../../middleWare/authorization";
+import { OrgWideRule, requireOrgWide } from "../settings/orgWideAccess";
 
 const permissions = new Permissions();
 
 export const branchRouter = Router();
 
 // Listing stays open to every signed-in user (pickers, member sign-up flows).
-// Changing branches is a Settings action, limited to the caller's branches.
+// Changing branches needs Settings.manage_branches (on purpose) in every branch
+// the caller holds a role in. Roles saved before actions keep the Settings
+// rule they had: manage (delete: Full) in the selected branch.
+const manageBranches = (legacyLevel: "manage" | "admin"): OrgWideRule => ({
+  action: ["Settings", "manage_branches"],
+  legacy: { domain: "Settings", level: legacyLevel, everyBranch: false },
+});
+const BRANCH_FORBIDDEN = "Not authorized to manage branches";
 branchRouter.get("/list-branches", permissions.protect, listBranches);
 branchRouter.post(
   "/create-branch",
-  [permissions.protect, permissions.can_manage_settings],
+  requireOrgWide(manageBranches("manage"), BRANCH_FORBIDDEN),
   createBranch,
 );
 branchRouter.put(
   "/update-branch",
-  [permissions.protect, permissions.can_manage_settings],
+  requireOrgWide(manageBranches("manage"), BRANCH_FORBIDDEN),
   updateBranch,
 );
 branchRouter.put(
   "/set-default-branch",
-  [permissions.protect, permissions.can_manage_settings],
+  requireOrgWide(manageBranches("manage"), BRANCH_FORBIDDEN),
   setDefaultBranch,
 );
 branchRouter.get(
@@ -38,6 +46,6 @@ branchRouter.get(
 );
 branchRouter.delete(
   "/delete-branch",
-  [permissions.protect, permissions.can_delete_settings],
+  requireOrgWide(manageBranches("admin"), BRANCH_FORBIDDEN),
   deleteBranch,
 );

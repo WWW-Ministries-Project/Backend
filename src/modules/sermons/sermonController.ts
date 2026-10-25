@@ -13,13 +13,13 @@ const toPositiveInt = (value: unknown): number | null => {
 const getActorUserId = (req: Request) => toPositiveInt((req as any)?.user?.id);
 
 /**
- * Whether this request may see unpublished sermons. Derived from the
- * attach_sermon_management probe, never from a query parameter — a member
- * cannot opt into drafts. A manager may still narrow to published-only by
- * asking for it.
+ * Whether this request may see unpublished sermons. Derived from
+ * `Sermons.view_drafts` (attachSermonDraftAccess), never from a query
+ * parameter — a member cannot opt into drafts. Someone who may see drafts can
+ * still narrow to published-only by asking for it.
  */
 const isPublishedOnly = (req: Request): boolean =>
-  !(req as any).canManageSermons ||
+  !(req as any).canViewSermonDrafts ||
   String(req.query?.published_only ?? "") === "true";
 
 const getStatusCode = (error: unknown): number | null => {

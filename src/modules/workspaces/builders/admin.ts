@@ -39,9 +39,9 @@ type RagCell = "ok" | "sub" | "ret" | "miss" | null;
 
 export const buildAdmin: WorkspaceBuilder = async (ctx) => {
   const [canVisitorsManage, canRides, canMarket] = await Promise.all([
-    ctx.can("Visitors", "manage"),
-    // Ride office overview is for Membership_Management managers (rides RIDE_SAFETY_DOMAIN).
-    ctx.can("Membership_Management", "manage"),
+    ctx.action("Visitors", "assign_responsible"),
+    // Ride office overview is for Rides managers (rides RIDE_SAFETY_DOMAIN).
+    ctx.can("Rides", "manage"),
     ctx.can("Marketplace", "view"),
   ]);
 
@@ -189,7 +189,8 @@ const requisitionPipeline = async (ctx: WorkspaceContext) => {
   const draftWhere: Prisma.requestWhereInput = { ...scope, request_approval_status: RequestApprovalStatus.Draft };
   const approvedWhere: Prisma.requestWhereInput = {
     ...scope,
-    request_approval_status: RequestApprovalStatus.APPROVED,
+    // Disbursed requisitions were approved first.
+    request_approval_status: { in: [RequestApprovalStatus.APPROVED, RequestApprovalStatus.DISBURSED] },
     OR: [
       { approval_instances: { some: { status: RequisitionApprovalInstanceStatus.APPROVED, acted_at: { gte: from, lte: to } } } },
       { approval_instances: { none: {} }, request_approvals: { is: { ps_approval_date: { gte: from, lte: to } } } },

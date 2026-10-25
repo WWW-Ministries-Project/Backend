@@ -1,3 +1,4 @@
+import { publicProductWhere } from "../orders/marketplaceAccess";
 import { prisma } from "../../Models/context";
 import {
   CreateProductInput,
@@ -345,9 +346,10 @@ export class ProductService {
     return this.updateDeletedOnProduct(product_id, false);
   }
 
-  async getProductById(id: number) {
+  /** `staff`: Marketplace staff, who also see drafts; everyone else sees live, published products only. */
+  async getProductById(id: number, staff = false) {
     const product = await prisma.products.findFirst({
-      where: { id, deleted: false },
+      where: staff ? { id, deleted: false } : { id, ...publicProductWhere() },
       include: this._include,
     });
 
@@ -383,16 +385,17 @@ export class ProductService {
     });
   }
 
-  async listProducts(filters?: ProductFilters) {
+  async listProducts(filters?: ProductFilters, staff = false) {
     const now = new Date();
 
     const where = {
+      ...(staff ? {} : { OR: publicProductWhere().OR }),
       name: filters?.name
         ? {
             contains: filters.name,
           }
         : undefined,
-      deleted: filters?.deleted || false,
+      deleted: (staff && filters?.deleted) || false,
       status: {
         not: "draft",
         equals: filters?.status,
@@ -446,10 +449,10 @@ export class ProductService {
     return transformed;
   }
 
-  async listProductsByMarketId(market_id: number, filters?: ProductFilters) {
+  async listProductsByMarketId(market_id: number, filters?: ProductFilters, staff = false) {
     //to fix the filters later
     const all_products = await prisma.products.findMany({
-      where: { deleted: false, market_id },
+      where: staff ? { deleted: false, market_id } : { ...publicProductWhere(), market_id },
       include: {
         product_colours: {
           include: {

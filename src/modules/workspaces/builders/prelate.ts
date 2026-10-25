@@ -10,6 +10,7 @@ import { computeReport } from "../../departmentReports/departmentReportService";
 import { addDays, parsePeriod, periodOptions, shortDate } from "../../departmentReports/period";
 import { REPORT_MAP, ReportDefinition } from "../../departmentReports/registry";
 import { nf, round1 } from "../../departmentReports/sections";
+import { canSignOffDeptReports } from "../access";
 import type { ReportKey, ReportResult } from "../../departmentReports/types";
 import {
   buildAttendanceVisitorCountsMap,
@@ -58,7 +59,8 @@ export const buildPrelate: WorkspaceBuilder = async (ctx) => {
     ctx.can("Life Center", "view"),
     ctx.can("Financials", "view"),
     ctx.can("Visitors", "view"),
-    ctx.can("Reports", "admin"),
+    // Same sign-off rule as the department reports module.
+    ctx.can("Reports", "view").then(async (view) => view && canSignOffDeptReports(await ctx.grants())),
   ]);
 
   // Shared reads, computed at most once per request.

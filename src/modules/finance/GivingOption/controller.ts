@@ -5,7 +5,9 @@ import {
   parsePagination,
   sendFinanceError,
 } from "../common";
-import { GivingOptionService } from "./service";
+import { GivingOptionService, type GivingOptionViewer } from "./service";
+import { getRequestAccess } from "../../../middleWare/authorization";
+import { actionAllowed } from "../../../permissions/access";
 import { validateGivingOptionPayload } from "./validation";
 
 const givingOptionService = new GivingOptionService();
@@ -15,6 +17,15 @@ const getActorUserId = (req: Request): number | undefined => {
   const parsed = Number(rawId);
 
   return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
+};
+
+/** What the caller's role lets them see and change on settlement accounts. */
+const getViewer = (req: Request): GivingOptionViewer => {
+  const permissions = getRequestAccess(req)?.permissions ?? {};
+  return {
+    fullAccountNumber: actionAllowed(permissions, "Giving", "view_full_account_number"),
+    manageSettlementAccount: actionAllowed(permissions, "Giving", "manage_settlement_account"),
+  };
 };
 
 const parseBoolean = (value: unknown): boolean =>
@@ -27,6 +38,7 @@ export class GivingOptionController {
       const givingOption = await givingOptionService.create(
         payload,
         getActorUserId(req),
+        getViewer(req),
       );
 
       return res.status(201).json({
@@ -45,6 +57,7 @@ export class GivingOptionController {
         pagination,
         req.query?.branch_id,
         parseBoolean(req.query?.include_archived),
+        getViewer(req),
       );
 
       return res.status(200).json({
@@ -69,7 +82,7 @@ export class GivingOptionController {
         throw new FinanceHttpError(400, "Invalid id parameter");
       }
 
-      const givingOption = await givingOptionService.findOne(id);
+      const givingOption = await givingOptionService.findOne(id, getViewer(req));
 
       return res.status(200).json({
         message: "Success",
@@ -84,7 +97,7 @@ export class GivingOptionController {
     try {
       const id = parseIdFromQuery(req);
       const payload = validateGivingOptionPayload(req.body);
-      const givingOption = await givingOptionService.update(id, payload);
+      const givingOption = await givingOptionService.update(id, payload, getViewer(req));
 
       return res.status(200).json({
         message: "Giving option updated successfully",
@@ -98,7 +111,7 @@ export class GivingOptionController {
   async archive(req: Request, res: Response): Promise<Response> {
     try {
       const id = parseIdFromQuery(req);
-      const givingOption = await givingOptionService.archive(id);
+      const givingOption = await givingOptionService.archive(id, getViewer(req));
 
       return res.status(200).json({
         message: givingOption.is_synced
@@ -114,7 +127,7 @@ export class GivingOptionController {
   async restore(req: Request, res: Response): Promise<Response> {
     try {
       const id = parseIdFromQuery(req);
-      const givingOption = await givingOptionService.restore(id);
+      const givingOption = await givingOptionService.restore(id, getViewer(req));
 
       return res.status(200).json({
         message: "Giving option restored successfully",

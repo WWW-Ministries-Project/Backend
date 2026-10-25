@@ -15,6 +15,8 @@ import {
   scopeAllows,
   toDateKey,
 } from "./lifeCenterHelpers";
+import { assertLifeCenterReachable } from "./lifeCenterAccess";
+import { AppError } from "../../utils/custom-error-handlers";
 
 const MAX_TAKE = 500;
 
@@ -79,7 +81,7 @@ const mapMeeting = (meeting: any) => ({
 });
 
 const sendError = (res: Response, error: any, fallbackStatus: number, message: string) => {
-  if (isLifeCenterHttpError(error)) {
+  if (isLifeCenterHttpError(error) || error instanceof AppError) {
     return res.status(error.statusCode).json({ message: error.message });
   }
   return res.status(fallbackStatus).json({ message, error: error?.message });
@@ -137,6 +139,7 @@ export class LifeCenterMeetingController {
           .status(401)
           .json({ message: "Not authorized to manage this life center" });
       }
+      await assertLifeCenterReachable(req, lifeCenterId);
 
       const newFirstTimers = parseNewFirstTimers(req.body?.newFirstTimers);
       const firstTimerError = validateNewFirstTimers(newFirstTimers);
@@ -197,6 +200,10 @@ export class LifeCenterMeetingController {
           .status(401)
           .json({ message: "Not authorized to modify this meeting" });
       }
+      await assertLifeCenterReachable(req, existing.lifeCenterId);
+      if (lifeCenterId !== existing.lifeCenterId) {
+        await assertLifeCenterReachable(req, lifeCenterId);
+      }
 
       const newFirstTimers = parseNewFirstTimers(req.body?.newFirstTimers);
       const firstTimerError = validateNewFirstTimers(newFirstTimers);
@@ -246,6 +253,7 @@ export class LifeCenterMeetingController {
           .status(401)
           .json({ message: "Not authorized to delete this meeting" });
       }
+      await assertLifeCenterReachable(req, existing.lifeCenterId);
 
       await lifeCenterMeetingService.deleteMeeting(id);
       return res.status(200).json({ message: "Meeting deleted" });
@@ -271,12 +279,11 @@ export class LifeCenterMeetingController {
           .status(401)
           .json({ message: "Not authorized to view this meeting" });
       }
+      await assertLifeCenterReachable(req, meeting.lifeCenterId);
 
       return res.status(200).json({ message: "OK", data: mapMeeting(meeting) });
     } catch (error: any) {
-      return res
-        .status(500)
-        .json({ message: "Error fetching meeting", error: error.message });
+      return sendError(res, error, 500, "Error fetching meeting");
     }
   }
 
@@ -291,10 +298,12 @@ export class LifeCenterMeetingController {
           .status(401)
           .json({ message: "Not authorized to view this life center's data" });
       }
+      if (lifeCenterId) await assertLifeCenterReachable(req, lifeCenterId);
 
       const { total, meetings } = await lifeCenterMeetingService.getMeetings({
         lifeCenterId,
         lifeCenterIds: isMemberScope(scope) ? scope!.lifeCenterIds : undefined,
+        branchId: req.query?.branch_id,
         skip: (page - 1) * take,
         take,
       });
@@ -308,9 +317,7 @@ export class LifeCenterMeetingController {
         data: meetings.map(mapMeeting),
       });
     } catch (error: any) {
-      return res
-        .status(500)
-        .json({ message: "Error fetching meetings", error: error.message });
+      return sendError(res, error, 500, "Error fetching meetings");
     }
   }
 
@@ -331,6 +338,7 @@ export class LifeCenterMeetingController {
           .status(401)
           .json({ message: "Not authorized to view this life center's data" });
       }
+      await assertLifeCenterReachable(req, lifeCenterId);
 
       const file = await exportMeetings({
         lifeCenterId,
@@ -373,16 +381,14 @@ export class LifeCenterMeetingController {
           .status(401)
           .json({ message: "Not authorized to view this life center's data" });
       }
+      await assertLifeCenterReachable(req, lifeCenterId);
 
       const souls = await lifeCenterMeetingService.getEligibleFirstTimers(
         lifeCenterId,
       );
       return res.status(200).json({ message: "OK", data: souls });
     } catch (error: any) {
-      return res.status(500).json({
-        message: "Error fetching eligible first-timers",
-        error: error.message,
-      });
+      return sendError(res, error, 500, "Error fetching eligible first-timers");
     }
   }
 }

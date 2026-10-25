@@ -24,6 +24,7 @@ import { loadReportConfig } from "../../settings/reportConfigService";
 import type { KpiDTO, PeriodType, ReportResult } from "../../departmentReports/types";
 import type { Kpi, QueueItem, WorkspaceContext } from "../types";
 import { deltaPct } from "../widgetKit";
+import { switchedOffEverywhere } from "../access";
 
 export const DAY_MS = 86_400_000;
 export const QUEUE_LIMIT = 6;
@@ -165,6 +166,10 @@ export const loadStepNames = async (userIds: number[], positionIds: number[]) =>
 
 /** Requisitions whose current (PENDING) approval step is the caller's. */
 export const requisitionsAtMyStep = async (ctx: WorkspaceContext, limit = QUEUE_LIMIT) => {
+  // The approval step names the approver; a role can only switch Requisition.approve off.
+  if (switchedOffEverywhere(await ctx.grants(), "Requisition", "approve")) {
+    return { total: 0, items: [] as QueueItem[] };
+  }
   const where: Prisma.requestWhereInput = {
     ...branchWhere(ctx),
     request_approval_status: { in: PENDING_REQUEST_STATUSES },
@@ -416,11 +421,18 @@ export const pendingAppointmentsForMe = async (ctx: WorkspaceContext, limit = QU
 
 /**
  * Pending department join requests the caller may decide: all of them with
- * Membership_Management manage, otherwise those for departments they head
+ * Membership_Management.decide_join_request, otherwise those for departments they head
  * (same rule as departmentJoinRequests canActOnDepartment).
  */
 export const pendingJoinRequests = async (ctx: WorkspaceContext, limit = QUEUE_LIMIT) => {
-  const manageAll = await ctx.can("Membership_Management", "manage");
+  const [manageAll, grants] = await Promise.all([
+    ctx.action("Membership_Management", "decide_join_request"),
+    ctx.grants(),
+  ]);
+  // Department heads decide for their departments unless the role switched the action off.
+  if (!manageAll && switchedOffEverywhere(grants, "Membership_Management", "decide_join_request")) {
+    return { total: 0, items: [] as QueueItem[] };
+  }
   const where: Prisma.department_join_requestWhereInput = {
     status: "PENDING",
     ...branchWhere(ctx),

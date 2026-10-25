@@ -1,4 +1,5 @@
 import { Prisma } from "@prisma/client";
+import { getBranchScopedWhere } from "../branches/branchService";
 import { prisma } from "../../Models/context";
 import {
   LifeCenterHttpError,
@@ -258,14 +259,18 @@ export class LifeCenterMeetingService {
   async getMeetings(filter: {
     lifeCenterId?: number;
     lifeCenterIds?: number[];
+    branchId?: unknown;
     skip: number;
     take: number;
   }) {
+    const branchWhere = getBranchScopedWhere(filter.branchId);
     const where: Prisma.life_center_meetingWhereInput = filter.lifeCenterId
       ? { lifeCenterId: filter.lifeCenterId }
       : filter.lifeCenterIds
         ? { lifeCenterId: { in: filter.lifeCenterIds } }
-        : {};
+        : branchWhere
+          ? { lifeCenter: branchWhere }
+          : {};
 
     const [total, meetings] = await Promise.all([
       prisma.life_center_meeting.count({ where }),

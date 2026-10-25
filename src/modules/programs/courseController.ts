@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import { CourseService } from "./courseService";
+import { somProgramIds } from "./somAccess";
 import { AppError } from "../../utils/custom-error-handlers";
 import {
   buildRoleEligibilityFailureResponse,
@@ -81,7 +82,12 @@ export class CourseController {
         take = parsedTake;
       }
 
-      const courses = await courseService.getAllCourses({ cohortId, page, take });
+      const courses = await courseService.getAllCourses({
+        cohortId,
+        page,
+        take,
+        programIds: await somProgramIds(req),
+      });
       return res.status(200).json({ data: courses });
     } catch (error: any) {
       return res

@@ -53,7 +53,9 @@ export const validateGivingOptionPayload = (
   const accountNumber = requireString(payload.account_number, "account_number");
   const accountName = requireString(payload.account_name, "account_name");
 
-  if (!/^[0-9]{5,20}$/.test(accountNumber)) {
+  // A masked number ("••••1234") is accepted here; the service swaps it for
+  // the stored one when it matches, and rejects it otherwise.
+  if (!/^[0-9]{5,20}$/.test(accountNumber) && !/^•+[0-9]{1,4}$/.test(accountNumber)) {
     throw new FinanceHttpError(
       422,
       "account_number must be between 5 and 20 digits",

@@ -1,4 +1,5 @@
 import { prisma } from "../../Models/context";
+import { getRelationBranchScopedWhere } from "../branches/branchService";
 
 export class CohortService {
   async createCohort(programId: number, data: any) {
@@ -25,7 +26,7 @@ export class CohortService {
     return cohorts.map(addDeadlineFlag);
   }
 
-  async getAllCohorts(filters?: { page?: number; take?: number }) {
+  async getAllCohorts(filters?: { page?: number; take?: number; programIds?: number[] }) {
     const shouldPaginate =
       typeof filters?.page === "number" && typeof filters?.take === "number";
     const skip = shouldPaginate ? (filters.page! - 1) * filters.take! : undefined;
@@ -33,6 +34,10 @@ export class CohortService {
     const cohorts = await prisma.cohort.findMany({
       skip,
       take: shouldPaginate ? filters?.take : undefined,
+      where: {
+        ...(getRelationBranchScopedWhere(undefined, "program") ?? {}),
+        ...(filters?.programIds ? { programId: { in: filters.programIds } } : {}),
+      },
       include: { program: true, courses: true },
     });
     return cohorts.map(addDeadlineFlag);

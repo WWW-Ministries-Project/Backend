@@ -1,24 +1,63 @@
 import { Request, Response } from "express";
 import { ProductService } from "./productService";
+import { prisma } from "../../Models/context";
+import { BranchAccessError } from "../branches/branchService";
+import {
+  assertMarketBranchAccessible,
+  isCatalogueStaff,
+  marketplaceActionAllowed,
+} from "../orders/marketplaceAccess";
+
+const failStatus = (error: unknown) => (error instanceof BranchAccessError ? 403 : 500);
+const forbidden = (res: Response, message: string) =>
+  res.status(403).json({ message, data: null, code: "ACTION_FORBIDDEN" });
+
+/** The market a product sits in, for branch checks on by-id writes. */
+const productMarketId = async (productId: number) =>
+  (
+    await prisma.products.findUnique({
+      where: { id: productId },
+      select: { market_id: true, status: true },
+    })
+  ) ?? null;
 
 const productService = new ProductService();
 
 export class ProductController {
   async createProduct(req: Request, res: Response) {
     try {
+      if (req.body?.status === "published" && !marketplaceActionAllowed(req, "publish_product")) {
+        return forbidden(res, "You can't publish products. Save it as a draft instead");
+      }
+      await assertMarketBranchAccessible(Number(req.body?.market_id));
       const product = await productService.createProduct(req.body);
       return res
         .status(200)
         .json({ message: "Product Created Successfully", data: product });
     } catch (error: any) {
       return res
-        .status(500)
+        .status(failStatus(error))
         .json({ message: "Failed to create product: " + error.message });
     }
   }
 
   async updateProduct(req: Request, res: Response) {
     try {
+      const existing = await productMarketId(Number(req.body?.id));
+      if (
+        req.body?.status === "published" &&
+        existing?.status !== "published" &&
+        !marketplaceActionAllowed(req, "publish_product")
+      ) {
+        return forbidden(res, "You can't publish products. Keep it as a draft instead");
+      }
+      if (req.body?.deleted === true && !marketplaceActionAllowed(req, "delete")) {
+        return forbidden(res, "You can't delete products");
+      }
+      await assertMarketBranchAccessible(existing?.market_id);
+      if (req.body?.market_id !== undefined) {
+        await assertMarketBranchAccessible(Number(req.body.market_id));
+      }
       const product = await productService.updateProduct(req.body);
       return res
         .status(200)
@@ -26,7 +65,7 @@ export class ProductController {
     } catch (error: any) {
       console.log(error);
       return res
-        .status(500)
+        .status(failStatus(error))
         .json({ message: "Failed to update product: " + error.message });
     }
   }
@@ -47,6 +86,9 @@ export class ProductController {
 
   async deleteProduct(req: Request, res: Response) {
     try {
+      await assertMarketBranchAccessible(
+        (await productMarketId(Number(req.query.product_id)))?.market_id,
+      );
       const product = await productService.softDeleteProduct(
         Number(req.query.product_id),
       );
@@ -55,13 +97,16 @@ export class ProductController {
         .json({ message: "Product Deleted Successfully", data: product });
     } catch (error: any) {
       return res
-        .status(500)
+        .status(failStatus(error))
         .json({ message: "Failed to delete product: " + error.message });
     }
   }
 
   async restoreProduct(req: Request, res: Response) {
     try {
+      await assertMarketBranchAccessible(
+        (await productMarketId(Number(req.query.product_id)))?.market_id,
+      );
       const product = await productService.restoreProduct(
         Number(req.query.product_id),
       );
@@ -70,14 +115,17 @@ export class ProductController {
         .json({ message: "Product Restored Successfully", data: product });
     } catch (error: any) {
       return res
-        .status(500)
+        .status(failStatus(error))
         .json({ message: "Failed to restore product: " + error.message });
     }
   }
 
   async getProductById(req: Request, res: Response) {
     try {
-      const product = await productService.getProductById(Number(req.query.id));
+      const product = await productService.getProductById(
+        Number(req.query.id),
+        await isCatalogueStaff(req),
+      );
       return res.status(200).json({ data: product });
     } catch (error: any) {
       return res
@@ -102,7 +150,10 @@ export class ProductController {
 
   async listProducts(req: Request, res: Response) {
     try {
-      const product = await productService.listProducts(req.body.filters);
+      const product = await productService.listProducts(
+        req.body?.filters,
+        await isCatalogueStaff(req),
+      );
       return res.status(200).json({ data: product });
     } catch (error: any) {
       return res
@@ -114,10 +165,11 @@ export class ProductController {
   async listProductsByMarketId(req: Request, res: Response) {
     try {
       const { market_id } = req.query;
-      const { filters } = req.body;
+      const filters = req.body?.filters;
       const product = await productService.listProductsByMarketId(
         Number(market_id),
         filters,
+        await isCatalogueStaff(req),
       );
       return res.status(200).json({ data: product });
     } catch (error: any) {

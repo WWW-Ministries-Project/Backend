@@ -10,10 +10,19 @@ import {
   getEventReportOverview,
   listEligibleEventReports,
 } from "./eventReportService";
+import { getRequestAccess } from "../../middleWare/authorization";
+import { UnauthorizedError } from "../../utils/custom-error-handlers";
 import {
   getApprovalConfigByModule,
   upsertRequisitionApprovalConfig,
 } from "../requisitions/requisition-approval-workflow";
+
+/** The caller and their live permissions (set by the route's permission guard). */
+const viewerOf = (req: Request) => {
+  const access = getRequestAccess(req);
+  if (!access) throw new UnauthorizedError("Authenticated user not found");
+  return { userId: access.userId, permissions: access.permissions };
+};
 
 /** Event report sign-off settings. Stored with the requisition approval configs. */
 export const getEventReportApprovalConfigHandler = async (
@@ -82,7 +91,7 @@ export const getEventReportDetailHandler = async (
   req: Request,
   res: Response,
 ) => {
-  const data = await getEventReportDetail(req.query, (req as any).user);
+  const data = await getEventReportDetail(req.query, viewerOf(req));
   res.status(200).json({
     message: "Operation successful",
     ...data,
@@ -102,28 +111,19 @@ export const generateServiceSummaryReportHandler = async (
   res.status(200).send(file.buffer);
 };
 
-/** Sign-off (Reports admin or Events admin; checked in the service). */
+/** Sign-off: the configured chain's current step, checked in the service. */
 export const approveEventReportHandler = async (req: Request, res: Response) => {
-  const data = await approveEventReport(
-    { ...req.query, ...req.body },
-    (req as any).user,
-  );
+  const data = await approveEventReport({ ...req.query, ...req.body }, viewerOf(req));
   res.status(200).json({ message: "Report approved", ...data });
 };
 
 export const returnEventReportHandler = async (req: Request, res: Response) => {
-  const data = await returnEventReport(
-    { ...req.query, ...req.body },
-    (req as any).user,
-  );
+  const data = await returnEventReport({ ...req.query, ...req.body }, viewerOf(req));
   res.status(200).json({ message: "Report returned", ...data });
 };
 
 export const resubmitEventReportHandler = async (req: Request, res: Response) => {
-  const data = await resubmitEventReport(
-    { ...req.query, ...req.body },
-    (req as any).user,
-  );
+  const data = await resubmitEventReport({ ...req.query, ...req.body }, viewerOf(req));
   res.status(200).json({ message: "Report resubmitted", ...data });
 };
 

@@ -145,7 +145,9 @@ export const currentStepSince = (r: RequisitionRow) => {
 };
 
 export const requisitionStatusPill = (s: RequestApprovalStatus): Pill =>
-  s === RequestApprovalStatus.APPROVED
+  s === RequestApprovalStatus.DISBURSED
+    ? pill("success", "Disbursed")
+    : s === RequestApprovalStatus.APPROVED
     ? pill("success", "Approved")
     : s === RequestApprovalStatus.REJECTED
       ? pill("danger", "Rejected")

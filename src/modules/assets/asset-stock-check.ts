@@ -5,7 +5,11 @@ import {
   NotFoundError,
   UnauthorizedError,
 } from "../../utils/custom-error-handlers";
-import { getBranchScopedWhere, resolveBranchIdOrDefault } from "../branches/branchService";
+import {
+  assertBranchAccessible,
+  getBranchScopedWhere,
+  resolveBranchIdOrDefault,
+} from "../branches/branchService";
 import { notificationService } from "../notifications/notificationService";
 import {
   ASSET_CATEGORIES,
@@ -233,6 +237,7 @@ const loadCheck = async (checkId: unknown, branchId?: unknown) => {
   const check = await prisma.asset_stock_check.findUnique({ where: { id }, include: CHECK_INCLUDE });
   const branch = toPositiveInt(branchId);
   if (!check || (branch && check.branch_id && check.branch_id !== branch)) throw new NotFoundError("Stock check not found");
+  assertBranchAccessible(check.branch_id);
   return check;
 };
 /** The open check named in the body, in the active branch. */
@@ -241,11 +246,18 @@ const loadOpenCheck = async (req: any) => {
   if (check.status !== asset_stock_check_status.OPEN) throw new InputValidationError("This stock check is closed.");
   return check;
 };
-const requireAdmin = (access: AssetAccess) => {
-  if (!access.canManage) throw new UnauthorizedError("Only the assets administrator can do this.");
+/** Branch-wide asset managers run stock checks; each step is its own action. */
+const requireAdmin = (access: AssetAccess, action: string) => {
+  if (!access.canManage || !access.can(action)) {
+    throw new UnauthorizedError("Only the assets administrator can do this.");
+  }
 };
+/**
+ * Department members count their own department's assets with no Asset role
+ * (a relationship rule); a role's reach beyond that needs `Asset.count`.
+ */
 const canCount = (access: AssetAccess, key: number) =>
-  access.canManage || (key > 0 && access.departmentIds.includes(key));
+  (access.canManage && access.can("count")) || (key > 0 && access.departmentIds.includes(key));
 const isSubmitted = (check: CheckRecord, key: number) =>
   Boolean(check.departments.find((row) => row.department_key === key)?.submitted_at);
 
@@ -390,7 +402,7 @@ export const getStockCheckDetail = async (req: any) => {
 /** POST /assets/stock-checks/start { name, department_key?, category?, due_date, branch_id? } */
 export const startStockCheck = async (req: any) => {
   const access = accessOf(req);
-  requireAdmin(access);
+  requireAdmin(access, "stock_check");
   const actor = await actorOf(req.user);
   const body = req.body || {};
   const name = String(body.name || "").trim();
@@ -489,7 +501,7 @@ export const startStockCheck = async (req: any) => {
 /** POST /assets/stock-checks/cancel { check_id } — discards counts; the register is untouched. */
 export const cancelStockCheck = async (req: any) => {
   const access = accessOf(req);
-  requireAdmin(access);
+  requireAdmin(access, "stock_check");
   const actor = await actorOf(req.user);
   const check = await loadOpenCheck(req);
   const depts = await departmentMap(check.items.map(keyOfItem));
@@ -593,7 +605,7 @@ export const markStockCheckItems = async (req: any) => {
 /** POST /assets/stock-checks/set-fix { check_id, asset_id | extra_id, fix } — administrator's decision. */
 export const setStockCheckFix = async (req: any) => {
   const access = accessOf(req);
-  requireAdmin(access);
+  requireAdmin(access, "reconcile");
   const check = await loadOpenCheck(req);
   const fix = String(req.body?.fix || "");
   const extraId = toPositiveInt(req.body?.extra_id);
@@ -735,7 +747,7 @@ const remindKeys = async (check: CheckRecord, keys: number[], actor: { id: numbe
 /** POST /assets/stock-checks/remind { check_id, department_keys? } — all unsubmitted when omitted. */
 export const remindStockCheckCounters = async (req: any) => {
   const access = accessOf(req);
-  requireAdmin(access);
+  requireAdmin(access, "stock_check");
   const actor = await actorOf(req.user);
   const check = await loadOpenCheck(req);
   const all = Array.from(new Set(check.items.map(keyOfItem)));
@@ -749,7 +761,7 @@ export const remindStockCheckCounters = async (req: any) => {
 /** POST /assets/stock-checks/recount { check_id, asset_id } — back on the counter's list, their count reopened. */
 export const requestStockCheckRecount = async (req: any) => {
   const access = accessOf(req);
-  requireAdmin(access);
+  requireAdmin(access, "request_recount");
   const actor = await actorOf(req.user);
   const check = await loadOpenCheck(req);
   const item = check.items.find((row) => row.asset_id === toPositiveInt(req.body?.asset_id));
@@ -784,7 +796,7 @@ export const requestStockCheckRecount = async (req: any) => {
 /** POST /assets/stock-checks/mark-rest-missing { check_id } — uncounted → not found, "check again next time". */
 export const markRestMissing = async (req: any) => {
   const access = accessOf(req);
-  requireAdmin(access);
+  requireAdmin(access, "reconcile");
   const actor = await actorOf(req.user);
   const check = await loadOpenCheck(req);
   const ids = check.items.filter((item) => !isDone(item)).map((item) => item.id);
@@ -812,7 +824,7 @@ export const markRestMissing = async (req: any) => {
 /** POST /assets/stock-checks/close { check_id } — applies every decision to the register. */
 export const closeStockCheck = async (req: any) => {
   const access = accessOf(req);
-  requireAdmin(access);
+  requireAdmin(access, "stock_check");
   const actor = await actorOf(req.user);
   const check = await loadOpenCheck(req);
   const left = check.items.filter((item) => !isDone(item)).length;

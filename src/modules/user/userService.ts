@@ -434,7 +434,7 @@ export class UserService {
       throw new Error("User not found");
     }
 
-    const { password: _, user_info, ...userWithoutPassword } = savedUser;
+    const { user_info, ...userWithoutPassword } = savedUser;
     const photo = user_info?.photo || null;
 
     let savedFamily = [];

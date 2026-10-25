@@ -9,10 +9,15 @@ export const communityRouter = Router();
 
 // Every Community endpoint needs a signed-in member. The probe never rejects:
 // it records the caller's Community view/manage access for the services, which
-// also turn guests and deactivated accounts away (403).
-const member = [protect, permissions.attach_community_management];
+// also turn guests and deactivated accounts away (403). `withAccess` sets
+// `req.access`, from which the controller resolves Community actions and scope.
+const member = [protect, permissions.attach_community_management, permissions.withAccess];
 const moderator = [...member, permissions.can_view_community];
-const manager = [...member, permissions.can_manage_community];
+const action = (key: string, message: string) => [
+  ...member,
+  permissions.requireAction("Community", key, message),
+];
+const moderate = action("moderate", "Not authorized to moderate the community");
 
 // Static paths are registered before the `/:id` ones that would capture them.
 communityRouter.get("/me", member, controller.getMe);
@@ -47,12 +52,18 @@ communityRouter.patch("/notifications/:id/read", member, controller.readNotifica
 
 // Moderation and admin.
 communityRouter.get("/moderation/reports", moderator, controller.getReports);
-communityRouter.get("/moderation/audit-log", manager, controller.getAuditLog);
-communityRouter.post("/moderation/:kind/:id/remove", manager, controller.removeContent);
-communityRouter.post("/moderation/:kind/:id/restore", manager, controller.restoreContent);
-communityRouter.post("/moderation/:kind/:id/warn", manager, controller.warnAuthor);
+// Community.view_audit_log (Manage still counts for roles saved before
+// actions); checked in the service.
+communityRouter.get("/moderation/audit-log", member, controller.getAuditLog);
+communityRouter.post("/moderation/:kind/:id/remove", moderate, controller.removeContent);
+communityRouter.post("/moderation/:kind/:id/restore", moderate, controller.restoreContent);
+communityRouter.post("/moderation/:kind/:id/warn", moderate, controller.warnAuthor);
 communityRouter.get("/admin/posts", moderator, controller.getAdminPosts);
 communityRouter.get("/admin/stats", moderator, controller.getAdminStats);
-communityRouter.post("/admin/posts/:id/pin", manager, controller.pinPost);
+communityRouter.post(
+  "/admin/posts/:id/pin",
+  action("pin_important", "Not authorized to pin community posts"),
+  controller.pinPost,
+);
 
 export default communityRouter;

@@ -11,6 +11,13 @@ import { buildRecipientRows, insertRecipients } from "./recipients";
 import { findUsers, findVisitorPerson, parseAudience, resolveAudience } from "./audience";
 import { refreshDispatch, triggerDispatchProcessing } from "./worker";
 import {
+  MessagingAccess,
+  assertAudienceAllowed,
+  assertChannelsAllowed,
+  assertMessagingAction,
+  retryableChannels,
+} from "./messagingAccess";
+import {
   Audience,
   Channels,
   hasAnyChannel,
@@ -57,7 +64,9 @@ const httpsOrNull = (value: unknown, field: string): string | null => {
   return text;
 };
 
-export const updateSettings = async (body: any, actorId: number | null) => {
+export const updateSettings = async (body: any, actorId: number | null, access: MessagingAccess) => {
+  // Store links and the birthday send time shape the automatic messages.
+  assertMessagingAction(access, "edit_templates");
   const time = String(body?.birthdaySendTime ?? "").trim();
   if (time && !/^([01]\d|2[0-3]):([0-5]\d)$/.test(time)) {
     throw new InputValidationError("birthdaySendTime must be HH:mm");
@@ -131,10 +140,27 @@ const parseKey = (value: unknown): TemplateKey => {
   return key as TemplateKey;
 };
 
-export const updateTemplate = async (rawKey: unknown, body: any, actorId: number | null) => {
+export const updateTemplate = async (
+  rawKey: unknown,
+  body: any,
+  actorId: number | null,
+  access: MessagingAccess,
+) => {
   const key = parseKey(rawKey);
   const channels = toChannels(body?.channels);
   const enabled = body?.enabled === true;
+  const current = await prisma.message_template.findUnique({ where: { key } });
+  if (!current) throw new NotFoundError("Unknown template");
+  // Switching a template on or off and changing its content are separate
+  // rights; each is checked only when that part changes.
+  if (current.enabled !== enabled) assertMessagingAction(access, "toggle_automatic");
+  const before = toTemplateDto(current);
+  const contentChanged =
+    JSON.stringify(before.channels) !== JSON.stringify(channels) ||
+    before.body !== String(body?.body ?? "").trim() ||
+    (before.emailSubject ?? "") !== String(body?.emailSubject ?? "").trim() ||
+    before.includeAppLink !== (key === "WELCOME_VISITOR" && body?.includeAppLink === true);
+  if (contentChanged) assertMessagingAction(access, "edit_templates");
   const message = validateMessage({
     body: body?.body,
     subject: body?.emailSubject,
@@ -395,7 +421,15 @@ const fillGeneralDispatch = async (dispatchId: number) => {
   );
 };
 
-export const createGeneralDispatch = async (body: any, actorId: number | null) => {
+/**
+ * `access` is the HTTP caller's Messaging rights. Internal callers that
+ * enforce their own rule (School of Ministry cohort announcements) omit it.
+ */
+export const createGeneralDispatch = async (
+  body: any,
+  actorId: number | null,
+  access?: MessagingAccess,
+) => {
   const title = String(body?.title ?? "").trim().slice(0, MAX_TITLE);
   if (!title) throw new InputValidationError("Title is required");
   const channels = toChannels(body?.channels);
@@ -408,6 +442,11 @@ export const createGeneralDispatch = async (body: any, actorId: number | null) =
   });
   const audience = parseAudience(body?.audience);
   const scheduledFor = parseSchedule(body?.scheduledFor);
+  if (access) {
+    assertChannelsAllowed(access, channels);
+    await assertAudienceAllowed(access, audience);
+    if (scheduledFor) assertMessagingAction(access, "schedule");
+  }
 
   const dispatch = await prisma.message_dispatch.create({
     data: {
@@ -628,7 +667,7 @@ export const getDispatch = async (id: number) => {
   return toDispatchDto(d);
 };
 
-export const listDispatchRecipients = async (id: number, query: any) => {
+export const listDispatchRecipients = async (id: number, query: any, access: MessagingAccess) => {
   assertValidId(id);
   await getDispatch(id);
   const page = Math.min(Math.max(Math.trunc(Number(query?.page)) || 1, 1), 10000);
@@ -651,10 +690,15 @@ export const listDispatchRecipients = async (id: number, query: any) => {
     }),
     prisma.message_recipient.count({ where }),
   ]);
-  return { data: rows, ...pageMeta(page, limit, total) };
+  // Phone numbers and email addresses need view_recipient_contacts.
+  const data = access.actions.view_recipient_contacts
+    ? rows
+    : rows.map((row) => ({ ...row, address: null }));
+  return { data, ...pageMeta(page, limit, total) };
 };
 
-export const cancelDispatch = async (id: number) => {
+export const cancelDispatch = async (id: number, access: MessagingAccess) => {
+  assertMessagingAction(access, "schedule");
   assertValidId(id);
   await getDispatch(id);
   const result = await prisma.message_dispatch.updateMany({
@@ -665,12 +709,15 @@ export const cancelDispatch = async (id: number) => {
   return getDispatch(id);
 };
 
-export const retryFailed = async (id: number) => {
+export const retryFailed = async (id: number, access: MessagingAccess) => {
   assertValidId(id);
   await getDispatch(id);
+  // Only channels the caller may resend; failed SMS also needs retry_paid.
+  const channels = retryableChannels(access);
+  if (!channels.length) assertMessagingAction(access, "retry_paid");
   const [result] = await prisma.$transaction([
     prisma.message_recipient.updateMany({
-      where: { dispatch_id: id, status: "FAILED" },
+      where: { dispatch_id: id, status: "FAILED", channel: { in: channels } },
       data: { status: "PENDING", attempts: 0, next_attempt_at: null, error: null },
     }),
     prisma.message_dispatch.updateMany({ where: { id, status: "SENT" }, data: { status: "QUEUED" } }),
@@ -709,8 +756,12 @@ export const preview = async (body: any) => {
   };
 };
 
-export const audienceCount = async (body: any) => {
-  const people = await resolveAudience(parseAudience(body?.audience));
+export const audienceCount = async (body: any, access: MessagingAccess) => {
+  const { send_in_app, send_email, send_sms } = access.actions;
+  if (!send_in_app && !send_email && !send_sms) assertMessagingAction(access, "send_in_app");
+  const audience = parseAudience(body?.audience);
+  await assertAudienceAllowed(access, audience);
+  const people = await resolveAudience(audience);
   const seen = new Set<string>();
   const unique = people.filter((p) => {
     const key = p.userId ? `u:${p.userId}` : `v:${p.visitorId}`;

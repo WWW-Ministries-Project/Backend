@@ -12,6 +12,14 @@ import {
   syncLegacyAccessLevel,
 } from "./branchAccessService";
 import { normalizeWorkspaces, resolveWorkspaces } from "../workspaces/workspaceKeys";
+import {
+  GrantCeilingError,
+  assertAdministersRoleBranches,
+  assertNotOwnRole,
+  assertNotSelf,
+  assertRoleWithinCeiling,
+  assertWithinCeiling,
+} from "./grantCeiling";
 
 const ALLOWED_PERMISSION_VALUES = new Set([
   "Can_View",
@@ -52,9 +60,29 @@ const OPTIONAL_PERMISSION_KEYS = [
   "Messaging",
   "Membership_Management",
   "AI",
+  // Stored explicitly since the role editor shows them; until a level sets
+  // them they fall back (Reports to Settings, Rides to Membership_Management).
+  "Reports",
+  "Rides",
 ];
 
-const ALLOWED_SCOPE_VALUES = new Set(["assigned_departments"]);
+// Whose records a role sees in a module; "assigned_departments" is the value
+// saved before the editor offered the others.
+const ALLOWED_SCOPE_VALUES = new Set([
+  "own",
+  "assigned",
+  "department",
+  "department_member",
+  "life_center",
+  "assigned_departments",
+  // Stored when a role chooses the whole branch over a narrower default
+  // (e.g. View on Visitors starts at "assigned").
+  "branch",
+]);
+
+// Action keys are snake_case names from the Frontend's permission catalogue,
+// e.g. Actions: { Requisition: { configure_approvals: false } }.
+const ACTION_KEY_PATTERN = /^[a-z][a-z0-9_]{0,63}$/;
 
 const PERMISSION_KEY_NORMALIZER: Record<string, string> = {
   Members: "Members",
@@ -94,16 +122,13 @@ const PERMISSION_KEY_NORMALIZER: Record<string, string> = {
   Membership_Management: "Membership_Management",
   "Membership Management": "Membership_Management",
   AI: "AI",
+  Reports: "Reports",
+  Rides: "Rides",
 };
 
 const ALLOWED_PERMISSION_KEYS = [
   ...REQUIRED_PERMISSION_KEYS,
   ...OPTIONAL_PERMISSION_KEYS,
-];
-
-const SCOPE_SUPPORTED_PERMISSION_KEYS = [
-  "Departments",
-  "Church_Attendance",
 ];
 
 const toPositiveInt = (value: any) => {
@@ -307,7 +332,7 @@ const normalizeScopes = (payload: any) => {
   for (const [rawKey, rawValue] of Object.entries(payload)) {
     const normalizedKey =
       PERMISSION_KEY_NORMALIZER[String(rawKey).trim()] || String(rawKey).trim();
-    if (!SCOPE_SUPPORTED_PERMISSION_KEYS.includes(normalizedKey)) {
+    if (!ALLOWED_PERMISSION_KEYS.includes(normalizedKey)) {
       continue;
     }
 
@@ -319,6 +344,36 @@ const normalizeScopes = (payload: any) => {
     }
 
     normalized[normalizedKey] = String(rawValue);
+  }
+
+  return normalized;
+};
+
+/** `{ Domain: { action_key: boolean } }`; null when the shape is wrong. */
+const normalizeActions = (payload: any) => {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return null;
+  }
+
+  const normalized: Record<string, Record<string, boolean>> = {};
+  for (const [rawKey, rawValue] of Object.entries(payload)) {
+    const normalizedKey =
+      PERMISSION_KEY_NORMALIZER[String(rawKey).trim()] || String(rawKey).trim();
+    if (!ALLOWED_PERMISSION_KEYS.includes(normalizedKey)) {
+      continue;
+    }
+    if (!rawValue || typeof rawValue !== "object" || Array.isArray(rawValue)) {
+      return null;
+    }
+
+    const actions: Record<string, boolean> = {};
+    for (const [action, on] of Object.entries(rawValue)) {
+      if (!ACTION_KEY_PATTERN.test(action) || typeof on !== "boolean") {
+        return null;
+      }
+      actions[action] = on;
+    }
+    if (Object.keys(actions).length > 0) normalized[normalizedKey] = actions;
   }
 
   return normalized;
@@ -340,6 +395,7 @@ const normalizePermissionPayload = (payload: any) => {
     payload?.scopes ||
     payload?.scope_list ||
     payload?.scopeList;
+  const actionPayload = payload?.Actions || payload?.actions;
 
   if (exclusionPayload !== undefined) {
     const normalizedExclusions = normalizeExclusions(exclusionPayload);
@@ -357,6 +413,14 @@ const normalizePermissionPayload = (payload: any) => {
     normalized.Scopes = normalizedScopes;
   }
 
+  if (actionPayload !== undefined) {
+    const normalizedActions = normalizeActions(actionPayload);
+    if (!normalizedActions) {
+      return null;
+    }
+    normalized.Actions = normalizedActions;
+  }
+
   for (const [rawKey, rawValue] of Object.entries(payload)) {
     if (
       [
@@ -368,6 +432,8 @@ const normalizePermissionPayload = (payload: any) => {
         "scopes",
         "scope_list",
         "scopeList",
+        "Actions",
+        "actions",
       ].includes(String(rawKey))
     ) {
       continue;
@@ -494,7 +560,15 @@ const parseWorkspacesInput = (value: unknown) =>
 const branchErrorResponse = (res: Response, error: unknown) =>
   error instanceof BranchAccessError
     ? res.status(403).json({ message: error.message, data: null, code: "BRANCH_FORBIDDEN" })
-    : null;
+    : error instanceof GrantCeilingError
+      ? res.status(403).json({ message: error.message, data: null, code: "GRANT_CEILING" })
+      : null;
+
+const callerOf = (req: Request) => ({
+  id: toPositiveInt((req as any).user?.id),
+  // Live, active-branch permissions: checkPermission replaces the login token's.
+  permissions: (req as any).user?.permissions,
+});
 
 // Access Levels Controllers
 export const createAccessLevel = async (req: Request, res: Response) => {
@@ -513,6 +587,8 @@ export const createAccessLevel = async (req: Request, res: Response) => {
     if (workspaces === null) {
       return res.status(400).json({ message: INVALID_WORKSPACES_MESSAGE, data: null });
     }
+    const caller = callerOf(req);
+    assertWithinCeiling(caller.permissions, normalizedPermissions);
 
     if (assigned_users !== undefined && !Array.isArray(assigned_users)) {
       return res.status(400).json({
@@ -545,6 +621,10 @@ export const createAccessLevel = async (req: Request, res: Response) => {
           },
         });
       }
+    }
+
+    if (Array.isArray(assigned_users)) {
+      assertNotSelf(caller.id, assigned_users.map((userId: any) => Number(userId)));
     }
 
     const response = await prisma.access_level.create({
@@ -628,6 +708,22 @@ export const updateAccessLevel = async (req: Request, res: Response) => {
     const permissionsForUpdate = normalizedPermissions
       ? JSON.stringify(normalizedPermissions)
       : undefined;
+    const caller = callerOf(req);
+    if (normalizedPermissions || req.body?.workspaces !== undefined) {
+      await assertNotOwnRole(caller.id, Number(id));
+      await assertAdministersRoleBranches(Number(id));
+    }
+    if (normalizedPermissions) {
+      const stored = await prisma.access_level.findUnique({
+        where: { id: Number(id) },
+        select: { permissions: true },
+      });
+      assertWithinCeiling(
+        caller.permissions,
+        normalizedPermissions,
+        stored?.permissions ?? {},
+      );
+    }
     const workspaces = parseWorkspacesInput(req.body?.workspaces);
     if (workspaces === null) {
       return res.status(400).json({ message: INVALID_WORKSPACES_MESSAGE, data: null });
@@ -663,6 +759,17 @@ export const updateAccessLevel = async (req: Request, res: Response) => {
             non_ministry_worker_ids: nonMinistryWorkerIds,
           },
         });
+      }
+    }
+
+    if (Array.isArray(assigned_users) && assigned_users.length > 0) {
+      assertNotSelf(
+        caller.id,
+        assigned_users.map((userId: any) => Number(userId)),
+      );
+      // New permissions were checked above; otherwise check the stored role.
+      if (!normalizedPermissions) {
+        await assertRoleWithinCeiling(caller.permissions, Number(id));
       }
     }
 
@@ -741,6 +848,13 @@ export const updateAccessLevelWorkspaces = async (req: Request, res: Response) =
   });
   if (!existing) {
     return res.status(404).json({ message: "Access level not found", data: null });
+  }
+  try {
+    await assertNotOwnRole(callerOf(req).id, id);
+    await assertAdministersRoleBranches(id);
+  } catch (error) {
+    if (branchErrorResponse(res, error)) return;
+    throw error;
   }
   await prisma.access_level.update({
     where: { id },
@@ -892,6 +1006,9 @@ export const assignAccessLevelToUser = async (req: Request, res: Response) => {
       });
     }
 
+    const caller = callerOf(req);
+    assertNotSelf(caller.id, [userId]);
+    await assertRoleWithinCeiling(caller.permissions, accessLevelId);
     const branchIds = await resolveGrantBranchIds(toPositiveInt(branch_id));
     assertCanGrantInBranches(branchIds);
     await setBranchGrants([userId], branchIds, accessLevelId);
@@ -1049,6 +1166,12 @@ export const bulkAssignAccessLevel = async (req: Request, res: Response) => {
       });
     }
 
+    const caller = callerOf(req);
+    assertNotSelf(caller.id, [...assignIds, ...unassignIds]);
+    if (assignIds.length > 0) {
+      await assertRoleWithinCeiling(caller.permissions, accessLevelId);
+    }
+
     if (assignIds.length > 0) {
       const { invalidUserIds, nonMinistryWorkerIds } =
         await validateAssignableUsers(assignIds);
@@ -1116,6 +1239,8 @@ export const deleteAccessLevel = async (req: Request, res: Response) => {
     });
   }
   try {
+    await assertNotOwnRole(callerOf(req).id, Number(id));
+    await assertAdministersRoleBranches(Number(id));
     const holders = await usersWithAccessLevel(Number(id));
     // Optionally move everyone holding this role to another one first, so
     // nobody is left without access.
@@ -1161,6 +1286,7 @@ export const deleteAccessLevel = async (req: Request, res: Response) => {
     void sessionChanged(holders, ["permissions"]);
     listAllAccessLevel(req, res);
   } catch (error: any) {
+    if (branchErrorResponse(res, error)) return;
     return res
       .status(500)
       .json({ message: "Operation Failed", data: error.message });
@@ -1217,6 +1343,11 @@ export const setUserBranchAccess = async (req: Request, res: Response) => {
 
   try {
     assertCanGrantInBranches([branchId]);
+    const caller = callerOf(req);
+    assertNotSelf(caller.id, [userId]);
+    if (accessLevelId) {
+      await assertRoleWithinCeiling(caller.permissions, accessLevelId);
+    }
 
     const [user, branch, accessLevel] = await Promise.all([
       prisma.user.findUnique({
