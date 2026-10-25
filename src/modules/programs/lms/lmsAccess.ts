@@ -2,16 +2,22 @@ import { Request } from "express";
 import { prisma } from "../../../Models/context";
 import { LmsError, requestUserId } from "./lmsHttp";
 
-export type InstructorAbility = "can_grade" | "can_attendance" | "can_message";
+export type InstructorAbility = "can_grade" | "can_attendance" | "can_message" | "can_edit_curriculum";
 
 /**
  * School-of-ministry managers may act on any cohort. Facilitators (instructors)
  * pass the route guard too, so here they are limited to programs where they are
  * on the instructor roster with the ability, or — when the program has no
  * roster entry for them — programs where they teach a class (default: may
- * grade, take attendance and message).
+ * grade, take attendance and message, not edit the curriculum). A null
+ * ability only needs the assignment. Callers whose role is limited to the
+ * cohorts they instruct get the same check (see ../somAccess.ts).
  */
-export const assertProgramAbility = async (req: Request, programId: number, ability: InstructorAbility) => {
+export const assertProgramAbility = async (
+  req: Request,
+  programId: number,
+  ability: InstructorAbility | null,
+) => {
   const scope = (req as Request & { somScope?: { manageAll: boolean } }).somScope;
   if (!scope || scope.manageAll) return;
 
@@ -22,12 +28,13 @@ export const assertProgramAbility = async (req: Request, programId: number, abil
     where: { programId_userId: { programId, userId } },
   });
   if (roster) {
-    if (roster[ability]) return;
+    if (!ability || roster[ability]) return;
     throw new LmsError("You do not have permission to do this in this program", 403);
   }
 
   const teaches = await prisma.course.count({ where: { instructorId: userId, cohort: { programId } } });
-  if (teaches > 0) return;
+  if (teaches > 0 && ability !== "can_edit_curriculum") return;
+  if (teaches > 0) throw new LmsError("You do not have permission to do this in this program", 403);
   throw new LmsError("You do not teach in this program", 403);
 };
 
@@ -43,7 +50,7 @@ export const programIdForTopic = async (topicId: number) => {
   return topic.programId;
 };
 
-export const assertCohortAbility = async (req: Request, cohortId: number, ability: InstructorAbility) =>
+export const assertCohortAbility = async (req: Request, cohortId: number, ability: InstructorAbility | null) =>
   assertProgramAbility(req, await programIdForCohort(cohortId), ability);
 
 export const programIdForSubmission = async (submissionId: number) => {

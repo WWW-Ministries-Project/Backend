@@ -920,6 +920,9 @@ model request {
   revised_from_id         Int?
   /// Server-written JSON list of events that have no other record (reminders, revisions).
   history                 Json?
+  /// Who marked an approved requisition as disbursed (paid out / items handed over), and when.
+  disbursed_by_user_id    Int?
+  disbursed_at            DateTime?
   attachmentsList         request_attachment[]
   branch                  branch?                           @relation(fields: [branch_id], references: [id])
   department              department                        @relation(fields: [department_id], references: [id])
@@ -2220,23 +2223,26 @@ model product_stock {
 }
 
 model orders {
-  id                 Int               @id @default(autoincrement())
-  order_number       String?
-  total_amount       Float
-  user_id            Int?
-  payment_status     payment_status    @default(pending)
-  delivery_status    delivery_status   @default(pending)
-  created_at         DateTime          @default(now())
-  updated_at         DateTime          @updatedAt
-  reference          String
-  deleted_at         DateTime?
-  placed_by_staff_id Int?
-  fulfilment_method  fulfilment_method @default(pickup)
-  delivery_address   String?           @db.Text
-  delivery_fee       Float             @default(0)
-  billing_details    billing_details?
-  items              order_items[]
-  user               user?             @relation(fields: [user_id], references: [id])
+  id                     Int               @id @default(autoincrement())
+  order_number           String?
+  total_amount           Float
+  user_id                Int?
+  payment_status         payment_status    @default(pending)
+  delivery_status        delivery_status   @default(pending)
+  created_at             DateTime          @default(now())
+  updated_at             DateTime          @updatedAt
+  reference              String
+  deleted_at             DateTime?
+  placed_by_staff_id     Int?
+  fulfilment_method      fulfilment_method @default(pickup)
+  delivery_address       String?           @db.Text
+  delivery_fee           Float             @default(0)
+  /// Staff member who marked the order paid by hand, and when (null for Paystack-confirmed payments).
+  marked_paid_by_user_id Int?
+  marked_paid_at         DateTime?
+  billing_details        billing_details?
+  items                  order_items[]
+  user                   user?             @relation(fields: [user_id], references: [id])
 
   @@index([user_id], map: "orders_user_id_fkey")
   @@index([reference], map: "orders_reference_idx")
@@ -2821,6 +2827,7 @@ enum RequestApprovalStatus {
   Awaiting_Executive_Pastor_Approval
   APPROVED
   REJECTED
+  DISBURSED
 }
 
 enum RequisitionApprovalModule {

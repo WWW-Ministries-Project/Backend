@@ -12,11 +12,26 @@ import { givingReceiptTemplate } from "../../../utils/mail_templates/givingRecei
 import logger from "../../../utils/logger-config";
 import { notificationService } from "../../notifications/notificationService";
 import { FinanceHttpError, PaginationQuery } from "../common";
+import {
+  BranchAccessError,
+  assertBranchAccessible,
+  getBranchScopedWhere,
+} from "../../branches/branchService";
 import type {
   ContributionListFilters,
   InitializeContributionPayload,
   RetryContributionPayload,
 } from "./contributionValidation";
+
+/** By-id records must sit in one of the caller's branches. */
+const assertOwnBranch = (branchId: number | null) => {
+  try {
+    assertBranchAccessible(branchId);
+  } catch (error) {
+    if (error instanceof BranchAccessError) throw new FinanceHttpError(403, error.message);
+    throw error;
+  }
+};
 
 /**
  * paystack_response holds the raw processor payload. It is useful for disputes
@@ -951,11 +966,23 @@ export class GivingContributionService {
     return { data, total };
   }
 
-  async listAll(pagination: PaginationQuery, filters: ContributionListFilters) {
+  /**
+   * Staff list. Always clamped to the caller's branches (the asked-for or
+   * active branch, else every branch they hold a role in), so leaving out
+   * `branch_id` no longer returns other branches' gifts. Without
+   * `Giving.view_donor_details` the giver's name, email and member id are
+   * blanked and `donor_hidden` is set.
+   */
+  async listAll(
+    pagination: PaginationQuery,
+    filters: ContributionListFilters,
+    options: { showDonor?: boolean } = {},
+  ) {
     const { skip, take } = clampPagination(pagination);
+    const showDonor = options.showDonor !== false;
 
     const where = {
-      ...(filters.branch_id !== undefined && { branch_id: filters.branch_id }),
+      ...getBranchScopedWhere(filters.branch_id),
       ...(filters.giving_option_id !== undefined && {
         giving_option_id: filters.giving_option_id,
       }),
@@ -979,7 +1006,17 @@ export class GivingContributionService {
       prisma.givingContribution.count({ where }),
     ]);
 
-    return { data, total };
+    if (showDonor) return { data, total };
+    return {
+      data: data.map((row) => ({
+        ...row,
+        user_id: null,
+        donor_name: null,
+        donor_email: null,
+        donor_hidden: true,
+      })),
+      total,
+    };
   }
 
   /**
@@ -994,7 +1031,8 @@ export class GivingContributionService {
     }
 
     const rows = await prisma.givingContribution.findMany({
-      where: { reference: { in: unique } },
+      // Only payments in the caller's branches.
+      where: { reference: { in: unique }, ...getBranchScopedWhere(undefined) },
       select: { reference: true, branch_id: true, status: true },
     });
 
@@ -1035,10 +1073,12 @@ export class GivingContributionService {
         giving_option_name: true,
         amount: true,
         currency: true,
+        branch_id: true,
       },
     });
 
     if (!row) throw new FinanceHttpError(404, "Contribution not found");
+    assertOwnBranch(row.branch_id);
     if (row.status !== "failed" && row.status !== "abandoned") {
       throw new FinanceHttpError(409, "Only failed or abandoned gifts can be retried.");
     }

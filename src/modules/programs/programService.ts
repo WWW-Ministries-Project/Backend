@@ -379,8 +379,13 @@ export class ProgramService {
     };
   }
 
-  async getAllProgramsWithEnrolledMembersAndCompletion() {
+  /** `programIds` limits the list to an instructor's programs (undefined: all in the caller's branches). */
+  async getAllProgramsWithEnrolledMembersAndCompletion(programIds?: number[]) {
     const programs = await prisma.program.findMany({
+      where: {
+        ...(getBranchScopedWhere(undefined) ?? {}),
+        ...(programIds ? { id: { in: programIds } } : {}),
+      },
       include: {
         topics: {
           orderBy: {

@@ -186,7 +186,7 @@ orderRouter.get(
 /**
  * @swagger
  * /orders/verify-payment:
- *   get:
+ *   post:
  *     summary: Verify a payment
  *     description: Verify an order payment using a payment reference.
  *     tags: [Orders]
@@ -225,7 +225,9 @@ orderRouter.get(
  *                   type: string
  *                   example: "Payment verification failed"
  */
-orderRouter.get(
+// POST: verifying asks the gateway and updates the order (it may restock and
+// notify), so it is not a GET. No web or mobile client called the old GET.
+orderRouter.post(
   "/verify-payment",
   [protect, permissions.can_view_orders_scoped],
   orderController.verifyPayment,
@@ -536,7 +538,10 @@ orderRouter.get(
 
 orderRouter.get(
   "/confirm-transaction-status-by-id",
-  [protect, permissions.can_manage_marketplace],
+  [
+    protect,
+    permissions.requireAction("Marketplace", "reconcile_payments", "Not authorized to reconcile payments"),
+  ],
   orderController.confirmTransactionById,
 );
 
@@ -663,12 +668,18 @@ orderRouter.post(
 
 orderRouter.post(
   "/reinitiate-payment",
-  [protect, permissions.can_manage_marketplace],
+  [
+    protect,
+    permissions.requireAction("Marketplace", "reconcile_payments", "Not authorized to reinitiate payments"),
+  ],
   orderController.reinitiatePayment,
 );
 orderRouter.post(
   "/reconcile-hubtel-pending-payments",
-  [protect, permissions.can_manage_marketplace],
+  [
+    protect,
+    permissions.requireAction("Marketplace", "reconcile_payments", "Not authorized to reconcile payments"),
+  ],
   orderController.reconcilePendingHubtelPayments,
 );
 /**
@@ -703,31 +714,42 @@ orderRouter.put(
 
 orderRouter.put(
   "/update-delivery-status",
-  [protect, permissions.can_manage_marketplace],
+  [
+    protect,
+    permissions.requireAction("Marketplace", "fulfil_order", "Not authorized to update delivery status"),
+  ],
   orderController.updateDeliveryStatus,
 );
 
 orderRouter.put(
   "/update-order",
-  [protect, permissions.can_manage_marketplace],
+  // Items/billing, payment and delivery are separate actions, checked in the controller.
+  [protect, permissions.withAccess],
   orderController.updateOrder,
 );
 
 orderRouter.delete(
   "/delete-order",
-  [protect, permissions.can_delete_marketplace],
+  [protect, permissions.requireAction("Marketplace", "delete", "Not authorized to delete orders")],
   orderController.deleteOrder,
 );
 
 orderRouter.delete(
   "/bulk-delete-orders",
-  [protect, permissions.can_delete_marketplace],
+  [protect, permissions.requireAction("Marketplace", "delete", "Not authorized to delete orders")],
   orderController.bulkDeleteOrders,
 );
 
 orderRouter.post(
   "/create-for-member",
-  [protect, permissions.can_manage_marketplace],
+  [
+    protect,
+    permissions.requireAction(
+      "Marketplace",
+      "create_order_for_member",
+      "Not authorized to place orders for members",
+    ),
+  ],
   orderController.createForMember,
 );
 
@@ -815,7 +837,8 @@ orderRouter.get("/delivery-config", orderController.getDeliveryConfig);
  */
 orderRouter.put(
   "/bulk-update-status",
-  [protect, permissions.can_manage_marketplace],
+  // Payment and delivery changes are separate actions, checked in the controller.
+  [protect, permissions.withAccess],
   orderController.bulkUpdateStatus,
 );
 

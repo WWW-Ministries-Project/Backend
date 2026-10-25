@@ -1,4 +1,5 @@
 import { Response } from "express";
+import { AppError } from "../../utils/custom-error-handlers";
 import { Prisma } from "@prisma/client";
 import { isPaystackFailure } from "../../libs/paystack/paystackClient";
 
@@ -162,6 +163,8 @@ export const resolvePledgeError = (
   error: unknown,
 ): { status: number; message: string } => {
   if (error instanceof PledgeHttpError) return { status: error.status, message: error.message };
+  // e.g. BranchAccessError (403) from the branch helpers.
+  if (error instanceof AppError) return { status: error.statusCode, message: error.message };
   // Paystack failures keep their own status codes and message, as in giving:
   // "Paystack rejected the settlement account" is actionable, a bare 500 is not.
   if (isPaystackFailure(error)) return { status: error.statusCode, message: error.message };

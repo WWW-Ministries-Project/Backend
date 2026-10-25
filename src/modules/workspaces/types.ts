@@ -110,6 +110,10 @@ export interface WorkspaceContext {
   /** Raw query, for widget-specific options (e.g. `att_event`). */
   query: Record<string, unknown>;
   can: (domain: string, action: "view" | "manage" | "admin") => Promise<boolean>;
+  /** Catalogue action (`Domain.action`) in the selected branch; every branch when none is selected. */
+  action: (domain: string, action: string) => Promise<boolean>;
+  /** Stored role permissions of the caller's grants in the selected branch (all when none). */
+  grants: () => Promise<unknown[]>;
 }
 
 export interface WorkspaceBuild {

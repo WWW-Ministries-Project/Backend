@@ -153,6 +153,7 @@ const requisitionLabel = (a: Asset, current: boolean) => {
   const s = a.repair_request?.request_approval_status;
   if (!s) return "Not raised";
   if (s === RequestApprovalStatus.APPROVED) return "Approved";
+  if (s === RequestApprovalStatus.DISBURSED) return "Disbursed";
   if (s === RequestApprovalStatus.REJECTED) return "Rejected";
   if (s === RequestApprovalStatus.Draft) return "Draft";
   return "Pending approval";

@@ -44,6 +44,12 @@ type ImportRequest = {
   punch_count?: unknown;
   payloadBytes?: unknown;
   payload_bytes?: unknown;
+  /**
+   * Set by the server (never the client) for a role limited to its
+   * departments: only check-ins of members of these departments become
+   * official attendance.
+   */
+  scopeDepartmentIds?: unknown;
 };
 
 type StagePunchInput = {
@@ -326,7 +332,7 @@ export class EventBiometricAttendanceService {
           },
         });
 
-    if (existingJob) {
+    if (existingJob && this.sameDepartmentScope(existingJob.request_payload, request)) {
       if (
         existingJob.status === biometric_import_job_status.QUEUED &&
         !this.activeJobIds.has(existingJob.id)
@@ -1015,7 +1021,10 @@ export class EventBiometricAttendanceService {
       },
     });
 
-    const attendanceCandidates = this.buildAttendanceCandidates(stagedPunches);
+    const attendanceCandidates = await this.limitToScopedDepartments(
+      this.buildAttendanceCandidates(stagedPunches),
+      request,
+    );
     const attendanceResult = await this.persistAttendanceRows({
       eventId: event.id,
       candidates: attendanceCandidates,
@@ -2026,6 +2035,42 @@ export class EventBiometricAttendanceService {
     return candidates.sort(
       (left, right) => left.created_at.getTime() - right.created_at.getTime(),
     );
+  }
+
+  private readDepartmentScope(request: unknown): number[] | null {
+    const value = (request as ImportRequest | null)?.scopeDepartmentIds;
+    return Array.isArray(value) ? this.parsePositiveIntArray(value).sort((a, b) => a - b) : null;
+  }
+
+  /** A queued job is only reused for a request with the same department scope. */
+  private sameDepartmentScope(existingPayload: unknown, request: ImportRequest) {
+    return (
+      JSON.stringify(this.readDepartmentScope(existingPayload)) ===
+      JSON.stringify(this.readDepartmentScope(request))
+    );
+  }
+
+  private async limitToScopedDepartments(
+    candidates: AttendanceCandidate[],
+    request: ImportRequest,
+  ): Promise<AttendanceCandidate[]> {
+    const departmentIds = this.readDepartmentScope(request);
+    if (!departmentIds) return candidates;
+    if (!departmentIds.length || !candidates.length) return [];
+
+    const userIds = Array.from(new Set(candidates.map((candidate) => candidate.user_id)));
+    const members = await prisma.user.findMany({
+      where: {
+        id: { in: userIds },
+        OR: [
+          { department_id: { in: departmentIds } },
+          { department_positions: { some: { department_id: { in: departmentIds } } } },
+        ],
+      },
+      select: { id: true },
+    });
+    const allowed = new Set(members.map((member) => member.id));
+    return candidates.filter((candidate) => allowed.has(candidate.user_id));
   }
 
   private getUtcDayBounds(dayKey: string) {

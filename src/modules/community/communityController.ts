@@ -3,7 +3,49 @@ import { UnauthorizedError } from "../../utils/custom-error-handlers";
 import * as community from "./communityService";
 import * as moderation from "./communityModerationService";
 import { toPositiveInt } from "./communityHelpers";
-import { Viewer, loadViewer } from "./communityQueries";
+import { CommunityActions, NO_COMMUNITY_ACTIONS, Viewer, loadViewer } from "./communityQueries";
+import { getRequestAccess } from "../../middleWare/authorization";
+import {
+  actionAllowed,
+  domainRank,
+  domainScope,
+  isLegacyRole,
+  scopeDepartmentIds,
+} from "../../permissions/access";
+
+/**
+ * Community actions from the caller's live, active-branch role (`req.access`,
+ * set by `permissions.withAccess` on every Community route).
+ */
+const communityAccessOf = (
+  req: Request,
+): { actions: CommunityActions; moderationDepartmentIds: number[] | null } => {
+  const access = getRequestAccess(req);
+  if (!access?.isPrivilegedUser) {
+    return { actions: NO_COMMUNITY_ACTIONS, moderationDepartmentIds: null };
+  }
+  const { permissions } = access;
+  const can = (action: string) => actionAllowed(permissions, "Community", action);
+  return {
+    actions: {
+      postChurchWide: can("post_church_wide"),
+      postAnyDepartment: can("post_any_department"),
+      pinImportant: can("pin_important"),
+      moderate: can("moderate"),
+      // The audit log used to need Manage; roles saved before actions keep that.
+      viewAuditLog:
+        can("view_audit_log") ||
+        (isLegacyRole(permissions) && domainRank(permissions, "Community") >= 2),
+      // Deleting others' posts used to need Manage (installed mobile apps
+      // still offer it at Manage); roles saved before actions keep that.
+      deleteAny:
+        can("delete_any") ||
+        (isLegacyRole(permissions) && domainRank(permissions, "Community") >= 2),
+      viewAnonymousAuthor: can("view_anonymous_author"),
+    },
+    moderationDepartmentIds: scopeDepartmentIds(domainScope(permissions, "Community"), access),
+  };
+};
 
 /**
  * Thin HTTP layer over the Community services. Business-rule failures are
@@ -16,6 +58,7 @@ const viewerOf = async (req: Request): Promise<Viewer> => {
   return loadViewer(id, {
     canView: Boolean((req as any).canViewCommunity),
     canManage: Boolean((req as any).canManageCommunity),
+    ...communityAccessOf(req),
   });
 };
 
@@ -125,12 +168,8 @@ export const getAdminPosts = async (req: Request, res: Response) =>
 export const pinPost = async (req: Request, res: Response) =>
   ok(res, await moderation.setPinned(await viewerOf(req), req.params.id, req.body ?? {}), "Post updated");
 
-export const getAdminStats = async (req: Request, res: Response) => {
-  await viewerOf(req);
-  return ok(res, await moderation.getAdminStats());
-};
+export const getAdminStats = async (req: Request, res: Response) =>
+  ok(res, await moderation.getAdminStats(await viewerOf(req)));
 
-export const getAuditLog = async (req: Request, res: Response) => {
-  await viewerOf(req);
-  return list(res, await moderation.listAuditLog(req.query));
-};
+export const getAuditLog = async (req: Request, res: Response) =>
+  list(res, await moderation.listAuditLog(await viewerOf(req), req.query));

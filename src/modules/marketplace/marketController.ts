@@ -1,5 +1,12 @@
 import { MarketService } from "./marketService";
 import { Request, Response } from "express";
+import { BranchAccessError } from "../branches/branchService";
+import {
+  assertMarketBranchAccessible,
+  isCatalogueStaff,
+} from "../orders/marketplaceAccess";
+
+const failStatus = (error: unknown) => (error instanceof BranchAccessError ? 403 : 500);
 
 const marketService = new MarketService();
 
@@ -42,6 +49,7 @@ export class MarketController {
           .status(400)
           .json({ message: "source_market_id is required" });
       }
+      await assertMarketBranchAccessible(Number(source_market_id));
       const result = await marketService.duplicateMarket({
         source_market_id: Number(source_market_id),
         name,
@@ -56,7 +64,7 @@ export class MarketController {
         .json({ message: "Market Duplicated Successfully", data: result });
     } catch (error: any) {
       return res
-        .status(500)
+        .status(failStatus(error))
         .json({ message: "Failed to duplicate market: " + error.message });
     }
   }
@@ -65,6 +73,7 @@ export class MarketController {
     try {
       const { id, name, description, event_id, start_date, end_date, branch_id } =
         req.body;
+      await assertMarketBranchAccessible(Number(id));
       const market = await marketService.updateMarket(id, {
         name,
         description,
@@ -78,21 +87,22 @@ export class MarketController {
         .json({ message: "Market Updated Successfully", data: market });
     } catch (error: any) {
       return res
-        .status(500)
-        .json({ message: "Failed to create market: " + error.message });
+        .status(failStatus(error))
+        .json({ message: "Failed to update market: " + error.message });
     }
   }
 
   async deleteMarket(req: Request, res: Response) {
     try {
       const { id } = req.query;
+      await assertMarketBranchAccessible(Number(id));
       const market = await marketService.deleteMarket(Number(id));
       return res
         .status(200)
         .json({ message: "Market Deleted Successfully", data: market });
     } catch (error: any) {
       return res
-        .status(500)
+        .status(failStatus(error))
         .json({ message: "Failed to delete market: " + error.message });
     }
   }
@@ -100,13 +110,14 @@ export class MarketController {
   async restoreMarket(req: Request, res: Response) {
     try {
       const { id } = req.body;
+      await assertMarketBranchAccessible(Number(id));
       const market = await marketService.restoreMarket(id);
       return res
         .status(200)
         .json({ message: "Market Restored Successfully", data: market });
     } catch (error: any) {
       return res
-        .status(500)
+        .status(failStatus(error))
         .json({ message: "Failed to get markets: " + error.message });
     }
   }
@@ -114,9 +125,13 @@ export class MarketController {
   async listMarkets(req: Request, res: Response) {
     try {
       const filters = {
-        ...(req.body.filters || {}),
+        ...(req.body?.filters || {}),
         branch_id: req.query?.branch_id ?? req.body?.filters?.branch_id,
       };
+      // Public read: only staff may list deleted markets.
+      if (filters.deleted && !(await isCatalogueStaff(req))) {
+        filters.deleted = false;
+      }
       const markets = await marketService.getAllMarkets(filters);
       return res.status(200).json({ data: markets });
     } catch (error: any) {

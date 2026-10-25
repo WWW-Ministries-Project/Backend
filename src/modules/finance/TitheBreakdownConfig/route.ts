@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { TitheBreakdownConfigController } from "./controller";
 import { Permissions } from "../../../middleWare/authorization";
+import { requireFinanceConfigAccess } from "../financeAccess";
 
 const titheBreakdownConfigRouter = Router();
 const controller = new TitheBreakdownConfigController();
@@ -9,22 +10,22 @@ const protect = permissions.protect;
 
 titheBreakdownConfigRouter.post(
   "/create-tithe-breakdown-config",
-  [protect, permissions.can_manage_settings],
+  [protect, permissions.withAccess, requireFinanceConfigAccess("manage")],
   controller.create,
 );
 titheBreakdownConfigRouter.get(
   "/get-tithe-breakdown-configs",
-  [protect, permissions.can_view_settings],
+  [protect, permissions.withAccess, requireFinanceConfigAccess("view")],
   controller.findAll,
 );
 titheBreakdownConfigRouter.put(
   "/update-tithe-breakdown-config",
-  [protect, permissions.can_manage_settings],
+  [protect, permissions.withAccess, requireFinanceConfigAccess("manage")],
   controller.update,
 );
 titheBreakdownConfigRouter.delete(
   "/delete-tithe-breakdown-config",
-  [protect, permissions.can_delete_settings],
+  [protect, permissions.withAccess, requireFinanceConfigAccess("admin")],
   controller.delete,
 );
 

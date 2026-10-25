@@ -1,9 +1,9 @@
 import { Prisma } from "@prisma/client";
-import { prisma } from "../../Models/context";
+import { prisma, type PrismaTx } from "../../Models/context";
 import { InputValidationError } from "../../utils/custom-error-handlers";
 
 type EventReportExclusionDb = Pick<
-  Prisma.TransactionClient,
+  PrismaTx,
   "event_report_exclusion"
 >;
 

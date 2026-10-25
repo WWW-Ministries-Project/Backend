@@ -3,6 +3,7 @@ import JWT from "jsonwebtoken";
 import { randomBytes } from "crypto";
 import * as dotenv from "dotenv";
 import { prisma } from "../../Models/context";
+import { getRequestAccess, hasActionPermission } from "../../middleWare/authorization";
 import {
   sendEmail,
   comparePassword,
@@ -15,6 +16,16 @@ import {
 } from "./departmentPositionUtils";
 import { buildMembershipStatusTimestampData } from "./membershipStatusTimestamps";
 import { buildMemberSource } from "./memberSource";
+import {
+  callerActionAllowed,
+  canSeeContactDetails,
+  denyAction,
+  denyMembersOutOfReach,
+  maskContactDetails,
+  memberExclusionIds,
+  memberScopeWhere,
+  membersActionAllowed,
+} from "./memberAccess";
 import { computeEnrollmentProgress } from "./enrollmentProgress";
 import { parseOtherNumber } from "./otherNumber";
 import { CourseService } from "../programs/courseService";
@@ -61,6 +72,7 @@ import {
   getBranchScopedWhere,
   resolveBranchIdOrDefault,
 } from "../branches/branchService";
+import { getBranchScope, isBranchAllowed } from "../branches/branchScope";
 
 dotenv.config();
 
@@ -344,6 +356,122 @@ const selectQuery = {
   },
 };
 
+const PUBLIC_MEMBERSHIP_TYPES = new Set(["ONLINE", "IN_HOUSE"]);
+
+const pickObject = (value: unknown): Record<string, any> =>
+  value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, any>)
+    : {};
+
+/**
+ * POST /user/public-register: the church's public "become a member" form.
+ * Only the person's own details are accepted. Everything that grants or
+ * places them (status, sign-in, password, departments, positions, the
+ * visitor/soul they came from, linking an existing spouse) is fixed or
+ * dropped, so the form can't create a confirmed member or an admin.
+ */
+export const publicRegisterMember = async (req: Request, res: Response) => {
+  const body = pickObject(req.body);
+  const churchInfo = pickObject(body.church_info);
+  const membershipType = String(churchInfo.membership_type || "").toUpperCase();
+  const branchId = Number(churchInfo.branch_id);
+  const branch =
+    Number.isInteger(branchId) && branchId > 0
+      ? await prisma.branch.findUnique({ where: { id: branchId }, select: { id: true } })
+      : null;
+  const stripLink = (member: unknown) => {
+    const { user_id: _userId, id: _id, ...rest } = pickObject(member);
+    return rest;
+  };
+
+  req.body = {
+    personal_info: pickObject(body.personal_info),
+    picture: pickObject(body.picture),
+    contact_info: pickObject(body.contact_info),
+    work_info: pickObject(body.work_info),
+    emergency_contact: pickObject(body.emergency_contact),
+    church_info: {
+      membership_type: PUBLIC_MEMBERSHIP_TYPES.has(membershipType) ? membershipType : "ONLINE",
+      member_since: churchInfo.member_since,
+      ...(branch ? { branch_id: branch.id } : {}),
+    },
+    family: Array.isArray(body.family) ? body.family.map(stripLink) : [],
+    children: Array.isArray(body.children) ? body.children.map(stripLink) : [],
+    status: "UNCONFIRMED",
+    is_user: false,
+  };
+  return registerUser(req, res);
+};
+
+const positiveIdOrNull = (value: unknown) => {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+};
+
+/**
+ * Dashboard "Add member": Members › Add members; a conversion also needs the convert action
+ * (visitor: Membership management › Convert visitors or Visitors › Convert
+ * to member; soul won: Membership management › Convert souls won), and the
+ * source record must be in a branch the caller works in.
+ */
+const denyRegisterWithoutActions = async (
+  req: Request,
+  res: Response,
+  payload: any,
+): Promise<boolean> => {
+  if (denyAction(res, membersActionAllowed(req, "create"), "You don't have permission to add members.")) {
+    return true;
+  }
+  const branchScope = getBranchScope();
+  const visitorId = positiveIdOrNull(payload?.source_visitor_id);
+  if (visitorId) {
+    if (
+      denyAction(
+        res,
+        callerActionAllowed(req, "Membership_Management", "convert_visitor") ||
+          callerActionAllowed(req, "Visitors", "convert_to_member"),
+        "You don't have permission to convert visitors to members.",
+      )
+    ) {
+      return true;
+    }
+    const visitor = await prisma.visitor.findUnique({
+      where: { id: visitorId },
+      select: { branch_id: true },
+    });
+    if (
+      visitor?.branch_id &&
+      denyAction(res, isBranchAllowed(branchScope, visitor.branch_id), "This visitor belongs to another branch.")
+    ) {
+      return true;
+    }
+  }
+  const soulId = positiveIdOrNull(payload?.source_soul_won_id);
+  if (soulId) {
+    if (
+      denyAction(
+        res,
+        callerActionAllowed(req, "Membership_Management", "convert_soul"),
+        "You don't have permission to convert souls won to members.",
+      )
+    ) {
+      return true;
+    }
+    const soul = await prisma.soul_won.findUnique({
+      where: { id: soulId },
+      select: { lifeCenter: { select: { branch_id: true } } },
+    });
+    const soulBranchId = soul?.lifeCenter?.branch_id;
+    if (
+      soulBranchId &&
+      denyAction(res, isBranchAllowed(branchScope, soulBranchId), "This soul won belongs to another branch.")
+    ) {
+      return true;
+    }
+  }
+  return false;
+};
+
 export const registerUser = async (req: Request, res: Response) => {
   try {
     const normalizedPayload = normalizeMemberPayload(req.body);
@@ -362,6 +490,10 @@ export const registerUser = async (req: Request, res: Response) => {
       is_user === "true" ||
       is_user === 1 ||
       is_user === "1";
+
+    if (await denyRegisterWithoutActions(req, res, normalizedPayload)) {
+      return;
+    }
 
     if (isLoginUser && !isRealEmail(normalizedEmail)) {
       return res.status(400).json({
@@ -424,9 +556,22 @@ export const registerUser = async (req: Request, res: Response) => {
   }
 };
 
+/**
+ * A role that can't see contact details gets them masked (null) on the edit
+ * form; drop them from the payload so saving doesn't wipe the stored values.
+ */
+const withoutHiddenContactDetails = (payload: any) => {
+  const { email, phone, other_number, state_region, city, ...contactInfo } =
+    payload?.contact_info || {};
+  const { emergency_contact, ...rest } = payload || {};
+  return { ...rest, contact_info: contactInfo };
+};
+
 export const updateUser = async (req: Request, res: Response) => {
   try {
-    const normalizedPayload = normalizeMemberPayload(req.body);
+    const normalizedPayload = canSeeContactDetails(req, Number(req.query?.user_id))
+      ? normalizeMemberPayload(req.body)
+      : withoutHiddenContactDetails(normalizeMemberPayload(req.body));
     const { user_id } = req.query;
     const contactInfoPayload = normalizedPayload?.contact_info || {};
     const hasEmailField = Object.prototype.hasOwnProperty.call(
@@ -520,6 +665,49 @@ export const updateUser = async (req: Request, res: Response) => {
     const nextStatus = String(status || userExists?.status || "")
       .trim()
       .toUpperCase();
+
+    if (await denyMembersOutOfReach(req, res, [userExists.id])) return;
+    const storedStatus = String(userExists?.status || "UNCONFIRMED").toUpperCase();
+    const requestedBranchId = Number(branch_id);
+    if (
+      denyAction(res, membersActionAllowed(req, "edit"), "You don't have permission to edit members.") ||
+      // Turning "ministry worker" off removes their roles in every branch,
+      // i.e. their admin sign-in (Members › Give admin sign-in).
+      (!nextIsUser &&
+        userExists?.is_user &&
+        (await prisma.user_branch_access.count({ where: { user_id: userExists.id } })) > 0 &&
+        denyAction(
+          res,
+          membersActionAllowed(req, "grant_login"),
+          "You don't have permission to remove a member's admin sign-in.",
+        )) ||
+      (Boolean(status) &&
+        nextStatus !== storedStatus &&
+        denyAction(
+          res,
+          membersActionAllowed(req, "change_status") ||
+            callerActionAllowed(req, "Membership_Management", "confirm_member"),
+          "You don't have permission to change membership status.",
+        )) ||
+      (hasFamilyField &&
+        Array.isArray(family) &&
+        family.length > 0 &&
+        denyAction(
+          res,
+          membersActionAllowed(req, "link_family"),
+          "You don't have permission to link family members.",
+        )) ||
+      (Number.isInteger(requestedBranchId) &&
+        requestedBranchId > 0 &&
+        requestedBranchId !== userExists?.branch_id &&
+        denyAction(
+          res,
+          isBranchAllowed(getBranchScope(), requestedBranchId),
+          "You can only move members into branches you have access to.",
+        ))
+    ) {
+      return;
+    }
 
     if (nextIsUser && !isRealEmail(nextEmail)) {
       return res.status(400).json({
@@ -838,7 +1026,8 @@ export const updateUser = async (req: Request, res: Response) => {
       }
       await updateFamilyMembers(family, updatedUser);
     }
-    const { password, ...rest } = updatedUser;
+    // The client never returns the password hash (see Models/context.ts).
+    const rest = updatedUser;
 
     const data = {
       parent: rest,
@@ -1151,6 +1340,16 @@ async function updateChildren(
 
 export const updateUserSatus = async (req: Request, res: Response) => {
   const { id, is_active } = req.body;
+  if (
+    denyAction(
+      res,
+      membersActionAllowed(req, "change_status"),
+      "You don't have permission to activate or deactivate members.",
+    ) ||
+    (await denyMembersOutOfReach(req, res, [Number(id)]))
+  ) {
+    return;
+  }
   try {
     const response = await prisma.user.update({
       where: {
@@ -1214,6 +1413,12 @@ export const updateUserSatus = async (req: Request, res: Response) => {
 export const deleteUser = async (req: Request, res: Response) => {
   try {
     const { id } = req.query;
+    if (
+      denyAction(res, membersActionAllowed(req, "delete"), "You don't have permission to delete members.") ||
+      (await denyMembersOutOfReach(req, res, [Number(id)]))
+    ) {
+      return;
+    }
     const existance = await prisma.user.findUnique({
       where: {
         id: Number(id),
@@ -1620,6 +1825,8 @@ export const forgetPassword = async (req: Request, res: Response) => {
       where: {
         email: normalizedEmail as string,
       },
+      // The reset link is signed with the current hash.
+      omit: { password: false },
     });
 
     if (!existingUser?.password) {
@@ -1713,6 +1920,16 @@ export const resetPassword = async (req: Request, res: Response) => {
 
 export const activateAccount = async (req: Request, res: Response) => {
   const { user_id } = req.query;
+  if (
+    denyAction(
+      res,
+      membersActionAllowed(req, "change_status"),
+      "You don't have permission to activate or deactivate members.",
+    ) ||
+    (await denyMembersOutOfReach(req, res, [Number(user_id)]))
+  ) {
+    return;
+  }
   try {
     const existingUser = await prisma.user.findUnique({
       where: {
@@ -2183,6 +2400,11 @@ export const ListUsers = async (req: Request, res: Response) => {
     if (branchWhere) {
       whereConditions.push(branchWhere);
     }
+    // A role limited to its departments or life centers lists those people.
+    const scopeWhere = memberScopeWhere(req);
+    if (scopeWhere) {
+      whereConditions.push(scopeWhere);
+    }
     // Guests who joined from the mobile app have accounts but are not
     // members: keep them out of the member list and the confirmation queue
     // (a null status would otherwise land them in UNCONFIRMED). They are
@@ -2268,8 +2490,11 @@ export const ListUsers = async (req: Request, res: Response) => {
           { name: { contains: searchTerm } },
           { member_id: { contains: searchTerm } },
           // Excluded members stay listed but their contact details are
-          // masked, so they must not be findable by email or phone either.
-          ...(excludedMemberIds.length > 0
+          // masked, so they must not be findable by email or phone either;
+          // nor is anyone, for a role that can't see contact details.
+          ...(!membersActionAllowed(req, "view_contact_details")
+            ? []
+            : excludedMemberIds.length > 0
             ? [
                 {
                   AND: [
@@ -2397,6 +2622,7 @@ export const ListUsers = async (req: Request, res: Response) => {
     });
 
     const excludedMemberIdSet = new Set(excludedMemberIds);
+    const showContacts = membersActionAllowed(req, "view_contact_details");
 
     res.status(200).json({
       message: "Operation Successful",
@@ -2409,7 +2635,9 @@ export const ListUsers = async (req: Request, res: Response) => {
       data: flattenListedUsers(usersWithDeptName).map((user) =>
         excludedMemberIdSet.has(user.id)
           ? maskExcludedListedUser(user)
-          : { ...user, is_restricted: false },
+          : showContacts || canSeeContactDetails(req, user.id)
+            ? { ...user, is_restricted: false }
+            : maskContactDetails({ ...user, is_restricted: false }),
       ),
     });
   } catch (error) {
@@ -2423,6 +2651,16 @@ export const ListUsersLight = async (req: Request, res: Response) => {
       ? memberScope.exclusions
       : [];
     const permissionDomain = String(req.query.permission_domain || "").trim();
+    // Who holds a permission is access-rights information: only for people
+    // who can see roles, or who manage that module (e.g. the finance approver picker).
+    const callerPermissions = getRequestAccess(req)?.permissions;
+    if (
+      permissionDomain &&
+      !hasActionPermission(callerPermissions, "Access_rights", "view") &&
+      !hasActionPermission(callerPermissions, permissionDomain, "manage")
+    ) {
+      return res.status(403).json({ message: "Not authorized", data: null });
+    }
     const minimumAccessRaw = String(req.query.minimum_access || "").trim().toLowerCase();
     const minimumAccess: MinimumAccessLevel =
       minimumAccessRaw === "manage"
@@ -2581,7 +2819,6 @@ export const ListUsersLight = async (req: Request, res: Response) => {
         return {
           id: user.id,
           name: user.name,
-          email: user.email,
           ministry_worker: Boolean(user.is_user),
           is_active: user.is_active ?? true,
           department:
@@ -2644,6 +2881,10 @@ export const filterUsersInfo = async (req: Request, res: Response) => {
         notIn: excludedMemberIds,
       };
     }
+    const scopeWhere = memberScopeWhere(req);
+    if (scopeWhere) {
+      filters.AND = [scopeWhere];
+    }
 
     const [total, users] = await Promise.all([
       prisma.user.count({ where: filters }),
@@ -2669,7 +2910,9 @@ export const filterUsersInfo = async (req: Request, res: Response) => {
       total,
       totalPages,
       count: users.length,
-      data: users,
+      data: users.map((user) =>
+        canSeeContactDetails(req, user.id) ? user : maskContactDetails(user),
+      ),
     });
   } catch (error) {
     console.error(error);
@@ -2692,6 +2935,7 @@ export const getUser = async (req: Request, res: Response) => {
   if (!resolvedUserId) {
     return res.status(400).json({ message: "Invalid or missing user_id" });
   }
+  if (await denyMembersOutOfReach(req, res, [resolvedUserId])) return;
 
   try {
     const response: any = await prisma.user.findUnique({
@@ -3021,9 +3265,15 @@ export const getUser = async (req: Request, res: Response) => {
       items: enrolledPrograms,
     };
 
+    const showContacts = canSeeContactDetails(req, resolvedUserId);
     return res.status(200).json({
       message: "Operation Successful",
-      data: user,
+      data: showContacts
+        ? user
+        : {
+            ...maskContactDetails(user),
+            family: (user.family || []).map((relative: any) => maskContactDetails(relative)),
+          },
     });
   } catch (error) {
     return res.status(500).json({
@@ -3096,6 +3346,9 @@ export const statsUsers = async (req: Request, res: Response) => {
     const branchWhere = getBranchScopedWhere(req.query?.branch_id);
     // `active_only=true` counts active members only; default counts everyone.
     const activeWhere = req.query?.active_only === "true" ? { is_active: true } : {};
+    // A role limited to its departments or life centers counts those people.
+    const scopeWhere = memberScopeWhere(req);
+    const scopeFilter = scopeWhere ? { AND: [scopeWhere] } : {};
     const [onlineUsers, inhouseUsers] = await Promise.all([
       prisma.user_info.findMany({
         where: {
@@ -3103,6 +3356,7 @@ export const statsUsers = async (req: Request, res: Response) => {
             membership_type: "ONLINE",
             ...(branchWhere || {}),
             ...activeWhere,
+            ...scopeFilter,
           },
         },
       }),
@@ -3112,6 +3366,7 @@ export const statsUsers = async (req: Request, res: Response) => {
             membership_type: "IN_HOUSE",
             ...(branchWhere || {}),
             ...activeWhere,
+            ...scopeFilter,
           },
         },
       }),
@@ -3215,6 +3470,7 @@ export const getUserByEmailPhone = async (req: Request, res: Response) => {
         message: "User not found",
       });
     }
+    if (user && (await denyMembersOutOfReach(req, res, [user.user_id]))) return;
 
     return res.status(200).json({
       message: "Operation successful",
@@ -3249,6 +3505,17 @@ export const convertMemeberToConfirmedMember = async (
   }
 
   const user_status = typeof status === "string" ? status : undefined;
+  if (
+    denyAction(
+      res,
+      callerActionAllowed(req, "Membership_Management", "confirm_member") ||
+        membersActionAllowed(req, "change_status"),
+      "You don't have permission to confirm members.",
+    ) ||
+    (await denyMembersOutOfReach(req, res, [Number(user_id)]))
+  ) {
+    return;
+  }
 
   try {
     const result = await userService.convertMemeberToConfirmedMember(
@@ -3300,6 +3567,18 @@ export const bulkUpdateMemberStatus = async (req: Request, res: Response) => {
         error: "user_ids must be a non-empty array.",
       },
     });
+  }
+
+  if (
+    denyAction(
+      res,
+      callerActionAllowed(req, "Membership_Management", "confirm_member") ||
+        membersActionAllowed(req, "change_status"),
+      "You don't have permission to change membership status.",
+    ) ||
+    (await denyMembersOutOfReach(req, res, user_ids))
+  ) {
+    return;
   }
 
   try {
@@ -3364,6 +3643,18 @@ export const bulkUpdateUserStatus = async (req: Request, res: Response) => {
     });
   }
 
+  if (
+    denyAction(
+      res,
+      membersActionAllowed(req, "change_status") ||
+        callerActionAllowed(req, "Access_rights", "deactivate_users"),
+      "You don't have permission to activate or deactivate members.",
+    ) ||
+    (await denyMembersOutOfReach(req, res, user_ids))
+  ) {
+    return;
+  }
+
   try {
     const result = await userService.bulkUpdateUserStatus(user_ids, is_active);
     const changedIds = result.results
@@ -3386,6 +3677,16 @@ export const bulkUpdateUserStatus = async (req: Request, res: Response) => {
 export const linkSpouses = async (req: Request, res: Response) => {
   try {
     const { husband, wife } = req.body;
+    if (
+      denyAction(
+        res,
+        membersActionAllowed(req, "link_family"),
+        "You don't have permission to link family members.",
+      ) ||
+      (await denyMembersOutOfReach(req, res, [Number(husband), Number(wife)]))
+    ) {
+      return;
+    }
     const result = await userService.linkSpouses(Number(husband), Number(wife));
     if (result.error == "") {
       return res.status(400).json({
@@ -3423,6 +3724,7 @@ export const getUserFamily = async (req: Request, res: Response) => {
       });
     }
 
+    if (await denyMembersOutOfReach(req, res, [resolvedUserId])) return;
     const family = await userService.getUserFamily(resolvedUserId);
 
     if (!family) {
@@ -3447,23 +3749,36 @@ export const getUserFamily = async (req: Request, res: Response) => {
 export const linkChildren = async (req: Request, res: Response) => {
   try {
     const { childrenIds, parentId } = req.body;
+    if (
+      denyAction(
+        res,
+        membersActionAllowed(req, "link_family"),
+        "You don't have permission to link family members.",
+      ) ||
+      (await denyMembersOutOfReach(req, res, [
+        Number(parentId),
+        ...(Array.isArray(childrenIds) ? childrenIds.map(Number) : []),
+      ]))
+    ) {
+      return;
+    }
 
     if (Array.isArray(childrenIds) && childrenIds.length > 0) {
       const result = await userService.linkChildren(childrenIds, parentId);
       if (result) {
-        return { message: "Operation Sucess", data: result };
+        return res.status(200).json({ message: "Operation Sucess", data: result });
       }
 
-      return {
+      return res.status(400).json({
         message: "Operation Failed",
         data: "Something Happened, Contact Eshun",
-      };
+      });
     }
 
-    return {
+    return res.status(400).json({
       message: "Operation Failed",
       data: "We expect the children Id to be an Array",
-    };
+    });
   } catch (error) {
     console.error("Error linking children:", error);
     throw error;
@@ -3737,6 +4052,19 @@ export const sendResetLink = async (req: Request, res: Response) => {
   const userId = Number(req.body?.user_id);
   if (!Number.isInteger(userId) || userId <= 0) {
     return res.status(400).json({ message: "user_id is required", data: null });
+  }
+  // Members › Send password links, or Access rights › Reset passwords (the
+  // Users page); a role saved before actions keeps the Members manage rule.
+  if (
+    denyAction(
+      res,
+      membersActionAllowed(req, "send_password_link") ||
+        callerActionAllowed(req, "Access_rights", "reset_password"),
+      "You don't have permission to send password links.",
+    ) ||
+    (await denyMembersOutOfReach(req, res, [userId]))
+  ) {
+    return;
   }
 
   try {

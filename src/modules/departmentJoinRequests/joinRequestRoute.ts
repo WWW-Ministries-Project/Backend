@@ -21,10 +21,12 @@ joinRequestRouter.post("/create", [protect], createJoinRequest);
 joinRequestRouter.get("/mine", [protect], listMyJoinRequests);
 
 // Approver-facing: authorization is enforced per-request inside the controller
-// (Membership_Management manager OR head of the target department).
-joinRequestRouter.get("/list", [protect], listJoinRequests);
-joinRequestRouter.patch("/approve", [protect], approveJoinRequest);
-joinRequestRouter.patch("/decline", [protect], declineJoinRequest);
-joinRequestRouter.post("/bulk", [protect], bulkJoinRequestAction);
+// from the live role (`req.access`): Membership management › Decide join
+// requests within its scope, OR head of the target department.
+const withAccess = permissions.withAccess;
+joinRequestRouter.get("/list", [protect, withAccess], listJoinRequests);
+joinRequestRouter.patch("/approve", [protect, withAccess], approveJoinRequest);
+joinRequestRouter.patch("/decline", [protect, withAccess], declineJoinRequest);
+joinRequestRouter.post("/bulk", [protect, withAccess], bulkJoinRequestAction);
 
 export default joinRequestRouter;

@@ -9,7 +9,12 @@ import {
   getBranchScopedWhere,
   resolveBranchIdOrDefault,
 } from "../branches/branchService";
-import { triggerRequisitionNotificationEventProcessing } from "../requisitions/requisition-approval-workflow";
+import { getRequestAccess } from "../../middleWare/authorization";
+import { actionAllowed, domainScope, scopeDepartmentIds } from "../../permissions/access";
+import {
+  getRequisitionApprovalConfig,
+  triggerRequisitionNotificationEventProcessing,
+} from "../requisitions/requisition-approval-workflow";
 import { createRequisitionTx } from "../requisitions/requisition-service";
 
 /**
@@ -21,10 +26,19 @@ import { createRequisitionTx } from "../requisitions/requisition-service";
  */
 
 export type AssetAccess = {
+  /** Asset role with the whole-branch scope. */
   canViewAll: boolean;
+  /** Asset Manage across the whole branch (runs stock checks for everyone). */
   canManage: boolean;
   canAdmin: boolean;
+  /** Departments whose assets they see and count: ones they belong to, plus their role's scope. */
   departmentIds: number[];
+  /** Departments a department-scoped role may change; null = the whole branch. */
+  manageDepartmentIds: number[] | null;
+  /** Whether the role allows `Asset.<action>` (always false without an Asset role). */
+  can: (action: string) => boolean;
+  /** Live permissions, for cross-domain checks. */
+  permissions: Record<string, any>;
 };
 
 export type HistoryTone = "neutral" | "info" | "success" | "warning" | "danger";
@@ -111,19 +125,36 @@ const parseStatus = (value: unknown): asset_status => {
 const toRequisitionStatus = (raw: RequestApprovalStatus): RequisitionStatus =>
   raw === RequestApprovalStatus.Draft
     ? "DRAFT"
-    : raw === RequestApprovalStatus.APPROVED
+    : raw === RequestApprovalStatus.APPROVED || raw === RequestApprovalStatus.DISBURSED
       ? "APPROVED"
       : raw === RequestApprovalStatus.REJECTED
         ? "REJECTED"
         : "PENDING";
 
+/**
+ * What this viewer may do with assets. `req.assetAccess` (set by
+ * can_view_assets_scoped) says whether they hold an Asset role at all; the
+ * role's scope and actions then narrow it. Department members keep seeing
+ * and counting their own department's assets with no Asset role.
+ */
 export const accessOf = (req: any): AssetAccess => {
-  const access = req?.assetAccess;
+  const guard = req?.assetAccess;
+  const live = getRequestAccess(req);
+  const permissions = live?.permissions ?? {};
+  const memberIds: number[] = Array.isArray(guard?.departmentIds) ? guard.departmentIds : [];
+  const hasRole = Boolean(guard?.canViewAll);
+  const scopedIds =
+    hasRole && live ? scopeDepartmentIds(domainScope(permissions, "Asset"), live) : null;
+  const canViewAll = hasRole && scopedIds === null;
+  const can = (action: string) => hasRole && actionAllowed(permissions, "Asset", action);
   return {
-    canViewAll: Boolean(access?.canViewAll),
-    canManage: Boolean(access?.canManage),
-    canAdmin: Boolean(access?.canAdmin),
-    departmentIds: Array.isArray(access?.departmentIds) ? access.departmentIds : [],
+    canViewAll,
+    canManage: canViewAll && Boolean(guard?.canManage),
+    canAdmin: Boolean(guard?.canAdmin) && can("delete"),
+    departmentIds: Array.from(new Set([...memberIds, ...(scopedIds ?? [])])),
+    manageDepartmentIds: hasRole ? scopedIds : [],
+    can,
+    permissions,
   };
 };
 
@@ -137,8 +168,11 @@ export const actorOf = async (user: any): Promise<{ id: number; name: string }> 
 /** Writes carry the active branch in the body (client branch scoping). */
 export const writeBranch = (req: any) => req?.body?.branch_id ?? req?.query?.branch_id;
 
-const requireManage = (access: AssetAccess) => {
-  if (!access.canManage) throw new UnauthorizedError("You can't change assets.");
+/** Throws unless the role allows one of `actions` on assets. */
+export const requireAssetAction = (access: AssetAccess, ...actions: string[]) => {
+  if (!actions.some((action) => access.can(action))) {
+    throw new UnauthorizedError("You can't change assets.");
+  }
 };
 
 /** Where clause for what this viewer may see in the active branch. */
@@ -146,6 +180,26 @@ export const assetScopeWhere = (access: AssetAccess, branchId: unknown): Prisma.
   ...(getBranchScopedWhere(branchId) || {}),
   ...(access.canViewAll ? {} : { department_assigned: { in: access.departmentIds } }),
 });
+
+/** Where clause for what this viewer may change: a department-scoped role only its departments. */
+export const assetWriteWhere = (access: AssetAccess, branchId: unknown): Prisma.assetsWhereInput => ({
+  ...(getBranchScopedWhere(branchId) || {}),
+  ...(access.manageDepartmentIds === null
+    ? {}
+    : { department_assigned: { in: access.manageDepartmentIds } }),
+});
+
+/** A department-scoped role can only place assets in its own departments. */
+const requireDepartmentInScope = (access: AssetAccess, departmentId: number | null) => {
+  if (access.manageDepartmentIds === null) return;
+  if (!departmentId || !access.manageDepartmentIds.includes(departmentId)) {
+    throw new UnauthorizedError("You can only manage assets in your departments.");
+  }
+};
+
+/** ASSIGNED / UNASSIGNED moves are assignments; anything else is a status change. */
+const statusAction = (status: asset_status) =>
+  status === asset_status.ASSIGNED || status === asset_status.UNASSIGNED ? "assign" : "change_status";
 
 const ASSET_SELECT = {
   id: true,
@@ -286,6 +340,8 @@ export const getAssetOverview = async (req: any) => {
       can_manage: access.canManage,
       can_delete: access.canAdmin,
       department_ids: access.departmentIds,
+      // Departments a department-scoped role may change; null = every department.
+      manage_department_ids: access.manageDepartmentIds,
     },
     repair_stale_days: REPAIR_STALE_DAYS,
     categories: ASSET_CATEGORIES,
@@ -373,10 +429,10 @@ export const getAssetHistory = async (req: any) => {
 /** POST /assets/save-asset — create (no id) or edit, with history. */
 export const saveAsset = async (req: any) => {
   const access = accessOf(req);
-  requireManage(access);
-  const actor = await actorOf(req.user);
   const body = req.body || {};
   const id = toPositiveInt(body.id);
+  requireAssetAction(access, id ? "edit" : "create");
+  const actor = await actorOf(req.user);
 
   const name = String(body.name || "").trim();
   const category = String(body.category || "").trim();
@@ -405,6 +461,8 @@ export const saveAsset = async (req: any) => {
   const now = new Date();
 
   if (!id) {
+    if (status !== asset_status.UNASSIGNED) requireAssetAction(access, statusAction(status));
+    if (access.manageDepartmentIds !== null) requireDepartmentInScope(access, departmentId);
     const created = await prisma.$transaction(async (tx) => {
       const asset = await tx.assets.create({
         data: {
@@ -454,12 +512,16 @@ export const saveAsset = async (req: any) => {
   }
 
   const existing = await prisma.assets.findFirst({
-    where: { id, ...assetScopeWhere(access, writeBranch(req)) },
+    where: { id, ...assetWriteWhere(access, writeBranch(req)) },
     select: ASSET_SELECT,
   });
   if (!existing) throw new NotFoundError("Asset not found");
   const changed =
     (existing.status || asset_status.UNASSIGNED) !== status || (existing.department_assigned ?? null) !== departmentId;
+  if (changed) {
+    requireAssetAction(access, statusAction(status));
+    requireDepartmentInScope(access, departmentId);
+  }
 
   await prisma.$transaction(async (tx) => {
     await tx.assets.update({
@@ -541,13 +603,14 @@ const snapshotOf = (asset: AssetRecord): Snapshot => ({
  */
 export const updateAssetStatus = async (req: any) => {
   const access = accessOf(req);
-  requireManage(access);
   const actor = await actorOf(req.user);
   const body = req.body || {};
   const ids = toIdList(body.ids ?? body.id);
   if (!ids.length) throw new InputValidationError("Choose at least one asset.");
   const status = parseStatus(body.status);
+  requireAssetAction(access, statusAction(status));
   const departmentId = toPositiveInt(body.department_id);
+  if (status === asset_status.ASSIGNED) requireDepartmentInScope(access, departmentId);
   const note = String(body.note || "").trim();
   const date = parseDate(body.date, "Effective date") || new Date();
   if (status === asset_status.ASSIGNED && !departmentId) throw new InputValidationError("Choose the department.");
@@ -557,7 +620,7 @@ export const updateAssetStatus = async (req: any) => {
   const deptName = await departmentName(status === asset_status.ASSIGNED ? departmentId : null);
 
   const assets = await prisma.assets.findMany({
-    where: { id: { in: ids }, ...assetScopeWhere(access, writeBranch(req)) },
+    where: { id: { in: ids }, ...assetWriteWhere(access, writeBranch(req)) },
     select: ASSET_SELECT,
   });
   if (assets.length !== ids.length) throw new NotFoundError("Some of these assets weren't found.");
@@ -611,13 +674,14 @@ export const updateAssetStatus = async (req: any) => {
 /** POST /assets/restore { snapshots } — undo of update-status / confirm-lost. */
 export const restoreAssets = async (req: any) => {
   const access = accessOf(req);
-  requireManage(access);
+  // Undo of a status change, assignment or write-off.
+  requireAssetAction(access, "change_status", "assign", "write_off");
   const actor = await actorOf(req.user);
   const snapshots: Snapshot[] = Array.isArray(req.body?.snapshots) ? req.body.snapshots : [];
   const ids = toIdList(snapshots.map((snapshot) => snapshot?.id));
   if (!ids.length) throw new InputValidationError("Nothing to undo.");
   const allowed = await prisma.assets.findMany({
-    where: { id: { in: ids }, ...assetScopeWhere(access, writeBranch(req)) },
+    where: { id: { in: ids }, ...assetWriteWhere(access, writeBranch(req)) },
     select: { id: true },
   });
   if (allowed.length !== ids.length) throw new NotFoundError("Some of these assets weren't found.");
@@ -660,12 +724,13 @@ export const restoreAssets = async (req: any) => {
 /** POST /assets/confirm-lost { id } — closes the search; stays on the register as lost. */
 export const confirmAssetLost = async (req: any) => {
   const access = accessOf(req);
-  requireManage(access);
+  // Confirming lost writes the asset off.
+  requireAssetAction(access, "write_off");
   const actor = await actorOf(req.user);
   const id = toPositiveInt(req.body?.id);
   if (!id) throw new InputValidationError("An asset id is required.");
   const asset = await prisma.assets.findFirst({
-    where: { id, ...assetScopeWhere(access, writeBranch(req)) },
+    where: { id, ...assetWriteWhere(access, writeBranch(req)) },
     select: ASSET_SELECT,
   });
   if (!asset) throw new NotFoundError("Asset not found");
@@ -693,6 +758,20 @@ export const confirmAssetLost = async (req: any) => {
 /* -------------------------------------------------------------------------- */
 
 /**
+ * Raising a repair requisition is raising a requisition: the person also needs
+ * `Requisition.raise` and must be on the approval chain's requester list.
+ */
+const requireRequisitionRaiser = async (access: AssetAccess, actorId: number) => {
+  if (!actionAllowed(access.permissions, "Requisition", "raise")) {
+    throw new UnauthorizedError("You can't raise requisitions.");
+  }
+  const config = await getRequisitionApprovalConfig();
+  if (config && !config.requester_user_ids.includes(actorId)) {
+    throw new UnauthorizedError("You aren't on the list of people who can raise requisitions.");
+  }
+};
+
+/**
  * POST /assets/repair-requisition
  * { asset_ids, estimates: { [assetId]: amount }, needed_by, purpose, user_sign,
  *   fallback_department_id?, branch_id? }
@@ -702,13 +781,14 @@ export const confirmAssetLost = async (req: any) => {
  */
 export const raiseRepairRequisitions = async (req: any) => {
   const access = accessOf(req);
-  requireManage(access);
+  requireAssetAction(access, "raise_requisition");
   const actor = await actorOf(req.user);
+  await requireRequisitionRaiser(access, actor.id);
   const body = req.body || {};
   const ids = toIdList(body.asset_ids);
   if (!ids.length) throw new InputValidationError("Select assets that need repair.");
   const assets = await prisma.assets.findMany({
-    where: { id: { in: ids }, ...assetScopeWhere(access, writeBranch(req)) },
+    where: { id: { in: ids }, ...assetWriteWhere(access, writeBranch(req)) },
     select: ASSET_SELECT,
   });
   const ok = assets.filter((asset) => asset.status === asset_status.NEEDS_REPAIR && !asset.repair_request_id);
@@ -733,6 +813,7 @@ export const raiseRepairRequisitions = async (req: any) => {
     errors.push("Choose which department raises the repair for items in the store.");
   }
   if (errors.length) throw new InputValidationError(errors.join(" "));
+  if (ok.some((asset) => !asset.department_assigned)) requireDepartmentInScope(access, fallbackDept);
 
   const groups = new Map<number, AssetRecord[]>();
   ok.forEach((asset) => {
@@ -821,12 +902,12 @@ export const raiseRepairRequisitions = async (req: any) => {
 /** POST /assets/clear-repair-requisition { id } — after a rejection, so a new one can be raised. */
 export const clearRepairRequisition = async (req: any) => {
   const access = accessOf(req);
-  requireManage(access);
+  requireAssetAction(access, "clear_repair");
   const actor = await actorOf(req.user);
   const id = toPositiveInt(req.body?.id);
   if (!id) throw new InputValidationError("An asset id is required.");
   const asset = await prisma.assets.findFirst({
-    where: { id, ...assetScopeWhere(access, writeBranch(req)) },
+    where: { id, ...assetWriteWhere(access, writeBranch(req)) },
     select: ASSET_SELECT,
   });
   if (!asset) throw new NotFoundError("Asset not found");

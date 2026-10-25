@@ -12,6 +12,7 @@ import {
   requiredText,
 } from "./lmsHttp";
 import { reportsService } from "./reportsService";
+import { assertMessagingChannels } from "../somAccess";
 import { ANNOUNCEMENT_AUDIENCES, SESSION_MODES, teachingService, type AnnouncementAudience } from "./teachingService";
 
 const text = (value: unknown) => (typeof value === "string" && value.trim() ? value.trim() : null);
@@ -116,6 +117,7 @@ export const operationsController = {
     const audience = String(req.body.audience ?? "COHORT") as AnnouncementAudience;
     if (!ANNOUNCEMENT_AUDIENCES.includes(audience)) throw new LmsError("audience must be COHORT, CLASS or AT_RISK");
     const channels = req.body.channels ?? {};
+    await assertMessagingChannels(req, { email: channels.email === true, sms: channels.sms === true });
     return teachingService.createAnnouncement(
       {
         cohortId,

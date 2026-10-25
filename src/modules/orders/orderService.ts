@@ -22,6 +22,9 @@ import {
   type PaymentStatusValue,
   type ResolvedFulfilment,
 } from "./marketplaceFulfilment";
+import { filterOrdersInBranches, orderBranchWhere } from "./marketplaceAccess";
+import { assertReturnUrls } from "./returnUrls";
+import { getBranchScopedWhere } from "../branches/branchService";
 
 export type StockShortage = {
   name: string;
@@ -97,6 +100,8 @@ export type UpdateOrderInput = {
   payment_status?: "pending" | "success" | "failed";
   delivery_status?: "pending" | "shipped" | "delivered" | "cancelled";
   items?: OrderItemEdit[];
+  /** Staff member making the change; recorded when they mark the order paid. */
+  actorUserId?: number | null;
 };
 
 export type CreateOrderForMemberInput = {
@@ -138,6 +143,14 @@ export type CreateOrderForMemberInput = {
 };
 
 export class OrderService {
+  /** The order's buyer, or null when there is no such order. */
+  async findOrderOwner(orderId: number) {
+    return prisma.orders.findFirst({
+      where: { id: orderId, deleted_at: null },
+      select: { user_id: true },
+    });
+  }
+
   async findOrderByName(first_name?: string, last_name?: string) {
     const orders = await prisma.orders.findMany({
       where: {
@@ -199,6 +212,7 @@ export class OrderService {
     },
     options: { reuseExistingPending?: boolean } = {},
   ) {
+    assertReturnUrls(data.return_url, data.cancellation_url);
     if (data.payment_type === "hubtel") {
       this.validateHubtelRedirectUrls(data.return_url, data.cancellation_url);
     }
@@ -411,6 +425,7 @@ export class OrderService {
     if (data.payment_mode !== "manual" && data.payment_mode !== "gateway") {
       throw new Error('payment_mode must be "manual" or "gateway"');
     }
+    assertReturnUrls(data.return_url, data.cancellation_url);
 
     // Deliberately no member notification here (unlike updateOrderPayment/
     // updateDeliveryStatus/cancelOrder) — a manually-placed order implies
@@ -483,6 +498,10 @@ export class OrderService {
           reference: clientReference,
           payment_status: manualStatus,
           placed_by_staff_id: data.placed_by_staff_id,
+          ...(manualStatus === "success" && {
+            marked_paid_by_user_id: data.placed_by_staff_id,
+            marked_paid_at: new Date(),
+          }),
           fulfilment_method: fulfilment.fulfilment_method,
           delivery_address: fulfilment.delivery_address,
           delivery_fee: fulfilment.delivery_fee,
@@ -543,6 +562,7 @@ export class OrderService {
     cancellation_url: string | null,
   ) {
     this.validateHubtelRedirectUrls(return_url, cancellation_url);
+    assertReturnUrls(return_url, cancellation_url);
     const clientReference = this.generateReference();
 
     const order = await prisma.orders.findFirst({
@@ -591,9 +611,9 @@ export class OrderService {
     };
   }
 
-  async findAll() {
+  async findAll(branchId?: unknown) {
     const orders = await prisma.orders.findMany({
-      where: { deleted_at: null },
+      where: { deleted_at: null, ...(orderBranchWhere(branchId) ?? {}) },
       orderBy: {
         id: "desc",
       },
@@ -626,7 +646,12 @@ export class OrderService {
     });
 
     if (!order) throw new Error("Order not found");
-    return order;
+    const names = await this.markedPaidNames([order]);
+    return {
+      ...order,
+      marked_paid_by_name:
+        (order.marked_paid_by_user_id && names.get(order.marked_paid_by_user_id)) || null,
+    };
   }
 
   async updateOrder(data: UpdateOrderInput) {
@@ -692,6 +717,13 @@ export class OrderService {
           data: changingStatus
             ? {
                 ...(data.payment_status && { payment_status: data.payment_status }),
+                // Marking paid by hand records who did it (gateway payments go
+                // through updateOrderPayment and leave these empty).
+                ...(data.payment_status === "success" &&
+                  order.payment_status !== "success" && {
+                    marked_paid_by_user_id: data.actorUserId ?? null,
+                    marked_paid_at: new Date(),
+                  }),
                 ...(data.delivery_status && { delivery_status: data.delivery_status }),
               }
             : { updated_at: new Date() },
@@ -984,16 +1016,9 @@ export class OrderService {
     return await this.flattenOrders(await orders);
   }
 
+  // Read-only: pending Hubtel payments are reconciled by the cron job or the
+  // explicit reconcile action (POST reconcile-hubtel-pending-payments?market_id=).
   async findOneByMarketplaceId(marketplaceId: number) {
-    try {
-      await this.reconcilePendingHubtelPaymentsByMarket(marketplaceId, 20);
-    } catch (error: any) {
-      console.error(
-        "Market-level Hubtel reconciliation failed:",
-        error.message || error,
-      );
-    }
-
     const orders = await prisma.orders.findMany({
       orderBy: {
         id: "desc",
@@ -1451,9 +1476,14 @@ export class OrderService {
     changes: { payment_status?: PaymentStatusValue; delivery_status?: DeliveryStatusValue },
     actorUserId?: number | null,
   ) {
-    const uniqueIds = Array.from(new Set(orderIds));
+    const { allowed: uniqueIds, denied } = await filterOrdersInBranches(
+      Array.from(new Set(orderIds)),
+    );
     const updated: number[] = [];
-    const skipped: { id: number; reason: string }[] = [];
+    const skipped: { id: number; reason: string }[] = denied.map((id) => ({
+      id,
+      reason: "Order not found",
+    }));
 
     const existing = await prisma.orders.findMany({
       where: { id: { in: uniqueIds }, deleted_at: null },
@@ -1478,6 +1508,7 @@ export class OrderService {
           id,
           payment_status: changes.payment_status,
           delivery_status: changes.delivery_status,
+          actorUserId,
         });
         updated.push(id);
 
@@ -1533,10 +1564,12 @@ export class OrderService {
 
     // Market scope: explicit market, markets of a branch, or both (intersection).
     let scopedMarketIds: number[] | null = null;
-    if (filters.branch_id != null) {
+    // No branch asked for: the active branch / the caller's branches.
+    const branchWhere = getBranchScopedWhere(filters.branch_id);
+    if (branchWhere) {
       const branchMarkets = await prisma.markets.findMany({
         where: {
-          branch_id: filters.branch_id,
+          ...branchWhere,
           ...(filters.market_id != null && { id: filters.market_id }),
         },
         select: { id: true },
@@ -1890,10 +1923,12 @@ export class OrderService {
 
   /** Soft-deletes many orders independently — one bad id doesn't block the rest. */
   async bulkDeleteOrders(orderIds: number[], actorUserId?: number | null) {
-    const uniqueIds = Array.from(new Set(orderIds));
+    const { allowed: uniqueIds, denied } = await filterOrdersInBranches(
+      Array.from(new Set(orderIds)),
+    );
     const BATCH_SIZE = 20;
     const deleted: number[] = [];
-    const skipped: number[] = [];
+    const skipped: number[] = [...denied];
 
     for (let i = 0; i < uniqueIds.length; i += BATCH_SIZE) {
       const batch = uniqueIds.slice(i, i + BATCH_SIZE);
@@ -2483,7 +2518,7 @@ export class OrderService {
     return "pending";
   }
 
-  private async reconcilePendingHubtelPaymentsByMarket(
+  async reconcilePendingHubtelPaymentsByMarket(
     marketplaceId: number,
     limit: number,
   ) {
@@ -2511,14 +2546,36 @@ export class OrderService {
       select: { reference: true },
     });
 
-    await Promise.allSettled(
+    const results = await Promise.allSettled(
       pendingOrders.map((order) =>
         this.checkHubtelTransactionStatus(order.reference),
       ),
     );
+    return {
+      checked: pendingOrders.length,
+      failed: results.filter((result) => result.status === "rejected").length,
+    };
+  }
+
+  /** Names of the staff who marked these orders paid, by user id. */
+  async markedPaidNames(orders: { marked_paid_by_user_id?: number | null }[]) {
+    const ids = Array.from(
+      new Set(
+        orders
+          .map((order) => order.marked_paid_by_user_id)
+          .filter((id): id is number => typeof id === "number"),
+      ),
+    );
+    if (!ids.length) return new Map<number, string>();
+    const users = await prisma.user.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, name: true },
+    });
+    return new Map(users.map((user) => [user.id, user.name ?? ""]));
   }
 
   private async flattenOrders(orders: any[]) {
+    const markedPaidNames = await this.markedPaidNames(orders);
     return orders.flatMap((order) => {
       const billingDetails = order.billing_details;
 
@@ -2596,6 +2653,9 @@ export class OrderService {
               delivery_address: order.delivery_address ?? null,
               delivery_fee: order.delivery_fee ?? 0,
               placed_by_staff_id: order.placed_by_staff_id ?? null,
+              marked_paid_by_user_id: order.marked_paid_by_user_id ?? null,
+              marked_paid_by_name: markedPaidNames.get(order.marked_paid_by_user_id) ?? null,
+              marked_paid_at: order.marked_paid_at ?? null,
               // Whole-order stored total (items + delivery fee). Distinct from
               // the per-item `total_amount` below, which must stay as-is.
               order_total: order.total_amount,

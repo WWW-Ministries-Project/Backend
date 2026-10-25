@@ -132,7 +132,7 @@ givingOptionRouter.get(
  */
 givingOptionRouter.post(
   "/create-giving-option",
-  [protect, permissions.can_manage_giving],
+  [protect, permissions.requireAction("Giving", "manage_options", "Not authorized to manage giving options")],
   controller.create,
 );
 
@@ -198,7 +198,7 @@ givingOptionRouter.get(
  */
 givingOptionRouter.put(
   "/update-giving-option",
-  [protect, permissions.can_manage_giving],
+  [protect, permissions.requireAction("Giving", "manage_options", "Not authorized to manage giving options")],
   controller.update,
 );
 
@@ -223,7 +223,7 @@ givingOptionRouter.put(
  */
 givingOptionRouter.put(
   "/restore-giving-option",
-  [protect, permissions.can_manage_giving],
+  [protect, permissions.requireAction("Giving", "manage_options", "Not authorized to manage giving options")],
   controller.restore,
 );
 
@@ -251,7 +251,7 @@ givingOptionRouter.put(
  */
 givingOptionRouter.delete(
   "/delete-giving-option",
-  [protect, permissions.can_delete_giving],
+  [protect, permissions.requireAction("Giving", "archive", "Not authorized to archive giving options")],
   controller.archive,
 );
 
@@ -551,7 +551,7 @@ givingOptionRouter.get(
  */
 givingOptionRouter.post(
   "/contributions/recheck",
-  [protect, permissions.can_manage_giving],
+  [protect, permissions.requireAction("Giving", "reconcile_payment", "Not authorized to reconcile payments")],
   contributionController.recheck,
 );
 
@@ -579,7 +579,7 @@ givingOptionRouter.post(
  */
 givingOptionRouter.post(
   "/contributions/nudge",
-  [protect, permissions.can_manage_giving],
+  [protect, permissions.requireAction("Giving", "message_donor", "Not authorized to message givers")],
   contributionController.nudge,
 );
 

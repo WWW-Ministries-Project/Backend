@@ -6,6 +6,7 @@
 import { Prisma, community_reaction_type } from "@prisma/client";
 import { prisma } from "../../Models/context";
 import { UnauthorizedError } from "../../utils/custom-error-handlers";
+import { getBranchScopedWhere } from "../branches/branchService";
 import {
   COMMENT_REACTIONS,
   POST_REACTIONS,
@@ -27,6 +28,33 @@ export type Viewer = {
   blockedIds: number[];
   canView: boolean;
   canManage: boolean;
+  /** Community actions the role allows (src/permissions/catalog.ts). */
+  actions: CommunityActions;
+  /**
+   * Departments whose posts the viewer may moderate when the role's Community
+   * scope is department-based; null means the whole active branch.
+   */
+  moderationDepartmentIds: number[] | null;
+};
+
+export type CommunityActions = {
+  postChurchWide: boolean;
+  postAnyDepartment: boolean;
+  pinImportant: boolean;
+  moderate: boolean;
+  viewAuditLog: boolean;
+  deleteAny: boolean;
+  viewAnonymousAuthor: boolean;
+};
+
+export const NO_COMMUNITY_ACTIONS: CommunityActions = {
+  postChurchWide: false,
+  postAnyDepartment: false,
+  pinImportant: false,
+  moderate: false,
+  viewAuditLog: false,
+  deleteAny: false,
+  viewAnonymousAuthor: false,
 };
 
 const MEMBER_ONLY_MESSAGE = "Community is for church members only.";
@@ -52,7 +80,12 @@ export const departmentIdsOf = async (userId: number): Promise<number[]> => {
 /** Loads the signed-in member, rejecting guests and deactivated accounts with 403. */
 export const loadViewer = async (
   userId: number,
-  access: { canView: boolean; canManage: boolean },
+  access: {
+    canView: boolean;
+    canManage: boolean;
+    actions?: CommunityActions;
+    moderationDepartmentIds?: number[] | null;
+  },
 ): Promise<Viewer> => {
   const user = await prisma.user.findUnique({
     where: { id: userId },
@@ -78,6 +111,8 @@ export const loadViewer = async (
     blockedIds: distinctIds(blocks.map((block) => block.blocked_id)),
     canView: access.canView || access.canManage,
     canManage: access.canManage,
+    actions: access.actions ?? NO_COMMUNITY_ACTIONS,
+    moderationDepartmentIds: access.moderationDepartmentIds ?? null,
   };
 };
 
@@ -151,6 +186,24 @@ export const visiblePostWhere = (viewer: Viewer): Prisma.community_postWhereInpu
     viewer.blockedIds.length ? { author_id: { notIn: viewer.blockedIds } } : {},
   ],
 });
+
+/**
+ * Posts the viewer may moderate: in the active branch (or one of their
+ * branches; posts with no branch are church-wide), and in the departments
+ * they lead when their Community scope is department-based.
+ */
+export const moderationPostWhere = (viewer: Viewer): Prisma.community_postWhereInput => {
+  const conditions: Prisma.community_postWhereInput[] = [];
+  const branch = getBranchScopedWhere(undefined);
+  if (branch) conditions.push({ OR: [branch, { branch_id: null }] });
+  if (viewer.moderationDepartmentIds) {
+    conditions.push({
+      audience: "DEPARTMENT",
+      department_id: { in: viewer.moderationDepartmentIds },
+    });
+  }
+  return { AND: conditions };
+};
 
 /** Comment-level rules; the post's own visibility is checked separately. */
 export const visibleCommentWhere = (viewer: Viewer): Prisma.community_commentWhereInput => ({

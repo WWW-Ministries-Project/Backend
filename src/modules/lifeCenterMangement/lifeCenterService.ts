@@ -451,11 +451,13 @@ export class LifeCenterService {
     return { message: "Soul removed successfully" };
   }
 
-  async getSouls(filter?: { lifeCenterId?: number; wonById?: number }) {
+  async getSouls(filter?: { lifeCenterId?: number; wonById?: number; branchId?: unknown }) {
+    const branchWhere = getBranchScopedWhere(filter?.branchId);
     return await prisma.soul_won.findMany({
       where: {
         lifeCenterId: filter?.lifeCenterId,
         wonById: filter?.wonById,
+        ...(branchWhere ? { lifeCenter: branchWhere } : {}),
       },
       include: {
         wonBy: true,
@@ -553,8 +555,13 @@ export class LifeCenterService {
     });
   }
 
-  async getLifeCenterStats() {
+  async getLifeCenterStats(filter: { branchId?: unknown; lifeCenterIds?: number[] } = {}) {
+    const branchWhere = getBranchScopedWhere(filter.branchId);
     const souls = await prisma.soul_won.findMany({
+      where: {
+        ...(filter.lifeCenterIds ? { lifeCenterId: { in: filter.lifeCenterIds } } : {}),
+        ...(branchWhere ? { lifeCenter: branchWhere } : {}),
+      },
       include: {
         lifeCenter: {
           select: {

@@ -4,8 +4,10 @@ import { prisma } from "../../Models/context";
 import {
   getUserDepartmentAccess,
   listUserIdsWithDomainPermission,
+  RequestAccess,
   userHasDomainPermission,
 } from "../../middleWare/authorization";
+import { actionAllowed, domainRank, domainScope, isLegacyRole } from "../../permissions/access";
 import {
   AppError,
   InputValidationError,
@@ -51,17 +53,45 @@ import {
 export interface Viewer {
   userId: number;
   reportsView: boolean;
-  /** Leadership: approve, return, decide on requests, send reminders. */
+  /** Leadership sign-off: approve and return (`Reports.dept_approve`). */
   reportsAdmin: boolean;
   /** Can see member names inside reports. */
   seesNames: boolean;
   domains: Record<string, { view: boolean; manage: boolean }>;
   /** Departments access (department attendance reports). */
   departments: { view: boolean; manage: boolean; assignedOnly: boolean; departmentIds: number[] };
+  /** Reports actions, from the caller's live role. */
+  can: {
+    prepare: boolean;
+    remind: boolean;
+    decideRequest: boolean;
+    execView: boolean;
+    execDecide: boolean;
+  };
+  /** Reports limited to departments they lead; null = the whole branch. */
+  reportsDepartmentIds: number[] | null;
+  /** A role saved before actions: the old per-module rules still apply. */
+  legacy: boolean;
 }
 
-export const loadViewer = async (userId: number): Promise<Viewer> => {
-  const [reportsView, reportsAdmin, seesNames, departments, ...domainChecks] = await Promise.all([
+/**
+ * Sign-off has no configurable chain for department reports: leadership is
+ * Full on Reports. A role can also be given (or refused) `dept_approve` on
+ * purpose.
+ */
+const signOffAllowed = (permissions: unknown) => {
+  const override = (permissions as any)?.Actions?.Reports?.dept_approve;
+  if (typeof override === "boolean") return override && domainRank(permissions, "Reports") > 0;
+  return domainRank(permissions, "Reports") >= 3;
+};
+
+/**
+ * `access` is the route guard's `req.access` (live, active-branch role). The
+ * Reports actions come from it; per-module rights keep the any-branch checks
+ * they had.
+ */
+export const loadViewer = async (userId: number, access?: RequestAccess | null): Promise<Viewer> => {
+  const [reportsViewAny, reportsAdminAny, membersView, departments, ...domainChecks] = await Promise.all([
     userHasDomainPermission(userId, "Reports", "view"),
     userHasDomainPermission(userId, "Reports", "admin"),
     userHasDomainPermission(userId, "Members", "view"),
@@ -75,13 +105,30 @@ export const loadViewer = async (userId: number): Promise<Viewer> => {
   REPORTS.forEach((r, i) => {
     domains[r.key] = { view: Boolean(domainChecks[i * 2]), manage: Boolean(domainChecks[i * 2 + 1]) };
   });
+
+  const p = access?.permissions;
+  const legacy = !p || isLegacyRole(p);
+  const has = (action: string) => (p ? actionAllowed(p, "Reports", action) : false);
+  const reportsView = p ? domainRank(p, "Reports") >= 1 : Boolean(reportsViewAny);
+  const scope = p ? domainScope(p, "Reports") : "branch";
+
   return {
     userId,
-    reportsView: Boolean(reportsView),
-    reportsAdmin: Boolean(reportsAdmin),
-    seesNames: Boolean(seesNames),
+    reportsView,
+    reportsAdmin: p ? signOffAllowed(p) : Boolean(reportsAdminAny),
+    // Member names: the Reports action; roles saved before actions keep Members view.
+    seesNames: has("dept_view_member_names") || (legacy && Boolean(membersView)),
     departments: departments as Viewer["departments"],
     domains,
+    can: {
+      prepare: has("dept_prepare"),
+      remind: p ? has("dept_remind") : Boolean(reportsAdminAny),
+      decideRequest: p ? has("dept_decide_request") : Boolean(reportsAdminAny),
+      execView: p ? has("exec_view") : Boolean(reportsViewAny),
+      execDecide: p ? has("exec_decide") : Boolean(reportsAdminAny),
+    },
+    reportsDepartmentIds: scope === "department" ? access?.ledDepartmentIds ?? [] : null,
+    legacy,
   };
 };
 
@@ -210,18 +257,38 @@ const departmentsAllow = (viewer: Viewer, dept: DepartmentRef, action: "view" | 
   return departmentInScope(dept);
 };
 
-const canView = (viewer: Viewer, t: Target) => {
-  if (isHead(viewer, t)) return true;
-  if (t.church) return Boolean(viewer.reportsView || viewer.domains[t.church.key]?.view);
-  return Boolean(t.department && ((viewer.reportsView && departmentInScope(t.department)) || departmentsAllow(viewer, t.department, "view")));
+/**
+ * Whether the viewer's Reports scope reaches the report: the whole branch, or
+ * (scope "department") a report owned by a department they lead.
+ */
+const reportsReach = (viewer: Viewer, t: Target) => {
+  if (!viewer.reportsDepartmentIds) return true;
+  const departmentId = t.department?.id ?? t.owner?.department_id;
+  return Boolean(departmentId && viewer.reportsDepartmentIds.includes(departmentId));
 };
 
-/** The head of department role: edit commentary and submit. */
+const canView = (viewer: Viewer, t: Target) => {
+  if (isHead(viewer, t)) return true;
+  const viaReports = viewer.reportsView && reportsReach(viewer, t);
+  if (t.church) return Boolean(viaReports || viewer.domains[t.church.key]?.view);
+  return Boolean(t.department && ((viaReports && departmentInScope(t.department)) || departmentsAllow(viewer, t.department, "view")));
+};
+
+/**
+ * The head of department role: edit commentary and submit. Heads always may;
+ * otherwise `Reports.dept_prepare` within the Reports scope, or (roles saved
+ * before actions) Manage on the module the report reads.
+ */
 const canPrepare = (viewer: Viewer, t: Target) => {
   if (isHead(viewer, t)) return true;
+  if (viewer.can.prepare && reportsReach(viewer, t) && (!t.department || departmentInScope(t.department))) return true;
+  if (!viewer.legacy) return false;
   if (t.church) return Boolean(viewer.domains[t.church.key]?.manage);
   return Boolean(t.department && departmentsAllow(viewer, t.department, "manage"));
 };
+
+/** Leadership sign-off on this report: `dept_approve` within the Reports scope. */
+const canSignOff = (viewer: Viewer, t: Target) => viewer.reportsAdmin && reportsReach(viewer, t);
 
 const dueFor = (t: Target, range: PeriodRange) => (t.dueDay ? dueOnDayAfter(range, t.dueDay) : dueDate(range));
 
@@ -501,19 +568,29 @@ const workflowNameIds = (row: WorkflowRow | null) =>
 const writableFor = (t: Target, sel: Selection) =>
   Boolean(t.department) || !(sel.branchKey === 0 && getBranchScope()?.allowedBranchIds);
 
-const permissionsFor = (viewer: Viewer, def: Target, status: DepartmentReportStatus, sel: Selection) => {
+const permissionsFor = (
+  viewer: Viewer,
+  def: Target,
+  status: DepartmentReportStatus,
+  sel: Selection,
+  submittedById: number | null,
+) => {
+  // Nobody approves a report they submitted themselves.
+  const preparedByViewer = submittedById === viewer.userId;
   const writable = writableFor(def, sel);
   const hod = writable && canPrepare(viewer, def);
-  const leader = writable && viewer.reportsAdmin;
+  const leader = writable && canSignOff(viewer, def);
+  const reach = writable && reportsReach(viewer, def);
+  const decider = reach && (viewer.can.decideRequest || viewer.can.execDecide);
   const editable = status === "DRAFT" || status === "RETURNED";
   return {
     can_edit: hod && editable,
     can_submit: hod && editable && periodEnded(sel.range),
-    can_approve: leader && status === "SUBMITTED",
+    can_approve: leader && status === "SUBMITTED" && !preparedByViewer,
     can_return: leader && status === "SUBMITTED",
     can_comment: writable,
-    can_decide: leader && (status === "SUBMITTED" || status === "APPROVED"),
-    can_remind: leader && editable,
+    can_decide: decider && (status === "SUBMITTED" || status === "APPROVED"),
+    can_remind: reach && viewer.can.remind && editable,
   };
 };
 
@@ -566,7 +643,7 @@ export const getReport = async (viewer: Viewer, query: Record<string, unknown>) 
     period_options: periodOptions(sel.range.type, new Date()),
     branch: { id: def.department ? def.department.branch_id : sel.branchId, name: branch },
     workflow,
-    permissions: permissionsFor(viewer, def, workflow.status, sel),
+    permissions: permissionsFor(viewer, def, workflow.status, sel, row?.submitted_by_user_id ?? null),
     body: { ...redact(computed.result.body, seesNames), restricted: !seesNames },
     failed: computed.failed,
   };
@@ -653,7 +730,7 @@ export const listReports = async (viewer: Viewer, query: Record<string, unknown>
       health: body.health,
       headline: headlineOf(body),
       failed: result.failed,
-      permissions: permissionsFor(viewer, def, workflow.status, itemSel),
+      permissions: permissionsFor(viewer, def, workflow.status, itemSel, row?.submitted_by_user_id ?? null),
     };
   };
 
@@ -829,7 +906,11 @@ export const submitReport = async (viewer: Viewer, body: Record<string, unknown>
 export const approveReport = async (viewer: Viewer, body: Record<string, unknown>) => {
   if (!viewer.reportsAdmin) throw new UnauthorizedError("Not authorized to sign off reports");
   const { def, sel, row } = await loadForWrite(viewer, body);
+  if (!canSignOff(viewer, def)) throw new UnauthorizedError("Not authorized to sign off this report");
   if (row.status !== "SUBMITTED") throw new AppError("Only submitted reports can be approved", 409);
+  if (row.submitted_by_user_id === viewer.userId) {
+    throw new AppError("You submitted this report, so someone else must approve it", 403);
+  }
   await transition(
     row,
     ["SUBMITTED"],
@@ -855,6 +936,7 @@ export const returnReport = async (viewer: Viewer, body: Record<string, unknown>
   const note = text(body.note, 2000);
   if (!note) throw new InputValidationError("Add a note so the head of department knows what to change");
   const { def, sel, row } = await loadForWrite(viewer, body);
+  if (!canSignOff(viewer, def)) throw new UnauthorizedError("Not authorized to sign off this report");
   if (row.status !== "SUBMITTED") throw new AppError("Only submitted reports can be returned", 409);
   await transition(
     row,
@@ -884,7 +966,7 @@ export const addComment = async (viewer: Viewer, body: Record<string, unknown>) 
   if (!comment) throw new InputValidationError("Write a comment first");
   const { def, sel, row } = await loadForWrite(viewer, body);
   await prisma.department_report_comments.create({ data: { report_id: row.id, author_user_id: viewer.userId, body: comment } });
-  const recipients = viewer.reportsAdmin ? await hodRecipients(def, row) : await listUserIdsWithDomainPermission("Reports", "admin");
+  const recipients = canSignOff(viewer, def) ? await hodRecipients(def, row) : await listUserIdsWithDomainPermission("Reports", "admin");
   await notify(
     recipients,
     viewer.userId,
@@ -899,8 +981,9 @@ export const addComment = async (viewer: Viewer, body: Record<string, unknown>) 
 };
 
 export const sendReminder = async (viewer: Viewer, body: Record<string, unknown>) => {
-  if (!viewer.reportsAdmin) throw new UnauthorizedError("Not authorized to send reminders");
+  if (!viewer.can.remind) throw new UnauthorizedError("Not authorized to send reminders");
   const { def, sel, row } = await loadForWrite(viewer, body);
+  if (!reportsReach(viewer, def)) throw new UnauthorizedError("Not authorized to send reminders for this report");
   if (row.status !== "DRAFT" && row.status !== "RETURNED") throw new AppError("This report is already submitted", 409);
   // Reminders go to the responsible head when one is set.
   const recipients = def.head ? [def.head.id] : await hodRecipients(def, row);
@@ -919,7 +1002,9 @@ export const sendReminder = async (viewer: Viewer, body: Record<string, unknown>
 };
 
 export const decideRequest = async (viewer: Viewer, body: Record<string, unknown>) => {
-  if (!viewer.reportsAdmin) throw new UnauthorizedError("Not authorized to decide on requests");
+  if (!viewer.can.decideRequest && !viewer.can.execDecide) {
+    throw new UnauthorizedError("Not authorized to decide on requests");
+  }
   const id = Number(body.request_id);
   if (!Number.isInteger(id) || id <= 0) throw new InputValidationError("request_id is required");
   const decision = String(body.decision || "").toUpperCase();
@@ -935,6 +1020,7 @@ export const decideRequest = async (viewer: Viewer, body: Record<string, unknown
     throw new AppError("Leadership can decide once the report is submitted", 409);
   }
   const def = await resolveTarget(report.report_key);
+  if (!reportsReach(viewer, def)) throw new UnauthorizedError("Not authorized to decide on this report");
   if (def.department) {
     if (!departmentInScope(def.department)) throw new UnauthorizedError("Not authorized for this branch");
   } else if (report.branch_key === 0 && getBranchScope()?.allowedBranchIds) {
@@ -986,7 +1072,7 @@ export const decideRequest = async (viewer: Viewer, body: Record<string, unknown
 const RANK = { act: 0, watch: 1, ok: 2 } as const;
 
 export const executiveSummary = async (viewer: Viewer, query: Record<string, unknown>) => {
-  if (!viewer.reportsView) throw new UnauthorizedError("Not authorized to view the executive summary");
+  if (!viewer.can.execView) throw new UnauthorizedError("Not authorized to view the executive summary");
   const type = String(query.period_type || "MONTHLY").toUpperCase();
   if (!["MONTHLY", "QUARTERLY", "ANNUAL"].includes(type)) {
     throw new InputValidationError("The executive summary is monthly, quarterly or annual");
@@ -1102,7 +1188,7 @@ export const executiveSummary = async (viewer: Viewer, query: Record<string, unk
     period: periodPayload(sel),
     period_options: periodOptions(sel.range.type, now),
     branch: { id: sel.branchId, name: branch },
-    viewer: { is_leadership: viewer.reportsAdmin },
+    viewer: { is_leadership: viewer.can.execDecide || viewer.can.decideRequest },
     empty: reports.every((r) => r.body.empty),
     cards: reports.map((r) => ({
       key: r.def.key,

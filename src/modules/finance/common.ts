@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import { Prisma } from "@prisma/client";
+import { AppError } from "../../utils/custom-error-handlers";
 
 export class FinanceHttpError extends Error {
   statusCode: number;
@@ -343,6 +344,11 @@ export const resolveFinanceError = (
 ): FinanceHttpError => {
   if (error instanceof FinanceHttpError) {
     return error;
+  }
+
+  // e.g. BranchAccessError (403) from a by-id branch check.
+  if (error instanceof AppError) {
+    return new FinanceHttpError(error.statusCode, error.message);
   }
 
   if (error instanceof Prisma.PrismaClientKnownRequestError) {

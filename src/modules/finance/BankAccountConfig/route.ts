@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { BankAccountConfigController } from "./controller";
 import { Permissions } from "../../../middleWare/authorization";
+import { requireFinanceConfigAccess } from "../financeAccess";
 
 const bankAccountConfigRouter = Router();
 const controller = new BankAccountConfigController();
@@ -9,22 +10,22 @@ const protect = permissions.protect;
 
 bankAccountConfigRouter.post(
   "/create-bank-account-config",
-  [protect, permissions.can_manage_settings],
+  [protect, permissions.withAccess, requireFinanceConfigAccess("manage")],
   controller.create,
 );
 bankAccountConfigRouter.get(
   "/get-bank-account-configs",
-  [protect, permissions.can_view_settings],
+  [protect, permissions.withAccess, requireFinanceConfigAccess("view")],
   controller.findAll,
 );
 bankAccountConfigRouter.put(
   "/update-bank-account-config",
-  [protect, permissions.can_manage_settings],
+  [protect, permissions.withAccess, requireFinanceConfigAccess("manage")],
   controller.update,
 );
 bankAccountConfigRouter.delete(
   "/delete-bank-account-config",
-  [protect, permissions.can_delete_settings],
+  [protect, permissions.withAccess, requireFinanceConfigAccess("admin")],
   controller.delete,
 );
 

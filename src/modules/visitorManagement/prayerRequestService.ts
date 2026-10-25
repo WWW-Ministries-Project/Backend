@@ -1,24 +1,10 @@
 import { prisma } from "../../Models/context";
+import { getBranchScopedWhere } from "../branches/branchService";
+import { parseResponsibleMemberIds } from "./visitorAccess";
 
-const toPositiveInt = (value: any) => {
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed <= 0) {
-    return null;
-  }
-  return parsed;
-};
-
-const parseResponsibleMembers = (responsibleMembers: any): number[] => {
-  if (!Array.isArray(responsibleMembers)) {
-    return [];
-  }
-
-  const ids = responsibleMembers
-    .map((memberId) => toPositiveInt(memberId))
-    .filter((memberId): memberId is number => Boolean(memberId));
-
-  return Array.from(new Set(ids));
-};
+// `responsibleMembers` is stored as a JSON string; an array-only parser
+// matched nobody, so responsible members saw empty lists.
+const parseResponsibleMembers = parseResponsibleMemberIds;
 
 export class PrayerRequestService {
   async createPrayerRequest(data: any) {
@@ -37,7 +23,19 @@ export class PrayerRequestService {
       ? Number(scope?.memberId)
       : null;
 
+    // Visitor requests by the visitor's branch; members' own by the member's.
+    const branchWhere = getBranchScopedWhere(undefined);
     const prayerRequests = await prisma.prayer_request.findMany({
+      ...(branchWhere
+        ? {
+            where: {
+              OR: [
+                { visitor: branchWhere },
+                { visitorId: null, user: branchWhere },
+              ],
+            },
+          }
+        : {}),
       include: {
         visitor: {
           select: {

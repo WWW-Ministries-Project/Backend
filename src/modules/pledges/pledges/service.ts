@@ -8,6 +8,7 @@ import {
   getBranchScopedWhere,
   resolveBranchIdOrDefault,
 } from "../../branches/branchService";
+import { assertPledgeReachable, pledgeScopeWhere, type PledgeViewer } from "../pledgeAccess";
 import { PledgeHttpError, type PledgeSettlementAccount } from "../common";
 import { notificationService } from "../../notifications/notificationService";
 import logger from "../../../utils/logger-config";
@@ -59,10 +60,16 @@ const settlementSummary = (p: {
   can_be_paid_online: Boolean(p.subaccount_code) && p.paystack_synced_at !== null,
 });
 
+// Only the member fields the pledge screens use; never the whole user row
+// (it carries the password hash and access fields).
+const pledgeUserSelect = {
+  select: { id: true, name: true, email: true, member_id: true, is_active: true },
+} as const;
+
 const pledgeInclude = {
   event: true,
-  callers: { include: { user: true } },
-  groups: { include: { pledgers: { include: { user: true, redemptions: true } } } },
+  callers: { include: { user: pledgeUserSelect } },
+  groups: { include: { pledgers: { include: { user: pledgeUserSelect, redemptions: true } } } },
 } satisfies Prisma.pledgeInclude;
 
 // Compute totals for a fully-included pledge row
@@ -167,9 +174,9 @@ export class PledgeService {
     }
   }
 
-  async list(branchId?: string | number, status?: string) {
+  async list(branchId?: string | number, status?: string, viewer?: PledgeViewer) {
     const rows = await prisma.pledge.findMany({
-      where: getBranchScopedWhere(branchId),
+      where: { ...getBranchScopedWhere(branchId), ...pledgeScopeWhere(viewer) },
       include: pledgeInclude,
       orderBy: { created_at: "desc" },
     });
@@ -214,11 +221,17 @@ export class PledgeService {
     return status ? mapped.filter((m) => m.status === status) : mapped;
   }
 
-  async detail(id: number) {
+  async detail(id: number, viewer?: PledgeViewer) {
+    const { isCaller } = await assertPledgeReachable(id, viewer);
     const p = await prisma.pledge.findUniqueOrThrow({
       where: { id },
       include: pledgeInclude,
     });
+    // Pledgers' phone numbers and emails: the payer-details action, or the
+    // pledge's own callers, who need them to make the calls.
+    const showPayer = !viewer || viewer.payerDetails || isCaller;
+    const payerUser = <T extends { email?: string | null } | null>(user: T): T =>
+      user && !showPayer ? { ...user, email: null } : user;
     const pledgers = p.groups.flatMap((g) =>
       g.pledgers.map((pl) => {
         const redeemed = pl.redemptions.reduce((s: number, r: any) => s + num(r.amount), 0);
@@ -227,9 +240,9 @@ export class PledgeService {
           group_id: g.id,
           group_label: g.label,
           called_amount: num(g.called_amount),
-          user: pl.user,
+          user: payerUser(pl.user),
           guest_name: pl.guest_name,
-          guest_phone: pl.guest_phone,
+          guest_phone: showPayer ? pl.guest_phone : null,
           pledged_amount: num(pl.pledged_amount),
           redeemed,
           remaining: num(pl.pledged_amount) - redeemed,
@@ -245,7 +258,17 @@ export class PledgeService {
 
     return {
       ...safe,
-      groups: p.groups,
+      groups: showPayer
+        ? p.groups
+        : p.groups.map((g) => ({
+            ...g,
+            pledgers: g.pledgers.map((pl) => ({
+              ...pl,
+              user: payerUser(pl.user),
+              guest_phone: null,
+            })),
+          })),
+      payer_details_hidden: !showPayer,
       callers: p.callers,
       pledgers,
       ...settlementSummary(p),
@@ -253,7 +276,12 @@ export class PledgeService {
     };
   }
 
-  async update(id: number, payload: any, account?: PledgeSettlementAccount) {
+  async update(
+    id: number,
+    payload: any,
+    account?: PledgeSettlementAccount,
+    options: { manageCallers?: boolean } = {},
+  ) {
     const existing = await prisma.pledge.findUniqueOrThrow({
       where: { id },
       select: {
@@ -262,8 +290,19 @@ export class PledgeService {
         event_id: true,
         branch_id: true,
         subaccount_code: true,
+        callers: { select: { user_id: true, guest_name: true, guest_phone: true } },
       },
     });
+
+    // Changing who calls pledgers is its own action (Pledges.manage_callers).
+    if (Array.isArray(payload.callers) && options.manageCallers === false) {
+      const key = (c: any) => `${c.user_id ?? ""}|${c.user_id ? "" : c.guest_name ?? ""}`;
+      const before = existing.callers.map(key).sort().join(",");
+      const after = payload.callers.map(key).sort().join(",");
+      if (before !== after) {
+        throw new PledgeHttpError(403, "You can't change this pledge's callers.");
+      }
+    }
 
     const branchId =
       payload.branch_id != null

@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 
+import { getRequestAccess } from "../../middleWare/authorization";
 import { UnauthorizedError } from "../../utils/custom-error-handlers";
 import {
   addComment,
@@ -18,7 +19,7 @@ import {
 const viewerOf = async (req: Request) => {
   const id = Number((req as any).user?.id);
   if (!Number.isInteger(id) || id <= 0) throw new UnauthorizedError("Authenticated user not found");
-  return loadViewer(id);
+  return loadViewer(id, getRequestAccess(req));
 };
 
 const query = (req: Request) => req.query as Record<string, unknown>;

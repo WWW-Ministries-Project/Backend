@@ -13,6 +13,7 @@ import { parsePeriod } from "../../departmentReports/period";
 import { loadReportConfig } from "../../settings/reportConfigService";
 import type { AgendaItem, Kpi, ListItem, NeedsItem, QueueItem, WorkspaceBuilder, WorkspaceContext } from "../types";
 import { deltaPct, runWidgets } from "../widgetKit";
+import { switchedOffEverywhere } from "../access";
 import { lastSundays, loadRoster, packFor, sundayCheckins, type HodPack } from "../queries/hodQueries";
 import {
   DAY,
@@ -218,6 +219,11 @@ export const buildHod: WorkspaceBuilder = async (ctx: WorkspaceContext) => {
       "h-join",
       null,
       async () => {
+        // Heads decide their department's requests unless the role switched the action off.
+        if (switchedOffEverywhere(await ctx.grants(), "Membership_Management", "decide_join_request")) {
+          counts.joins = 0;
+          return { items: [] as QueueItem[] };
+        }
         const rows = await prisma.department_join_request.findMany({
           where: { department_id: dept.id, status: "PENDING" },
           orderBy: { requested_at: "asc" },
@@ -478,7 +484,8 @@ export const buildHod: WorkspaceBuilder = async (ctx: WorkspaceContext) => {
           const sub =
             a.status === "NEEDS_REPAIR"
               ? a.repair_request
-                ? a.repair_request.request_approval_status === RequestApprovalStatus.APPROVED
+                ? a.repair_request.request_approval_status === RequestApprovalStatus.APPROVED ||
+                  a.repair_request.request_approval_status === RequestApprovalStatus.DISBURSED
                   ? "Repair requisition approved"
                   : isPendingRequisition(a.repair_request.request_approval_status)
                     ? "Repair requisition awaiting approval"
@@ -500,6 +507,11 @@ export const buildHod: WorkspaceBuilder = async (ctx: WorkspaceContext) => {
       "m-ser",
       ["Sermons", "view"],
       async () => {
+        // Drafts are listed to publish them, so only for Sermons.publish.
+        if (!(await ctx.action("Sermons", "publish"))) {
+          counts.pack = 0;
+          return { items: [] as QueueItem[] };
+        }
         const rows = await prisma.sermon.findMany({
           where: { status: "DRAFT", ...(deptBranch ? { OR: [{ branch_id: deptBranch }, { branch_id: null }] } : getBranchScopedWhere(ctx.branchId) || {}) },
           select: { id: true, title: true, preached_at: true, created_at: true, series: { select: { title: true } } },
@@ -525,6 +537,10 @@ export const buildHod: WorkspaceBuilder = async (ctx: WorkspaceContext) => {
         "e-g",
         ["Visitors", "view"],
         async () => {
+          if (!(await ctx.action("Visitors", "record_follow_up"))) {
+            counts.pack = 0;
+            return { items: [] as QueueItem[], total: 0 };
+          }
           const team = await roster();
           const teamIds = new Set(team.map((u) => u.id));
           const names = new Map(team.map((u) => [u.id, u.name]));

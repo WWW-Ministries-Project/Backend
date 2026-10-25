@@ -37,6 +37,7 @@ import {
   commentInclude,
   departmentMemberIds,
   personSelect,
+  moderationPostWhere,
   postInclude,
   reactionSummaries,
   toPerson,
@@ -142,7 +143,13 @@ export const getMe = async (viewer: Viewer) => {
     viewer.canView
       ? prisma.community_report.groupBy({
           by: ["post_id", "comment_id"],
-          where: { status: "PENDING" },
+          where: {
+            status: "PENDING",
+            OR: [
+              { post: moderationPostWhere(viewer) },
+              { comment: { post: moderationPostWhere(viewer) } },
+            ],
+          },
         })
       : Promise.resolve([]),
     prisma.in_app_notification.count({
@@ -151,8 +158,12 @@ export const getMe = async (viewer: Viewer) => {
   ]);
 
   return {
-    canManage: viewer.canManage,
+    // Mobile reads these two flags: canModerate opens the reports queue,
+    // canManage the moderation actions, church messages and important posts.
+    canManage: viewer.actions.moderate,
     canModerate: viewer.canView,
+    // The role's Community actions, for clients that gate each control.
+    actions: viewer.actions,
     departments,
     pendingReports: viewer.canView ? pendingTargets.length : 0,
     unreadNotifications,
@@ -273,8 +284,14 @@ export const createPost = async (viewer: Viewer, input: Record<string, unknown>)
   let isAnonymous = parseBoolean(input.isAnonymous);
   const imageUrls = parseImageUrls(input.imageUrls);
 
-  if ((type === "MESSAGE" || isImportant || isPinned || !commentsEnabled) && !viewer.canManage) {
-    throw new UnauthorizedError("Only Community managers can post church messages or important posts");
+  if (type === "MESSAGE" && !viewer.actions.postChurchWide) {
+    throw new UnauthorizedError("Your role can't post church messages");
+  }
+  if ((isImportant || isPinned) && !viewer.actions.pinImportant) {
+    throw new UnauthorizedError("Your role can't post important or pinned posts");
+  }
+  if (!commentsEnabled && !viewer.actions.moderate) {
+    throw new UnauthorizedError("Your role can't turn off comments");
   }
 
   let departmentId: number | null = null;
@@ -283,7 +300,13 @@ export const createPost = async (viewer: Viewer, input: Record<string, unknown>)
   if (audience === "DEPARTMENT") {
     departmentId = toPositiveInt(input.departmentId);
     if (!departmentId) throw new InputValidationError("departmentId is required for a DEPARTMENT audience");
-    if (!viewer.canManage && !viewer.departmentIds.includes(departmentId)) {
+    // Any department needs post_any_department; a department-scoped role
+    // reaches only the departments it leads.
+    const canPostThere =
+      viewer.departmentIds.includes(departmentId) ||
+      (viewer.actions.postAnyDepartment &&
+        (!viewer.moderationDepartmentIds || viewer.moderationDepartmentIds.includes(departmentId)));
+    if (!canPostThere) {
       throw new InputValidationError("You can only post to a department you belong to");
     }
     const department = await prisma.department.findUnique({
@@ -350,23 +373,40 @@ export const createPost = async (viewer: Viewer, input: Record<string, unknown>)
   return postDto(viewer, created.id);
 };
 
-/** Author or Community manager; the post must not be deleted. */
-const findEditablePost = async (viewer: Viewer, postId: unknown) => {
+/**
+ * The author, or someone allowed to act on others' posts (`moderate` to edit,
+ * `delete_any` to delete) within their moderation branch/departments. The
+ * post must not be deleted.
+ */
+const findEditablePost = async (viewer: Viewer, postId: unknown, mode: "edit" | "delete") => {
   const id = toPositiveInt(postId);
   if (!id) throw new NotFoundError("Post not found");
+  const canActOnOthers = mode === "edit" ? viewer.actions.moderate : viewer.actions.deleteAny;
   const post = await prisma.community_post.findFirst({
-    where: viewer.canManage ? { id, deleted_at: null } : { AND: [{ id }, visiblePostWhere(viewer)] },
+    where: {
+      AND: [
+        { id },
+        canActOnOthers
+          ? {
+              OR: [
+                visiblePostWhere(viewer),
+                { AND: [{ deleted_at: null }, moderationPostWhere(viewer)] },
+              ],
+            }
+          : visiblePostWhere(viewer),
+      ],
+    },
     select: { id: true, author_id: true, body: true },
   });
   if (!post) throw new NotFoundError("Post not found");
-  if (post.author_id !== viewer.id && !viewer.canManage) {
+  if (post.author_id !== viewer.id && !canActOnOthers) {
     throw new InputValidationError("You can only change your own posts");
   }
   return post;
 };
 
 export const updatePost = async (viewer: Viewer, postId: unknown, input: Record<string, unknown>) => {
-  const post = await findEditablePost(viewer, postId);
+  const post = await findEditablePost(viewer, postId, "edit");
   const body = parseBody(input.body);
   const updated = await prisma.community_post.update({
     where: { id: post.id },
@@ -380,7 +420,7 @@ export const updatePost = async (viewer: Viewer, postId: unknown, input: Record<
 };
 
 export const deletePost = async (viewer: Viewer, postId: unknown) => {
-  const post = await findEditablePost(viewer, postId);
+  const post = await findEditablePost(viewer, postId, "delete");
   await prisma.community_post.update({ where: { id: post.id }, data: { deleted_at: new Date() } });
   return { id: post.id };
 };
@@ -518,14 +558,20 @@ export const createComment = async (viewer: Viewer, postId: unknown, input: Reco
 export const deleteComment = async (viewer: Viewer, commentId: unknown) => {
   const id = toPositiveInt(commentId);
   if (!id) throw new NotFoundError("Comment not found");
+  const canDeleteAny = viewer.actions.deleteAny;
   const comment = await prisma.community_comment.findFirst({
-    where: viewer.canManage
-      ? { id, deleted_at: null }
+    where: canDeleteAny
+      ? {
+          OR: [
+            { AND: [{ id }, visibleCommentWhere(viewer), { post: audienceWhere(viewer) }] },
+            { id, deleted_at: null, post: moderationPostWhere(viewer) },
+          ],
+        }
       : { AND: [{ id }, visibleCommentWhere(viewer), { post: audienceWhere(viewer) }] },
     select: { id: true, author_id: true },
   });
   if (!comment) throw new NotFoundError("Comment not found");
-  if (comment.author_id !== viewer.id && !viewer.canManage) {
+  if (comment.author_id !== viewer.id && !canDeleteAny) {
     throw new InputValidationError("You can only delete your own comments");
   }
   await prisma.community_comment.update({ where: { id: comment.id }, data: { deleted_at: new Date() } });

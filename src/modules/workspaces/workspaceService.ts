@@ -1,5 +1,5 @@
 import { prisma } from "../../Models/context";
-import { userHasBranchDomainPermission } from "../../middleWare/authorization";
+import { userHasAction, userHasBranchDomainPermission } from "../../middleWare/authorization";
 import { InputValidationError, UnauthorizedError } from "../../utils/custom-error-handlers";
 import { getBranchScope } from "../branches/branchScope";
 import { assertBranchAccessible, parseBranchId } from "../branches/branchService";
@@ -47,6 +47,7 @@ export const getWorkspace = async (userId: number, rawWs: unknown, query: Record
   const user = await prisma.user.findUnique({ where: { id: userId }, select: { name: true } });
   const range = resolveRange(query.range);
   const permCache = new Map<string, Promise<boolean>>();
+  let grants: Promise<unknown[]> | null = null;
   const ctx: WorkspaceContext = {
     userId,
     userName: user?.name ?? "",
@@ -60,6 +61,18 @@ export const getWorkspace = async (userId: number, rawWs: unknown, query: Record
       if (!permCache.has(key)) permCache.set(key, userHasBranchDomainPermission(userId, domain, action, branchId));
       return permCache.get(key) as Promise<boolean>;
     },
+    action: (domain, action) => {
+      const key = `${domain}.${action}`;
+      if (!permCache.has(key)) permCache.set(key, userHasAction(userId, domain, action, branchId));
+      return permCache.get(key) as Promise<boolean>;
+    },
+    grants: () =>
+      (grants ??= prisma.user_branch_access
+        .findMany({
+          where: { user_id: userId, access_level: { deleted: false }, ...(branchId ? { branch_id: branchId } : {}) },
+          select: { access_level: { select: { permissions: true } } },
+        })
+        .then((rows) => rows.map((g) => g.access_level?.permissions ?? null))),
   };
 
   const built = await BUILDERS[ws](ctx);

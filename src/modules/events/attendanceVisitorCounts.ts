@@ -1,7 +1,7 @@
 import { Prisma } from "@prisma/client";
-import { prisma } from "../../Models/context";
+import { prisma, type PrismaTx } from "../../Models/context";
 
-type VisitQueryClient = Pick<Prisma.TransactionClient, "visit">;
+type VisitQueryClient = Pick<PrismaTx, "visit">;
 
 type AttendanceLookupRecord = {
   eventId: number;

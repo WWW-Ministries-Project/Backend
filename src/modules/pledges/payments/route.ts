@@ -298,6 +298,6 @@ pledgePaymentsRouter.get(
  */
 pledgePaymentsRouter.post(
   "/credit-payment",
-  [protect, permissions.can_manage_pledges],
+  [protect, permissions.requireAction("Pledges", "reconcile_online", "Not authorized to credit pledge payments")],
   creditPledgePayment,
 );

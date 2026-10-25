@@ -25,8 +25,13 @@ import {
   ResourceDuplicationError,
   UnauthorizedError,
 } from "../../utils/custom-error-handlers";
-import { userHasDomainPermission } from "../../middleWare/authorization";
 import { prisma } from "../../Models/context";
+import { getApprovalConfigByModule } from "../requisitions/requisition-approval-workflow";
+import {
+  canOverrideChain,
+  canSignOffWithoutChain,
+  hasEventReportRight,
+} from "./eventReportAccess";
 import {
   buildAttendanceVisitorCountsMap,
   getAttendanceVisitorCountsForRecord,
@@ -1757,7 +1762,7 @@ export const getEventReportDetail = async (
     event_date?: unknown;
     branch_id?: unknown;
   },
-  user?: any,
+  viewer?: EventReportViewer | null,
 ) => {
   const eventId = toPositiveInt(query.event_id);
   if (!eventId) {
@@ -1765,7 +1770,6 @@ export const getEventReportDetail = async (
   }
 
   const eventDate = parseEventDateString(query.event_date);
-  const viewerUserId = toPositiveInt(user?.id);
   const branchWhere = getBranchScopedWhere(query.branch_id);
 
   // Read-only — run on the shared client, not inside a transaction.
@@ -1794,7 +1798,7 @@ export const getEventReportDetail = async (
     throw new NotFoundError("Event report not found");
   }
 
-  const workflow = await buildEventReportWorkflow(reportRow, viewerUserId);
+  const workflow = await buildEventReportWorkflow(reportRow, viewer ?? null);
 
   return {
     data: {
@@ -2162,49 +2166,140 @@ type EventReportPermissions = {
   can_return: boolean;
   can_resubmit: boolean;
   can_comment: boolean;
+  can_export: boolean;
 };
 
-const canSignOffEventReports = async (userId: number): Promise<boolean> => {
-  const [reportsAdmin, eventsAdmin] = await Promise.all([
-    userHasDomainPermission(userId, "Reports", "admin"),
-    userHasDomainPermission(userId, "Events", "admin"),
-  ]);
-  return reportsAdmin || eventsAdmin;
+/** The caller, with their live (active-branch) permissions from `req.access`. */
+export type EventReportViewer = {
+  userId: number;
+  permissions: Record<string, any>;
+};
+
+type ApprovalStep = {
+  order: number;
+  type: string;
+  position_id?: number;
+  user_id?: number;
+};
+
+/** The configured event report chain (Settings › Approvals), or null when none is active. */
+const loadActiveApprovalChain = async (): Promise<ApprovalStep[] | null> => {
+  const config = await getApprovalConfigByModule("EVENT_REPORT" as any);
+  if (!config || !config.is_active || !config.approvers?.length) return null;
+  return [...config.approvers].sort((a, b) => a.order - b.order);
+};
+
+/**
+ * Index of the chain step awaiting a decision: the steps approved since the
+ * report was generated or last resubmitted.
+ */
+const currentStepIndexTx = async (tx: ApprovalWorkflowTx, reportId: number) => {
+  const activity = await tx.event_report_activity.findMany({
+    where: { event_report_id: reportId },
+    orderBy: [{ created_at: "asc" }, { id: "asc" }],
+    select: { action: true },
+  });
+  let index = 0;
+  for (const row of activity) {
+    if (row.action === "GENERATED" || row.action === "RESUBMITTED") index = 0;
+    else if (row.action === "STEP_APPROVED") index += 1;
+  }
+  return index;
+};
+
+/** Who may act at a step: the named person, the position's holders, or the generator's head of department. */
+const stepApproverIdsTx = async (
+  tx: ApprovalWorkflowTx,
+  step: ApprovalStep,
+  report: EventReportWorkflowRow,
+): Promise<number[]> => {
+  if (step.type === "SPECIFIC_PERSON") return step.user_id ? [step.user_id] : [];
+  if (step.type === "POSITION") {
+    if (!step.position_id) return [];
+    const holders = await tx.user.findMany({
+      where: { position_id: step.position_id, NOT: { is_active: false } },
+      select: { id: true },
+    });
+    return holders.map((holder) => holder.id);
+  }
+  const membership = await tx.user_departments.findUnique({
+    where: { user_id: report.created_by },
+    select: { department_info: { select: { department_head: true } } },
+  });
+  const head = membership?.department_info?.department_head;
+  return head ? [head] : [];
+};
+
+type SignOffDecision = {
+  allowed: boolean;
+  /** Steps in the configured chain (0 = no chain). */
+  totalSteps: number;
+  stepIndex: number;
+};
+
+/**
+ * Whether the viewer may approve or return the report now. With a chain
+ * configured, only the current step's approver (or Full on Reports, as an
+ * override) may act; without one, Full on Reports or an on-purpose
+ * `event_approve`. Nobody approves a report they generated themselves.
+ */
+const decideSignOffTx = async (
+  tx: ApprovalWorkflowTx,
+  viewer: EventReportViewer,
+  report: EventReportWorkflowRow,
+  intent: "approve" | "return",
+): Promise<SignOffDecision> => {
+  const chain = await loadActiveApprovalChain();
+  const stepIndex = chain ? await currentStepIndexTx(tx, report.id) : 0;
+  const totalSteps = chain?.length ?? 0;
+  const deny = { allowed: false, totalSteps, stepIndex };
+
+  if (intent === "approve" && report.created_by === viewer.userId) return deny;
+  if (!chain) {
+    return { ...deny, allowed: canSignOffWithoutChain(viewer.permissions) };
+  }
+  if (canOverrideChain(viewer.permissions)) return { ...deny, allowed: true };
+  if ((viewer.permissions as any)?.Actions?.Reports?.event_approve === false) return deny;
+  const step = chain[Math.min(stepIndex, chain.length - 1)];
+  const approvers = await stepApproverIdsTx(tx, step, report);
+  return { ...deny, allowed: approvers.includes(viewer.userId) };
 };
 
 const computeEventReportPermissions = async (
-  userId: number | null,
-  status: EventReportStatus,
+  viewer: EventReportViewer | null,
+  report: EventReportWorkflowRow,
 ): Promise<EventReportPermissions> => {
-  if (!userId) {
+  if (!viewer) {
     return {
       can_approve: false,
       can_return: false,
       can_resubmit: false,
       can_comment: false,
+      can_export: false,
     };
   }
 
-  const [canSignOff, eventsManage, eventsView, reportsView] = await Promise.all([
-    canSignOffEventReports(userId),
-    userHasDomainPermission(userId, "Events", "manage"),
-    userHasDomainPermission(userId, "Events", "view"),
-    userHasDomainPermission(userId, "Reports", "view"),
+  const isPending = PENDING_REPORT_STATUSES.includes(report.status);
+  const [approve, ret, generate, comment, exportReport] = await Promise.all([
+    isPending ? decideSignOffTx(prisma, viewer, report, "approve") : null,
+    isPending ? decideSignOffTx(prisma, viewer, report, "return") : null,
+    hasEventReportRight(viewer.userId, viewer.permissions, "generate"),
+    hasEventReportRight(viewer.userId, viewer.permissions, "comment"),
+    hasEventReportRight(viewer.userId, viewer.permissions, "export"),
   ]);
 
-  const isPending = PENDING_REPORT_STATUSES.includes(status);
-
   return {
-    can_approve: isPending && canSignOff,
-    can_return: isPending && canSignOff,
-    can_resubmit: status === EventReportStatus.REJECTED && eventsManage,
-    can_comment: eventsView,
+    can_approve: Boolean(approve?.allowed),
+    can_return: Boolean(ret?.allowed),
+    can_resubmit: report.status === EventReportStatus.REJECTED && generate,
+    can_comment: comment,
+    can_export: exportReport,
   };
 };
 
 const buildEventReportWorkflow = async (
   report: EventReportWorkflowRow,
-  viewerUserId: number | null,
+  viewer: EventReportViewer | null,
 ) => {
   const [activity, comments, permissions] = await Promise.all([
     prisma.event_report_activity.findMany({
@@ -2217,7 +2312,7 @@ const buildEventReportWorkflow = async (
       orderBy: [{ created_at: "asc" }, { id: "asc" }],
       select: { id: true, author_user_id: true, body: true, created_at: true },
     }),
-    computeEventReportPermissions(viewerUserId, report.status),
+    computeEventReportPermissions(viewer, report),
   ]);
 
   const names = await loadUserNamesTx(prisma, [
@@ -2478,16 +2573,28 @@ const transitionEventReportTx = async (
   }
 };
 
-const assertCanSignOff = async (userId: number) => {
-  if (!(await canSignOffEventReports(userId))) {
-    throw new UnauthorizedError("Not authorized to sign off event reports");
+const assertCanSignOffTx = async (
+  tx: ApprovalWorkflowTx,
+  viewer: EventReportViewer,
+  report: EventReportWorkflowRow,
+  intent: "approve" | "return",
+) => {
+  const decision = await decideSignOffTx(tx, viewer, report, intent);
+  if (!decision.allowed) {
+    throw new AppError(
+      intent === "approve" && report.created_by === viewer.userId
+        ? "You generated this report, so someone else must approve it"
+        : "Not authorized to sign off this event report",
+      403,
+    );
   }
+  return decision;
 };
 
 const respondWithWorkflow = async (
   eventId: number,
   eventDate: string,
-  viewerUserId: number,
+  viewer: EventReportViewer,
 ) => {
   const report = await findEventReportWorkflowRowTx(prisma, eventId, eventDate);
   if (!report) {
@@ -2497,20 +2604,38 @@ const respondWithWorkflow = async (
     data: {
       event_id: eventId,
       event_date: eventDate,
-      ...(await buildEventReportWorkflow(report, viewerUserId)),
+      ...(await buildEventReportWorkflow(report, viewer)),
     },
   };
 };
 
 export const approveEventReport = async (
   payload: EventReportActionPayload,
-  user: any,
+  viewer: EventReportViewer,
 ) => {
-  const { eventId, eventDate, actorUserId } = parseActionTarget(payload, user);
-  await assertCanSignOff(actorUserId);
+  const { eventId, eventDate, actorUserId } = parseActionTarget(payload, { id: viewer.userId });
 
   await runEventReportTransaction(async (tx) => {
     const report = await loadActionReportTx(tx, eventId, eventDate, payload?.branch_id);
+    if (!PENDING_REPORT_STATUSES.includes(report.status)) {
+      throw new AppError("This report is not awaiting approval", 409);
+    }
+    const decision = await assertCanSignOffTx(tx, viewer, report, "approve");
+    const finalStep = decision.totalSteps === 0 || decision.stepIndex >= decision.totalSteps - 1;
+
+    if (!finalStep) {
+      // An earlier step of the chain: record it and wait for the next approver.
+      await tx.event_report_activity.create({
+        data: {
+          event_report_id: report.id,
+          action: "STEP_APPROVED",
+          actor_user_id: actorUserId,
+          note: `Step ${decision.stepIndex + 1} of ${decision.totalSteps}`,
+        },
+      });
+      return;
+    }
+
     await transitionEventReportTx(tx, {
       report,
       from: PENDING_REPORT_STATUSES,
@@ -2528,22 +2653,25 @@ export const approveEventReport = async (
     });
   });
 
-  return respondWithWorkflow(eventId, eventDate, actorUserId);
+  return respondWithWorkflow(eventId, eventDate, viewer);
 };
 
 export const returnEventReport = async (
   payload: EventReportActionPayload,
-  user: any,
+  viewer: EventReportViewer,
 ) => {
-  const { eventId, eventDate, actorUserId } = parseActionTarget(payload, user);
+  const { eventId, eventDate, actorUserId } = parseActionTarget(payload, { id: viewer.userId });
   const note = typeof payload?.note === "string" ? payload.note.trim() : "";
   if (!note) {
     throw new InputValidationError("A note is required when returning a report");
   }
-  await assertCanSignOff(actorUserId);
 
   await runEventReportTransaction(async (tx) => {
     const report = await loadActionReportTx(tx, eventId, eventDate, payload?.branch_id);
+    if (!PENDING_REPORT_STATUSES.includes(report.status)) {
+      throw new AppError("This report is not awaiting approval", 409);
+    }
+    await assertCanSignOffTx(tx, viewer, report, "return");
     await transitionEventReportTx(tx, {
       report,
       from: PENDING_REPORT_STATUSES,
@@ -2569,14 +2697,14 @@ export const returnEventReport = async (
     });
   });
 
-  return respondWithWorkflow(eventId, eventDate, actorUserId);
+  return respondWithWorkflow(eventId, eventDate, viewer);
 };
 
 export const resubmitEventReport = async (
   payload: EventReportActionPayload,
-  user: any,
+  viewer: EventReportViewer,
 ) => {
-  const { eventId, eventDate, actorUserId } = parseActionTarget(payload, user);
+  const { eventId, eventDate, actorUserId } = parseActionTarget(payload, { id: viewer.userId });
 
   await runEventReportTransaction(async (tx) => {
     const report = await loadActionReportTx(tx, eventId, eventDate, payload?.branch_id);
@@ -2597,7 +2725,7 @@ export const resubmitEventReport = async (
     });
   });
 
-  return respondWithWorkflow(eventId, eventDate, actorUserId);
+  return respondWithWorkflow(eventId, eventDate, viewer);
 };
 
 export const commentOnEventReport = async (

@@ -2,6 +2,19 @@ import { Request, Response } from "express";
 import { OrderService, InsufficientStockError, OrderConflictError } from "./orderService";
 import { isPaystackFailure } from "../../libs/paystack/paystackClient";
 import { getMarketplaceDeliveryConfig } from "./marketplaceFulfilment";
+import {
+  assertMarketBranchAccessible,
+  assertOrderBranchAccessible,
+  marketplaceActionAllowed,
+} from "./marketplaceAccess";
+import { BranchAccessError } from "../branches/branchService";
+
+const forbidden = (res: Response, message: string) =>
+  res.status(403).json({ message, data: null, code: "ACTION_FORBIDDEN" });
+
+/** 403 for a record outside the caller's branches, else the given status. */
+const errorStatus = (error: unknown, fallback: number) =>
+  error instanceof BranchAccessError ? 403 : fallback;
 
 const orderService = new OrderService();
 
@@ -30,7 +43,7 @@ export class OrderController {
   // Get all orders
   async findAll(req: Request, res: Response) {
     try {
-      const orders = await orderService.findAll();
+      const orders = await orderService.findAll(req.query?.branch_id);
       return res.status(200).json({
         message: "Orders retrieved successfully",
         data: orders,
@@ -46,13 +59,17 @@ export class OrderController {
   async findOne(req: Request, res: Response) {
     try {
       const { id } = req.query;
+      // Staff reading any order stay inside their branches; owners read their own.
+      if ((req as any).orderScope?.mode === "all") {
+        await assertOrderBranchAccessible(Number(id));
+      }
       const order = await orderService.findOne(Number(id));
       return res.status(200).json({
         message: "Order retrieved successfully",
         data: order,
       });
     } catch (error: any) {
-      return res.status(404).json({
+      return res.status(errorStatus(error, 404)).json({
         message: error.message || "Order not found",
       });
     }
@@ -78,13 +95,14 @@ export class OrderController {
   async findByMarketplaceId(req: Request, res: Response) {
     try {
       const marketId = parseInt(req.query.market_id as string);
+      await assertMarketBranchAccessible(marketId);
       const orders = await orderService.findOneByMarketplaceId(marketId);
       return res.status(200).json({
         success: true,
         data: orders,
       });
     } catch (error: any) {
-      return res.status(404).json({
+      return res.status(errorStatus(error, 404)).json({
         success: false,
         message: error.message || "No orders found for this marketplace",
       });
@@ -174,6 +192,7 @@ export class OrderController {
         return res.status(400).json({ error: "Id is required" });
       }
 
+      await assertOrderBranchAccessible(Number(id));
       const response = await orderService.checkHubtelTransactionStatusById(
         Number(id),
       );
@@ -183,6 +202,9 @@ export class OrderController {
         data: response,
       });
     } catch (error: any) {
+      if (error instanceof BranchAccessError) {
+        return res.status(403).json({ message: error.message, data: null });
+      }
       console.error("Error confirming transaction:", error.message);
       return res.status(500).json({ error: "Failed to confirm transaction" });
     }
@@ -191,6 +213,7 @@ export class OrderController {
   async reinitiatePayment(req: Request, res: Response) {
     try {
       const { id, return_url, cancellation_url } = req.body;
+      await assertOrderBranchAccessible(Number(id));
       const order = await orderService.reinitiatePayment(
         id,
         return_url,
@@ -201,7 +224,7 @@ export class OrderController {
         data: order,
       });
     } catch (error: any) {
-      return res.status(400).json({
+      return res.status(errorStatus(error, 400)).json({
         success: false,
         message: error.message || "Failed to create order",
       });
@@ -232,7 +255,14 @@ export class OrderController {
     try {
       const limit = Number(req.query.limit ?? 100);
       const safeLimit = Number.isNaN(limit) ? 100 : Math.min(Math.max(limit, 1), 500);
-      const result = await orderService.reconcilePendingHubtelPayments(safeLimit);
+      const marketId = Number(req.query.market_id);
+      if (Number.isInteger(marketId) && marketId > 0) {
+        await assertMarketBranchAccessible(marketId);
+      }
+      const result =
+        Number.isInteger(marketId) && marketId > 0
+          ? await orderService.reconcilePendingHubtelPaymentsByMarket(marketId, safeLimit)
+          : await orderService.reconcilePendingHubtelPayments(safeLimit);
 
       return res.status(200).json({
         success: true,
@@ -240,7 +270,7 @@ export class OrderController {
         data: result,
       });
     } catch (error: any) {
-      return res.status(500).json({
+      return res.status(errorStatus(error, 500)).json({
         success: false,
         message: error.message || "Failed to reconcile pending Hubtel payments",
       });
@@ -258,6 +288,13 @@ export class OrderController {
         return res.status(400).json({ message: "Delivery status is required" });
       }
 
+      if (
+        status.trim().toLowerCase() === "cancelled" &&
+        !marketplaceActionAllowed(req, "cancel_any_order")
+      ) {
+        return forbidden(res, "You can't cancel orders");
+      }
+      await assertOrderBranchAccessible(orderId);
       const actorUserId = Number((req as any)?.user?.id);
       const updatedOrder = await orderService.updateDeliveryStatus(
         orderId,
@@ -274,7 +311,7 @@ export class OrderController {
         data: updatedOrder,
       });
     } catch (error: any) {
-      return res.status(400).json({
+      return res.status(errorStatus(error, 400)).json({
         message: error.message || "Failed to update delivery status",
       });
     }
@@ -289,6 +326,15 @@ export class OrderController {
       }
 
       const actorUserId = Number((req as any)?.user?.id);
+      // Staff cancelling someone else's order need cancel_any_order and the
+      // order's branch; members cancel their own.
+      const owner = await orderService.findOrderOwner(orderId);
+      if (owner !== null && owner.user_id !== actorUserId) {
+        if (!marketplaceActionAllowed(req, "cancel_any_order")) {
+          return forbidden(res, "You can't cancel other people's orders");
+        }
+        await assertOrderBranchAccessible(orderId);
+      }
       const updatedOrder = await orderService.cancelOrder(
         orderId,
         Number.isInteger(actorUserId) && actorUserId > 0 ? actorUserId : null,
@@ -299,7 +345,7 @@ export class OrderController {
         data: updatedOrder,
       });
     } catch (error: any) {
-      return res.status(400).json({
+      return res.status(errorStatus(error, 400)).json({
         message: error.message || "Failed to cancel order",
       });
     }
@@ -330,12 +376,33 @@ export class OrderController {
         });
       }
 
+      // Each part of the edit is its own action.
+      const editingItems = Array.isArray(items) && items.length > 0;
+      if (!editingItems && !billing && payment_status === undefined && delivery_status === undefined) {
+        return res.status(400).json({ message: "Nothing to update" });
+      }
+      if ((editingItems || billing) && !marketplaceActionAllowed(req, "edit_order_items")) {
+        return forbidden(res, "You can't edit order items or billing details");
+      }
+      if (payment_status !== undefined && !marketplaceActionAllowed(req, "mark_paid")) {
+        return forbidden(res, "You can't change an order's payment status");
+      }
+      if (delivery_status !== undefined) {
+        const action = delivery_status === "cancelled" ? "cancel_any_order" : "fulfil_order";
+        if (!marketplaceActionAllowed(req, action)) {
+          return forbidden(res, "You can't change an order's delivery status");
+        }
+      }
+      await assertOrderBranchAccessible(orderId);
+
+      const actorUserId = Number((req as any)?.user?.id);
       const updatedOrder = await orderService.updateOrder({
         id: orderId,
         billing,
         payment_status,
         delivery_status,
         items,
+        actorUserId: Number.isInteger(actorUserId) && actorUserId > 0 ? actorUserId : null,
       });
 
       return res.status(200).json({
@@ -346,7 +413,7 @@ export class OrderController {
       const status =
         error instanceof InsufficientStockError || error instanceof OrderConflictError
           ? 409
-          : 400;
+          : errorStatus(error, 400);
       return res.status(status).json({
         message: error.message || "Failed to update order",
       });
@@ -360,6 +427,7 @@ export class OrderController {
         return res.status(400).json({ message: "A valid order id is required" });
       }
 
+      await assertOrderBranchAccessible(orderId);
       const actorUserId = Number((req as any)?.user?.id);
       await orderService.deleteOrder(
         orderId,
@@ -367,7 +435,7 @@ export class OrderController {
       );
       return res.status(200).json({ message: "Order deleted successfully" });
     } catch (error: any) {
-      return res.status(400).json({
+      return res.status(errorStatus(error, 400)).json({
         message: error.message || "Failed to delete order",
       });
     }
@@ -417,6 +485,14 @@ export class OrderController {
           .json({ message: "Unable to identify the staff placing this order" });
       }
 
+      // A manual order recorded as already paid is marking it paid.
+      if (
+        req.body?.payment_mode === "manual" &&
+        (req.body?.manual_status ?? "success") === "success" &&
+        !marketplaceActionAllowed(req, "mark_paid")
+      ) {
+        return forbidden(res, "You can't record an order as paid. Save it as awaiting payment instead");
+      }
       const order = await orderService.createForMember({
         ...req.body,
         placed_by_staff_id: actorUserId,
@@ -497,6 +573,16 @@ export class OrderController {
         message:
           "delivery_status must be pending, shipped, delivered, or cancelled",
       });
+    }
+
+    if (payment_status !== undefined && !marketplaceActionAllowed(req, "mark_paid")) {
+      return forbidden(res, "You can't change orders' payment status");
+    }
+    if (delivery_status !== undefined) {
+      const action = delivery_status === "cancelled" ? "cancel_any_order" : "fulfil_order";
+      if (!marketplaceActionAllowed(req, action)) {
+        return forbidden(res, "You can't change orders' delivery status");
+      }
     }
 
     try {

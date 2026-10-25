@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import { CohortService } from "./cohortService";
+import { somProgramIds } from "./somAccess";
 
 const cohortService = new CohortService();
 
@@ -64,7 +65,11 @@ export class CohortController {
         take = parsedTake;
       }
 
-      const cohorts = await cohortService.getAllCohorts({ page, take });
+      const cohorts = await cohortService.getAllCohorts({
+        page,
+        take,
+        programIds: await somProgramIds(req),
+      });
       return res.status(200).json({ data: cohorts });
     } catch (error: any) {
       return res

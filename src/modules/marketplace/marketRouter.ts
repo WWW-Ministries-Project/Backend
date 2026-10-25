@@ -9,27 +9,27 @@ const protect = permissions.protect;
 
 marketRouter.post(
   "/create-market",
-  [protect, permissions.can_manage_marketplace],
+  [protect, permissions.requireAction("Marketplace", "manage_markets", "Not authorized to manage markets")],
   marketController.createMarket,
 );
 marketRouter.post(
   "/duplicate-market",
-  [protect, permissions.can_manage_marketplace],
+  [protect, permissions.requireAction("Marketplace", "manage_markets", "Not authorized to manage markets")],
   marketController.duplicateMarket,
 );
 marketRouter.put(
   "/update-market",
-  [protect, permissions.can_manage_marketplace],
+  [protect, permissions.requireAction("Marketplace", "manage_markets", "Not authorized to manage markets")],
   marketController.updateMarket,
 );
 marketRouter.delete(
   "/delete-market",
-  [protect, permissions.can_delete_marketplace],
+  [protect, permissions.requireAction("Marketplace", "delete", "Not authorized to delete markets")],
   marketController.deleteMarket,
 );
 marketRouter.put(
   "/restore-market",
-  [protect, permissions.can_manage_marketplace],
+  [protect, permissions.requireAction("Marketplace", "manage_markets", "Not authorized to manage markets")],
   marketController.restoreMarket,
 );
 // Public storefront read: guests browsing /out/products fetch markets for the

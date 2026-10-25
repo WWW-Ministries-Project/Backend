@@ -8,11 +8,23 @@ import {
 } from "../../../libs/paystack/paystackSubaccount";
 import { isPaystackFailure } from "../../../libs/paystack/paystackClient";
 import {
+  BranchAccessError,
+  assertBranchAccessible,
   getBranchScopedWhere,
   resolveBranchIdOrDefault,
 } from "../../branches/branchService";
 import { FinanceHttpError, PaginationQuery } from "../common";
 import type { GivingOptionPayload } from "./validation";
+
+/** By-id records must sit in one of the caller's branches. */
+const assertOwnBranch = (branchId: number | null) => {
+  try {
+    assertBranchAccessible(branchId);
+  } catch (error) {
+    if (error instanceof BranchAccessError) throw new FinanceHttpError(403, error.message);
+    throw error;
+  }
+};
 
 /**
  * Payments are ROUTED, not split: the whole transaction lands in the giving
@@ -81,6 +93,24 @@ const maskAccountNumber = (accountNumber: string): string => {
   return `${"•".repeat(Math.max(accountNumber.length - 4, 0))}${visible}`;
 };
 
+/**
+ * What the caller may see and change on an option's settlement account
+ * (`Giving.view_full_account_number`, `Giving.manage_settlement_account`).
+ * Omitted for internal callers, which see everything.
+ */
+export type GivingOptionViewer = {
+  fullAccountNumber: boolean;
+  manageSettlementAccount: boolean;
+};
+
+const SETTLEMENT_FIELDS = [
+  "account_type",
+  "settlement_bank",
+  "bank_name",
+  "account_number",
+  "account_name",
+] as const;
+
 /** Paystack failures are surfaced with their own status codes, unchanged. */
 const toFinanceError = (error: unknown, fallback: string): FinanceHttpError => {
   if (error instanceof FinanceHttpError) {
@@ -95,10 +125,17 @@ const toFinanceError = (error: unknown, fallback: string): FinanceHttpError => {
 };
 
 export class GivingOptionService {
-  private mapResponse(record: GivingOptionRecord): GivingOptionEntity {
+  private mapResponse(
+    record: GivingOptionRecord,
+    viewer?: GivingOptionViewer,
+  ): GivingOptionEntity {
+    const masked = maskAccountNumber(record.account_number);
     return {
       ...record,
-      masked_account_number: maskAccountNumber(record.account_number),
+      // Without the action the full number never leaves the server.
+      account_number:
+        viewer && !viewer.fullAccountNumber ? masked : record.account_number,
+      masked_account_number: masked,
       is_synced: record.paystack_synced_at !== null,
     };
   }
@@ -141,13 +178,19 @@ export class GivingOptionService {
       throw new FinanceHttpError(404, "Giving option not found");
     }
 
+    assertOwnBranch(record.branch_id);
+
     return record;
   }
 
   async create(
     data: GivingOptionPayload,
     createdBy?: number,
+    viewer?: GivingOptionViewer,
   ): Promise<GivingOptionEntity> {
+    if (data.account_number.includes("•")) {
+      throw new FinanceHttpError(422, "account_number must be between 5 and 20 digits");
+    }
     const branchId = await resolveBranchIdOrDefault(data.branch_id);
     await this.ensureNameIsFree(data.name, branchId);
 
@@ -189,7 +232,7 @@ export class GivingOptionService {
         select: SELECT_FIELDS,
       });
 
-      return this.mapResponse(created);
+      return this.mapResponse(created, viewer);
     } catch (error) {
       // Compensate: deactivate the subaccount we just created so it cannot
       // silently receive payments with no local record behind it.
@@ -207,6 +250,7 @@ export class GivingOptionService {
     pagination: PaginationQuery,
     branchId?: unknown,
     includeArchived = false,
+    viewer?: GivingOptionViewer,
   ): Promise<{ data: GivingOptionEntity[]; total: number }> {
     const where = {
       ...getBranchScopedWhere(branchId),
@@ -226,20 +270,42 @@ export class GivingOptionService {
 
     return {
       total,
-      data: records.map((record) => this.mapResponse(record)),
+      data: records.map((record) => this.mapResponse(record, viewer)),
     };
   }
 
-  async findOne(id: string): Promise<GivingOptionEntity> {
+  async findOne(id: string, viewer?: GivingOptionViewer): Promise<GivingOptionEntity> {
     const record = await this.findRecordOrThrow(id);
-    return this.mapResponse(record);
+    return this.mapResponse(record, viewer);
   }
 
   async update(
     id: string,
-    data: GivingOptionPayload,
+    payload: GivingOptionPayload,
+    viewer?: GivingOptionViewer,
   ): Promise<GivingOptionEntity> {
     const existing = await this.findRecordOrThrow(id);
+
+    // A caller who only sees the masked number sends it back unchanged.
+    const data: GivingOptionPayload =
+      payload.account_number === maskAccountNumber(existing.account_number)
+        ? { ...payload, account_number: existing.account_number }
+        : payload;
+    if (data.account_number.includes("•")) {
+      throw new FinanceHttpError(422, "account_number must be between 5 and 20 digits");
+    }
+
+    // Where the money settles is its own, on-purpose right.
+    if (
+      viewer &&
+      !viewer.manageSettlementAccount &&
+      SETTLEMENT_FIELDS.some((field) => data[field] !== existing[field])
+    ) {
+      throw new FinanceHttpError(
+        403,
+        "You can't change where this option's money settles. Ask someone who manages settlement accounts.",
+      );
+    }
 
     if (existing.archived_at) {
       throw new FinanceHttpError(
@@ -317,7 +383,7 @@ export class GivingOptionService {
         select: SELECT_FIELDS,
       });
 
-      return this.mapResponse(updated);
+      return this.mapResponse(updated, viewer);
     } catch (error) {
       // Roll Paystack back to what the DB still believes is true.
       if (existing.subaccount_code) {
@@ -349,11 +415,11 @@ export class GivingOptionService {
    * can never be selected at checkout — so archiving proceeds even when Paystack
    * is unreachable, and paystack_synced_at is cleared to record the drift.
    */
-  async archive(id: string): Promise<GivingOptionEntity> {
+  async archive(id: string, viewer?: GivingOptionViewer): Promise<GivingOptionEntity> {
     const existing = await this.findRecordOrThrow(id);
 
     if (existing.archived_at) {
-      return this.mapResponse(existing);
+      return this.mapResponse(existing, viewer);
     }
 
     let synced = true;
@@ -378,7 +444,7 @@ export class GivingOptionService {
       select: SELECT_FIELDS,
     });
 
-    return this.mapResponse(archived);
+    return this.mapResponse(archived, viewer);
   }
 
   /**
@@ -386,11 +452,11 @@ export class GivingOptionService {
    * visible in the UI must actually be able to receive money, so a Paystack
    * failure here aborts the restore.
    */
-  async restore(id: string): Promise<GivingOptionEntity> {
+  async restore(id: string, viewer?: GivingOptionViewer): Promise<GivingOptionEntity> {
     const existing = await this.findRecordOrThrow(id);
 
     if (!existing.archived_at) {
-      return this.mapResponse(existing);
+      return this.mapResponse(existing, viewer);
     }
 
     const branchId =
@@ -421,7 +487,7 @@ export class GivingOptionService {
       select: SELECT_FIELDS,
     });
 
-    return this.mapResponse(restored);
+    return this.mapResponse(restored, viewer);
   }
 
   async listBanks(
