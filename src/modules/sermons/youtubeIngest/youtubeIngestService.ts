@@ -1,6 +1,10 @@
 import { notificationService } from "../../notifications/notificationService";
 import { listUserIdsWithDomainPermission } from "../../../middleWare/authorization";
 import { ingestNotificationDedupeKey } from "./websub";
+import { youtubeGet } from "../../integrationUtils/youtubeClient";
+import { classifyVideo } from "./videoClassification";
+import { mapVideoToSermonFields } from "./videoMapping";
+import { sermonService } from "../sermonService";
 
 // Deep link into the dashboard sermon manager (frontend route).
 const SERMON_MANAGE_URL = "/home/communication/sermons";
@@ -26,4 +30,28 @@ export const notifySermonManagers = async (sermon: { id: number; title: string; 
       dedupeKey: ingestNotificationDedupeKey(sermon.video_id, recipientUserId),
     })),
   );
+};
+
+export type IngestResult = { status: "ingested" | "skipped-existing" | "skipped-shorts-or-live" | "not-found" };
+
+/** Fetch one video's full metadata, skip Shorts/live, ingest + notify.
+ *  Idempotent: an already-ingested video_id short-circuits before any write. */
+export const ingestVideoById = async (videoId: string): Promise<IngestResult> => {
+  const body = await youtubeGet("videos", {
+    part: "snippet,contentDetails,liveStreamingDetails,status",
+    id: videoId,
+  });
+  const resource = Array.isArray(body.items) ? body.items[0] : undefined;
+  if (!resource) return { status: "not-found" };
+  if (resource.status?.privacyStatus && resource.status.privacyStatus !== "public") {
+    return { status: "skipped-shorts-or-live" };
+  }
+  if (classifyVideo(resource) !== "video") return { status: "skipped-shorts-or-live" };
+
+  const fields = mapVideoToSermonFields(resource);
+  const { sermon, created } = await sermonService.ingestSermon(fields);
+  if (!created) return { status: "skipped-existing" };
+
+  await notifySermonManagers({ id: Number(sermon.id), title: sermon.title, video_id: fields.video_id });
+  return { status: "ingested" };
 };
