@@ -36,7 +36,10 @@ export type IngestResult = { status: "ingested" | "skipped-existing" | "skipped-
 
 /** Fetch one video's full metadata, skip Shorts/live, ingest + notify.
  *  Idempotent: an already-ingested video_id short-circuits before any write. */
-export const ingestVideoById = async (videoId: string): Promise<IngestResult> => {
+export const ingestVideoById = async (
+  videoId: string,
+  opts: { notify?: boolean } = {},
+): Promise<IngestResult> => {
   const body = await youtubeGet("videos", {
     part: "snippet,contentDetails,liveStreamingDetails,status",
     id: videoId,
@@ -52,6 +55,8 @@ export const ingestVideoById = async (videoId: string): Promise<IngestResult> =>
   const { sermon, created } = await sermonService.ingestSermon(fields);
   if (!created) return { status: "skipped-existing" };
 
-  await notifySermonManagers({ id: Number(sermon.id), title: sermon.title, video_id: fields.video_id });
+  if (opts.notify !== false) {
+    await notifySermonManagers({ id: Number(sermon.id), title: sermon.title, video_id: fields.video_id });
+  }
   return { status: "ingested" };
 };
