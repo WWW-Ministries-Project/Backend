@@ -1,7 +1,7 @@
 import { notificationService } from "../../notifications/notificationService";
 import { listUserIdsWithDomainPermission } from "../../../middleWare/authorization";
 import { ingestNotificationDedupeKey } from "./websub";
-import { youtubeGet } from "../../integrationUtils/youtubeClient";
+import { youtubeGet, youtubeConfig } from "../../integrationUtils/youtubeClient";
 import { classifyVideo } from "./videoClassification";
 import { mapVideoToSermonFields } from "./videoMapping";
 import { sermonService } from "../sermonService";
@@ -46,6 +46,9 @@ export const ingestVideoById = async (
   });
   const resource = Array.isArray(body.items) ? body.items[0] : undefined;
   if (!resource) return { status: "not-found" };
+  if (resource.snippet?.channelId && resource.snippet.channelId !== youtubeConfig().channelId) {
+    return { status: "skipped-shorts-or-live" };
+  }
   if (resource.status?.privacyStatus && resource.status.privacyStatus !== "public") {
     return { status: "skipped-shorts-or-live" };
   }

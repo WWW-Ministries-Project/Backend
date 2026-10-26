@@ -36,6 +36,7 @@ router.post(
     res.status(204).end(); // ack immediately; ingest async so a slow YouTube call can't time out the hub
     const entry = parseFeedEntry(rawBody);
     if (!entry) return;
+    if (entry.channelId !== youtubeConfig().channelId) return;
     try {
       await ingestVideoById(entry.videoId);
     } catch (error) {
