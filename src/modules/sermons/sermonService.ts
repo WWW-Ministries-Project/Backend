@@ -40,9 +40,10 @@ export type UpdateSermonInput = {
   preached_at?: string | null;
 };
 
-// Ascending, deliberately: a series is watched front-to-back. `position` is no
-// longer written by any path, so every row ties at 0 and ordering by it is
-// arbitrary; created_at is the closest stand-in for the order they were added.
+// Ascending, deliberately: a series is watched front-to-back. `position` is now
+// written only by the series sync (assignPlaylistItems), so rows outside a synced
+// playlist still tie at 0 and ordering by it would be inconsistent across the
+// collection; created_at is the closest uniform stand-in for the order they were added.
 //
 // The nested sermons are filtered too, not just the series row: a PUBLISHED
 // series can contain DRAFT sermons, so hydrating them unconditionally would
