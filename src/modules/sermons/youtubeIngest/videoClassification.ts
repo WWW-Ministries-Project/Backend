@@ -7,8 +7,17 @@ export const parseIsoDurationSeconds = (iso: string | undefined): number => {
   return Number(h ?? 0) * 3600 + Number(min ?? 0) * 60 + Number(s ?? 0);
 };
 const SHORT_MAX_SECONDS = 60;
-export const classifyVideo = (resource: { contentDetails?: { duration?: string }; liveStreamingDetails?: unknown; }): VideoKind => {
-  if (resource.liveStreamingDetails) return "live";
+export const classifyVideo = (resource: {
+  contentDetails?: { duration?: string };
+  liveStreamingDetails?: { actualStartTime?: string; actualEndTime?: string; scheduledStartTime?: string };
+}): VideoKind => {
+  const live = resource.liveStreamingDetails;
+  if (live) {
+    const currentlyLive = Boolean(live.actualStartTime) && !live.actualEndTime;
+    const upcoming = Boolean(live.scheduledStartTime) && !live.actualStartTime;
+    if (currentlyLive || upcoming) return "live";
+    // finished broadcast (actualEndTime set) falls through to normal duration logic
+  }
   const seconds = parseIsoDurationSeconds(resource.contentDetails?.duration);
   if (seconds > 0 && seconds <= SHORT_MAX_SECONDS) return "short";
   return "video";

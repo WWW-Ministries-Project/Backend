@@ -11,6 +11,15 @@ test("parseIsoDurationSeconds parses hours/minutes/seconds", () => {
 test("classifyVideo flags a live/premiere resource", () => {
   assert.equal(classifyVideo({ contentDetails: { duration: "PT30M" }, liveStreamingDetails: { actualStartTime: "x" } }), "live");
 });
+test("classifyVideo skips a currently-live broadcast", () => {
+  assert.equal(classifyVideo({ contentDetails: { duration: "PT30M" }, liveStreamingDetails: { actualStartTime: "2026-10-20T10:00:00Z" } }), "live");
+});
+test("classifyVideo skips an upcoming/scheduled broadcast", () => {
+  assert.equal(classifyVideo({ contentDetails: { duration: "PT0S" }, liveStreamingDetails: { scheduledStartTime: "2026-12-01T10:00:00Z" } }), "live");
+});
+test("classifyVideo ingests a FINISHED livestream VOD as a normal video", () => {
+  assert.equal(classifyVideo({ contentDetails: { duration: "PT1H5M" }, liveStreamingDetails: { actualStartTime: "2026-10-20T10:00:00Z", actualEndTime: "2026-10-20T11:05:00Z" } }), "video");
+});
 test("classifyVideo flags a <=60s clip as a short", () => {
   assert.equal(classifyVideo({ contentDetails: { duration: "PT59S" } }), "short");
 });
