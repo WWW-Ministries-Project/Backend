@@ -96,7 +96,6 @@ export const issueNotificationStreamToken = (userId: number) => {
   }
 
   const ttlSeconds = resolveTtlSeconds();
-  const expiresIn = `${ttlSeconds}s`;
   const token = JWT.sign(
     {
       id: parsedUserId,
@@ -104,7 +103,7 @@ export const issueNotificationStreamToken = (userId: number) => {
     },
     getJwtSecret(),
     {
-      expiresIn,
+      expiresIn: ttlSeconds,
     },
   );
 
