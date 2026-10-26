@@ -1,6 +1,9 @@
 import { Request, Response } from "express";
 import { sermonService } from "./sermonService";
 import { listTags } from "./sermonTagService";
+import { searchTranscripts } from "./sermonTranscriptService";
+import { transcribeVideo } from "./whisperTranscriptionService";
+import { batchTranscribeRecent } from "./sermonBatchTranscribeService";
 
 const toPositiveInt = (value: unknown): number | null => {
   const parsed = Number(value);
@@ -331,6 +334,101 @@ export class sermonController {
       const statusCode = getStatusCode(error) ?? 500;
       return res.status(statusCode).json({
         message: (error as Error).message || "Failed to unpublish sermon",
+        data: null,
+      });
+    }
+  };
+
+  /**
+   * Keyword search over the spoken content of YouTube sermon videos. The client
+   * sends the query and the video ids it currently has loaded (the Messages
+   * view pages itself from YouTube); we fetch each video's captions, match, and
+   * return the videos that contain the words along with a snippet and a seek
+   * offset. A video without captions is simply absent from the results.
+   */
+  searchTranscripts = async (req: Request, res: Response) => {
+    try {
+      const body = req.body ?? {};
+      const q = String(body.q ?? body.query ?? "").trim();
+      if (!q) {
+        return res.status(400).json({ message: "A search query is required", data: null });
+      }
+
+      const rawIds = Array.isArray(body.video_ids)
+        ? body.video_ids
+        : Array.isArray(body.videoIds)
+          ? body.videoIds
+          : [];
+      const videoIds = rawIds
+        .map((value: unknown) => String(value ?? "").trim())
+        .filter(Boolean);
+      if (videoIds.length === 0) {
+        return res.status(200).json({ message: "No videos to search", data: [] });
+      }
+
+      const data = await searchTranscripts(q, videoIds);
+      return res.status(200).json({ message: "Transcript matches", data });
+    } catch (error) {
+      return res.status(500).json({
+        message: (error as Error).message || "Failed to search sermon transcripts",
+        data: null,
+      });
+    }
+  };
+
+  /**
+   * Transcribes one YouTube sermon with Whisper and stores the result. Spends
+   * OpenAI credit, so it is gated behind sermon-management permission. Runs
+   * synchronously for the prototype — a long video can take minutes, so a
+   * production build would move this to a background job with a status endpoint.
+   */
+  transcribeSermon = async (req: Request, res: Response) => {
+    try {
+      const body = req.body ?? {};
+      const videoId = String(body.video_id ?? body.videoId ?? "").trim();
+      if (!videoId) {
+        return res.status(400).json({ message: "video_id is required", data: null });
+      }
+      const force = body.force === true || String(req.query?.force ?? "") === "true";
+
+      const result = await transcribeVideo(videoId, { force });
+      return res.status(200).json({
+        message: result.cached ? "Transcript already available" : "Sermon transcribed",
+        data: {
+          video_id: result.video_id,
+          cached: result.cached,
+          source: result.source,
+          model: result.model,
+          segment_count: result.segments.length,
+        },
+      });
+    } catch (error) {
+      const statusCode = getStatusCode(error) ?? 500;
+      return res.status(statusCode).json({
+        message: (error as Error).message || "Failed to transcribe sermon",
+        data: null,
+      });
+    }
+  };
+
+  /**
+   * Transcribes the channel's recent videos now, instead of waiting for the
+   * cron. Free (captions) by default; pass allow_whisper to let uncaptioned
+   * videos fall back to the paid model. Gated to sermon managers.
+   */
+  transcribeRecent = async (req: Request, res: Response) => {
+    try {
+      const body = req.body ?? {};
+      const limit = toPositiveInt(body.limit ?? req.query?.limit) ?? undefined;
+      const allowWhisper =
+        body.allow_whisper === true || String(req.query?.allow_whisper ?? "") === "true";
+
+      const summary = await batchTranscribeRecent({ limit, allowWhisper });
+      return res.status(200).json({ message: "Batch transcription complete", data: summary });
+    } catch (error) {
+      const statusCode = getStatusCode(error) ?? 500;
+      return res.status(statusCode).json({
+        message: (error as Error).message || "Failed to batch transcribe sermons",
         data: null,
       });
     }

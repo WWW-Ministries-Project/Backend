@@ -40,6 +40,7 @@ if (shouldRunBackgroundJobs) {
   require("./src/cron-jobs/messagingBirthdayCron");
   require("./src/cron-jobs/appointmentNotificationCron");
   require("./src/cron-jobs/assetStockCheckCron");
+  require("./src/cron-jobs/sermonTranscribeCron");
 } else {
   logger.info("Background cron jobs are disabled for this process.");
 }
