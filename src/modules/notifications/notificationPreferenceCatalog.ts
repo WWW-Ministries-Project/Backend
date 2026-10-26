@@ -470,6 +470,13 @@ export const NOTIFICATION_PREFERENCE_OPTIONS: NotificationPreferenceOption[] = [
     category: "System",
     availableChannels: IN_APP_AND_EMAIL_CHANNELS,
   },
+  {
+    type: "sermon.ingested",
+    title: "New sermon imported",
+    description: "A new sermon was imported from YouTube and may need review.",
+    category: "Content",
+    availableChannels: IN_APP_AND_EMAIL_CHANNELS,
+  },
 ];
 
 const notificationPreferenceOptionByType = new Map(
