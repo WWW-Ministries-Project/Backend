@@ -42,6 +42,7 @@ if (shouldRunBackgroundJobs) {
   require("./src/cron-jobs/assetStockCheckCron");
   require("./src/cron-jobs/sermonTranscribeCron");
   require("./src/cron-jobs/youtubeWebsubRenewalCron");
+  require("./src/cron-jobs/sermonSeriesSyncCron");
 } else {
   logger.info("Background cron jobs are disabled for this process.");
 }
