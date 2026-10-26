@@ -22,6 +22,24 @@ const sermonInBranch = requireSermonRecordInBranch("sermon");
 // Static paths first: /:id would otherwise swallow "series" and "tags".
 router.get("/tags", [protect], controller.listTags);
 
+// Spoken-word search over stored sermon transcripts. Any authenticated member.
+router.post("/transcript-search", [protect], controller.searchTranscripts);
+
+// Transcribe a YouTube sermon with Whisper (spends OpenAI credit) — gated to
+// sermon managers. Populates the store that transcript-search reads.
+router.post(
+  "/transcribe",
+  [protect, permissions.requireAction("Sermons", "create", "Not authorized to transcribe sermons")],
+  controller.transcribeSermon,
+);
+
+// Transcribe the channel's recent videos in bulk (free captions by default).
+router.post(
+  "/transcribe-recent",
+  [protect, permissions.requireAction("Sermons", "create", "Not authorized to transcribe sermons")],
+  controller.transcribeRecent,
+);
+
 router.get("/series", [protect, ...drafts], controller.listSeries);
 router.get(
   "/series/:id",

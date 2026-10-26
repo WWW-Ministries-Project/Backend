@@ -3333,6 +3333,19 @@ model sermon_tag_assignment {
   @@index([tag_id])
 }
 
+// Stored spoken-word transcript for a YouTube sermon, keyed by its video id
+// (sermons on mobile come straight from YouTube, so there is no sermon row to
+// hang this off). `segments` is the array of { text, offset, duration } cues.
+// Source is "captions" (free YouTube track) or "whisper" (OpenAI fallback).
+model sermon_transcript {
+  video_id   String   @id
+  segments   Json
+  source     String
+  model      String
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+}
+
 model stock_notification_requests {
   id                Int            @id @default(autoincrement())
   user_id           Int

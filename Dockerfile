@@ -9,7 +9,13 @@ RUN apk add --no-cache \
     freetype \
     harfbuzz \
     ca-certificates \
-    ttf-freefont
+    ttf-freefont \
+    ffmpeg \
+    yt-dlp
+
+# Sermon transcription shells out to yt-dlp (installed above as a binary, not the
+# `python3 -m yt_dlp` module form), and uses ffmpeg to downmix/chunk audio.
+ENV YTDLP_CMD=yt-dlp
 
 # Use the Alpine (musl) Chromium instead of Puppeteer's bundled glibc build,
 # which cannot launch on Alpine and makes PDF report generation 500.
