@@ -31,6 +31,7 @@ if (shouldRunBackgroundJobs) {
   require("./src/cron-jobs/followUpNotificationCron");
   require("./src/cron-jobs/notificationRetentionCron");
   require("./src/cron-jobs/notificationPushRetryCron");
+  require("./src/cron-jobs/notificationPushReceiptCron");
   require("./src/cron-jobs/notificationSmsRetryCron");
   require("./src/cron-jobs/eventReminderCron");
   require("./src/cron-jobs/liveStreamCron");

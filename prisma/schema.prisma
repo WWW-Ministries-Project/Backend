@@ -1415,6 +1415,21 @@ model notification_device_token {
   @@map("notification_device_tokens")
 }
 
+// Expo returns a push TICKET at send time, but DeviceNotRegistered (the signal
+// that a token is dead) only arrives later in the delivery RECEIPT. We persist
+// one row per outstanding receipt id so a background job can poll Expo and
+// deactivate tokens whose receipts report them gone. Rows are deleted once the
+// receipt has been resolved.
+model notification_push_receipt {
+  id         String   @id @default(uuid())
+  receipt_id String   @unique @db.VarChar(191)
+  token_id   String   @db.VarChar(191)
+  created_at DateTime @default(now())
+
+  @@index([created_at], map: "notification_push_receipts_created_idx")
+  @@map("notification_push_receipts")
+}
+
 model notification_sms_delivery_job {
   id                 String                           @id @default(uuid())
   notification_id    Int?                             @unique

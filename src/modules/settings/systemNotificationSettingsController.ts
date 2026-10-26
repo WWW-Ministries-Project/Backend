@@ -29,10 +29,14 @@ const systemNotificationSettingsController = {
         });
       }
 
+      console.error(
+        "[ERROR] Failed to fetch system notification settings:",
+        error?.message ?? error,
+      );
       return res.status(500).json({
         success: false,
         message: "Failed to fetch system notification settings",
-        data: error?.message ?? null,
+        data: null,
       });
     }
   },
@@ -54,10 +58,14 @@ const systemNotificationSettingsController = {
         });
       }
 
+      console.error(
+        "[ERROR] Failed to fetch system notification admin candidates:",
+        error?.message ?? error,
+      );
       return res.status(500).json({
         success: false,
         message: "Failed to fetch system notification admin candidates",
-        data: error?.message ?? null,
+        data: null,
       });
     }
   },
@@ -84,10 +92,14 @@ const systemNotificationSettingsController = {
         });
       }
 
+      console.error(
+        "[ERROR] Failed to save system notification settings:",
+        error?.message ?? error,
+      );
       return res.status(500).json({
         success: false,
         message: "Failed to save system notification settings",
-        data: error?.message ?? null,
+        data: null,
       });
     }
   },

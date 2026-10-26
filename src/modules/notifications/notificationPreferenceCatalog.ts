@@ -502,6 +502,14 @@ export const getNotificationPreferenceOption = (
   };
 };
 
+export const isKnownNotificationType = (notificationType: unknown): boolean => {
+  const normalizedType = String(notificationType || "").trim();
+  if (!normalizedType) {
+    return false;
+  }
+  return notificationPreferenceOptionByType.has(normalizedType);
+};
+
 export const listNotificationPreferenceTypes = (
   additionalTypes: string[] = [],
 ): string[] => {

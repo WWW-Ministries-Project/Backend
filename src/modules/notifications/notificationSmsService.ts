@@ -76,6 +76,9 @@ class HubtelSmsRequestError extends Error {
 const DEFAULT_HUBTEL_SMS_ENDPOINT = "https://smsc.hubtel.com/v1/messages/send";
 const DEFAULT_HUBTEL_SMS_TIMEOUT_MS = 5_000;
 const DEFAULT_HUBTEL_SMS_MAX_RETRIES = 3;
+// A job left PROCESSING past this was almost certainly orphaned by a crash
+// mid-send; reclaim it to PENDING so it is retried.
+const STALE_PROCESSING_RECLAIM_MS = 5 * 60 * 1000;
 const DEFAULT_HUBTEL_SMS_RETRY_BASE_DELAY_MS = 250;
 const DEFAULT_HUBTEL_SMS_MAX_QUEUE_SIZE = 2_000;
 const DEFAULT_HUBTEL_SMS_MAX_MESSAGE_LENGTH = 612;
@@ -631,6 +634,10 @@ const sendHubtelSms = async (
 
   let lastError: HubtelSmsRequestError | null = null;
 
+  // Status codes that mean "the request body shape was wrong" — the only case
+  // where retrying a different payload variant is safe.
+  const SHAPE_RETRY_STATUS_CODES = new Set([400, 422]);
+
   for (const payload of payloadCandidates) {
     const { response, payload: bodyPayload, raw } = await postJson(
       config.endpoint,
@@ -650,7 +657,11 @@ const sendHubtelSms = async (
         shouldRetry,
       );
 
-      if (response.status >= 400 && response.status < 500) {
+      // Only a bad-request SHAPE error ("try a different payload layout") should
+      // fall through to the next variant. Transient codes (408/429/5xx) and
+      // auth/other errors must NOT re-POST the same SMS up to 4x in one tight
+      // loop — surface them so the job-level retry/backoff decides.
+      if (SHAPE_RETRY_STATUS_CODES.has(response.status)) {
         continue;
       }
 
@@ -658,10 +669,11 @@ const sendHubtelSms = async (
     }
 
     if (hasExplicitFailure(bodyPayload)) {
+      // A 2xx means Hubtel accepted the request; trying another variant could
+      // send the SMS twice (double-text/double-charge). Treat it as final.
       const reason =
         getFailureMessage(bodyPayload) || "Hubtel SMS response indicates failure";
-      lastError = new HubtelSmsRequestError(reason, "response_failure", 200, false);
-      continue;
+      throw new HubtelSmsRequestError(reason, "response_failure", 200, false);
     }
 
     return;
@@ -874,6 +886,22 @@ const processPendingSmsDeliveryJobs = async (args?: {
     args?.batchSize ?? process.env.HUBTEL_SMS_RETRY_BATCH_SIZE,
   );
   const now = new Date();
+
+  // Reclaim jobs orphaned in PROCESSING by a crash/restart mid-send; otherwise
+  // the due query (PENDING only) never retries them.
+  await prisma.notification_sms_delivery_job.updateMany({
+    where: {
+      status: "PROCESSING",
+      updated_at: {
+        lt: new Date(now.getTime() - STALE_PROCESSING_RECLAIM_MS),
+      },
+    },
+    data: {
+      status: "PENDING",
+      next_attempt_at: now,
+    },
+  });
+
   const dueJobs = await prisma.notification_sms_delivery_job.findMany({
     where: {
       status: "PENDING",
@@ -1018,28 +1046,49 @@ const processPendingSmsDeliveryJobs = async (args?: {
       }
     } catch (error) {
       const normalized = normalizeErrorForMetrics(error);
+      // Count the failed run as an attempt and cap it: a job whose non-send path
+      // (claim / state update) errors every tick would otherwise requeue forever
+      // and never reach DEAD.
+      const nextAttempts = dueJob.attempts + 1;
+      const giveUp = nextAttempts >= config.maxRetries;
+
       await prisma.notification_sms_delivery_job.updateMany({
         where: {
           id: dueJob.id,
           status: "PROCESSING",
         },
-        data: {
-          status: "PENDING",
-          next_attempt_at: new Date(
-            Date.now() + delayForRetry(1, config.retryBaseDelayMs),
-          ),
-          last_error_code: "PROCESSING_ERROR",
-          last_error_message: truncate(normalized.message, 1024),
-          last_error_at: new Date(),
-        },
+        data: giveUp
+          ? {
+              status: "DEAD",
+              attempts: nextAttempts,
+              last_error_code: "PROCESSING_ERROR",
+              last_error_message: truncate(normalized.message, 1024),
+              last_error_at: new Date(),
+            }
+          : {
+              status: "PENDING",
+              attempts: nextAttempts,
+              next_attempt_at: new Date(
+                Date.now() + delayForRetry(nextAttempts, config.retryBaseDelayMs),
+              ),
+              last_error_code: "PROCESSING_ERROR",
+              last_error_message: truncate(normalized.message, 1024),
+              last_error_at: new Date(),
+            },
       });
 
       await updateNotificationSmsState({
         notificationId: dueJob.notification_id,
-        status: "PENDING",
+        status: giveUp ? "DEAD" : "PENDING",
         errorCode: "PROCESSING_ERROR",
         errorMessage: normalized.message,
       });
+
+      if (giveUp) {
+        dead += 1;
+      } else {
+        requeued += 1;
+      }
 
       console.error(
         `[ERROR] SMS retry processing failed for job=${dueJob.id}: ${normalized.message}`,
