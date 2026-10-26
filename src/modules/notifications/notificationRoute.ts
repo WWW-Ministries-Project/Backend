@@ -1,48 +1,10 @@
 import { Router } from "express";
 import { Permissions } from "../../middleWare/authorization";
 import { notificationController } from "./notificationController";
-import {
-  extractBearerTokenFromHeader,
-  extractStreamTokenFromQuery,
-  verifyNotificationStreamToken,
-} from "./notificationStreamAuth";
 import { notificationPushRateLimiter } from "./notificationPushRateLimiter";
 
 const notificationRouter = Router();
 const permissions = new Permissions();
-
-const streamAuth = (req: any, res: any, next: any) => {
-  const bearerToken = extractBearerTokenFromHeader(req);
-  if (bearerToken) {
-    return permissions.protect(req, res, next);
-  }
-
-  const streamToken = extractStreamTokenFromQuery(req);
-  if (!streamToken) {
-    return res
-      .status(401)
-      .json({ message: "Not authorized. Token not found", data: null });
-  }
-
-  const userId = verifyNotificationStreamToken(streamToken);
-  if (!userId) {
-    return res
-      .status(401)
-      .json({ message: "Session Expired", data: "Session Expired" });
-  }
-
-  req.user = {
-    ...(req.user || {}),
-    id: userId,
-  };
-  return next();
-};
-
-notificationRouter.get(
-  "/stream-token",
-  [permissions.protect],
-  notificationController.issueStreamToken,
-);
 
 notificationRouter.get(
   "/push/public-key",
@@ -135,12 +97,6 @@ notificationRouter.patch(
   "/read-all",
   [permissions.protect],
   notificationController.markAllAsRead,
-);
-
-notificationRouter.get(
-  "/stream",
-  [streamAuth],
-  notificationController.stream,
 );
 
 export default notificationRouter;

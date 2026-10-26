@@ -22,11 +22,21 @@ type ExpoPushTicketLike = {
   details?: { error?: string } | null;
 };
 
+type ExpoPushReceiptLike = {
+  status: "ok" | "error";
+  message?: string;
+  details?: { error?: string } | null;
+};
+
 type ExpoClientLike = {
   chunkPushNotifications(messages: ExpoPushMessageLike[]): ExpoPushMessageLike[][];
   sendPushNotificationsAsync(
     messages: ExpoPushMessageLike[],
   ): Promise<ExpoPushTicketLike[]>;
+  chunkPushNotificationReceiptIds(receiptIds: string[]): string[][];
+  getPushNotificationReceiptsAsync(
+    receiptIds: string[],
+  ): Promise<Record<string, ExpoPushReceiptLike>>;
 };
 
 type ExpoStatic = {
@@ -260,6 +270,10 @@ const sendExpoMessages = async (
     });
     const chunks = expo.chunkPushNotifications(messages);
 
+    // receipt id -> device token id, so the receipt poller can deactivate the
+    // right token when Expo later reports DeviceNotRegistered.
+    const receiptTokenPairs: { receipt_id: string; token_id: string }[] = [];
+
     for (const chunk of chunks) {
       let tickets: ExpoPushTicketLike[] = [];
       try {
@@ -279,9 +293,18 @@ const sendExpoMessages = async (
         const ticket = tickets[index];
         const message = chunk[index];
         const to = message?.to;
+        const tokenRow = to ? tokenById.get(to) : undefined;
 
         if (ticket.status === "ok") {
           sent += 1;
+          // The ticket only says "accepted". DeviceNotRegistered surfaces in the
+          // receipt; record the id so the poller can resolve it later.
+          if (ticket.id && tokenRow) {
+            receiptTokenPairs.push({
+              receipt_id: ticket.id,
+              token_id: tokenRow.id,
+            });
+          }
           continue;
         }
 
@@ -289,7 +312,6 @@ const sendExpoMessages = async (
         const errorCode = trimToNull(ticket.details?.error) || "ExpoPushError";
         const errorMessage = trimToNull(ticket.message) || "Expo push failed";
 
-        const tokenRow = to ? tokenById.get(to) : undefined;
         if (tokenRow && ticket.details?.error === "DeviceNotRegistered") {
           await deactivateDeviceToken({
             tokenId: tokenRow.id,
@@ -297,6 +319,17 @@ const sendExpoMessages = async (
             message: errorMessage,
           });
         }
+      }
+    }
+
+    if (receiptTokenPairs.length) {
+      try {
+        await prisma.notification_push_receipt.createMany({
+          data: receiptTokenPairs,
+          skipDuplicates: true,
+        });
+      } catch (error) {
+        // Losing a receipt row only costs a later wasted send; never throw.
       }
     }
   } catch (error) {
@@ -361,60 +394,199 @@ const deliverExpoPush = async (
  * member would be thousands of sequential inserts for a message that is stale
  * an hour later.
  */
+const BROADCAST_TOKEN_PAGE_SIZE = 1000;
+
 const broadcastExpoPush = async (
   notification: ExpoPushDispatchInput,
 ): Promise<{ sent: number; failed: number }> => {
-  let tokens: DeviceTokenRow[] = [];
-  try {
-    tokens = await prisma.notification_device_token.findMany({
-      where: {
-        is_active: true,
-        user: {
-          OR: [{ is_active: true }, { is_active: null }],
-          notification_preferences: {
-            none: {
-              type: notification.type,
-              in_app_enabled: false,
+  const priority = toExpoPriority(notification.priority);
+  const buildMessage = (to: string): ExpoPushMessageLike => ({
+    to,
+    sound: "default",
+    title: notification.title,
+    body: notification.body,
+    priority,
+    data: {
+      notificationId: notification.id,
+      type: notification.type,
+      entityType: notification.entityType,
+      entityId: notification.entityId,
+      actionUrl: notification.actionUrl,
+      priority: notification.priority,
+    },
+  });
+
+  let sent = 0;
+  let failed = 0;
+  let cursor: string | undefined;
+
+  // Page the token set so a large congregation does not load every device row
+  // (and build every message) into memory at once.
+  for (;;) {
+    let tokens: DeviceTokenRow[] = [];
+    try {
+      tokens = await prisma.notification_device_token.findMany({
+        where: {
+          is_active: true,
+          user: {
+            OR: [{ is_active: true }, { is_active: null }],
+            notification_preferences: {
+              none: {
+                type: notification.type,
+                in_app_enabled: false,
+              },
             },
           },
         },
+        select: {
+          id: true,
+          token: true,
+        },
+        orderBy: { id: "asc" },
+        take: BROADCAST_TOKEN_PAGE_SIZE,
+        ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
+      });
+    } catch (error) {
+      console.error(
+        `[ERROR] Expo broadcast token lookup failed: notification=${notification.id} error=${truncate(
+          error instanceof Error ? error.message : String(error),
+          MAX_ERROR_MESSAGE_LENGTH,
+        )}`,
+      );
+      break;
+    }
+
+    if (!tokens.length) {
+      break;
+    }
+
+    const result = await sendExpoMessages(
+      tokens,
+      buildMessage,
+      `broadcast notification=${notification.id}`,
+    );
+    sent += result.sent;
+    failed += result.failed;
+
+    if (tokens.length < BROADCAST_TOKEN_PAGE_SIZE) {
+      break;
+    }
+    cursor = tokens[tokens.length - 1]?.id;
+    if (!cursor) {
+      break;
+    }
+  }
+
+  return { sent, failed };
+};
+
+// Receipts are not ready the instant a ticket is accepted; give Expo a short
+// grace period before polling, keep rows no longer than their 24h availability.
+const RECEIPT_POLL_MIN_AGE_MS = 60_000;
+const RECEIPT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const RECEIPT_POLL_BATCH = 1000;
+
+/**
+ * Poll Expo for outstanding delivery receipts and deactivate tokens Expo now
+ * reports as DeviceNotRegistered. Resolved and stale receipt rows are deleted.
+ * Never throws. Driven by notificationPushReceiptCron.
+ */
+const pollExpoPushReceipts = async (): Promise<{
+  checked: number;
+  deactivated: number;
+  cleared: number;
+}> => {
+  let checked = 0;
+  let deactivated = 0;
+  let cleared = 0;
+
+  let rows: { id: string; receipt_id: string; token_id: string }[] = [];
+  try {
+    rows = await prisma.notification_push_receipt.findMany({
+      where: {
+        created_at: { lte: new Date(Date.now() - RECEIPT_POLL_MIN_AGE_MS) },
       },
-      select: {
-        id: true,
-        token: true,
-      },
+      orderBy: { created_at: "asc" },
+      take: RECEIPT_POLL_BATCH,
+      select: { id: true, receipt_id: true, token_id: true },
     });
   } catch (error) {
+    return { checked, deactivated, cleared };
+  }
+
+  if (!rows.length) {
+    return { checked, deactivated, cleared };
+  }
+
+  const rowByReceiptId = new Map(rows.map((row) => [row.receipt_id, row]));
+  const resolvedRowIds: string[] = [];
+
+  try {
+    const { Expo } = await loadExpo();
+    const expo = new Expo({ accessToken: process.env.EXPO_ACCESS_TOKEN });
+    const chunks = expo.chunkPushNotificationReceiptIds(
+      rows.map((row) => row.receipt_id),
+    );
+
+    for (const chunk of chunks) {
+      let receipts: Record<string, ExpoPushReceiptLike> = {};
+      try {
+        receipts = await expo.getPushNotificationReceiptsAsync(chunk);
+      } catch (error) {
+        console.error(
+          `[WARN] Expo receipt fetch failed: error=${truncate(
+            error instanceof Error ? error.message : String(error),
+            MAX_ERROR_MESSAGE_LENGTH,
+          )}`,
+        );
+        continue;
+      }
+
+      for (const [receiptId, receipt] of Object.entries(receipts)) {
+        const row = rowByReceiptId.get(receiptId);
+        if (!row) continue;
+
+        checked += 1;
+        resolvedRowIds.push(row.id);
+
+        if (
+          receipt.status === "error" &&
+          receipt.details?.error === "DeviceNotRegistered"
+        ) {
+          await deactivateDeviceToken({
+            tokenId: row.token_id,
+            code: "DeviceNotRegistered",
+            message: trimToNull(receipt.message) || "Device no longer registered",
+          });
+          deactivated += 1;
+        }
+      }
+    }
+  } catch (error) {
     console.error(
-      `[ERROR] Expo broadcast token lookup failed: notification=${notification.id} error=${truncate(
+      `[ERROR] Expo receipt poll failed: error=${truncate(
         error instanceof Error ? error.message : String(error),
         MAX_ERROR_MESSAGE_LENGTH,
       )}`,
     );
-    return { sent: 0, failed: 0 };
   }
 
-  const priority = toExpoPriority(notification.priority);
-
-  return sendExpoMessages(
-    tokens,
-    (to) => ({
-      to,
-      sound: "default",
-      title: notification.title,
-      body: notification.body,
-      priority,
-      data: {
-        notificationId: notification.id,
-        type: notification.type,
-        entityType: notification.entityType,
-        entityId: notification.entityId,
-        actionUrl: notification.actionUrl,
-        priority: notification.priority,
+  // Remove receipts we resolved, plus any that outlived Expo's retention window.
+  try {
+    const result = await prisma.notification_push_receipt.deleteMany({
+      where: {
+        OR: [
+          { id: { in: resolvedRowIds } },
+          { created_at: { lt: new Date(Date.now() - RECEIPT_MAX_AGE_MS) } },
+        ],
       },
-    }),
-    `broadcast notification=${notification.id}`,
-  );
+    });
+    cleared = result.count;
+  } catch (error) {
+    // Rows will be retried next run; never throw from cleanup.
+  }
+
+  return { checked, deactivated, cleared };
 };
 
 export const notificationDeviceService = {
@@ -423,4 +595,5 @@ export const notificationDeviceService = {
   listActiveTokensForUser,
   deliverExpoPush,
   broadcastExpoPush,
+  pollExpoPushReceipts,
 };

@@ -31,12 +31,21 @@ export async function pruneOldNotificationsJob() {
     const normalizedError = error?.message || String(error);
     console.error("[ERROR] Notification retention job failed:", normalizedError);
 
-    await notificationService.notifyAdminsJobFailed({
-      jobName: "notification-retention",
-      errorMessage: normalizedError,
-      actionUrl: "/home/notifications",
-      dedupeKey: `job:notification-retention:${new Date().toISOString().slice(0, 13)}`,
-    });
+    // The admin alert runs its own DB writes; a failure here must not escape
+    // the async cron callback as an unhandled rejection.
+    try {
+      await notificationService.notifyAdminsJobFailed({
+        jobName: "notification-retention",
+        errorMessage: normalizedError,
+        actionUrl: "/home/notifications",
+        dedupeKey: `job:notification-retention:${new Date().toISOString().slice(0, 13)}`,
+      });
+    } catch (notificationError: any) {
+      console.error(
+        "[ERROR] Notification retention job failure alert failed:",
+        notificationError?.message || String(notificationError),
+      );
+    }
   } finally {
     isRetentionJobRunning = false;
   }

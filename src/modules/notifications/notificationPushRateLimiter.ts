@@ -8,12 +8,24 @@ type PushRateLimitBucket = {
 const DEFAULT_WINDOW_MS = 60 * 1000;
 const DEFAULT_MAX_ATTEMPTS = 30;
 
-const windowMs = Number(
-  process.env.NOTIFICATION_PUSH_RATE_LIMIT_WINDOW_MS || DEFAULT_WINDOW_MS,
+// A non-numeric env value (e.g. "30s") would yield NaN, and `count >= NaN` is
+// always false — silently disabling the limiter. Fall back to the default
+// unless the override parses to a positive integer.
+const positiveIntFromEnv = (value: string | undefined, fallback: number) => {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return parsed;
+};
+
+const windowMs = positiveIntFromEnv(
+  process.env.NOTIFICATION_PUSH_RATE_LIMIT_WINDOW_MS,
+  DEFAULT_WINDOW_MS,
 );
-const maxAttempts = Number(
-  process.env.NOTIFICATION_PUSH_RATE_LIMIT_MAX_ATTEMPTS ||
-    DEFAULT_MAX_ATTEMPTS,
+const maxAttempts = positiveIntFromEnv(
+  process.env.NOTIFICATION_PUSH_RATE_LIMIT_MAX_ATTEMPTS,
+  DEFAULT_MAX_ATTEMPTS,
 );
 
 const buckets = new Map<string, PushRateLimitBucket>();
@@ -41,8 +53,17 @@ const getUserId = (req: Request): string => {
   return String(parsed);
 };
 
-const getBucketKey = (req: Request): string =>
-  `${req.method}:${req.path}:${getUserId(req)}:${getClientIp(req)}`;
+// These routes run behind `protect`, so an authenticated caller always has a
+// trustworthy user id — key on that alone. X-Forwarded-For is client-supplied
+// and can be rotated to mint fresh buckets, so only fall back to IP for the
+// (shouldn't-happen) anonymous case.
+const getBucketKey = (req: Request): string => {
+  const userId = getUserId(req);
+  if (userId !== "anonymous") {
+    return `${req.method}:${req.path}:user:${userId}`;
+  }
+  return `${req.method}:${req.path}:ip:${getClientIp(req)}`;
+};
 
 const cleanupExpiredBuckets = (now: number) => {
   for (const [key, bucket] of buckets.entries()) {
