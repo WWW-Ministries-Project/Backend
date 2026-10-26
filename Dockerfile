@@ -22,8 +22,6 @@ RUN npm install
 
 COPY . .
 
-RUN npm install prisma@5.17.0 @prisma/client@5.17.0
-
 RUN npm run migrate:2
 
 EXPOSE 8000
