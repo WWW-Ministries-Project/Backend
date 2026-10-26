@@ -3290,7 +3290,7 @@ model sermon {
   title         String
   description   String?       @db.Text
   youtube_url   String
-  video_id      String?
+  video_id      String?       @unique
   thumbnail_url String?
   status        sermon_status @default(DRAFT)
   branch_id     Int?
