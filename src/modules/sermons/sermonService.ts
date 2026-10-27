@@ -53,7 +53,9 @@ const sermonSeriesIncludeFor = (
 ): Prisma.sermon_seriesInclude => ({
   sermons: {
     ...(publishedOnly ? { where: { status: "PUBLISHED" as const } } : {}),
-    orderBy: { created_at: "asc" },
+    // Follow the YouTube playlist order the series sync records in `position`;
+    // created_at is only a tie-breaker for rows not placed by a playlist.
+    orderBy: [{ position: "asc" }, { created_at: "asc" }],
   },
 });
 
@@ -470,26 +472,29 @@ const ingestSermon = async (
   });
   if (existing) return { sermon: shapeSermon(existing), created: false };
 
-  const sermon = await prisma.$transaction(async (tx) => {
-    const tagIds = await resolveTagIds(fields.tags, tx);
-    return tx.sermon.create({
-      data: {
-        title: fields.title,
-        description: fields.description,
-        youtube_url: fields.youtube_url,
-        video_id: fields.video_id,
-        thumbnail_url: fields.thumbnail_url,
-        preached_at: fields.preached_at
-          ? new Date(fields.preached_at)
-          : undefined,
-        branch_id: INGEST_BRANCH_ID,
-        created_by: INGEST_AUTHOR_USER_ID,
-        status: "PUBLISHED",
-        published_at: new Date(),
-        tags: { create: tagIds.map((tag_id) => ({ tag_id })) },
-      },
-      include: sermonInclude,
-    });
+  // Resolve (upsert) tags OUTSIDE any interactive transaction. Tags are shared,
+  // idempotent lookup rows, so a tag created here that never gets linked (if the
+  // create below fails) is harmless — and keeping the N sequential tag upserts
+  // out of a transaction avoids holding one open across many round trips, which
+  // blew Prisma's interactive-transaction timeout (P2028) during bulk ingest
+  // over a high-latency link. The create is a single atomic statement, so no
+  // wrapping transaction is needed.
+  const tagIds = await resolveTagIds(fields.tags);
+  const sermon = await prisma.sermon.create({
+    data: {
+      title: fields.title,
+      description: fields.description,
+      youtube_url: fields.youtube_url,
+      video_id: fields.video_id,
+      thumbnail_url: fields.thumbnail_url,
+      preached_at: fields.preached_at ? new Date(fields.preached_at) : undefined,
+      branch_id: INGEST_BRANCH_ID,
+      created_by: INGEST_AUTHOR_USER_ID,
+      status: "PUBLISHED",
+      published_at: new Date(),
+      tags: { create: tagIds.map((tag_id) => ({ tag_id })) },
+    },
+    include: sermonInclude,
   });
   return { sermon: shapeSermon(sermon), created: true };
 };
