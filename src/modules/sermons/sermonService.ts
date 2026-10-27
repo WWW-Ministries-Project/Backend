@@ -499,6 +499,111 @@ const ingestSermon = async (
   return { sermon: shapeSermon(sermon), created: true };
 };
 
+/**
+ * Bulk variant of ingestSermon for the one-time backfill. Instead of one
+ * findUnique + create per video, it works a batch (e.g. 50 at a time) with a
+ * handful of set-based statements: pre-filter the ones already stored, bulk
+ * createMany the tags, bulk createMany the sermons, then bulk createMany the
+ * tag links. All idempotent (`skipDuplicates` + the unique `video_id`), so a
+ * re-run skips what already exists. Auto-publishes; does NOT notify (the
+ * backfill is silent by design).
+ */
+const ingestSermonsBatch = async (
+  fieldsList: IngestSermonFields[],
+): Promise<{ created: number; skipped: number }> => {
+  // Dedupe the input by video_id (a video can appear on more than one page).
+  const byVideo = new Map<string, IngestSermonFields>();
+  for (const f of fieldsList) {
+    if (f.video_id && !byVideo.has(f.video_id)) byVideo.set(f.video_id, f);
+  }
+  const videoIds = [...byVideo.keys()];
+  if (videoIds.length === 0) return { created: 0, skipped: 0 };
+
+  // Skip the ones we already hold (one query, not one findUnique per video).
+  const existing = await prisma.sermon.findMany({
+    where: { video_id: { in: videoIds } },
+    select: { video_id: true },
+  });
+  const existingSet = new Set(existing.map((r) => r.video_id));
+  const fresh = videoIds
+    .filter((id) => !existingSet.has(id))
+    .map((id) => byVideo.get(id)!);
+  if (fresh.length === 0) return { created: 0, skipped: videoIds.length };
+
+  // Bulk-upsert every distinct tag across the batch, then map slug -> id.
+  const nameBySlug = new Map<string, string>();
+  for (const f of fresh) {
+    for (const name of f.tags) {
+      const slug = toTagSlug(name);
+      if (slug && !nameBySlug.has(slug)) nameBySlug.set(slug, name);
+    }
+  }
+  if (nameBySlug.size > 0) {
+    await prisma.sermon_tag.createMany({
+      data: [...nameBySlug].map(([slug, name]) => ({ name, slug })),
+      skipDuplicates: true,
+    });
+  }
+  const tagRows =
+    nameBySlug.size > 0
+      ? await prisma.sermon_tag.findMany({
+          where: { slug: { in: [...nameBySlug.keys()] } },
+          select: { id: true, slug: true },
+        })
+      : [];
+  const tagIdBySlug = new Map(tagRows.map((t) => [t.slug, t.id]));
+
+  // Bulk-create the sermons (createMany cannot nest relations).
+  const now = new Date();
+  await prisma.sermon.createMany({
+    data: fresh.map((f) => ({
+      title: f.title,
+      description: f.description,
+      youtube_url: f.youtube_url,
+      video_id: f.video_id,
+      thumbnail_url: f.thumbnail_url,
+      preached_at: f.preached_at ? new Date(f.preached_at) : null,
+      branch_id: INGEST_BRANCH_ID,
+      created_by: INGEST_AUTHOR_USER_ID,
+      status: "PUBLISHED" as const,
+      published_at: now,
+    })),
+    skipDuplicates: true,
+  });
+
+  // Read back the new ids and bulk-link the tags.
+  const createdRows = await prisma.sermon.findMany({
+    where: { video_id: { in: fresh.map((f) => f.video_id) } },
+    select: { id: true, video_id: true },
+  });
+  const sermonIdByVideo = new Map(
+    createdRows
+      .filter((r): r is { id: number; video_id: string } => r.video_id !== null)
+      .map((r) => [r.video_id, r.id]),
+  );
+  const assignments: { sermon_id: number; tag_id: number }[] = [];
+  for (const f of fresh) {
+    const sermonId = sermonIdByVideo.get(f.video_id);
+    if (!sermonId) continue;
+    const seen = new Set<number>();
+    for (const name of f.tags) {
+      const tagId = tagIdBySlug.get(toTagSlug(name));
+      if (tagId && !seen.has(tagId)) {
+        seen.add(tagId);
+        assignments.push({ sermon_id: sermonId, tag_id: tagId });
+      }
+    }
+  }
+  if (assignments.length > 0) {
+    await prisma.sermon_tag_assignment.createMany({
+      data: assignments,
+      skipDuplicates: true,
+    });
+  }
+
+  return { created: fresh.length, skipped: videoIds.length - fresh.length };
+};
+
 export const sermonService = {
   createSermonSeries,
   listSermonSeries,
@@ -512,4 +617,5 @@ export const sermonService = {
   deleteSermon,
   setSermonStatus,
   ingestSermon,
+  ingestSermonsBatch,
 };
