@@ -5,6 +5,7 @@ import {
   resolveBranchIdOrDefault,
 } from "../branches/branchService";
 import { resolveTagIds, toTagSlug } from "./sermonTagService";
+import { IngestSermonFields } from "./youtubeIngest/videoMapping";
 
 export type CreateSermonSeriesInput = {
   title: string;
@@ -39,9 +40,10 @@ export type UpdateSermonInput = {
   preached_at?: string | null;
 };
 
-// Ascending, deliberately: a series is watched front-to-back. `position` is no
-// longer written by any path, so every row ties at 0 and ordering by it is
-// arbitrary; created_at is the closest stand-in for the order they were added.
+// Ascending, deliberately: a series is watched front-to-back. `position` is now
+// written only by the series sync (assignPlaylistItems), so rows outside a synced
+// playlist still tie at 0 and ordering by it would be inconsistent across the
+// collection; created_at is the closest uniform stand-in for the order they were added.
 //
 // The nested sermons are filtered too, not just the series row: a PUBLISHED
 // series can contain DRAFT sermons, so hydrating them unconditionally would
@@ -449,6 +451,49 @@ const setSermonStatus = async (id: number, publish: boolean) => {
   return shapeSermon(sermon);
 };
 
+const INGEST_AUTHOR_USER_ID = Number(
+  process.env.SERMON_INGEST_AUTHOR_USER_ID || 1,
+);
+const INGEST_BRANCH_ID = Number(process.env.SERMON_INGEST_BRANCH_ID || 1);
+
+/**
+ * Create (and auto-publish) a sermon from ingested YouTube metadata, keyed on
+ * video_id. If a row with this video_id already exists it is LEFT UNTOUCHED
+ * (dedupe: re-sync skips) so a manager's manual edits are never clobbered.
+ */
+const ingestSermon = async (
+  fields: IngestSermonFields,
+): Promise<{ sermon: ReturnType<typeof shapeSermon>; created: boolean }> => {
+  const existing = await prisma.sermon.findUnique({
+    where: { video_id: fields.video_id },
+    include: sermonInclude,
+  });
+  if (existing) return { sermon: shapeSermon(existing), created: false };
+
+  const sermon = await prisma.$transaction(async (tx) => {
+    const tagIds = await resolveTagIds(fields.tags, tx);
+    return tx.sermon.create({
+      data: {
+        title: fields.title,
+        description: fields.description,
+        youtube_url: fields.youtube_url,
+        video_id: fields.video_id,
+        thumbnail_url: fields.thumbnail_url,
+        preached_at: fields.preached_at
+          ? new Date(fields.preached_at)
+          : undefined,
+        branch_id: INGEST_BRANCH_ID,
+        created_by: INGEST_AUTHOR_USER_ID,
+        status: "PUBLISHED",
+        published_at: new Date(),
+        tags: { create: tagIds.map((tag_id) => ({ tag_id })) },
+      },
+      include: sermonInclude,
+    });
+  });
+  return { sermon: shapeSermon(sermon), created: true };
+};
+
 export const sermonService = {
   createSermonSeries,
   listSermonSeries,
@@ -461,4 +506,5 @@ export const sermonService = {
   updateSermon,
   deleteSermon,
   setSermonStatus,
+  ingestSermon,
 };

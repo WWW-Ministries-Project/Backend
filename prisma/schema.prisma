@@ -3273,6 +3273,7 @@ model sermon_series {
   branch_id    Int?
   created_by   Int
   published_at DateTime?
+  youtube_playlist_id String? @unique
   created_at   DateTime      @default(now())
   updated_at   DateTime      @updatedAt
 
@@ -3290,7 +3291,7 @@ model sermon {
   title         String
   description   String?       @db.Text
   youtube_url   String
-  video_id      String?
+  video_id      String?       @unique
   thumbnail_url String?
   status        sermon_status @default(DRAFT)
   branch_id     Int?
