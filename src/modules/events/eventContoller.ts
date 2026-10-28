@@ -2062,6 +2062,7 @@ export class eventManagement {
         fromDate || toDate
           ? { gte: fromDate ?? undefined, lte: toDate ?? undefined }
           : null;
+      const hasQ = typeof q === "string" && q.trim().length > 0;
       const showPresentUpcoming =
         this.resolveShowPresentUpcomingFilter(req.query);
       const startDateRange = this.resolveLightEventDateRange({
@@ -2076,7 +2077,8 @@ export class eventManagement {
         id: eventFilterId ?? undefined,
         event_type,
         event_status,
-        start_date: explicitRange ?? startDateRange,
+        // q alone = global name search across all dates; q + from/to still honored via explicitRange.
+        start_date: explicitRange ?? (hasQ ? undefined : startDateRange),
         ...(typeof q === "string" && q.trim()
           ? { event: { event_name: { contains: q.trim() } } }
           : {}),
