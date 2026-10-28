@@ -5,6 +5,7 @@ import { VisitorController } from "./visitorController";
 import { VisitController } from "./visitController";
 import { FollowUPController } from "./followUpController";
 import { PrayerRequestController } from "./prayerRequestController";
+import { MemberVisitorController } from "./memberVisitorController";
 import {
   checkVisitorRecord,
   requireAssignResponsibleWhenChanged,
@@ -20,6 +21,7 @@ const visitorController = new VisitorController();
 const visitController = new VisitController();
 const followUpController = new FollowUPController();
 const prayerRequestController = new PrayerRequestController();
+const memberVisitorController = new MemberVisitorController();
 
 //visitor routes
 visitorRouter.post(
@@ -174,6 +176,11 @@ visitorRouter.post(
   [protect],
   prayerRequestController.createMyPrayerRequest,
 );
+// Member-facing, ownership-scoped: only visitors/follow-ups the caller is responsible for.
+visitorRouter.get("/my-visitors", [protect], memberVisitorController.listMyVisitors);
+visitorRouter.get("/my-follow-ups", [protect], memberVisitorController.listMyFollowUps);
+visitorRouter.put("/my-follow-up", [protect], memberVisitorController.updateMyFollowUp);
+visitorRouter.post("/my-visit-note", [protect], memberVisitorController.addMyVisitNote);
 visitorRouter.post(
   "/prayerrequest",
   [
