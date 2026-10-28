@@ -1337,6 +1337,49 @@ const listAdminUserIds = async (): Promise<number[]> => {
     .map((user) => user.id);
 };
 
+// Mirrors hasActionPermission(permissions, "Visitors", "manage") in
+// src/middleWare/authorization.ts: the first alias key holding a string wins
+// (Visitors, then the Members fallback), and Can_Manage / Super_Admin both
+// satisfy the "manage" action.
+const VISITOR_PERMISSION_KEYS = ["Visitors", "Members"];
+
+const canManageVisitors = (permissions: unknown): boolean => {
+  const permissionObject = parsePermissionsObject(permissions);
+  for (const key of VISITOR_PERMISSION_KEYS) {
+    const value = permissionObject[key];
+    if (typeof value === "string") {
+      return SETTINGS_MANAGE_VALUES.has(value);
+    }
+  }
+  return false;
+};
+
+const listUserIdsWithVisitorManageAccess = async (): Promise<number[]> => {
+  const users = await prisma.user.findMany({
+    where: {
+      NOT: {
+        is_active: false,
+      },
+    },
+    select: {
+      id: true,
+      access: {
+        select: {
+          permissions: true,
+        },
+      },
+    },
+  });
+
+  return Array.from(
+    new Set(
+      users
+        .filter((user) => canManageVisitors(user.access?.permissions))
+        .map((user) => user.id),
+    ),
+  );
+};
+
 const listSystemFailureRecipientUserIds = async (): Promise<number[]> => {
   const configuredRecipients =
     await systemNotificationSettingsService.getConfiguredSystemFailureRecipientUserIds();
@@ -1420,4 +1463,5 @@ export const notificationService = {
   deleteNotifications,
   pruneOldNotifications,
   notifyAdminsJobFailed,
+  listUserIdsWithVisitorManageAccess,
 };
