@@ -4,6 +4,11 @@ import { parseResponsibleMemberIds } from "./visitorAccess";
 const httpError = (message: string, statusCode: number) =>
   Object.assign(new Error(message), { statusCode });
 
+// pending is the schema default; the rest are the terminal values
+// followUpNotificationCron excludes. The admin /followup path does not validate.
+export const MEMBER_FOLLOW_UP_STATUSES = ["pending", "completed", "cancelled", "done"];
+export const MAX_NOTE_LENGTH = 2000;
+
 export class MemberVisitorService {
   async getVisitorsForResponsibleUser(userId: number) {
     // `contains` is a loose prefilter; the parse is the exact membership check.
@@ -38,6 +43,12 @@ export class MemberVisitorService {
     followUpId: number,
     data: { status?: string; notes?: string },
   ) {
+    if (data.status !== undefined && !MEMBER_FOLLOW_UP_STATUSES.includes(data.status)) {
+      throw httpError(`Invalid status. Allowed: ${MEMBER_FOLLOW_UP_STATUSES.join(", ")}`, 400);
+    }
+    if (data.notes !== undefined && data.notes.length > MAX_NOTE_LENGTH) {
+      throw httpError(`Notes must be ${MAX_NOTE_LENGTH} characters or fewer`, 400);
+    }
     const followUp = await prisma.follow_up.findUnique({
       where: { id: followUpId },
     });
@@ -59,6 +70,9 @@ export class MemberVisitorService {
     visitorId: number,
     content: string,
   ) {
+    if (content.length > MAX_NOTE_LENGTH) {
+      throw httpError(`Note must be ${MAX_NOTE_LENGTH} characters or fewer`, 400);
+    }
     const visitor = await prisma.visitor.findUnique({
       where: { id: visitorId },
       select: { responsibleMembers: true },

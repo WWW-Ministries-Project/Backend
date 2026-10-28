@@ -13,10 +13,13 @@ const toPositiveInt = (value: unknown) => {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 };
 
-const fail = (res: Response, error: any, message: string) =>
-  res
-    .status(Number(error?.statusCode) || 500)
-    .json({ message, error: error?.message });
+const fail = (res: Response, error: any, message: string) => {
+  const status = Number(error?.statusCode) || 500;
+  return res.status(status).json({
+    message,
+    error: status >= 500 ? "Something went wrong" : error?.message,
+  });
+};
 
 export class MemberVisitorController {
   async listMyVisitors(req: Request, res: Response) {
