@@ -2047,6 +2047,21 @@ export class eventManagement {
   listEventsLight = async (req: Request, res: Response) => {
     try {
       const { month, year, event_type, event_status }: any = req.query;
+      const { from, to, q }: any = req.query;
+      const parseDay = (v: unknown, end = false): Date | undefined => {
+        if (!v) return undefined;
+        const d = new Date(String(v));
+        if (Number.isNaN(d.getTime())) return undefined;
+        if (end) d.setHours(23, 59, 59, 999);
+        else d.setHours(0, 0, 0, 0);
+        return d;
+      };
+      const fromDate = parseDay(from);
+      const toDate = parseDay(to, true);
+      const explicitRange =
+        fromDate || toDate
+          ? { gte: fromDate ?? undefined, lte: toDate ?? undefined }
+          : null;
       const showPresentUpcoming =
         this.resolveShowPresentUpcomingFilter(req.query);
       const startDateRange = this.resolveLightEventDateRange({
@@ -2061,7 +2076,10 @@ export class eventManagement {
         id: eventFilterId ?? undefined,
         event_type,
         event_status,
-        start_date: startDateRange,
+        start_date: explicitRange ?? startDateRange,
+        ...(typeof q === "string" && q.trim()
+          ? { event: { event_name: { contains: q.trim() } } }
+          : {}),
         ...(getBranchScopedWhere(req.query?.branch_id) || {}),
       };
 
