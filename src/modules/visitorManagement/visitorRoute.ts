@@ -180,6 +180,7 @@ visitorRouter.post(
 visitorRouter.get("/my-visitors", [protect], memberVisitorController.listMyVisitors);
 visitorRouter.get("/my-follow-ups", [protect], memberVisitorController.listMyFollowUps);
 visitorRouter.put("/my-follow-up", [protect], memberVisitorController.updateMyFollowUp);
+visitorRouter.post("/my-follow-up", [protect], memberVisitorController.createMyFollowUp);
 visitorRouter.post("/my-visit-note", [protect], memberVisitorController.addMyVisitNote);
 visitorRouter.post(
   "/prayerrequest",

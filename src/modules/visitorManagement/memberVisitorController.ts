@@ -93,4 +93,28 @@ export class MemberVisitorController {
       return fail(res, error, "Error adding note");
     }
   }
+
+  async createMyFollowUp(req: Request, res: Response) {
+    const userId = getRequestUserId(req);
+    if (!userId) {
+      return res.status(401).json({ message: "Unauthorized", data: null });
+    }
+    const visitorId = toPositiveInt(req.body?.visitorId);
+    if (!visitorId) {
+      return res.status(400).json({ message: "visitorId is required", data: null });
+    }
+    const { date, type, notes, status } = req.body ?? {};
+    try {
+      const data = await memberVisitorService.createFollowUpForResponsibleUser(userId, {
+        visitorId,
+        date: typeof date === "string" ? date : undefined,
+        type: typeof type === "string" ? type : undefined,
+        notes: typeof notes === "string" ? notes : undefined,
+        status: typeof status === "string" ? status : undefined,
+      });
+      return res.status(201).json({ message: "Follow-up recorded", data });
+    } catch (error: any) {
+      return fail(res, error, "Error creating follow-up");
+    }
+  }
 }
