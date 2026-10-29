@@ -29,6 +29,7 @@ if (shouldRunBackgroundJobs) {
   require("./src/cron-jobs/pledgePaymentReconciliationCron");
   require("./src/cron-jobs/requisitionNotificationCron");
   require("./src/cron-jobs/followUpNotificationCron");
+  require("./src/cron-jobs/visitorFollowUpGenerationCron");
   require("./src/cron-jobs/notificationRetentionCron");
   require("./src/cron-jobs/notificationPushRetryCron");
   require("./src/cron-jobs/notificationPushReceiptCron");

@@ -2,6 +2,7 @@ import { Router } from "express";
 import attendanceTimingSettingsController from "./attendanceTimingSettingsController";
 import eventReportExclusionController from "./eventReportExclusionController";
 import reportConfigController from "./reportConfigController";
+import visitorFollowUpSettingsController from "./visitorFollowUpSettingsController";
 import roleEligibilityController from "./roleEligibilityController";
 import systemNotificationSettingsController from "./systemNotificationSettingsController";
 import { Permissions } from "../../middleWare/authorization";
@@ -92,6 +93,18 @@ settingsRouter.post(
   "/upsert-system-notification-config",
   requireOrgWide(CONFIGURE_GENERAL, "Not authorized to change general configuration"),
   systemNotificationSettingsController.upsertConfig,
+);
+
+settingsRouter.get(
+  "/visitor-follow-up-config",
+  [protect, permissions.can_view_settings],
+  visitorFollowUpSettingsController.getConfig,
+);
+
+settingsRouter.post(
+  "/upsert-visitor-follow-up-config",
+  requireOrgWide(CONFIGURE_GENERAL, "Not authorized to change general configuration"),
+  visitorFollowUpSettingsController.upsertConfig,
 );
 
 export default settingsRouter;
