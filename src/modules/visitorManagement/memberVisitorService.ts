@@ -95,4 +95,38 @@ export class MemberVisitorService {
       },
     });
   }
+
+  async createFollowUpForResponsibleUser(
+    userId: number,
+    input: { visitorId: number; date?: string; type?: string; notes?: string; status?: string },
+  ) {
+    const status = input.status ?? "pending";
+    if (!MEMBER_FOLLOW_UP_STATUSES.includes(status)) {
+      throw httpError(`status must be one of: ${MEMBER_FOLLOW_UP_STATUSES.join(", ")}`, 400);
+    }
+    if (input.notes && input.notes.length > MAX_NOTE_LENGTH) {
+      throw httpError(`notes must be ${MAX_NOTE_LENGTH} characters or fewer`, 400);
+    }
+    const date = input.date ? new Date(input.date) : new Date();
+    if (Number.isNaN(date.getTime())) throw httpError("date is invalid", 400);
+    const visitor = await prisma.visitor.findUnique({
+      where: { id: input.visitorId },
+      select: { id: true, responsibleMembers: true },
+    });
+    if (!visitor) throw httpError("Visitor not found", 404);
+    if (!parseResponsibleMemberIds(visitor.responsibleMembers).includes(userId)) {
+      throw httpError("Not authorized for this visitor", 403);
+    }
+    return prisma.follow_up.create({
+      data: {
+        visitorId: input.visitorId,
+        userId,
+        assignedTo: userId,
+        date,
+        type: input.type?.trim() || "general",
+        status,
+        notes: input.notes ?? null,
+      },
+    });
+  }
 }
