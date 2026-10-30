@@ -6,6 +6,8 @@ import { applicationLiveTemplate } from "../../utils/mail_templates/applicationL
 import { InputValidationError } from "../../utils/custom-error-handlers";
 import {
   FAMILY_RELATION,
+  getDirectChildIds,
+  getSiblingIds,
   normalizeFamilyRelation,
   toFamilyRelationLabel,
   upsertBidirectionalFamilyRelation,
@@ -378,7 +380,7 @@ export class UserService {
         email: userEmail,
         password: hashedPassword,
         is_user: isLoginUser,
-        is_active: false,
+        is_active: true,
         status,
         ...buildMembershipStatusTimestampData(null, status),
         branch_id: await resolveBranchIdOrDefault(branch_id),
@@ -520,25 +522,36 @@ export class UserService {
           where: { id: Number(member.user_id) },
         });
       } else if (relation === FAMILY_RELATION.CHILD) {
-        // Try to find existing child for either parent
-        familyUser = await prisma.user.findFirst({
-          where: {
-            user_info: {
-              first_name: member.first_name,
-              last_name: member.last_name,
-              date_of_birth: new Date(member.date_of_birth),
-            },
-            OR: [{ parent_id: primaryUser.id }, { parent_id: spouseUser?.id }],
-          },
-        });
+        // Match an existing child by name + DOB, scoped to THIS family's
+        // children (resolved from family_relation, the single source of truth).
+        const existingChildIds = await getDirectChildIds(primaryUser.id);
+        if (spouseUser?.id) {
+          (await getDirectChildIds(spouseUser.id)).forEach((childId) =>
+            existingChildIds.add(childId),
+          );
+        }
 
-        // Create child if not found
+        familyUser = existingChildIds.size
+          ? await prisma.user.findFirst({
+              where: {
+                id: { in: Array.from(existingChildIds) },
+                user_info: {
+                  first_name: member.first_name,
+                  last_name: member.last_name,
+                  date_of_birth: new Date(member.date_of_birth),
+                },
+              },
+            })
+          : null;
+
+        // Create child if not found. The parent↔child link is written below via
+        // upsertBidirectionalFamilyRelation; no scalar parent_id is stored.
         if (!familyUser) {
           familyUser = await prisma.user.create({
             data: {
               name: `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
               email: this.normalizeOptionalEmail(member.email),
-              parent_id: primaryUser.id, // biological / primary
+              membership_type: primaryUser.membership_type || "IN_HOUSE",
               is_user: false,
               is_active: true,
               user_info: {
@@ -564,6 +577,7 @@ export class UserService {
           data: {
             name: `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
             email: this.normalizeOptionalEmail(member.email),
+            membership_type: primaryUser.membership_type || "IN_HOUSE",
             is_user: false,
             is_active: true,
             user_info: {
@@ -629,52 +643,6 @@ export class UserService {
       })),
       skipDuplicates: true,
     });
-  }
-
-  async registerChildren(
-    children: any[],
-    parentObj: any,
-    membership_type: any,
-  ) {
-    const createdChildren = await Promise.all(
-      children.map(async (child) => {
-        try {
-          const childUser = await prisma.user.create({
-            data: {
-              name: `${child.first_name} ${child.other_name || ""} ${child.last_name}`.trim(),
-              email: this.normalizeOptionalEmail(child.email),
-              is_user: false,
-              is_active: true,
-              parent_id: parentObj.id,
-              membership_type,
-              status: parentObj.status,
-              ...buildMembershipStatusTimestampData(null, parentObj.status),
-              user_info: {
-                create: {
-                  title: child.title,
-                  first_name: child.first_name,
-                  last_name: child.last_name,
-                  other_name: child.other_name || null,
-                  date_of_birth: new Date(child.date_of_birth),
-                  gender: child.gender,
-                  marital_status: child.marital_status,
-                  nationality: child.nationality,
-                },
-              },
-            },
-          });
-
-          const createdChild = await this.generateUserId(childUser);
-
-          return createdChild;
-        } catch (error) {
-          console.error("Error creating child user:", error);
-          return null; // Optional: skip this child if an error occurs
-        }
-      }),
-    );
-
-    return createdChildren.filter(Boolean);
   }
 
   async generateUserId(userData: any) {
@@ -1425,29 +1393,27 @@ export class UserService {
         relation: toFamilyRelationLabel(r.relation),
       }));
 
-    // 4️⃣ Include children who have this user as biological parent
-    const biologicalChildren = await prisma.user.findMany({
-      where: { parent_id: user.id },
-      include: { user_info: true },
-    });
-
-    // Merge children from family_relation and parent_id, deduplicate
+    // 4️⃣ Children come solely from family_relation CHILD links.
     const childrenMap = new Map<number, any>();
-    [...children, ...biologicalChildren.map(sanitizeUser)].forEach((c) =>
-      childrenMap.set(c.id, c),
-    );
+    children.forEach((c) => childrenMap.set(c.id, c));
 
-    // 5️⃣ Include siblings by checking parent_id
-    const parentIds = parents.map((p) => p.id);
-    const siblingsByParent = await prisma.user.findMany({
-      where: { parent_id: { in: parentIds }, NOT: { id: user.id } },
-      include: { user_info: true },
-    });
-
+    // 5️⃣ Siblings: explicit SIBLING links plus everyone who shares a parent,
+    // all resolved from family_relation.
     const siblingsMap = new Map<number, any>();
-    [...siblings, ...siblingsByParent.map(sanitizeUser)].forEach((s) =>
-      siblingsMap.set(s.id, s),
+    siblings.forEach((s) => siblingsMap.set(s.id, s));
+
+    const derivedSiblingIds = Array.from(await getSiblingIds(user.id)).filter(
+      (id) => id !== user.id && !siblingsMap.has(id),
     );
+    if (derivedSiblingIds.length) {
+      const derivedSiblings = await prisma.user.findMany({
+        where: { id: { in: derivedSiblingIds } },
+        include: { user_info: true },
+      });
+      derivedSiblings
+        .map(sanitizeUser)
+        .forEach((s) => siblingsMap.set(s.id, s));
+    }
 
     return {
       user: sanitizeUser(user),
@@ -1463,18 +1429,19 @@ export class UserService {
     if (!childrenIds || childrenIds.length === 0) return;
 
     try {
-      const result = await prisma.user.updateMany({
-        where: {
-          id: { in: childrenIds },
-        },
-        data: {
-          parent_id: parentId,
-        },
-      });
+      const uniqueChildIds = Array.from(
+        new Set(childrenIds.map(Number).filter((id) => id && id !== parentId)),
+      );
 
-      if (result) {
-        return result;
+      for (const childId of uniqueChildIds) {
+        await upsertBidirectionalFamilyRelation(
+          parentId,
+          childId,
+          FAMILY_RELATION.CHILD,
+        );
       }
+
+      return { count: uniqueChildIds.length };
     } catch (error) {
       console.error("Error linking children:", error);
       throw error;

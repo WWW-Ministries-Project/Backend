@@ -23,7 +23,6 @@ model user {
   updated_at                                   DateTime?
   access_level_id                              Int?
   membership_type                              membership_type?
-  parent_id                                    Int?
   status                                       status_type?
   is_sync                                      Boolean?                                @default(false)
   sync_id                                      Int?
@@ -107,8 +106,6 @@ model user {
   life_center_meetings_created                 life_center_meeting[]                   @relation("life_center_meeting_created_by")
   soul_won_membership                          soul_won?                               @relation("soul_won_member")
   access                                       access_level?                           @relation(fields: [access_level_id], references: [id])
-  parent                                       user?                                   @relation("UserParent", fields: [parent_id], references: [id])
-  children                                     user[]                                  @relation("UserParent")
   position                                     position?                               @relation(fields: [position_id], references: [id])
   spouse                                       user?                                   @relation("SpouseRelation", fields: [spouse_id], references: [id])
   spouse_of                                    user?                                   @relation("SpouseRelation")
@@ -153,7 +150,6 @@ model user {
 
   @@index([access_level_id], map: "user_access_level_id_fkey")
   @@index([position_id], map: "user_position_id_fkey")
-  @@index([parent_id], map: "user_parent_id_fkey")
   @@index([department_id], map: "user_department_id_idx")
   @@index([membership_type], map: "user_membership_type_idx")
   @@index([is_user], map: "user_is_user_idx")
