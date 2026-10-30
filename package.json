@@ -10,6 +10,7 @@
     "start": "npm run rimraf && npm run build && node dist/index.js",
     "migrate": "npx prisma migrate deploy && npx prisma generate",
     "migrate:2": "npx prisma generate",
+    "reconcile:family-relations": "npx ts-node --transpile-only scripts/reconcileFamilyRelations.ts",
     "prod": "npx tsc && npm run copy:libs && node -r newrelic dist/index.js",
     "jack": "npm run build && node dist/src/utils/rm_user.js",
     "copy:libs": "cpx \"src/libs/**/*\" dist/src/libs",

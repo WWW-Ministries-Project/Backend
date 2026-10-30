@@ -37,7 +37,9 @@ import { userActivatedTemplate } from "../../utils/mail_templates/userActivatedT
 import { activateUserTemplate } from "../../utils/mail_templates/activateUserTemplate";
 import {
   FAMILY_RELATION,
+  getDirectChildIds,
   getReciprocalFamilyRelation,
+  getSiblingIds,
   normalizeFamilyRelation,
   pruneMissingBidirectionalFamilyRelations,
   toFamilyRelationLabel,
@@ -1133,6 +1135,7 @@ async function updateFamilyMembers(family: any[], primaryUser: any) {
         data: {
           name: `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
           email: normalizeOptionalEmail(member.email),
+          membership_type: primaryUser.membership_type || "IN_HOUSE",
           is_user: false,
           is_active: true,
           user_info: {
@@ -1211,23 +1214,36 @@ async function updateFamilyMembers(family: any[], primaryUser: any) {
         },
       });
     } else if (relation === FAMILY_RELATION.CHILD) {
-      familyUser = await prisma.user.findFirst({
-        where: {
-          user_info: {
-            first_name: member.first_name,
-            last_name: member.last_name,
-            date_of_birth: new Date(member.date_of_birth),
-          },
-          OR: [{ parent_id: primaryUser.id }, { parent_id: spouseUser?.id }],
-        },
-      });
+      // Match an existing child by name + DOB, scoped to THIS family's
+      // children (resolved from family_relation, the single source of truth).
+      const existingChildIds = await getDirectChildIds(primaryUser.id);
+      if (spouseUser?.id) {
+        (await getDirectChildIds(spouseUser.id)).forEach((childId) =>
+          existingChildIds.add(childId),
+        );
+      }
 
+      familyUser = existingChildIds.size
+        ? await prisma.user.findFirst({
+            where: {
+              id: { in: Array.from(existingChildIds) },
+              user_info: {
+                first_name: member.first_name,
+                last_name: member.last_name,
+                date_of_birth: new Date(member.date_of_birth),
+              },
+            },
+          })
+        : null;
+
+      // The parent↔child link is written below via
+      // upsertBidirectionalFamilyRelation; no scalar parent_id is stored.
       if (!familyUser) {
         familyUser = await prisma.user.create({
           data: {
             name: `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
             email: normalizeOptionalEmail(member.email),
-            parent_id: primaryUser.id,
+            membership_type: primaryUser.membership_type || "IN_HOUSE",
             is_user: false,
             is_active: true,
             user_info: {
@@ -1260,6 +1276,7 @@ async function updateFamilyMembers(family: any[], primaryUser: any) {
         data: {
           name: `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
           email: normalizeOptionalEmail(member.email),
+          membership_type: primaryUser.membership_type || "IN_HOUSE",
           is_user: false,
           is_active: true,
           user_info: {
@@ -1324,18 +1341,6 @@ function departmentPositionWrites(
       }),
     ),
   ] as const;
-}
-
-async function updateChildren(
-  children: any[],
-  parentObj: any,
-  membership_type: string,
-  userId: number,
-) {
-  await prisma.user.deleteMany({
-    where: { parent_id: userId },
-  });
-  await userService.registerChildren(children, parentObj, membership_type);
 }
 
 export const updateUserSatus = async (req: Request, res: Response) => {
@@ -2215,8 +2220,8 @@ const maskExcludedListedUser = (user: any) => ({
 
 /**
  * Children per user for one page of the member list: explicit CHILD links
- * (either direction of family_relation) plus legacy `parent_id` children,
- * de-duplicated the same way get-user builds `family`.
+ * (either direction of family_relation), de-duplicated the same way get-user
+ * builds `family`.
  */
 const countChildrenByUserId = async (
   userIds: number[],
@@ -2224,21 +2229,16 @@ const countChildrenByUserId = async (
   const childIdsByUser = new Map<number, Set<number>>();
   if (!userIds.length) return new Map();
 
-  const [forwardChildren, reverseChildren, biologicalChildren] =
-    await Promise.all([
-      prisma.family_relation.findMany({
-        where: { user_id: { in: userIds }, relation: FAMILY_RELATION.CHILD },
-        select: { user_id: true, family_id: true },
-      }),
-      prisma.family_relation.findMany({
-        where: { family_id: { in: userIds }, relation: FAMILY_RELATION.PARENT },
-        select: { user_id: true, family_id: true },
-      }),
-      prisma.user.findMany({
-        where: { parent_id: { in: userIds } },
-        select: { id: true, parent_id: true },
-      }),
-    ]);
+  const [forwardChildren, reverseChildren] = await Promise.all([
+    prisma.family_relation.findMany({
+      where: { user_id: { in: userIds }, relation: FAMILY_RELATION.CHILD },
+      select: { user_id: true, family_id: true },
+    }),
+    prisma.family_relation.findMany({
+      where: { family_id: { in: userIds }, relation: FAMILY_RELATION.PARENT },
+      select: { user_id: true, family_id: true },
+    }),
+  ]);
 
   const add = (parentId: number | null, childId: number) => {
     if (!parentId || parentId === childId) return;
@@ -2249,7 +2249,6 @@ const countChildrenByUserId = async (
 
   forwardChildren.forEach((row) => add(row.user_id, row.family_id));
   reverseChildren.forEach((row) => add(row.family_id, row.user_id));
-  biologicalChildren.forEach((row) => add(row.parent_id, row.id));
 
   return new Map(
     Array.from(childIdsByUser.entries()).map(([id, set]) => [id, set.size]),
@@ -3105,34 +3104,24 @@ export const getUser = async (req: Request, res: Response) => {
     );
 
     /* =========================
-       6️⃣ BIOLOGICAL LOOKUPS
+       6️⃣ FAMILY GRAPH LOOKUPS (family_relation only)
     ========================== */
-    const biologicalChildren = await prisma.user.findMany({
-      where: { parent_id: response.id },
-      include: { user_info: true },
-    });
-
     const childrenMap = new Map<number, any>();
-    [...children.map((c) => c.user), ...biologicalChildren].forEach((c) =>
-      childrenMap.set(c.id, c),
-    );
-
-    const parentIds = parents.map((p) => p.user.id);
-    const siblingByParent =
-      parentIds.length > 0
-        ? await prisma.user.findMany({
-            where: {
-              parent_id: { in: parentIds },
-              NOT: { id: response.id },
-            },
-            include: { user_info: true },
-          })
-        : [];
+    children.map((c) => c.user).forEach((c) => childrenMap.set(c.id, c));
 
     const siblingsMap = new Map<number, any>();
-    [...siblings.map((s) => s.user), ...siblingByParent].forEach((s) =>
-      siblingsMap.set(s.id, s),
-    );
+    siblings.map((s) => s.user).forEach((s) => siblingsMap.set(s.id, s));
+
+    const derivedSiblingIds = Array.from(
+      await getSiblingIds(response.id),
+    ).filter((id) => id !== response.id && !siblingsMap.has(id));
+    if (derivedSiblingIds.length) {
+      const derivedSiblings = await prisma.user.findMany({
+        where: { id: { in: derivedSiblingIds } },
+        include: { user_info: true },
+      });
+      derivedSiblings.forEach((s) => siblingsMap.set(s.id, s));
+    }
 
     /* =========================
        7️⃣ BUILD RESPONSE

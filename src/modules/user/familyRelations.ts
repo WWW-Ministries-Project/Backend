@@ -179,8 +179,10 @@ const removeBidirectionalFamilyRelationRaw = async (
   });
 };
 
-const getDirectChildIds = async (parentId: number): Promise<Set<number>> => {
-  const [forwardChildren, reverseChildren, biologicalChildren] = await Promise.all([
+export const getDirectChildIds = async (
+  parentId: number,
+): Promise<Set<number>> => {
+  const [forwardChildren, reverseChildren] = await Promise.all([
     prisma.family_relation.findMany({
       where: {
         user_id: parentId,
@@ -199,23 +201,48 @@ const getDirectChildIds = async (parentId: number): Promise<Set<number>> => {
         user_id: true,
       },
     }),
-    prisma.user.findMany({
-      where: {
-        parent_id: parentId,
-      },
-      select: {
-        id: true,
-      },
-    }),
   ]);
 
   const childIds = new Set<number>();
 
   forwardChildren.forEach((entry) => childIds.add(entry.family_id));
   reverseChildren.forEach((entry) => childIds.add(entry.user_id));
-  biologicalChildren.forEach((entry) => childIds.add(entry.id));
 
   return childIds;
+};
+
+/**
+ * Sibling ids for a member: everyone who shares at least one parent, minus the
+ * member themselves. Parents come from forward PARENT links or reverse CHILD
+ * links; siblings are the other direct children of those parents.
+ */
+export const getSiblingIds = async (userId: number): Promise<Set<number>> => {
+  const [forwardParents, reverseParents] = await Promise.all([
+    prisma.family_relation.findMany({
+      where: { user_id: userId, relation: FAMILY_RELATION.PARENT },
+      select: { family_id: true },
+    }),
+    prisma.family_relation.findMany({
+      where: { family_id: userId, relation: FAMILY_RELATION.CHILD },
+      select: { user_id: true },
+    }),
+  ]);
+
+  const parentIds = new Set<number>();
+  forwardParents.forEach((entry) => parentIds.add(entry.family_id));
+  reverseParents.forEach((entry) => parentIds.add(entry.user_id));
+
+  const siblingIds = new Set<number>();
+  for (const parentId of parentIds) {
+    const children = await getDirectChildIds(parentId);
+    children.forEach((childId) => {
+      if (childId !== userId) {
+        siblingIds.add(childId);
+      }
+    });
+  }
+
+  return siblingIds;
 };
 
 const syncGrandparentRelationsForParent = async (parentId: number) => {
