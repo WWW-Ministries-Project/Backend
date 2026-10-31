@@ -136,6 +136,18 @@ aiRouter.get(
 );
 
 aiRouter.get(
+  "/preferences",
+  [protect],
+  (req: Request, res: Response) => aiController.getPreferences(req, res),
+);
+
+aiRouter.patch(
+  "/preferences",
+  [protect],
+  (req: Request, res: Response) => aiController.updatePreferences(req, res),
+);
+
+aiRouter.get(
   "/query-contracts",
   [protect, queryData],
   (req: Request, res: Response) => aiController.queryContracts(req, res),

@@ -72,6 +72,7 @@ model user {
   received_notifications                       in_app_notification[]                   @relation("notification_recipient")
   acted_notifications                          in_app_notification[]                   @relation("notification_actor")
   notification_preferences                     notification_preference[]
+  assistant_preference                         assistant_preference?
   push_subscriptions                           notification_push_subscription[]
   device_tokens                                notification_device_token[]
   push_delivery_jobs                           notification_push_delivery_job[]        @relation("notification_push_delivery_user")
@@ -1354,6 +1355,23 @@ model notification_preference {
 
   @@unique([user_id, type], map: "notification_preference_user_id_type_key")
   @@index([user_id], map: "notification_preference_user_id_idx")
+}
+
+model assistant_preference {
+  id             Int      @id @default(autoincrement())
+  user_id        Int      @unique
+  brief          Boolean  @default(true)
+  nudges         Boolean  @default(true)
+  quiet          Boolean  @default(true)
+  email_copy     Boolean  @default(false)
+  approval_after String   @default("24 hours")
+  report_lead    String   @default("2 days before")
+  visitor_after  String   @default("48 hours")
+  created_at     DateTime @default(now())
+  updated_at     DateTime @default(now()) @updatedAt
+  user           user     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id], map: "assistant_preference_user_id_idx")
 }
 
 model notification_push_subscription {

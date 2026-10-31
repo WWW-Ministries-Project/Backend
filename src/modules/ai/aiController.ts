@@ -7,6 +7,7 @@ import { AiCredentialService, AiCredentialServiceError } from "./aiCredentialSer
 import { AiBusinessContextService } from "./aiBusinessContextService";
 import { AiReadOnlyDataService, AiReadOnlyDataServiceError } from "./aiReadOnlyDataService";
 import { AiResponseFormatter } from "./aiResponseFormatter";
+import { AiPreferenceService } from "./aiPreferenceService";
 import {
   AiChatHistoryMessage,
   AiContext,
@@ -39,6 +40,7 @@ export class AiController {
   private businessContextService = new AiBusinessContextService();
   private readOnlyDataService = new AiReadOnlyDataService();
   private responseFormatter = new AiResponseFormatter();
+  private preferenceService = new AiPreferenceService();
 
   async listCredentials(req: Request, res: Response) {
     const provider =
@@ -583,6 +585,36 @@ export class AiController {
         message: "Failed to load assistant tasks",
         data: null,
       });
+    }
+  }
+
+  async getPreferences(req: Request, res: Response) {
+    const actorId = this.getActorId(req);
+    if (!actorId) {
+      return res.status(401).json({ message: "Not authorized. Token not found", data: null });
+    }
+
+    try {
+      const data = await this.preferenceService.getPreferences(actorId);
+      return res.status(200).json({ data });
+    } catch (error: any) {
+      return res.status(500).json({ message: "Failed to load assistant preferences", data: null });
+    }
+  }
+
+  async updatePreferences(req: Request, res: Response) {
+    const actorId = this.getActorId(req);
+    if (!actorId) {
+      return res.status(401).json({ message: "Not authorized. Token not found", data: null });
+    }
+
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+
+    try {
+      const data = await this.preferenceService.updatePreferences(actorId, body);
+      return res.status(200).json({ data });
+    } catch (error: any) {
+      return res.status(500).json({ message: "Failed to save assistant preferences", data: null });
     }
   }
 
