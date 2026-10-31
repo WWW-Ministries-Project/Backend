@@ -2,9 +2,15 @@ import Router from "express";
 import * as dotenv from "dotenv";
 import { Permissions } from "../../middleWare/authorization";
 import { eventManagement } from "../events/eventContoller";
+import { requireEventsAction } from "./eventAccess";
+import {
+  requireBranchWideAttendance,
+  requireRecordOfficialUnlessPreview,
+} from "./attendanceAccess";
 const eventContoller = new eventManagement();
 const permissions = new Permissions();
 const protect = permissions.protect;
+const withAccess = permissions.withAccess;
 dotenv.config();
 
 export const eventRouter = Router();
@@ -51,13 +57,13 @@ eventRouter.post(
 
 eventRouter.post(
   "/create-event",
-  [protect, permissions.can_manage_events],
+  [protect, permissions.requireAction("Events", "create", "Not authorized to create events")],
   eventContoller.createEvent,
 );
 
 eventRouter.put(
   "/update-event",
-  [protect, permissions.can_manage_events],
+  [protect, permissions.requireAction("Events", "edit", "Not authorized to edit events")],
   eventContoller.updateEvent,
 );
 
@@ -66,13 +72,13 @@ eventRouter.put(
 // An entry with an empty url removes that platform's link.
 eventRouter.put(
   "/online-links",
-  [protect, permissions.can_manage_events],
+  [protect, permissions.requireAction("Events", "manage_online_links", "Not authorized to change online links")],
   eventContoller.updateOnlineLinks,
 );
 
 eventRouter.delete(
   "/delete-event",
-  [protect, permissions.can_delete_events],
+  [protect, permissions.requireAction("Events", "delete", "Not authorized to delete events")],
   eventContoller.deleteEvent,
 );
 
@@ -81,12 +87,12 @@ eventRouter.delete(
 // DELETE /event/delete-series-from?series_id=<uuid>&from_date=YYYY-MM-DD  → this + following
 eventRouter.delete(
   "/delete-series",
-  [protect, permissions.can_delete_events],
+  [protect, permissions.requireAction("Events", "delete", "Not authorized to delete events")],
   eventContoller.deleteEventSeries,
 );
 eventRouter.delete(
   "/delete-series-from",
-  [protect, permissions.can_delete_events],
+  [protect, permissions.requireAction("Events", "delete", "Not authorized to delete events")],
   eventContoller.deleteEventSeriesFrom,
 );
 
@@ -95,75 +101,85 @@ eventRouter.delete(
 // PUT /event/update-series-from  body: { series_id, from_date, ...fields }
 eventRouter.put(
   "/update-series",
-  [protect, permissions.can_manage_events],
+  [protect, permissions.requireAction("Events", "manage_series", "Not authorized to edit event series")],
   eventContoller.updateEventSeries,
 );
 eventRouter.put(
   "/update-series-from",
-  [protect, permissions.can_manage_events],
+  [protect, permissions.requireAction("Events", "manage_series", "Not authorized to edit event series")],
   eventContoller.updateEventSeriesFrom,
 );
 
-eventRouter.post("/sign-attendance", eventContoller.eventAttendance);
-eventRouter.get("/search-user", eventContoller.searchUser1);
+// Staff check-in: creates people and attendance, and looks members up by
+// phone, so it needs a signed-in Events manager (no client calls these today).
+eventRouter.post(
+  "/sign-attendance",
+  [protect, permissions.can_manage_events],
+  eventContoller.eventAttendance,
+);
+eventRouter.get(
+  "/search-user",
+  [protect, permissions.can_manage_events],
+  eventContoller.searchUser1,
+);
 
 eventRouter.post(
   "/create-event-type",
-  [protect, permissions.can_manage_events],
+  [protect, withAccess, requireEventsAction("manage_types", "Not authorized to manage event types", "manage")],
   eventContoller.createEventType,
 );
 eventRouter.put(
   "/update-event-type",
-  [protect, permissions.can_manage_events],
+  [protect, withAccess, requireEventsAction("manage_types", "Not authorized to manage event types", "manage")],
   eventContoller.updateEventType,
 );
 eventRouter.get("/get-event-type", [protect], eventContoller.getEventType);
 eventRouter.get("/get-event-types", [protect], eventContoller.getEventTypes);
 eventRouter.delete(
   "/delete-event-type",
-  [protect, permissions.can_delete_events],
+  [protect, permissions.can_delete_events, requireEventsAction("manage_types", "Not authorized to manage event types")],
   eventContoller.deleteEventType,
 );
 
 eventRouter.post("/register", [protect], eventContoller.register);
 eventRouter.get(
   "/get-registered-event-members",
-  [protect, permissions.can_view_events],
+  [protect, permissions.requireAction("Events", "view_registrations", "Not authorized to view registrations")],
   eventContoller.allRegisteredMembers,
 );
 eventRouter.get(
   "/all-registered-event-member",
-  [protect, permissions.can_view_events],
+  [protect, permissions.requireAction("Events", "view_registrations", "Not authorized to view registrations")],
   eventContoller.registeredMember,
 );
 
 eventRouter.post(
   "/stage-biometric-attendance",
-  [protect, permissions.can_manage_church_attendance],
+  [protect, permissions.requireAction("Church_Attendance", "import_biometric", "Not authorized to import check-ins"), requireRecordOfficialUnlessPreview],
   eventContoller.stageBiometricAttendance,
 );
 
 eventRouter.post(
   "/biometric-attendance-upload-intent",
-  [protect, permissions.can_manage_church_attendance],
+  [protect, permissions.requireAction("Church_Attendance", "import_biometric", "Not authorized to import check-ins")],
   eventContoller.createBiometricAttendanceUploadIntent,
 );
 
 eventRouter.post(
   "/stage-biometric-attendance-from-upload",
-  [protect, permissions.can_manage_church_attendance],
+  [protect, permissions.requireAction("Church_Attendance", "import_biometric", "Not authorized to import check-ins"), requireRecordOfficialUnlessPreview],
   eventContoller.importBiometricAttendanceFromUpload,
 );
 
 eventRouter.post(
   "/import-biometric-attendance",
-  [protect, permissions.can_manage_church_attendance],
+  [protect, permissions.requireAction("Church_Attendance", "import_biometric", "Not authorized to import check-ins"), requireRecordOfficialUnlessPreview],
   eventContoller.importBiometricAttendance,
 );
 
 eventRouter.get(
   "/import-biometric-attendance-job",
-  [protect, permissions.can_view_church_attendance],
+  [protect, permissions.can_view_church_attendance_scoped],
   eventContoller.getBiometricAttendanceImportJob,
 );
 
@@ -172,7 +188,11 @@ eventRouter.get(
  */
 eventRouter.post(
   "/church-attendance",
-  [protect, permissions.can_manage_church_attendance],
+  [
+    protect,
+    permissions.requireAction("Church_Attendance", "record", "Not authorized to record attendance"),
+    requireBranchWideAttendance,
+  ],
   eventContoller.createAttendanceSummary,
 );
 
@@ -182,7 +202,7 @@ eventRouter.post(
  */
 eventRouter.get(
   "/church-attendance",
-  [protect, permissions.can_view_church_attendance],
+  [protect, permissions.can_view_church_attendance_scoped],
   eventContoller.getAttendances,
 );
 
@@ -198,7 +218,7 @@ eventRouter.get(
  */
 eventRouter.get(
   "/church-attendance/by-id",
-  [protect, permissions.can_view_church_attendance],
+  [protect, permissions.can_view_church_attendance_scoped],
   eventContoller.getAttendanceById,
 );
 
@@ -208,7 +228,11 @@ eventRouter.get(
  */
 eventRouter.put(
   "/church-attendance",
-  [protect, permissions.can_manage_church_attendance],
+  [
+    protect,
+    permissions.requireAction("Church_Attendance", "record", "Not authorized to edit attendance"),
+    requireBranchWideAttendance,
+  ],
   eventContoller.updateAttendance,
 );
 
@@ -218,7 +242,11 @@ eventRouter.put(
  */
 eventRouter.delete(
   "/church-attendance",
-  [protect, permissions.can_delete_church_attendance],
+  [
+    protect,
+    permissions.requireAction("Church_Attendance", "delete", "Not authorized to delete attendance"),
+    requireBranchWideAttendance,
+  ],
   eventContoller.deleteAttendance,
 );
 
@@ -234,11 +262,11 @@ eventRouter.get("/ical-export", [protect], eventContoller.icalExport);
 eventRouter.get("/reminders", [protect], eventContoller.getEventReminders);
 eventRouter.post(
   "/reminders",
-  [protect, permissions.can_manage_events],
+  [protect, permissions.requireAction("Events", "send_reminders", "Not authorized to set event reminders")],
   eventContoller.upsertEventReminders,
 );
 eventRouter.delete(
   "/reminders",
-  [protect, permissions.can_manage_events],
+  [protect, permissions.requireAction("Events", "send_reminders", "Not authorized to cancel event reminders")],
   eventContoller.cancelReminder,
 );

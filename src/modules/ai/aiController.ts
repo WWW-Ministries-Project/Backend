@@ -7,6 +7,11 @@ import { AiCredentialService, AiCredentialServiceError } from "./aiCredentialSer
 import { AiBusinessContextService } from "./aiBusinessContextService";
 import { AiReadOnlyDataService, AiReadOnlyDataServiceError } from "./aiReadOnlyDataService";
 import { AiResponseFormatter } from "./aiResponseFormatter";
+import { AiPreferenceService } from "./aiPreferenceService";
+import { AiTaskService } from "./aiTaskService";
+import { AiTaskStateService } from "./aiTaskStateService";
+import { buildCollectors } from "./aiTaskCollectors";
+import { getBranchScope } from "../branches/branchScope";
 import {
   AiChatHistoryMessage,
   AiContext,
@@ -39,6 +44,8 @@ export class AiController {
   private businessContextService = new AiBusinessContextService();
   private readOnlyDataService = new AiReadOnlyDataService();
   private responseFormatter = new AiResponseFormatter();
+  private preferenceService = new AiPreferenceService();
+  private taskStateService = new AiTaskStateService();
 
   async listCredentials(req: Request, res: Response) {
     const provider =
@@ -556,6 +563,120 @@ export class AiController {
         message: "Failed to fetch usage history",
         data: null,
       });
+    }
+  }
+
+  /**
+   * Assistant "For you" feed. Phase 1 returns an empty, well-formed payload so
+   * the drawer renders against the real contract; aggregation across modules
+   * (requisitions, finance, appointments, visitors, reports, pledges, assets)
+   * lands in a later phase, permission- and branch-scoped per source.
+   */
+  async tasks(req: Request, res: Response) {
+    const actorId = this.getActorId(req);
+    if (!actorId) {
+      return res.status(401).json({ message: "Not authorized. Token not found", data: null });
+    }
+
+    try {
+      const branchId = getBranchScope()?.activeBranchId ?? null;
+      const service = new AiTaskService(buildCollectors());
+      const data = await service.getTasks({ userId: actorId, branchId, now: new Date() });
+      return res.status(200).json({ data });
+    } catch (error: any) {
+      return res.status(500).json({
+        message: "Failed to load assistant tasks",
+        data: null,
+      });
+    }
+  }
+
+  async setTaskState(req: Request, res: Response) {
+    const actorId = this.getActorId(req);
+    if (!actorId) {
+      return res.status(401).json({ message: "Not authorized. Token not found", data: null });
+    }
+
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+    const taskKey = typeof body.task_key === "string" ? body.task_key.trim() : "";
+    const state = body.state === "done" || body.state === "snoozed" ? body.state : null;
+
+    if (!taskKey || !state) {
+      return res.status(400).json({
+        message: "task_key and a valid state (done | snoozed) are required",
+        data: null,
+      });
+    }
+
+    let snoozedUntil: Date | null = null;
+    if (state === "snoozed" && body.snoozed_until) {
+      const parsed = new Date(body.snoozed_until);
+      if (Number.isNaN(parsed.getTime())) {
+        return res.status(400).json({ message: "snoozed_until must be a valid date", data: null });
+      }
+      snoozedUntil = parsed;
+    }
+
+    try {
+      const data = await this.taskStateService.setState(actorId, {
+        taskKey,
+        state,
+        snoozedUntil,
+        label: typeof body.label === "string" ? body.label : null,
+      });
+      return res.status(200).json({ data });
+    } catch (error: any) {
+      return res.status(500).json({ message: "Failed to update task", data: null });
+    }
+  }
+
+  async clearTaskState(req: Request, res: Response) {
+    const actorId = this.getActorId(req);
+    if (!actorId) {
+      return res.status(401).json({ message: "Not authorized. Token not found", data: null });
+    }
+
+    const taskKey =
+      typeof req.params?.taskKey === "string" ? decodeURIComponent(req.params.taskKey).trim() : "";
+    if (!taskKey) {
+      return res.status(400).json({ message: "task_key is required", data: null });
+    }
+
+    try {
+      await this.taskStateService.clearState(actorId, taskKey);
+      return res.status(200).json({ data: { cleared: true } });
+    } catch (error: any) {
+      return res.status(500).json({ message: "Failed to update task", data: null });
+    }
+  }
+
+  async getPreferences(req: Request, res: Response) {
+    const actorId = this.getActorId(req);
+    if (!actorId) {
+      return res.status(401).json({ message: "Not authorized. Token not found", data: null });
+    }
+
+    try {
+      const data = await this.preferenceService.getPreferences(actorId);
+      return res.status(200).json({ data });
+    } catch (error: any) {
+      return res.status(500).json({ message: "Failed to load assistant preferences", data: null });
+    }
+  }
+
+  async updatePreferences(req: Request, res: Response) {
+    const actorId = this.getActorId(req);
+    if (!actorId) {
+      return res.status(401).json({ message: "Not authorized. Token not found", data: null });
+    }
+
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+
+    try {
+      const data = await this.preferenceService.updatePreferences(actorId, body);
+      return res.status(200).json({ data });
+    } catch (error: any) {
+      return res.status(500).json({ message: "Failed to save assistant preferences", data: null });
     }
   }
 

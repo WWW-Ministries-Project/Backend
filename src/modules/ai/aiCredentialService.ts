@@ -6,6 +6,16 @@ const SUPPORTED_PROVIDERS = new Set<string>(SUPPORTED_PROVIDER_LIST);
 
 type CredentialProvider = (typeof SUPPORTED_PROVIDER_LIST)[number];
 
+// Env var that supplies each provider's API key. When set it takes precedence
+// over any stored `ai_provider_credential` row (see getActiveCredential), so
+// the platform can run on an env-provided key (e.g. OPENAI_API_KEY) without the
+// admin UI. When unset, key resolution falls back to the DB credential.
+const PROVIDER_ENV_KEYS: Record<CredentialProvider, string> = {
+  openai: "OPENAI_API_KEY",
+  gemini: "GEMINI_API_KEY",
+  claude: "ANTHROPIC_API_KEY",
+};
+
 export type AiChatbotModelOption = {
   provider: CredentialProvider;
   model: string;
@@ -191,6 +201,15 @@ export class AiCredentialService {
 
   async getActiveCredential(providerInput: string) {
     const provider = this.normalizeProvider(providerInput);
+
+    // An env-provided key takes precedence over any stored credential. When set
+    // it is used directly and the DB is not consulted, so operators can run on
+    // an env key (e.g. OPENAI_API_KEY) regardless of what the admin UI holds.
+    const envKey = this.getEnvApiKey(provider);
+    if (envKey) {
+      return { id: "env", provider, api_key: envKey, api_secret: null };
+    }
+
     const credential = await prisma.ai_provider_credential.findFirst({
       where: {
         provider,
@@ -249,9 +268,22 @@ export class AiCredentialService {
       }
     }
 
+    // A provider with an env-provided key is usable even without a DB row.
+    for (const provider of SUPPORTED_PROVIDER_LIST) {
+      if (!activeProviders.has(provider) && this.getEnvApiKey(provider)) {
+        activeProviders.add(provider);
+      }
+    }
+
     return CHATBOT_MODEL_PRIORITY.filter((option) =>
       activeProviders.has(option.provider),
     );
+  }
+
+  /** The API key an env var supplies for a provider, or null when unset. */
+  private getEnvApiKey(provider: CredentialProvider): string | null {
+    const value = String(process.env[PROVIDER_ENV_KEYS[provider]] || "").trim();
+    return value || null;
   }
 
   async resolveDefaultChatbotModel(): Promise<AiChatbotModelOption | null> {

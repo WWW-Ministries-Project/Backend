@@ -5,6 +5,13 @@ import {
   normalizeBranchListItem,
   parseBranchId,
 } from "./branchService";
+import {
+  BRANCH_FORBIDDEN_MESSAGE,
+  getBranchScope,
+  isBranchAllowed,
+} from "./branchScope";
+import { setBranchGrants } from "../accessLevels/branchAccessService";
+import { sessionChanged } from "../realtime/realtimeSession";
 
 const mapBranch = (branch: {
   id: number;
@@ -44,12 +51,47 @@ export const listBranches = async (_req: Request, res: Response) => {
 
   const branches = await prisma.branch.findMany({
     orderBy: [{ is_default: "desc" }, { name: "asc" }],
-    include: branchInclude,
+    include: { ...branchInclude, _count: { select: { users: true } } },
   });
 
   return res.status(200).json({
     message: "Branches fetched successfully",
-    data: branches.map(mapBranch),
+    data: branches.map(({ _count, ...branch }) => ({
+      ...mapBranch(branch),
+      member_count: _count.users,
+    })),
+  });
+};
+
+/** Makes one branch the default: new sign-ups and records without a branch land there. */
+export const setDefaultBranch = async (req: Request, res: Response) => {
+  const id = parseBranchId(req.body?.id ?? req.query?.id);
+  if (!id) {
+    return res.status(400).json({ message: "Branch id is required", data: null });
+  }
+
+  if (!isBranchAllowed(getBranchScope(), id)) {
+    return res.status(403).json({
+      code: "BRANCH_FORBIDDEN",
+      message: BRANCH_FORBIDDEN_MESSAGE,
+      data: null,
+    });
+  }
+
+  const branch = await prisma.branch.findUnique({ where: { id }, select: { id: true } });
+  if (!branch) {
+    return res.status(404).json({ message: "Branch not found", data: null });
+  }
+
+  const [, , updated] = await prisma.$transaction([
+    prisma.branch.updateMany({ where: { is_default: true, NOT: { id } }, data: { is_default: false } }),
+    prisma.branch.update({ where: { id }, data: { is_default: true } }),
+    prisma.branch.findUniqueOrThrow({ where: { id }, include: branchInclude }),
+  ]);
+
+  return res.status(200).json({
+    message: "Default branch updated",
+    data: mapBranch(updated),
   });
 };
 
@@ -111,6 +153,26 @@ export const createBranch = async (req: Request, res: Response) => {
     include: branchInclude,
   });
 
+  // An admin limited to some branches keeps their current role in the branch
+  // they just created; otherwise they could not see it.
+  const scope = getBranchScope();
+  const creatorId = Number((req as any).user?.id);
+  if (scope?.allowedBranchIds && Number.isInteger(creatorId) && creatorId > 0) {
+    const sourceBranchId = scope.activeBranchId ?? scope.allowedBranchIds[0];
+    const sourceGrant = sourceBranchId
+      ? await prisma.user_branch_access.findUnique({
+          where: {
+            user_id_branch_id: { user_id: creatorId, branch_id: sourceBranchId },
+          },
+          select: { access_level_id: true },
+        })
+      : null;
+    if (sourceGrant) {
+      await setBranchGrants([creatorId], [created.id], sourceGrant.access_level_id);
+      void sessionChanged([creatorId], ["permissions"]);
+    }
+  }
+
   return res.status(200).json({
     message: "Branch created successfully",
     data: mapBranch(created),
@@ -119,6 +181,11 @@ export const createBranch = async (req: Request, res: Response) => {
 
 export const updateBranch = async (req: Request, res: Response) => {
   const branchId = parseBranchId(req.body?.id ?? req.query?.id);
+  if (branchId && !isBranchAllowed(getBranchScope(), branchId)) {
+    return res
+      .status(403)
+      .json({ message: BRANCH_FORBIDDEN_MESSAGE, data: null, code: "BRANCH_FORBIDDEN" });
+  }
   const name = String(req.body?.name ?? "").trim();
   const description =
     readOptionalString(req.body?.description);
@@ -204,8 +271,105 @@ export const updateBranch = async (req: Request, res: Response) => {
   });
 };
 
+const BRANCH_RECORD_CHECKS: {
+  key: string;
+  singular: string;
+  plural: string;
+  count: (branchId: number) => Promise<number>;
+}[] = [
+  { key: "members", singular: "member", plural: "members", count: (id) => prisma.user.count({ where: { branch_id: id } }) },
+  { key: "departments", singular: "department", plural: "departments", count: (id) => prisma.department.count({ where: { branch_id: id } }) },
+  { key: "assets", singular: "asset", plural: "assets", count: (id) => prisma.assets.count({ where: { branch_id: id } }) },
+  { key: "events", singular: "event", plural: "events", count: (id) => prisma.event_mgt.count({ where: { branch_id: id } }) },
+  { key: "requisitions", singular: "requisition", plural: "requisitions", count: (id) => prisma.request.count({ where: { branch_id: id } }) },
+  { key: "event_reports", singular: "event report", plural: "event reports", count: (id) => prisma.event_reports.count({ where: { branch_id: id } }) },
+  { key: "programs", singular: "program", plural: "programs", count: (id) => prisma.program.count({ where: { branch_id: id } }) },
+  { key: "visitors", singular: "visitor", plural: "visitors", count: (id) => prisma.visitor.count({ where: { branch_id: id } }) },
+  { key: "life_centers", singular: "life center", plural: "life centers", count: (id) => prisma.life_center.count({ where: { branch_id: id } }) },
+  { key: "markets", singular: "market", plural: "markets", count: (id) => prisma.markets.count({ where: { branch_id: id } }) },
+  { key: "annual_themes", singular: "annual theme", plural: "annual themes", count: (id) => prisma.annualTheme.count({ where: { branch_id: id } }) },
+  { key: "receipt_configs", singular: "receipt setting", plural: "receipt settings", count: (id) => prisma.receiptConfig.count({ where: { branch_id: id } }) },
+  { key: "payment_configs", singular: "payment setting", plural: "payment settings", count: (id) => prisma.paymentConfig.count({ where: { branch_id: id } }) },
+  { key: "bank_accounts", singular: "bank account", plural: "bank accounts", count: (id) => prisma.bankAccountConfig.count({ where: { branch_id: id } }) },
+  { key: "tithe_breakdowns", singular: "tithe breakdown", plural: "tithe breakdowns", count: (id) => prisma.titheBreakdownConfig.count({ where: { branch_id: id } }) },
+  { key: "financials", singular: "finance record", plural: "finance records", count: (id) => prisma.financials.count({ where: { branch_id: id } }) },
+  { key: "finance_approvals", singular: "finance approval setting", plural: "finance approval settings", count: (id) => prisma.finance_approval_config.count({ where: { branch_id: id } }) },
+  { key: "availability", singular: "availability slot", plural: "availability slots", count: (id) => prisma.availability.count({ where: { branch_id: id } }) },
+  { key: "appointments", singular: "appointment", plural: "appointments", count: (id) => prisma.appointment.count({ where: { branch_id: id } }) },
+];
+
+type BranchDeleteBlocker = { key: string; label: string; count: number };
+
+/** Records still scoped to a branch, which must be moved before it can be deleted. */
+const getBranchDeleteBlockers = async (
+  branchId: number,
+): Promise<BranchDeleteBlocker[]> => {
+  const counts = await Promise.all(
+    BRANCH_RECORD_CHECKS.map((check) => check.count(branchId)),
+  );
+  return BRANCH_RECORD_CHECKS.flatMap((check, index) =>
+    counts[index] > 0
+      ? [
+          {
+            key: check.key,
+            label: `${counts[index]} ${counts[index] === 1 ? check.singular : check.plural}`,
+            count: counts[index],
+          },
+        ]
+      : [],
+  );
+};
+
+const describeBlockers = (blockers: BranchDeleteBlocker[]) => {
+  const labels = blockers.map((blocker) => blocker.label);
+  const listed =
+    labels.length <= 3
+      ? labels.join(", ")
+      : `${labels.slice(0, 3).join(", ")} and ${labels.length - 3} more record types`;
+  return `This branch still has ${listed}. Move them to another branch first.`;
+};
+
+export const getBranchDeleteImpact = async (req: Request, res: Response) => {
+  const branchId = parseBranchId(req.query?.id);
+  if (branchId && !isBranchAllowed(getBranchScope(), branchId)) {
+    return res
+      .status(403)
+      .json({ message: BRANCH_FORBIDDEN_MESSAGE, data: null, code: "BRANCH_FORBIDDEN" });
+  }
+
+  if (!branchId) {
+    return res.status(400).json({ message: "Branch id is required", data: null });
+  }
+
+  const existing = await prisma.branch.findUnique({ where: { id: branchId } });
+
+  if (!existing) {
+    return res.status(404).json({ message: "Branch not found", data: null });
+  }
+
+  const blockers = existing.is_default
+    ? []
+    : await getBranchDeleteBlockers(branchId);
+
+  return res.status(200).json({
+    message: "Branch delete impact",
+    data: {
+      branch_id: branchId,
+      name: existing.name,
+      is_default: existing.is_default,
+      deletable: !existing.is_default && blockers.length === 0,
+      blockers,
+    },
+  });
+};
+
 export const deleteBranch = async (req: Request, res: Response) => {
   const branchId = parseBranchId(req.query?.id);
+  if (branchId && !isBranchAllowed(getBranchScope(), branchId)) {
+    return res
+      .status(403)
+      .json({ message: BRANCH_FORBIDDEN_MESSAGE, data: null, code: "BRANCH_FORBIDDEN" });
+  }
 
   if (!branchId) {
     return res.status(400).json({
@@ -232,33 +396,12 @@ export const deleteBranch = async (req: Request, res: Response) => {
     });
   }
 
-  const scopedRecordCounts = await Promise.all([
-    prisma.user.count({ where: { branch_id: branchId } }),
-    prisma.department.count({ where: { branch_id: branchId } }),
-    prisma.assets.count({ where: { branch_id: branchId } }),
-    prisma.event_mgt.count({ where: { branch_id: branchId } }),
-    prisma.request.count({ where: { branch_id: branchId } }),
-    prisma.event_reports.count({ where: { branch_id: branchId } }),
-    prisma.program.count({ where: { branch_id: branchId } }),
-    prisma.visitor.count({ where: { branch_id: branchId } }),
-    prisma.life_center.count({ where: { branch_id: branchId } }),
-    prisma.markets.count({ where: { branch_id: branchId } }),
-    prisma.annualTheme.count({ where: { branch_id: branchId } }),
-    prisma.receiptConfig.count({ where: { branch_id: branchId } }),
-    prisma.paymentConfig.count({ where: { branch_id: branchId } }),
-    prisma.bankAccountConfig.count({ where: { branch_id: branchId } }),
-    prisma.titheBreakdownConfig.count({ where: { branch_id: branchId } }),
-    prisma.financials.count({ where: { branch_id: branchId } }),
-    prisma.finance_approval_config.count({ where: { branch_id: branchId } }),
-    prisma.availability.count({ where: { branch_id: branchId } }),
-    prisma.appointment.count({ where: { branch_id: branchId } }),
-  ]);
+  const blockers = await getBranchDeleteBlockers(branchId);
 
-  if (scopedRecordCounts.some((count) => count > 0)) {
-    return res.status(400).json({
-      message:
-        "This branch has assigned records and cannot be deleted. Move or delete those records first.",
-      data: null,
+  if (blockers.length > 0) {
+    return res.status(409).json({
+      message: describeBlockers(blockers),
+      data: { blockers },
     });
   }
 

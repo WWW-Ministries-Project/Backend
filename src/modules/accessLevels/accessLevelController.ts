@@ -1,6 +1,25 @@
 import { prisma } from "../../Models/context";
 import { Request, Response } from "express";
 import { sessionChanged, usersWithAccessLevel } from "../realtime/realtimeSession";
+import { getBranchScope } from "../branches/branchScope";
+import { BranchAccessError } from "../branches/branchService";
+import {
+  assertCanGrantInBranches,
+  listBranchGrantsByUser,
+  listUserBranchGrants,
+  resolveGrantBranchIds,
+  setBranchGrants,
+  syncLegacyAccessLevel,
+} from "./branchAccessService";
+import { normalizeWorkspaces, resolveWorkspaces } from "../workspaces/workspaceKeys";
+import {
+  GrantCeilingError,
+  assertAdministersRoleBranches,
+  assertNotOwnRole,
+  assertNotSelf,
+  assertRoleWithinCeiling,
+  assertWithinCeiling,
+} from "./grantCeiling";
 
 const ALLOWED_PERMISSION_VALUES = new Set([
   "Can_View",
@@ -39,9 +58,31 @@ const OPTIONAL_PERMISSION_KEYS = [
   "Sermons",
   "Promotions",
   "Messaging",
+  "Membership_Management",
+  "AI",
+  // Stored explicitly since the role editor shows them; until a level sets
+  // them they fall back (Reports to Settings, Rides to Membership_Management).
+  "Reports",
+  "Rides",
 ];
 
-const ALLOWED_SCOPE_VALUES = new Set(["assigned_departments"]);
+// Whose records a role sees in a module; "assigned_departments" is the value
+// saved before the editor offered the others.
+const ALLOWED_SCOPE_VALUES = new Set([
+  "own",
+  "assigned",
+  "department",
+  "department_member",
+  "life_center",
+  "assigned_departments",
+  // Stored when a role chooses the whole branch over a narrower default
+  // (e.g. View on Visitors starts at "assigned").
+  "branch",
+]);
+
+// Action keys are snake_case names from the Frontend's permission catalogue,
+// e.g. Actions: { Requisition: { configure_approvals: false } }.
+const ACTION_KEY_PATTERN = /^[a-z][a-z0-9_]{0,63}$/;
 
 const PERMISSION_KEY_NORMALIZER: Record<string, string> = {
   Members: "Members",
@@ -78,16 +119,16 @@ const PERMISSION_KEY_NORMALIZER: Record<string, string> = {
   Promotions: "Promotions",
   Promotion: "Promotions",
   Messaging: "Messaging",
+  Membership_Management: "Membership_Management",
+  "Membership Management": "Membership_Management",
+  AI: "AI",
+  Reports: "Reports",
+  Rides: "Rides",
 };
 
 const ALLOWED_PERMISSION_KEYS = [
   ...REQUIRED_PERMISSION_KEYS,
   ...OPTIONAL_PERMISSION_KEYS,
-];
-
-const SCOPE_SUPPORTED_PERMISSION_KEYS = [
-  "Departments",
-  "Church_Attendance",
 ];
 
 const toPositiveInt = (value: any) => {
@@ -240,6 +281,7 @@ const enrichAccessLevelWithExclusions = async (payload: any) => {
       ...row,
       permissions: parsedPermissions || row?.permissions,
       exclusion_users: exclusionUsers,
+      ...resolveWorkspaces(row?.workspaces, parsedPermissions || row?.permissions),
     };
   });
 
@@ -290,7 +332,7 @@ const normalizeScopes = (payload: any) => {
   for (const [rawKey, rawValue] of Object.entries(payload)) {
     const normalizedKey =
       PERMISSION_KEY_NORMALIZER[String(rawKey).trim()] || String(rawKey).trim();
-    if (!SCOPE_SUPPORTED_PERMISSION_KEYS.includes(normalizedKey)) {
+    if (!ALLOWED_PERMISSION_KEYS.includes(normalizedKey)) {
       continue;
     }
 
@@ -302,6 +344,36 @@ const normalizeScopes = (payload: any) => {
     }
 
     normalized[normalizedKey] = String(rawValue);
+  }
+
+  return normalized;
+};
+
+/** `{ Domain: { action_key: boolean } }`; null when the shape is wrong. */
+const normalizeActions = (payload: any) => {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return null;
+  }
+
+  const normalized: Record<string, Record<string, boolean>> = {};
+  for (const [rawKey, rawValue] of Object.entries(payload)) {
+    const normalizedKey =
+      PERMISSION_KEY_NORMALIZER[String(rawKey).trim()] || String(rawKey).trim();
+    if (!ALLOWED_PERMISSION_KEYS.includes(normalizedKey)) {
+      continue;
+    }
+    if (!rawValue || typeof rawValue !== "object" || Array.isArray(rawValue)) {
+      return null;
+    }
+
+    const actions: Record<string, boolean> = {};
+    for (const [action, on] of Object.entries(rawValue)) {
+      if (!ACTION_KEY_PATTERN.test(action) || typeof on !== "boolean") {
+        return null;
+      }
+      actions[action] = on;
+    }
+    if (Object.keys(actions).length > 0) normalized[normalizedKey] = actions;
   }
 
   return normalized;
@@ -323,6 +395,7 @@ const normalizePermissionPayload = (payload: any) => {
     payload?.scopes ||
     payload?.scope_list ||
     payload?.scopeList;
+  const actionPayload = payload?.Actions || payload?.actions;
 
   if (exclusionPayload !== undefined) {
     const normalizedExclusions = normalizeExclusions(exclusionPayload);
@@ -340,6 +413,14 @@ const normalizePermissionPayload = (payload: any) => {
     normalized.Scopes = normalizedScopes;
   }
 
+  if (actionPayload !== undefined) {
+    const normalizedActions = normalizeActions(actionPayload);
+    if (!normalizedActions) {
+      return null;
+    }
+    normalized.Actions = normalizedActions;
+  }
+
   for (const [rawKey, rawValue] of Object.entries(payload)) {
     if (
       [
@@ -351,6 +432,8 @@ const normalizePermissionPayload = (payload: any) => {
         "scopes",
         "scope_list",
         "scopeList",
+        "Actions",
+        "actions",
       ].includes(String(rawKey))
     ) {
       continue;
@@ -400,6 +483,93 @@ const validateAssignableUsers = async (assignedUsers: number[]) => {
   };
 };
 
+/**
+ * Replaces `users_assigned` (the legacy single-role column) with the people who
+ * hold the role through a branch grant, limited to the caller's branch scope,
+ * and adds `grants` so clients can show which branch each person has it in.
+ */
+const attachBranchGrants = async (payload: any) => {
+  const levels = (Array.isArray(payload) ? payload : [payload]).filter(Boolean);
+  if (!levels.length) return payload;
+
+  const scope = getBranchScope();
+  const branchFilter = scope?.activeBranchId
+    ? { branch_id: scope.activeBranchId }
+    : scope?.allowedBranchIds
+      ? { branch_id: { in: scope.allowedBranchIds } }
+      : {};
+
+  const grants = await prisma.user_branch_access.findMany({
+    where: {
+      access_level_id: { in: levels.map((level: any) => level.id) },
+      ...branchFilter,
+    },
+    orderBy: [{ branch_id: "asc" }, { user_id: "asc" }],
+    select: {
+      access_level_id: true,
+      branch_id: true,
+      branch: { select: { name: true } },
+      user: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          is_active: true,
+          user_info: { select: { photo: true } },
+        },
+      },
+    },
+  });
+
+  for (const level of levels) {
+    const levelGrants = grants.filter(
+      (grant) => grant.access_level_id === level.id,
+    );
+    level.grants = levelGrants.map((grant) => ({
+      user_id: grant.user.id,
+      name: grant.user.name,
+      email: grant.user.email,
+      is_active: grant.user.is_active !== false,
+      photo: grant.user.user_info?.photo ?? null,
+      branch_id: grant.branch_id,
+      branch_name: grant.branch?.name ?? "",
+    }));
+    const seen = new Set<number>();
+    level.users_assigned = levelGrants
+      .filter((grant) => !seen.has(grant.user.id) && seen.add(grant.user.id))
+      .map((grant) => ({
+        id: grant.user.id,
+        name: grant.user.name,
+        user_info: { photo: grant.user.user_info?.photo ?? null },
+      }));
+  }
+
+  return payload;
+};
+
+const INVALID_WORKSPACES_MESSAGE =
+  "workspaces must be an array of: prelate, admin, finance, hod, generic.";
+
+/**
+ * Reads an optional `workspaces` body field. `undefined` = leave unchanged,
+ * `null` = invalid (400), otherwise the canonical list to store.
+ */
+const parseWorkspacesInput = (value: unknown) =>
+  value === undefined ? undefined : normalizeWorkspaces(value);
+
+const branchErrorResponse = (res: Response, error: unknown) =>
+  error instanceof BranchAccessError
+    ? res.status(403).json({ message: error.message, data: null, code: "BRANCH_FORBIDDEN" })
+    : error instanceof GrantCeilingError
+      ? res.status(403).json({ message: error.message, data: null, code: "GRANT_CEILING" })
+      : null;
+
+const callerOf = (req: Request) => ({
+  id: toPositiveInt((req as any).user?.id),
+  // Live, active-branch permissions: checkPermission replaces the login token's.
+  permissions: (req as any).user?.permissions,
+});
+
 // Access Levels Controllers
 export const createAccessLevel = async (req: Request, res: Response) => {
   const { name, description, permissions, created_by, assigned_users } =
@@ -413,6 +583,12 @@ export const createAccessLevel = async (req: Request, res: Response) => {
         data: null,
       });
     }
+    const workspaces = parseWorkspacesInput(req.body?.workspaces);
+    if (workspaces === null) {
+      return res.status(400).json({ message: INVALID_WORKSPACES_MESSAGE, data: null });
+    }
+    const caller = callerOf(req);
+    assertWithinCeiling(caller.permissions, normalizedPermissions);
 
     if (assigned_users !== undefined && !Array.isArray(assigned_users)) {
       return res.status(400).json({
@@ -447,28 +623,29 @@ export const createAccessLevel = async (req: Request, res: Response) => {
       }
     }
 
+    if (Array.isArray(assigned_users)) {
+      assertNotSelf(caller.id, assigned_users.map((userId: any) => Number(userId)));
+    }
+
     const response = await prisma.access_level.create({
       data: {
         name,
         description,
         created_by,
         permissions: JSON.stringify(normalizedPermissions),
+        ...(workspaces ? { workspaces } : {}),
+        updated_at: new Date(),
       },
     });
 
     if (Array.isArray(assigned_users) && assigned_users.length > 0) {
-      await prisma.user.updateMany({
-        where: {
-          id: {
-            in: assigned_users.map((id: any) => Number(id)),
-          },
-          is_user: true,
-        },
-        data: {
-          access_level_id: response.id,
-        },
-      });
-      void sessionChanged(assigned_users.map((id: any) => Number(id)), ["permissions"]);
+      const userIds = assigned_users.map((id: any) => Number(id));
+      const branchIds = await resolveGrantBranchIds(
+        toPositiveInt(req.body?.branch_id),
+      );
+      assertCanGrantInBranches(branchIds);
+      await setBranchGrants(userIds, branchIds, response.id);
+      void sessionChanged(userIds, ["permissions"]);
     }
 
     const data = await prisma.access_level.findMany({
@@ -480,6 +657,9 @@ export const createAccessLevel = async (req: Request, res: Response) => {
         name: true,
         description: true,
         permissions: true,
+        workspaces: true,
+        created_at: true,
+        updated_at: true,
         users_assigned: {
           select: {
             id: true,
@@ -488,12 +668,15 @@ export const createAccessLevel = async (req: Request, res: Response) => {
         },
       },
     });
-    const enrichedData = await enrichAccessLevelWithExclusions(data);
+    const enrichedData = await attachBranchGrants(
+      await enrichAccessLevelWithExclusions(data),
+    );
 
     res
       .status(200)
       .json({ message: "Access Level Created Succesfully", data: enrichedData });
   } catch (error: any) {
+    if (branchErrorResponse(res, error)) return;
     return res
       .status(500)
       .json({ message: "Access Level failed to create", data: error.message });
@@ -525,6 +708,26 @@ export const updateAccessLevel = async (req: Request, res: Response) => {
     const permissionsForUpdate = normalizedPermissions
       ? JSON.stringify(normalizedPermissions)
       : undefined;
+    const caller = callerOf(req);
+    if (normalizedPermissions || req.body?.workspaces !== undefined) {
+      await assertNotOwnRole(caller.id, Number(id));
+      await assertAdministersRoleBranches(Number(id));
+    }
+    if (normalizedPermissions) {
+      const stored = await prisma.access_level.findUnique({
+        where: { id: Number(id) },
+        select: { permissions: true },
+      });
+      assertWithinCeiling(
+        caller.permissions,
+        normalizedPermissions,
+        stored?.permissions ?? {},
+      );
+    }
+    const workspaces = parseWorkspacesInput(req.body?.workspaces);
+    if (workspaces === null) {
+      return res.status(400).json({ message: INVALID_WORKSPACES_MESSAGE, data: null });
+    }
 
     if (assigned_users !== undefined && !Array.isArray(assigned_users)) {
       return res.status(400).json({
@@ -559,6 +762,17 @@ export const updateAccessLevel = async (req: Request, res: Response) => {
       }
     }
 
+    if (Array.isArray(assigned_users) && assigned_users.length > 0) {
+      assertNotSelf(
+        caller.id,
+        assigned_users.map((userId: any) => Number(userId)),
+      );
+      // New permissions were checked above; otherwise check the stored role.
+      if (!normalizedPermissions) {
+        await assertRoleWithinCeiling(caller.permissions, Number(id));
+      }
+    }
+
     const response = await prisma.access_level.update({
       where: {
         id: Number(id),
@@ -568,12 +782,18 @@ export const updateAccessLevel = async (req: Request, res: Response) => {
         description,
         created_by,
         permissions: permissionsForUpdate,
+        workspaces,
+        updated_at: new Date(),
+        updated_by: toPositiveInt((req as any).user?.id) ?? undefined,
       },
       select: {
         id: true,
         name: true,
         description: true,
         permissions: true,
+        workspaces: true,
+        created_at: true,
+        updated_at: true,
         users_assigned: {
           select: {
             id: true,
@@ -584,31 +804,73 @@ export const updateAccessLevel = async (req: Request, res: Response) => {
     });
 
     if (Array.isArray(assigned_users) && assigned_users.length > 0) {
-      await prisma.user.updateMany({
-        where: {
-          id: {
-            in: assigned_users.map((userId: any) => Number(userId)),
-          },
-          is_user: true,
-        },
-        data: {
-          access_level_id: response.id,
-        },
-      });
+      const branchIds = await resolveGrantBranchIds(
+        toPositiveInt(req.body?.branch_id),
+      );
+      assertCanGrantInBranches(branchIds);
+      await setBranchGrants(
+        assigned_users.map((userId: any) => Number(userId)),
+        branchIds,
+        response.id,
+      );
     }
     // Permissions changed for every holder, not only newly assigned users.
     void usersWithAccessLevel(response.id)
       .then((holders) => sessionChanged(holders, ["permissions"]))
       .catch(() => undefined);
-    const enrichedResponse = await enrichAccessLevelWithExclusions(response);
+    const enrichedResponse = await attachBranchGrants(
+      await enrichAccessLevelWithExclusions(response),
+    );
     res
       .status(200)
       .json({ message: "Access Level updated Succesfully", data: enrichedResponse });
   } catch (error: any) {
+    if (branchErrorResponse(res, error)) return;
     return res
       .status(500)
       .json({ message: "Access Level failed to create", data: error.message });
   }
+};
+
+/** PUT access/access-level-workspaces — saves only the role's Home workspaces. */
+export const updateAccessLevelWorkspaces = async (req: Request, res: Response) => {
+  const id = toPositiveInt(req.body?.id ?? req.query?.id);
+  if (!id) {
+    return res.status(400).json({ message: "A valid access level id is required.", data: null });
+  }
+  const workspaces = normalizeWorkspaces(req.body?.workspaces);
+  if (!workspaces) {
+    return res.status(400).json({ message: INVALID_WORKSPACES_MESSAGE, data: null });
+  }
+  const existing = await prisma.access_level.findUnique({
+    where: { id },
+    select: { id: true },
+  });
+  if (!existing) {
+    return res.status(404).json({ message: "Access level not found", data: null });
+  }
+  try {
+    await assertNotOwnRole(callerOf(req).id, id);
+    await assertAdministersRoleBranches(id);
+  } catch (error) {
+    if (branchErrorResponse(res, error)) return;
+    throw error;
+  }
+  await prisma.access_level.update({
+    where: { id },
+    data: {
+      workspaces,
+      updated_at: new Date(),
+      updated_by: toPositiveInt((req as any).user?.id) ?? undefined,
+    },
+  });
+  void usersWithAccessLevel(id)
+    .then((holders) => sessionChanged(holders, ["permissions"]))
+    .catch(() => undefined);
+  return res.status(200).json({
+    message: "Operation successful",
+    data: { id, workspaces, workspaces_default: false },
+  });
 };
 
 export const listAllAccessLevel = async (req: Request, res: Response) => {
@@ -622,6 +884,9 @@ export const listAllAccessLevel = async (req: Request, res: Response) => {
         name: true,
         description: true,
         permissions: true,
+        workspaces: true,
+        created_at: true,
+        updated_at: true,
         users_assigned: {
           select: {
             id: true,
@@ -635,7 +900,9 @@ export const listAllAccessLevel = async (req: Request, res: Response) => {
         },
       },
     });
-    const enrichedData = await enrichAccessLevelWithExclusions(data);
+    const enrichedData = await attachBranchGrants(
+      await enrichAccessLevelWithExclusions(data),
+    );
     res.status(200).json({ message: "Operation successful", data: enrichedData });
   } catch (error: any) {
     return res
@@ -662,6 +929,9 @@ export const getAccessLevel = async (req: Request, res: Response) => {
         name: true,
         description: true,
         permissions: true,
+        workspaces: true,
+        created_at: true,
+        updated_at: true,
         users_assigned: {
           select: {
             id: true,
@@ -675,7 +945,9 @@ export const getAccessLevel = async (req: Request, res: Response) => {
         },
       },
     });
-    const enrichedData = await enrichAccessLevelWithExclusions(data);
+    const enrichedData = await attachBranchGrants(
+      await enrichAccessLevelWithExclusions(data),
+    );
     res.status(200).json({ message: "Operation successful", data: enrichedData });
   } catch (error: any) {
     return res
@@ -685,7 +957,7 @@ export const getAccessLevel = async (req: Request, res: Response) => {
 };
 
 export const assignAccessLevelToUser = async (req: Request, res: Response) => {
-  const { user_id, access_level_id } = req.body;
+  const { user_id, access_level_id, branch_id } = req.body;
   try {
     const userId = Number(user_id);
     const accessLevelId = Number(access_level_id);
@@ -734,18 +1006,20 @@ export const assignAccessLevelToUser = async (req: Request, res: Response) => {
       });
     }
 
-    const assign = await prisma.user.update({
-      where: { id: userId },
-      data: { access_level_id: accessLevelId },
-    });
-
-    if (!assign) {
-      return res.status(500).json({ message: "Invalid User Id" });
-    }
+    const caller = callerOf(req);
+    assertNotSelf(caller.id, [userId]);
+    await assertRoleWithinCeiling(caller.permissions, accessLevelId);
+    const branchIds = await resolveGrantBranchIds(toPositiveInt(branch_id));
+    assertCanGrantInBranches(branchIds);
+    await setBranchGrants([userId], branchIds, accessLevelId);
 
     void sessionChanged([userId], ["permissions"]);
-    return res.status(200).json({ message: "Operation successful" });
+    return res.status(200).json({
+      message: "Operation successful",
+      data: { branch_access: await listUserBranchGrants(userId) },
+    });
   } catch (error: any) {
+    if (branchErrorResponse(res, error)) return;
     return res
       .status(500)
       .json({ message: "Operation Failed", data: error.message });
@@ -757,6 +1031,8 @@ const ACCESS_LEVEL_DETAIL_SELECT = {
   name: true,
   description: true,
   permissions: true,
+  created_at: true,
+  updated_at: true,
   users_assigned: {
     select: {
       id: true,
@@ -782,10 +1058,12 @@ const parseUserIdList = (value: unknown): number[] | null => {
 
 export const listAssignableUsers = async (req: Request, res: Response) => {
   try {
+    // Settings > Users also lists deactivated accounts.
+    const includeInactive = String(req.query?.include_inactive ?? "") === "true";
     const users = await prisma.user.findMany({
       where: {
         is_user: true,
-        OR: [{ is_active: true }, { is_active: null }],
+        ...(!includeInactive && { OR: [{ is_active: true }, { is_active: null }] }),
       },
       orderBy: {
         name: "asc",
@@ -795,6 +1073,10 @@ export const listAssignableUsers = async (req: Request, res: Response) => {
         name: true,
         email: true,
         member_id: true,
+        is_active: true,
+        branch_id: true,
+        last_active_at: true,
+        branch: { select: { name: true } },
         user_info: {
           select: {
             first_name: true,
@@ -811,6 +1093,7 @@ export const listAssignableUsers = async (req: Request, res: Response) => {
       },
     });
 
+    const grantsByUser = await listBranchGrantsByUser(users.map((user) => user.id));
     const data = users.map((user) => ({
       id: user.id,
       name: buildFullName(user) || user.name,
@@ -820,6 +1103,11 @@ export const listAssignableUsers = async (req: Request, res: Response) => {
       access_level: user.access
         ? { id: user.access.id, name: user.access.name }
         : null,
+      branch_access: grantsByUser.get(user.id) ?? [],
+      is_active: user.is_active !== false,
+      home_branch_id: user.branch_id,
+      home_branch_name: user.branch?.name ?? null,
+      last_active_at: user.last_active_at,
     }));
 
     return res.status(200).json({ message: "Operation successful", data });
@@ -878,6 +1166,12 @@ export const bulkAssignAccessLevel = async (req: Request, res: Response) => {
       });
     }
 
+    const caller = callerOf(req);
+    assertNotSelf(caller.id, [...assignIds, ...unassignIds]);
+    if (assignIds.length > 0) {
+      await assertRoleWithinCeiling(caller.permissions, accessLevelId);
+    }
+
     if (assignIds.length > 0) {
       const { invalidUserIds, nonMinistryWorkerIds } =
         await validateAssignableUsers(assignIds);
@@ -893,25 +1187,32 @@ export const bulkAssignAccessLevel = async (req: Request, res: Response) => {
       }
     }
 
-    const [assigned, unassigned] = await prisma.$transaction([
-      prisma.user.updateMany({
-        where: { id: { in: assignIds }, is_user: true },
-        data: { access_level_id: accessLevelId },
-      }),
-      // Only clear users who are actually on this level, so a stale client
-      // cannot strip someone who has since moved to another level.
-      prisma.user.updateMany({
-        where: { id: { in: unassignIds }, access_level_id: accessLevelId },
-        data: { access_level_id: null },
-      }),
-    ]);
+    const branchIds = await resolveGrantBranchIds(
+      toPositiveInt(req.body?.branch_id),
+    );
+    assertCanGrantInBranches(branchIds);
+
+    await setBranchGrants(assignIds, branchIds, accessLevelId);
+    // Only remove grants that are actually on this level, so a stale client
+    // cannot strip someone who has since moved to another level.
+    const unassigned = await prisma.user_branch_access.deleteMany({
+      where: {
+        user_id: { in: unassignIds },
+        branch_id: { in: branchIds },
+        access_level_id: accessLevelId,
+      },
+    });
+    await syncLegacyAccessLevel(unassignIds);
+    const assigned = { count: assignIds.length };
     void sessionChanged([...assignIds, ...unassignIds], ["permissions"]);
 
     const updated = await prisma.access_level.findUnique({
       where: { id: accessLevelId },
       select: ACCESS_LEVEL_DETAIL_SELECT,
     });
-    const enriched = await enrichAccessLevelWithExclusions(updated);
+    const enriched = await attachBranchGrants(
+      await enrichAccessLevelWithExclusions(updated),
+    );
 
     return res.status(200).json({
       message: "Access level members updated successfully",
@@ -922,6 +1223,7 @@ export const bulkAssignAccessLevel = async (req: Request, res: Response) => {
       },
     });
   } catch (error: any) {
+    if (branchErrorResponse(res, error)) return;
     return res
       .status(500)
       .json({ message: "Operation Failed", data: error.message });
@@ -937,7 +1239,33 @@ export const deleteAccessLevel = async (req: Request, res: Response) => {
     });
   }
   try {
+    await assertNotOwnRole(callerOf(req).id, Number(id));
+    await assertAdministersRoleBranches(Number(id));
     const holders = await usersWithAccessLevel(Number(id));
+    // Optionally move everyone holding this role to another one first, so
+    // nobody is left without access.
+    const reassignTo = toPositiveInt(req.query?.reassign_to);
+    if (reassignTo && reassignTo !== Number(id)) {
+      const target = await prisma.access_level.findFirst({
+        where: { id: reassignTo, deleted: false },
+        select: { id: true },
+      });
+      if (!target) {
+        return res
+          .status(400)
+          .json({ message: "The role to move people to doesn't exist", data: null });
+      }
+      await prisma.$transaction([
+        prisma.user_branch_access.updateMany({
+          where: { access_level_id: Number(id) },
+          data: { access_level_id: reassignTo },
+        }),
+        prisma.user.updateMany({
+          where: { access_level_id: Number(id) },
+          data: { access_level_id: reassignTo },
+        }),
+      ]);
+    }
     const unAssign = await prisma.user.updateMany({
       where: {
         access_level_id: Number(id),
@@ -952,9 +1280,117 @@ export const deleteAccessLevel = async (req: Request, res: Response) => {
     if (!deleteAccess) {
       res.status(500).json({ message: "Invalid Access Level Id" });
     }
+    // Their grants for this role were removed with it; point the legacy
+    // column at whatever roles they still hold.
+    await syncLegacyAccessLevel(holders);
     void sessionChanged(holders, ["permissions"]);
     listAllAccessLevel(req, res);
   } catch (error: any) {
+    if (branchErrorResponse(res, error)) return;
+    return res
+      .status(500)
+      .json({ message: "Operation Failed", data: error.message });
+  }
+};
+
+/** GET /access/user-branch-access?user_id= — a user's role in each branch. */
+export const getUserBranchAccess = async (req: Request, res: Response) => {
+  const userId = toPositiveInt(req.query?.user_id);
+  if (!userId) {
+    return res.status(400).json({ message: "Invalid user_id.", data: null });
+  }
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, is_user: true, branch_id: true },
+    });
+    if (!user) {
+      return res.status(404).json({ message: "User not found", data: null });
+    }
+    return res.status(200).json({
+      message: "Operation successful",
+      data: {
+        user_id: user.id,
+        home_branch_id: user.branch_id ?? null,
+        branch_access: await listUserBranchGrants(user.id),
+      },
+    });
+  } catch (error: any) {
+    return res
+      .status(500)
+      .json({ message: "Operation Failed", data: error.message });
+  }
+};
+
+/**
+ * PUT /access/user-branch-access — set a user's role in one branch.
+ * Body: `{ user_id, branch_id, access_level_id }`; `access_level_id: null`
+ * removes their access to that branch (their other branches stay).
+ */
+export const setUserBranchAccess = async (req: Request, res: Response) => {
+  const userId = toPositiveInt(req.body?.user_id);
+  const branchId = toPositiveInt(req.body?.branch_id);
+  const rawLevel = req.body?.access_level_id;
+  const removing = rawLevel === null || rawLevel === "";
+  const accessLevelId = removing ? null : toPositiveInt(rawLevel);
+
+  if (!userId || !branchId || (!removing && !accessLevelId)) {
+    return res.status(400).json({
+      message: "user_id, branch_id and access_level_id (or null) are required.",
+      data: null,
+    });
+  }
+
+  try {
+    assertCanGrantInBranches([branchId]);
+    const caller = callerOf(req);
+    assertNotSelf(caller.id, [userId]);
+    if (accessLevelId) {
+      await assertRoleWithinCeiling(caller.permissions, accessLevelId);
+    }
+
+    const [user, branch, accessLevel] = await Promise.all([
+      prisma.user.findUnique({
+        where: { id: userId },
+        select: { id: true, is_user: true },
+      }),
+      prisma.branch.findUnique({ where: { id: branchId }, select: { id: true } }),
+      accessLevelId
+        ? prisma.access_level.findUnique({
+            where: { id: accessLevelId },
+            select: { id: true, deleted: true },
+          })
+        : Promise.resolve(null),
+    ]);
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found", data: null });
+    }
+    if (!branch) {
+      return res.status(404).json({ message: "Branch not found", data: null });
+    }
+    if (accessLevelId && !user.is_user) {
+      return res.status(400).json({
+        message: "Only ministry workers can be assigned access levels.",
+        data: null,
+      });
+    }
+    if (accessLevelId && (!accessLevel || accessLevel.deleted)) {
+      return res.status(404).json({ message: "Access level not found", data: null });
+    }
+
+    await setBranchGrants([userId], [branchId], accessLevelId);
+    void sessionChanged([userId], ["permissions"]);
+
+    return res.status(200).json({
+      message: "Operation successful",
+      data: {
+        user_id: userId,
+        branch_access: await listUserBranchGrants(userId),
+      },
+    });
+  } catch (error: any) {
+    if (branchErrorResponse(res, error)) return;
     return res
       .status(500)
       .json({ message: "Operation Failed", data: error.message });

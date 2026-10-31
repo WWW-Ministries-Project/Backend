@@ -1,13 +1,33 @@
 import e, { Request, Response } from "express";
 import JWT from "jsonwebtoken";
+import { randomBytes } from "crypto";
 import * as dotenv from "dotenv";
 import { prisma } from "../../Models/context";
+import { getRequestAccess, hasActionPermission } from "../../middleWare/authorization";
 import {
   sendEmail,
   comparePassword,
   hashPassword,
 } from "../../utils";
-import { UserService, parseOptionalDate } from "./userService";
+import { UserService } from "./userService";
+import {
+  NormalizedDepartmentPosition,
+  normalizeDepartmentPositions,
+} from "./departmentPositionUtils";
+import { buildMembershipStatusTimestampData } from "./membershipStatusTimestamps";
+import { buildMemberSource } from "./memberSource";
+import {
+  callerActionAllowed,
+  canSeeContactDetails,
+  denyAction,
+  denyMembersOutOfReach,
+  maskContactDetails,
+  memberExclusionIds,
+  memberScopeWhere,
+  membersActionAllowed,
+} from "./memberAccess";
+import { computeEnrollmentProgress } from "./enrollmentProgress";
+import { parseOtherNumber } from "./otherNumber";
 import { CourseService } from "../programs/courseService";
 import { LifeCenterService } from "../lifeCenterMangement/lifeCenterService";
 // import { forgetPasswordTemplate } from "../../utils/mail_templates/forgot-password";
@@ -17,7 +37,9 @@ import { userActivatedTemplate } from "../../utils/mail_templates/userActivatedT
 import { activateUserTemplate } from "../../utils/mail_templates/activateUserTemplate";
 import {
   FAMILY_RELATION,
+  getDirectChildIds,
   getReciprocalFamilyRelation,
+  getSiblingIds,
   normalizeFamilyRelation,
   pruneMissingBidirectionalFamilyRelations,
   toFamilyRelationLabel,
@@ -40,11 +62,19 @@ import { InputValidationError } from "../../utils/custom-error-handlers";
 import { Prisma } from "@prisma/client";
 import { buildPrismaError } from "../../middleWare/errorHandler";
 import { sessionChanged, sessionRevoked } from "../realtime/realtimeSession";
+import {
+  assertCanGrantInBranches,
+  listUserBranchGrants,
+  setBranchGrants,
+} from "../accessLevels/branchAccessService";
+import { BranchAccessError } from "../branches/branchService";
+import { resolveWorkspaces } from "../workspaces/workspaceKeys";
 import { sessionReasonsForUserUpdate } from "../realtime/sessionNotifier";
 import {
   getBranchScopedWhere,
   resolveBranchIdOrDefault,
 } from "../branches/branchService";
+import { getBranchScope, isBranchAllowed } from "../branches/branchScope";
 
 dotenv.config();
 
@@ -328,6 +358,122 @@ const selectQuery = {
   },
 };
 
+const PUBLIC_MEMBERSHIP_TYPES = new Set(["ONLINE", "IN_HOUSE"]);
+
+const pickObject = (value: unknown): Record<string, any> =>
+  value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, any>)
+    : {};
+
+/**
+ * POST /user/public-register: the church's public "become a member" form.
+ * Only the person's own details are accepted. Everything that grants or
+ * places them (status, sign-in, password, departments, positions, the
+ * visitor/soul they came from, linking an existing spouse) is fixed or
+ * dropped, so the form can't create a confirmed member or an admin.
+ */
+export const publicRegisterMember = async (req: Request, res: Response) => {
+  const body = pickObject(req.body);
+  const churchInfo = pickObject(body.church_info);
+  const membershipType = String(churchInfo.membership_type || "").toUpperCase();
+  const branchId = Number(churchInfo.branch_id);
+  const branch =
+    Number.isInteger(branchId) && branchId > 0
+      ? await prisma.branch.findUnique({ where: { id: branchId }, select: { id: true } })
+      : null;
+  const stripLink = (member: unknown) => {
+    const { user_id: _userId, id: _id, ...rest } = pickObject(member);
+    return rest;
+  };
+
+  req.body = {
+    personal_info: pickObject(body.personal_info),
+    picture: pickObject(body.picture),
+    contact_info: pickObject(body.contact_info),
+    work_info: pickObject(body.work_info),
+    emergency_contact: pickObject(body.emergency_contact),
+    church_info: {
+      membership_type: PUBLIC_MEMBERSHIP_TYPES.has(membershipType) ? membershipType : "ONLINE",
+      member_since: churchInfo.member_since,
+      ...(branch ? { branch_id: branch.id } : {}),
+    },
+    family: Array.isArray(body.family) ? body.family.map(stripLink) : [],
+    children: Array.isArray(body.children) ? body.children.map(stripLink) : [],
+    status: "UNCONFIRMED",
+    is_user: false,
+  };
+  return registerUser(req, res);
+};
+
+const positiveIdOrNull = (value: unknown) => {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+};
+
+/**
+ * Dashboard "Add member": Members › Add members; a conversion also needs the convert action
+ * (visitor: Membership management › Convert visitors or Visitors › Convert
+ * to member; soul won: Membership management › Convert souls won), and the
+ * source record must be in a branch the caller works in.
+ */
+const denyRegisterWithoutActions = async (
+  req: Request,
+  res: Response,
+  payload: any,
+): Promise<boolean> => {
+  if (denyAction(res, membersActionAllowed(req, "create"), "You don't have permission to add members.")) {
+    return true;
+  }
+  const branchScope = getBranchScope();
+  const visitorId = positiveIdOrNull(payload?.source_visitor_id);
+  if (visitorId) {
+    if (
+      denyAction(
+        res,
+        callerActionAllowed(req, "Membership_Management", "convert_visitor") ||
+          callerActionAllowed(req, "Visitors", "convert_to_member"),
+        "You don't have permission to convert visitors to members.",
+      )
+    ) {
+      return true;
+    }
+    const visitor = await prisma.visitor.findUnique({
+      where: { id: visitorId },
+      select: { branch_id: true },
+    });
+    if (
+      visitor?.branch_id &&
+      denyAction(res, isBranchAllowed(branchScope, visitor.branch_id), "This visitor belongs to another branch.")
+    ) {
+      return true;
+    }
+  }
+  const soulId = positiveIdOrNull(payload?.source_soul_won_id);
+  if (soulId) {
+    if (
+      denyAction(
+        res,
+        callerActionAllowed(req, "Membership_Management", "convert_soul"),
+        "You don't have permission to convert souls won to members.",
+      )
+    ) {
+      return true;
+    }
+    const soul = await prisma.soul_won.findUnique({
+      where: { id: soulId },
+      select: { lifeCenter: { select: { branch_id: true } } },
+    });
+    const soulBranchId = soul?.lifeCenter?.branch_id;
+    if (
+      soulBranchId &&
+      denyAction(res, isBranchAllowed(branchScope, soulBranchId), "This soul won belongs to another branch.")
+    ) {
+      return true;
+    }
+  }
+  return false;
+};
+
 export const registerUser = async (req: Request, res: Response) => {
   try {
     const normalizedPayload = normalizeMemberPayload(req.body);
@@ -346,6 +492,10 @@ export const registerUser = async (req: Request, res: Response) => {
       is_user === "true" ||
       is_user === 1 ||
       is_user === "1";
+
+    if (await denyRegisterWithoutActions(req, res, normalizedPayload)) {
+      return;
+    }
 
     if (isLoginUser && !isRealEmail(normalizedEmail)) {
       return res.status(400).json({
@@ -408,9 +558,22 @@ export const registerUser = async (req: Request, res: Response) => {
   }
 };
 
+/**
+ * A role that can't see contact details gets them masked (null) on the edit
+ * form; drop them from the payload so saving doesn't wipe the stored values.
+ */
+const withoutHiddenContactDetails = (payload: any) => {
+  const { email, phone, other_number, state_region, city, ...contactInfo } =
+    payload?.contact_info || {};
+  const { emergency_contact, ...rest } = payload || {};
+  return { ...rest, contact_info: contactInfo };
+};
+
 export const updateUser = async (req: Request, res: Response) => {
   try {
-    const normalizedPayload = normalizeMemberPayload(req.body);
+    const normalizedPayload = canSeeContactDetails(req, Number(req.query?.user_id))
+      ? normalizeMemberPayload(req.body)
+      : withoutHiddenContactDetails(normalizeMemberPayload(req.body));
     const { user_id } = req.query;
     const contactInfoPayload = normalizedPayload?.contact_info || {};
     const hasEmailField = Object.prototype.hasOwnProperty.call(
@@ -505,6 +668,49 @@ export const updateUser = async (req: Request, res: Response) => {
       .trim()
       .toUpperCase();
 
+    if (await denyMembersOutOfReach(req, res, [userExists.id])) return;
+    const storedStatus = String(userExists?.status || "UNCONFIRMED").toUpperCase();
+    const requestedBranchId = Number(branch_id);
+    if (
+      denyAction(res, membersActionAllowed(req, "edit"), "You don't have permission to edit members.") ||
+      // Turning "ministry worker" off removes their roles in every branch,
+      // i.e. their admin sign-in (Members › Give admin sign-in).
+      (!nextIsUser &&
+        userExists?.is_user &&
+        (await prisma.user_branch_access.count({ where: { user_id: userExists.id } })) > 0 &&
+        denyAction(
+          res,
+          membersActionAllowed(req, "grant_login"),
+          "You don't have permission to remove a member's admin sign-in.",
+        )) ||
+      (Boolean(status) &&
+        nextStatus !== storedStatus &&
+        denyAction(
+          res,
+          membersActionAllowed(req, "change_status") ||
+            callerActionAllowed(req, "Membership_Management", "confirm_member"),
+          "You don't have permission to change membership status.",
+        )) ||
+      (hasFamilyField &&
+        Array.isArray(family) &&
+        family.length > 0 &&
+        denyAction(
+          res,
+          membersActionAllowed(req, "link_family"),
+          "You don't have permission to link family members.",
+        )) ||
+      (Number.isInteger(requestedBranchId) &&
+        requestedBranchId > 0 &&
+        requestedBranchId !== userExists?.branch_id &&
+        denyAction(
+          res,
+          isBranchAllowed(getBranchScope(), requestedBranchId),
+          "You can only move members into branches you have access to.",
+        ))
+    ) {
+      return;
+    }
+
     if (nextIsUser && !isRealEmail(nextEmail)) {
       return res.status(400).json({
         message:
@@ -578,6 +784,17 @@ export const updateUser = async (req: Request, res: Response) => {
       );
     }
 
+    // `department_positions` present as an array (even empty) replaces the
+    // member's rows; absent leaves them untouched. Validated up front so a bad
+    // payload fails before anything is written.
+    const normalizedDepartmentPositions: NormalizedDepartmentPosition[] | null =
+      Array.isArray(department_positions)
+        ? normalizeDepartmentPositions(department_positions)
+        : null;
+
+    // undefined = absent (untouched), null = cleared; throws 400 when invalid.
+    const otherNumber = parseOtherNumber(contactInfoPayload);
+
     const normalizedGender = normalizeGenderValue(gender);
     const resolvedUserInfoGender =
       normalizedGender || userExists?.user_info?.gender || null;
@@ -619,6 +836,7 @@ export const updateUser = async (req: Request, res: Response) => {
       city,
       country_code,
       primary_number,
+      other_number: otherNumber,
       member_since: member_since ? new Date(member_since) : undefined,
     };
     const userInfoCreateData: any = {
@@ -637,6 +855,7 @@ export const updateUser = async (req: Request, res: Response) => {
       city,
       country_code,
       primary_number,
+      other_number: otherNumber ?? null,
       member_since: member_since ? new Date(member_since) : null,
     };
 
@@ -737,7 +956,12 @@ export const updateUser = async (req: Request, res: Response) => {
       ? nextNameParts.join(" ")
       : userExists?.name;
 
-    const updatedUser = await prisma.user.update({
+    const resolvedBranchId = await resolveBranchIdOrDefault(
+      branch_id ?? userExists?.branch_id,
+    );
+    // The profile row and the department rows are written in one transaction
+    // so a failed department write can't leave a half-saved member.
+    const userUpdate = prisma.user.update({
       where: { id: Number(user_id) },
       data: {
         name: nextDisplayName,
@@ -745,9 +969,13 @@ export const updateUser = async (req: Request, res: Response) => {
         is_user: nextIsUser,
         access_level_id: nextAccessLevelId,
         status: status || userExists?.status,
+        ...buildMembershipStatusTimestampData(
+          userExists,
+          status || userExists?.status,
+        ),
         position_id: Number(position_id) || userExists?.position_id,
         department_id: Number(department_id) || userExists?.department_id,
-        branch_id: await resolveBranchIdOrDefault(branch_id ?? userExists?.branch_id),
+        branch_id: resolvedBranchId,
         membership_type: membership_type || userExists?.membership_type,
         user_info: {
           upsert: {
@@ -766,17 +994,24 @@ export const updateUser = async (req: Request, res: Response) => {
     });
 
     let dep_posts, kids;
+    let updatedUser;
 
-    // Handle department_positions update
-    if (
-      Array.isArray(department_positions) &&
-      department_positions.length > 0
-    ) {
-      console.log("Stub: handle department updates here");
-      dep_posts = await updateDepartmentPositions(
-        Number(user_id),
-        department_positions,
-      );
+    if (normalizedDepartmentPositions) {
+      const [savedUser, , ...createdPositions] = await prisma.$transaction([
+        userUpdate,
+        ...departmentPositionWrites(Number(user_id), normalizedDepartmentPositions),
+      ]);
+      updatedUser = savedUser;
+      dep_posts = createdPositions;
+    } else {
+      updatedUser = await userUpdate;
+    }
+
+    // Losing admin sign-in removes their role in every branch.
+    if (!nextIsUser && userExists?.is_user) {
+      await prisma.user_branch_access.deleteMany({
+        where: { user_id: updatedUser.id },
+      });
     }
 
     void sessionChanged(
@@ -793,7 +1028,8 @@ export const updateUser = async (req: Request, res: Response) => {
       }
       await updateFamilyMembers(family, updatedUser);
     }
-    const { password, ...rest } = updatedUser;
+    // The client never returns the password hash (see Models/context.ts).
+    const rest = updatedUser;
 
     const data = {
       parent: rest,
@@ -899,6 +1135,7 @@ async function updateFamilyMembers(family: any[], primaryUser: any) {
         data: {
           name: `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
           email: normalizeOptionalEmail(member.email),
+          membership_type: primaryUser.membership_type || "IN_HOUSE",
           is_user: false,
           is_active: true,
           user_info: {
@@ -977,23 +1214,36 @@ async function updateFamilyMembers(family: any[], primaryUser: any) {
         },
       });
     } else if (relation === FAMILY_RELATION.CHILD) {
-      familyUser = await prisma.user.findFirst({
-        where: {
-          user_info: {
-            first_name: member.first_name,
-            last_name: member.last_name,
-            date_of_birth: new Date(member.date_of_birth),
-          },
-          OR: [{ parent_id: primaryUser.id }, { parent_id: spouseUser?.id }],
-        },
-      });
+      // Match an existing child by name + DOB, scoped to THIS family's
+      // children (resolved from family_relation, the single source of truth).
+      const existingChildIds = await getDirectChildIds(primaryUser.id);
+      if (spouseUser?.id) {
+        (await getDirectChildIds(spouseUser.id)).forEach((childId) =>
+          existingChildIds.add(childId),
+        );
+      }
 
+      familyUser = existingChildIds.size
+        ? await prisma.user.findFirst({
+            where: {
+              id: { in: Array.from(existingChildIds) },
+              user_info: {
+                first_name: member.first_name,
+                last_name: member.last_name,
+                date_of_birth: new Date(member.date_of_birth),
+              },
+            },
+          })
+        : null;
+
+      // The parent↔child link is written below via
+      // upsertBidirectionalFamilyRelation; no scalar parent_id is stored.
       if (!familyUser) {
         familyUser = await prisma.user.create({
           data: {
             name: `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
             email: normalizeOptionalEmail(member.email),
-            parent_id: primaryUser.id,
+            membership_type: primaryUser.membership_type || "IN_HOUSE",
             is_user: false,
             is_active: true,
             user_info: {
@@ -1026,6 +1276,7 @@ async function updateFamilyMembers(family: any[], primaryUser: any) {
         data: {
           name: `${member.first_name} ${member.other_name || ""} ${member.last_name}`.trim(),
           email: normalizeOptionalEmail(member.email),
+          membership_type: primaryUser.membership_type || "IN_HOUSE",
           is_user: false,
           is_active: true,
           user_info: {
@@ -1070,60 +1321,40 @@ async function updateFamilyMembers(family: any[], primaryUser: any) {
   return updatedMembers;
 }
 
-// Helper to update department_positions
-async function updateDepartmentPositions(
+// Writes that replace a member's department rows: delete everything, then
+// re-create. Callers run them inside a transaction so a failed create rolls the
+// delete back. An empty array clears every row.
+function departmentPositionWrites(
   userId: number,
-  department_positions: {
-    department_id: any;
-    position_id: any;
-    start_date?: any;
-    end_date?: any;
-  }[],
+  rows: NormalizedDepartmentPosition[],
 ) {
-  const seenDepartmentIds = new Set<number>();
-  for (const dp of department_positions) {
-    const departmentId = parseInt(dp.department_id);
-    if (seenDepartmentIds.has(departmentId)) {
-      throw new InputValidationError(
-        `Duplicate department assignment: department_id ${dp.department_id} appears more than once in department_positions.`,
-      );
-    }
-    seenDepartmentIds.add(departmentId);
-  }
-
-  await prisma.department_positions.deleteMany({
-    where: { user_id: userId },
-  });
-  const created = await Promise.all(
-    department_positions.map((dp) =>
+  return [
+    prisma.department_positions.deleteMany({
+      where: { user_id: userId },
+    }),
+    ...rows.map((dp) =>
       prisma.department_positions.create({
         data: {
           user_id: userId,
-          department_id: parseInt(dp.department_id),
-          position_id: parseInt(dp.position_id),
-          start_date: parseOptionalDate(dp.start_date),
-          end_date: parseOptionalDate(dp.end_date),
+          ...dp,
         },
       }),
     ),
-  );
-  return created;
-}
-
-async function updateChildren(
-  children: any[],
-  parentObj: any,
-  membership_type: string,
-  userId: number,
-) {
-  await prisma.user.deleteMany({
-    where: { parent_id: userId },
-  });
-  await userService.registerChildren(children, parentObj, membership_type);
+  ] as const;
 }
 
 export const updateUserSatus = async (req: Request, res: Response) => {
   const { id, is_active } = req.body;
+  if (
+    denyAction(
+      res,
+      membersActionAllowed(req, "change_status"),
+      "You don't have permission to activate or deactivate members.",
+    ) ||
+    (await denyMembersOutOfReach(req, res, [Number(id)]))
+  ) {
+    return;
+  }
   try {
     const response = await prisma.user.update({
       where: {
@@ -1187,6 +1418,12 @@ export const updateUserSatus = async (req: Request, res: Response) => {
 export const deleteUser = async (req: Request, res: Response) => {
   try {
     const { id } = req.query;
+    if (
+      denyAction(res, membersActionAllowed(req, "delete"), "You don't have permission to delete members.") ||
+      (await denyMembersOutOfReach(req, res, [Number(id)]))
+    ) {
+      return;
+    }
     const existance = await prisma.user.findUnique({
       where: {
         id: Number(id),
@@ -1291,6 +1528,17 @@ const SESSION_USER_SELECT = {
   is_active: true,
   is_user: true,
   access_level_id: true,
+  branch_id: true,
+  branch_access: {
+    where: { access_level: { deleted: false } },
+    orderBy: { branch_id: "asc" as const },
+    select: {
+      branch_id: true,
+      access_level_id: true,
+      branch: { select: { name: true } },
+      access_level: { select: { name: true, permissions: true, workspaces: true } },
+    },
+  },
   membership_type: true,
   is_guest: true,
   status: true,
@@ -1351,14 +1599,34 @@ export const buildSessionClaims = async (existance: any) => {
   );
 
   const ministry_worker = Boolean(existance.is_user);
+  const grants: any[] = Array.isArray(existance.branch_access)
+    ? existance.branch_access
+    : [];
+  // Admin access comes from per-branch roles; no role in any branch = member.
   const user_category =
-    ministry_worker && Boolean(existance.access_level_id)
-      ? "admin"
-      : "member";
+    ministry_worker && grants.length > 0 ? "admin" : "member";
+  // The token carries the home-branch role (or the first one); clients switch
+  // to the active branch's permissions using `branch_access` from current-user.
+  const homeGrant =
+    grants.find((grant) => grant.branch_id === existance.branch_id) ??
+    grants[0];
   const tokenPermissions =
     user_category === "admin"
-      ? parsePermissionsObject(existance.access?.permissions) || {}
+      ? parsePermissionsObject(
+          homeGrant?.access_level?.permissions ?? existance.access?.permissions,
+        ) || {}
       : null;
+  // Names only: per-branch permission maps would push the JWT past the
+  // cookie size limit, so current-user sends those.
+  const branch_access =
+    user_category === "admin"
+      ? grants.map((grant) => ({
+          branch_id: grant.branch_id,
+          branch_name: grant.branch?.name ?? "",
+          access_level_id: grant.access_level_id,
+          access_level_name: grant.access_level?.name ?? "",
+        }))
+      : [];
 
   const life_center_leader: boolean = await checkIfLifeCenterLeader(
     existance.id,
@@ -1385,6 +1653,8 @@ export const buildSessionClaims = async (existance: any) => {
     member_since: existance.user_info?.member_since || null,
     is_guest: Boolean(existance.is_guest),
     status: existance.status ?? null,
+    branch_id: existance.branch_id ?? null,
+    branch_access,
   };
 };
 
@@ -1405,6 +1675,25 @@ export const issueSessionTokenForUser = async (userId: number) => {
     select: SESSION_USER_SELECT,
   });
   return existance ? signSessionToken(existance) : null;
+};
+
+const LAST_ACTIVE_THROTTLE_MS = 5 * 60 * 1000;
+
+/** Records that the user is using the app. Fire-and-forget; written at most every 5 minutes. */
+const touchLastActive = (userId: number) => {
+  const now = new Date();
+  void prisma.user
+    .updateMany({
+      where: {
+        id: userId,
+        OR: [
+          { last_active_at: null },
+          { last_active_at: { lt: new Date(now.getTime() - LAST_ACTIVE_THROTTLE_MS) } },
+        ],
+      },
+      data: { last_active_at: now },
+    })
+    .catch(() => undefined);
 };
 
 export const login = async (req: Request, res: Response) => {
@@ -1447,6 +1736,7 @@ export const login = async (req: Request, res: Response) => {
 
     if (await comparePassword(String(password || ""), existance.password)) {
       const token = await signSessionToken(existance);
+      touchLastActive(existance.id);
 
       return res
         .status(200)
@@ -1540,6 +1830,8 @@ export const forgetPassword = async (req: Request, res: Response) => {
       where: {
         email: normalizedEmail as string,
       },
+      // The reset link is signed with the current hash.
+      omit: { password: false },
     });
 
     if (!existingUser?.password) {
@@ -1633,6 +1925,16 @@ export const resetPassword = async (req: Request, res: Response) => {
 
 export const activateAccount = async (req: Request, res: Response) => {
   const { user_id } = req.query;
+  if (
+    denyAction(
+      res,
+      membersActionAllowed(req, "change_status"),
+      "You don't have permission to activate or deactivate members.",
+    ) ||
+    (await denyMembersOutOfReach(req, res, [Number(user_id)]))
+  ) {
+    return;
+  }
   try {
     const existingUser = await prisma.user.findUnique({
       where: {
@@ -1766,6 +2068,15 @@ const fetchUserDirectoryRelations = async (
         date_of_birth: true,
         marital_status: true,
         work_info_id: true,
+        gender: true,
+        city: true,
+        state_region: true,
+        nationality: true,
+        emergency_contact: {
+          select: {
+            name: true,
+          },
+        },
       },
     }),
     prisma.department_positions.findMany({
@@ -1855,6 +2166,11 @@ const fetchUserDirectoryRelations = async (
         member_since: info.member_since,
         date_of_birth: info.date_of_birth,
         marital_status: info.marital_status,
+        gender: info.gender ?? null,
+        city: info.city ?? null,
+        state_region: info.state_region ?? null,
+        nationality: info.nationality ?? null,
+        has_emergency_contact: Boolean(info.emergency_contact?.name?.trim()),
         work_info: info.work_info_id
           ? workInfoById.get(info.work_info_id) || null
           : null,
@@ -1893,8 +2209,122 @@ const maskExcludedListedUser = (user: any) => ({
   date_of_birth: null,
   marital_status: null,
   employment_status: null,
+  gender: null,
+  city: null,
+  state_region: null,
+  nationality: null,
+  has_emergency_contact: null,
+  children_count: null,
   is_restricted: true,
 });
+
+/**
+ * Children per user for one page of the member list: explicit CHILD links
+ * (either direction of family_relation), de-duplicated the same way get-user
+ * builds `family`.
+ */
+const countChildrenByUserId = async (
+  userIds: number[],
+): Promise<Map<number, number>> => {
+  const childIdsByUser = new Map<number, Set<number>>();
+  if (!userIds.length) return new Map();
+
+  const [forwardChildren, reverseChildren] = await Promise.all([
+    prisma.family_relation.findMany({
+      where: { user_id: { in: userIds }, relation: FAMILY_RELATION.CHILD },
+      select: { user_id: true, family_id: true },
+    }),
+    prisma.family_relation.findMany({
+      where: { family_id: { in: userIds }, relation: FAMILY_RELATION.PARENT },
+      select: { user_id: true, family_id: true },
+    }),
+  ]);
+
+  const add = (parentId: number | null, childId: number) => {
+    if (!parentId || parentId === childId) return;
+    const set = childIdsByUser.get(parentId) || new Set<number>();
+    set.add(childId);
+    childIdsByUser.set(parentId, set);
+  };
+
+  forwardChildren.forEach((row) => add(row.user_id, row.family_id));
+  reverseChildren.forEach((row) => add(row.family_id, row.user_id));
+
+  return new Map(
+    Array.from(childIdsByUser.entries()).map(([id, set]) => [id, set.size]),
+  );
+};
+
+type MemberStatusCounts = {
+  all: number;
+  UNCONFIRMED: number;
+  CONFIRMED: number;
+  MEMBER: number;
+  inactive: number;
+};
+
+/** One grouped query over the request's filters minus status / is_active. */
+const buildMemberStatusCounts = async (
+  baseWhere: any,
+): Promise<MemberStatusCounts> => {
+  const groups = await prisma.user.groupBy({
+    by: ["status", "is_active"],
+    where: baseWhere,
+    _count: { _all: true },
+  });
+
+  const counts: MemberStatusCounts = {
+    all: 0,
+    UNCONFIRMED: 0,
+    CONFIRMED: 0,
+    MEMBER: 0,
+    inactive: 0,
+  };
+
+  for (const group of groups) {
+    const count = group._count?._all ?? 0;
+    counts.all += count;
+    if (group.is_active === false) {
+      counts.inactive += count;
+      continue;
+    }
+    if (group.is_active !== true) continue;
+    if (group.status === "CONFIRMED") counts.CONFIRMED += count;
+    else if (group.status === "MEMBER") counts.MEMBER += count;
+    else if (group.status === "UNCONFIRMED" || group.status === null) {
+      counts.UNCONFIRMED += count;
+    }
+  }
+
+  return counts;
+};
+
+type ListUsersSort = "name" | "newest" | "oldest";
+
+const resolveListUsersSort = (value: unknown): ListUsersSort => {
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return normalized === "newest" || normalized === "oldest"
+    ? normalized
+    : "name";
+};
+
+const buildListUsersOrderBy = (sort: ListUsersSort): any => {
+  if (sort === "newest") {
+    return [
+      { user_info: { member_since: { sort: "desc", nulls: "last" } } },
+      { created_at: "desc" },
+      { id: "desc" },
+    ];
+  }
+  if (sort === "oldest") {
+    return [
+      { user_info: { member_since: { sort: "asc", nulls: "last" } } },
+      { created_at: "asc" },
+      { id: "asc" },
+    ];
+  }
+  return { name: "asc" };
+};
 
 const flattenListedUsers = (data: any[]) => {
   return data.map(({ user_info, ...rest }) => {
@@ -1925,7 +2355,11 @@ export const ListUsers = async (req: Request, res: Response) => {
     ministry_worker,
     membership_type,
     status,
+    sort,
+    include_status_counts,
   } = req.query;
+  const listSort = resolveListUsersSort(sort);
+  const includeStatusCounts = include_status_counts === "true";
   const isUser =
     is_user === "true" || ministry_worker === "true" ? true : false;
   const resolvedTake =
@@ -1965,6 +2399,11 @@ export const ListUsers = async (req: Request, res: Response) => {
     if (branchWhere) {
       whereConditions.push(branchWhere);
     }
+    // A role limited to its departments or life centers lists those people.
+    const scopeWhere = memberScopeWhere(req);
+    if (scopeWhere) {
+      whereConditions.push(scopeWhere);
+    }
     // Guests who joined from the mobile app have accounts but are not
     // members: keep them out of the member list and the confirmation queue
     // (a null status would otherwise land them in UNCONFIRMED). They are
@@ -1975,8 +2414,11 @@ export const ListUsers = async (req: Request, res: Response) => {
       });
     }
 
+    // status / is_active are kept out of `whereConditions` so status_counts
+    // can reuse every other filter.
+    const stageConditions: any[] = [];
     if (is_active !== undefined) {
-      whereConditions.push({
+      stageConditions.push({
         is_active:
           is_active === "true"
             ? true
@@ -2018,14 +2460,14 @@ export const ListUsers = async (req: Request, res: Response) => {
     }
     if (normalizedStatus) {
       if (normalizedStatus === "UNCONFIRMED") {
-        whereConditions.push({
+        stageConditions.push({
           OR: [{ status: "UNCONFIRMED" }, { status: null }],
         });
       } else if (
         normalizedStatus === "CONFIRMED" ||
         normalizedStatus === "MEMBER"
       ) {
-        whereConditions.push({ status: normalizedStatus });
+        stageConditions.push({ status: normalizedStatus });
       }
     }
     if (membership_type) {
@@ -2047,8 +2489,11 @@ export const ListUsers = async (req: Request, res: Response) => {
           { name: { contains: searchTerm } },
           { member_id: { contains: searchTerm } },
           // Excluded members stay listed but their contact details are
-          // masked, so they must not be findable by email or phone either.
-          ...(excludedMemberIds.length > 0
+          // masked, so they must not be findable by email or phone either;
+          // nor is anyone, for a role that can't see contact details.
+          ...(!membersActionAllowed(req, "view_contact_details")
+            ? []
+            : excludedMemberIds.length > 0
             ? [
                 {
                   AND: [
@@ -2061,17 +2506,18 @@ export const ListUsers = async (req: Request, res: Response) => {
         ],
       });
     }
-    const whereFilter =
+    const baseWhere =
       whereConditions.length > 0 ? { AND: whereConditions } : undefined;
+    const allConditions = [...whereConditions, ...stageConditions];
+    const whereFilter =
+      allConditions.length > 0 ? { AND: allConditions } : undefined;
 
-    const [total, users] = await Promise.all([
+    const [total, users, statusCounts] = await Promise.all([
       prisma.user.count({ where: whereFilter }),
       prisma.user.findMany({
         skip,
         take: pageSize,
-        orderBy: {
-          name: "asc",
-        },
+        orderBy: buildListUsersOrderBy(listSort),
         where: whereFilter,
         select: {
           id: true,
@@ -2086,11 +2532,19 @@ export const ListUsers = async (req: Request, res: Response) => {
           membership_type: true,
           status: true,
           position_id: true,
+          confirmed_at: true,
+          functional_at: true,
+          source_visitor_id: true,
+          source_soul_won_id: true,
         },
       }),
+      includeStatusCounts
+        ? buildMemberStatusCounts(baseWhere)
+        : Promise.resolve(null),
     ]);
 
     const userIds = users.map((user) => user.id);
+    const childrenCountByUserId = await countChildrenByUserId(userIds);
     const primaryPositionIds = toUniquePositiveIds(
       users.map((user) => user.position_id),
     );
@@ -2136,8 +2590,14 @@ export const ListUsers = async (req: Request, res: Response) => {
         departmentNamesFromPositions[0] ||
         null;
 
+      const {
+        source_visitor_id: sourceVisitorId,
+        source_soul_won_id: sourceSoulWonId,
+        ...listedUser
+      } = user;
+
       return {
-        ...user,
+        ...listedUser,
         position: user.position_id
           ? positionById.get(user.position_id) || null
           : null,
@@ -2145,6 +2605,11 @@ export const ListUsers = async (req: Request, res: Response) => {
         department_id: primaryDepartmentId,
         department_name: primaryDepartmentName,
         branch_id: user.branch_id ?? null,
+        confirmed_at: user.confirmed_at ?? null,
+        functional_at: user.functional_at ?? null,
+        from_visitor: sourceVisitorId != null,
+        from_soul_won: sourceSoulWonId != null,
+        children_count: childrenCountByUserId.get(user.id) ?? 0,
         department_names: departmentNamesFromPositions,
         department_positions: departmentPositions.map((entry: any) => ({
           department_id: entry.department_id,
@@ -2156,6 +2621,7 @@ export const ListUsers = async (req: Request, res: Response) => {
     });
 
     const excludedMemberIdSet = new Set(excludedMemberIds);
+    const showContacts = membersActionAllowed(req, "view_contact_details");
 
     res.status(200).json({
       message: "Operation Successful",
@@ -2164,10 +2630,13 @@ export const ListUsers = async (req: Request, res: Response) => {
       page_size: pageSize,
       total,
       totalPages: Math.ceil(total / pageSize),
+      ...(statusCounts ? { meta: { status_counts: statusCounts } } : {}),
       data: flattenListedUsers(usersWithDeptName).map((user) =>
         excludedMemberIdSet.has(user.id)
           ? maskExcludedListedUser(user)
-          : { ...user, is_restricted: false },
+          : showContacts || canSeeContactDetails(req, user.id)
+            ? { ...user, is_restricted: false }
+            : maskContactDetails({ ...user, is_restricted: false }),
       ),
     });
   } catch (error) {
@@ -2181,6 +2650,16 @@ export const ListUsersLight = async (req: Request, res: Response) => {
       ? memberScope.exclusions
       : [];
     const permissionDomain = String(req.query.permission_domain || "").trim();
+    // Who holds a permission is access-rights information: only for people
+    // who can see roles, or who manage that module (e.g. the finance approver picker).
+    const callerPermissions = getRequestAccess(req)?.permissions;
+    if (
+      permissionDomain &&
+      !hasActionPermission(callerPermissions, "Access_rights", "view") &&
+      !hasActionPermission(callerPermissions, permissionDomain, "manage")
+    ) {
+      return res.status(403).json({ message: "Not authorized", data: null });
+    }
     const minimumAccessRaw = String(req.query.minimum_access || "").trim().toLowerCase();
     const minimumAccess: MinimumAccessLevel =
       minimumAccessRaw === "manage"
@@ -2209,6 +2688,7 @@ export const ListUsersLight = async (req: Request, res: Response) => {
         name: true,
         email: true,
         is_user: true,
+        is_active: true,
         branch_id: true,
         position_id: true,
         access: {
@@ -2338,8 +2818,8 @@ export const ListUsersLight = async (req: Request, res: Response) => {
         return {
           id: user.id,
           name: user.name,
-          email: user.email,
           ministry_worker: Boolean(user.is_user),
+          is_active: user.is_active ?? true,
           department:
             userDepartmentByUserId.get(user.id) || fallbackDepartment || null,
           position:
@@ -2400,6 +2880,10 @@ export const filterUsersInfo = async (req: Request, res: Response) => {
         notIn: excludedMemberIds,
       };
     }
+    const scopeWhere = memberScopeWhere(req);
+    if (scopeWhere) {
+      filters.AND = [scopeWhere];
+    }
 
     const [total, users] = await Promise.all([
       prisma.user.count({ where: filters }),
@@ -2425,7 +2909,9 @@ export const filterUsersInfo = async (req: Request, res: Response) => {
       total,
       totalPages,
       count: users.length,
-      data: users,
+      data: users.map((user) =>
+        canSeeContactDetails(req, user.id) ? user : maskContactDetails(user),
+      ),
     });
   } catch (error) {
     console.error(error);
@@ -2448,6 +2934,7 @@ export const getUser = async (req: Request, res: Response) => {
   if (!resolvedUserId) {
     return res.status(400).json({ message: "Invalid or missing user_id" });
   }
+  if (await denyMembersOutOfReach(req, res, [resolvedUserId])) return;
 
   try {
     const response: any = await prisma.user.findUnique({
@@ -2469,12 +2956,35 @@ export const getUser = async (req: Request, res: Response) => {
         department: true,
         position: true,
         access: true,
+        source_visitor: {
+          select: {
+            id: true,
+            visitDate: true,
+            visits: { select: { date: true } },
+          },
+        },
+        source_soul_won: {
+          select: {
+            id: true,
+            date_won: true,
+            lifeCenter: { select: { name: true } },
+            wonBy: { select: { name: true } },
+          },
+        },
         enrollments: {
           select: {
             id: true,
             enrolledAt: true,
             completed: true,
             completedAt: true,
+            progress: {
+              select: {
+                topicId: true,
+                completed: true,
+                status: true,
+                topic: { select: { programId: true } },
+              },
+            },
             course: {
               select: {
                 cohort: {
@@ -2594,39 +3104,36 @@ export const getUser = async (req: Request, res: Response) => {
     );
 
     /* =========================
-       6️⃣ BIOLOGICAL LOOKUPS
+       6️⃣ FAMILY GRAPH LOOKUPS (family_relation only)
     ========================== */
-    const biologicalChildren = await prisma.user.findMany({
-      where: { parent_id: response.id },
-      include: { user_info: true },
-    });
-
     const childrenMap = new Map<number, any>();
-    [...children.map((c) => c.user), ...biologicalChildren].forEach((c) =>
-      childrenMap.set(c.id, c),
-    );
-
-    const parentIds = parents.map((p) => p.user.id);
-    const siblingByParent =
-      parentIds.length > 0
-        ? await prisma.user.findMany({
-            where: {
-              parent_id: { in: parentIds },
-              NOT: { id: response.id },
-            },
-            include: { user_info: true },
-          })
-        : [];
+    children.map((c) => c.user).forEach((c) => childrenMap.set(c.id, c));
 
     const siblingsMap = new Map<number, any>();
-    [...siblings.map((s) => s.user), ...siblingByParent].forEach((s) =>
-      siblingsMap.set(s.id, s),
-    );
+    siblings.map((s) => s.user).forEach((s) => siblingsMap.set(s.id, s));
+
+    const derivedSiblingIds = Array.from(
+      await getSiblingIds(response.id),
+    ).filter((id) => id !== response.id && !siblingsMap.has(id));
+    if (derivedSiblingIds.length) {
+      const derivedSiblings = await prisma.user.findMany({
+        where: { id: { in: derivedSiblingIds } },
+        include: { user_info: true },
+      });
+      derivedSiblings.forEach((s) => siblingsMap.set(s.id, s));
+    }
 
     /* =========================
        7️⃣ BUILD RESPONSE
     ========================== */
-    const { user_info, department_positions, enrollments, ...rest } = response;
+    const {
+      user_info,
+      department_positions,
+      enrollments,
+      source_visitor,
+      source_soul_won,
+      ...rest
+    } = response;
 
     const user: any = {
       ...(user_info || {}),
@@ -2671,8 +3178,41 @@ export const getUser = async (req: Request, res: Response) => {
       end_date: dp.end_date ?? null,
     }));
 
+    user.member_source = buildMemberSource(source_visitor, source_soul_won);
+
+    // One grouped query for every enrolled program's topic count (no N+1).
+    const enrolledProgramIds = toUniquePositiveIds(
+      (enrollments || []).map(
+        (enrollment: any) => enrollment.course?.cohort?.program?.id,
+      ),
+    );
+    const topicCountByProgramId = new Map<number, number>();
+    if (enrolledProgramIds.length > 0) {
+      const topicCounts = await prisma.topic.groupBy({
+        by: ["programId"],
+        where: { programId: { in: enrolledProgramIds } },
+        _count: { _all: true },
+      });
+      topicCounts.forEach((row) =>
+        topicCountByProgramId.set(row.programId, row._count._all),
+      );
+    }
+
     const enrolledPrograms = (enrollments || []).map((enrollment: any) => {
       const completed = Boolean(enrollment.completed);
+      const programId: number | null =
+        enrollment.course?.cohort?.program?.id ?? null;
+      const progress = computeEnrollmentProgress({
+        programId,
+        totalTopics: programId ? topicCountByProgramId.get(programId) ?? 0 : 0,
+        enrollmentCompleted: enrollment.completed,
+        progress: (enrollment.progress || []).map((row: any) => ({
+          topicId: row.topicId,
+          completed: row.completed,
+          status: row.status,
+          topicProgramId: row.topic?.programId ?? null,
+        })),
+      });
 
       return {
         enrollment_id: enrollment.id,
@@ -2695,6 +3235,9 @@ export const getUser = async (req: Request, res: Response) => {
           label: completed ? "COMPLETED" : "IN_PROGRESS",
           completed_at: enrollment.completedAt ?? null,
         },
+        progress_percent: progress.progress_percent,
+        completed_topics: progress.completed_topics,
+        total_topics: progress.total_topics,
       };
     });
 
@@ -2711,9 +3254,15 @@ export const getUser = async (req: Request, res: Response) => {
       items: enrolledPrograms,
     };
 
+    const showContacts = canSeeContactDetails(req, resolvedUserId);
     return res.status(200).json({
       message: "Operation Successful",
-      data: user,
+      data: showContacts
+        ? user
+        : {
+            ...maskContactDetails(user),
+            family: (user.family || []).map((relative: any) => maskContactDetails(relative)),
+          },
     });
   } catch (error) {
     return res.status(500).json({
@@ -2784,12 +3333,19 @@ const calculateStats = (users: any[]) => {
 export const statsUsers = async (req: Request, res: Response) => {
   try {
     const branchWhere = getBranchScopedWhere(req.query?.branch_id);
+    // `active_only=true` counts active members only; default counts everyone.
+    const activeWhere = req.query?.active_only === "true" ? { is_active: true } : {};
+    // A role limited to its departments or life centers counts those people.
+    const scopeWhere = memberScopeWhere(req);
+    const scopeFilter = scopeWhere ? { AND: [scopeWhere] } : {};
     const [onlineUsers, inhouseUsers] = await Promise.all([
       prisma.user_info.findMany({
         where: {
           user: {
             membership_type: "ONLINE",
             ...(branchWhere || {}),
+            ...activeWhere,
+            ...scopeFilter,
           },
         },
       }),
@@ -2798,6 +3354,8 @@ export const statsUsers = async (req: Request, res: Response) => {
           user: {
             membership_type: "IN_HOUSE",
             ...(branchWhere || {}),
+            ...activeWhere,
+            ...scopeFilter,
           },
         },
       }),
@@ -2901,6 +3459,7 @@ export const getUserByEmailPhone = async (req: Request, res: Response) => {
         message: "User not found",
       });
     }
+    if (user && (await denyMembersOutOfReach(req, res, [user.user_id]))) return;
 
     return res.status(200).json({
       message: "Operation successful",
@@ -2935,6 +3494,17 @@ export const convertMemeberToConfirmedMember = async (
   }
 
   const user_status = typeof status === "string" ? status : undefined;
+  if (
+    denyAction(
+      res,
+      callerActionAllowed(req, "Membership_Management", "confirm_member") ||
+        membersActionAllowed(req, "change_status"),
+      "You don't have permission to confirm members.",
+    ) ||
+    (await denyMembersOutOfReach(req, res, [Number(user_id)]))
+  ) {
+    return;
+  }
 
   try {
     const result = await userService.convertMemeberToConfirmedMember(
@@ -2986,6 +3556,18 @@ export const bulkUpdateMemberStatus = async (req: Request, res: Response) => {
         error: "user_ids must be a non-empty array.",
       },
     });
+  }
+
+  if (
+    denyAction(
+      res,
+      callerActionAllowed(req, "Membership_Management", "confirm_member") ||
+        membersActionAllowed(req, "change_status"),
+      "You don't have permission to change membership status.",
+    ) ||
+    (await denyMembersOutOfReach(req, res, user_ids))
+  ) {
+    return;
   }
 
   try {
@@ -3050,6 +3632,18 @@ export const bulkUpdateUserStatus = async (req: Request, res: Response) => {
     });
   }
 
+  if (
+    denyAction(
+      res,
+      membersActionAllowed(req, "change_status") ||
+        callerActionAllowed(req, "Access_rights", "deactivate_users"),
+      "You don't have permission to activate or deactivate members.",
+    ) ||
+    (await denyMembersOutOfReach(req, res, user_ids))
+  ) {
+    return;
+  }
+
   try {
     const result = await userService.bulkUpdateUserStatus(user_ids, is_active);
     const changedIds = result.results
@@ -3072,6 +3666,16 @@ export const bulkUpdateUserStatus = async (req: Request, res: Response) => {
 export const linkSpouses = async (req: Request, res: Response) => {
   try {
     const { husband, wife } = req.body;
+    if (
+      denyAction(
+        res,
+        membersActionAllowed(req, "link_family"),
+        "You don't have permission to link family members.",
+      ) ||
+      (await denyMembersOutOfReach(req, res, [Number(husband), Number(wife)]))
+    ) {
+      return;
+    }
     const result = await userService.linkSpouses(Number(husband), Number(wife));
     if (result.error == "") {
       return res.status(400).json({
@@ -3109,6 +3713,7 @@ export const getUserFamily = async (req: Request, res: Response) => {
       });
     }
 
+    if (await denyMembersOutOfReach(req, res, [resolvedUserId])) return;
     const family = await userService.getUserFamily(resolvedUserId);
 
     if (!family) {
@@ -3133,23 +3738,36 @@ export const getUserFamily = async (req: Request, res: Response) => {
 export const linkChildren = async (req: Request, res: Response) => {
   try {
     const { childrenIds, parentId } = req.body;
+    if (
+      denyAction(
+        res,
+        membersActionAllowed(req, "link_family"),
+        "You don't have permission to link family members.",
+      ) ||
+      (await denyMembersOutOfReach(req, res, [
+        Number(parentId),
+        ...(Array.isArray(childrenIds) ? childrenIds.map(Number) : []),
+      ]))
+    ) {
+      return;
+    }
 
     if (Array.isArray(childrenIds) && childrenIds.length > 0) {
       const result = await userService.linkChildren(childrenIds, parentId);
       if (result) {
-        return { message: "Operation Sucess", data: result };
+        return res.status(200).json({ message: "Operation Sucess", data: result });
       }
 
-      return {
+      return res.status(400).json({
         message: "Operation Failed",
         data: "Something Happened, Contact Eshun",
-      };
+      });
     }
 
-    return {
+    return res.status(400).json({
       message: "Operation Failed",
       data: "We expect the children Id to be an Array",
-    };
+    });
   } catch (error) {
     console.error("Error linking children:", error);
     throw error;
@@ -3162,6 +3780,7 @@ export const currentuser = async (req: Request, res: Response) => {
     if (!Number.isInteger(authenticatedUserId) || authenticatedUserId <= 0) {
       return res.status(401).json({ message: "Unauthorized" });
     }
+    touchLastActive(authenticatedUserId);
 
     const user = await prisma.user.findUnique({
       where: { id: authenticatedUserId },
@@ -3236,9 +3855,32 @@ export const currentuser = async (req: Request, res: Response) => {
       .map((dept) => departmentById.get(dept.department_id)?.name ?? null)
       .filter((value): value is string => Boolean(value));
 
+    const branchAccess =
+      claims?.user_category === "admin"
+        ? (sessionUser?.branch_access ?? []).map((grant: any) => ({
+            branch_id: grant.branch_id,
+            branch_name: grant.branch?.name ?? "",
+            access_level_id: grant.access_level_id,
+            access_level_name: grant.access_level?.name ?? "",
+            permissions: parsePermissionsObject(grant.access_level?.permissions),
+            workspaces: resolveWorkspaces(
+              grant.access_level?.workspaces,
+              grant.access_level?.permissions,
+            ).workspaces,
+          }))
+        : [];
+    const homeBranch = user.branch_id
+      ? await prisma.branch.findUnique({
+          where: { id: user.branch_id },
+          select: { id: true, name: true },
+        })
+      : null;
+
     const data = {
       permissions: claims?.permissions ?? null,
       user_category: claims?.user_category ?? null,
+      branch_access: branchAccess,
+      branch_name: homeBranch?.name ?? null,
       ministry_worker: claims?.ministry_worker ?? false,
       department_positions: claims?.department_positions ?? [],
       life_center_leader: claims?.life_center_leader ?? false,
@@ -3354,5 +3996,168 @@ export const sendEmailToAllUsers = async (req: Request, res: Response) => {
     return res
       .status(500)
       .json({ message: "Failed to send emails", data: error?.message });
+  }
+};
+
+
+/**
+ * Emails a link to set a new password: the 7-day welcome link for an account
+ * that was just turned on, else the 15-minute reset link. An account with no
+ * password gets a random one first, because the reset endpoint needs a stored
+ * hash to check the link against.
+ */
+const sendPasswordLinkTo = async (
+  user: { id: number; name: string; email: string | null; password: string | null },
+  welcome: boolean,
+) => {
+  if (!isRealEmail(user.email)) return false;
+
+  let password = user.password;
+  if (!password) {
+    password = await hashPassword(randomBytes(24).toString("hex"));
+    await prisma.user.update({ where: { id: user.id }, data: { password } });
+  }
+
+  const token = JWT.sign(
+    { id: user.id, email: user.email },
+    JWT_SECRET + password,
+    { expiresIn: welcome ? "7d" : "15m" },
+  );
+  const mailDetails = {
+    user_name: user.name,
+    link: `${process.env.Frontend_URL}/reset-password/?id=${user.id}&token=${token}`,
+    expiration: welcome ? "7days" : "15mins",
+  };
+  await sendEmail(
+    welcome ? userActivatedTemplate(mailDetails) : forgetPasswordTemplate(mailDetails),
+    user.email as string,
+    welcome ? "Set your password" : "Reset Password",
+  );
+  return true;
+};
+
+/** POST /user/send-reset-link { user_id } — an admin emails someone a password link. */
+export const sendResetLink = async (req: Request, res: Response) => {
+  const userId = Number(req.body?.user_id);
+  if (!Number.isInteger(userId) || userId <= 0) {
+    return res.status(400).json({ message: "user_id is required", data: null });
+  }
+  // Members › Send password links, or Access rights › Reset passwords (the
+  // Users page); a role saved before actions keeps the Members manage rule.
+  if (
+    denyAction(
+      res,
+      membersActionAllowed(req, "send_password_link") ||
+        callerActionAllowed(req, "Access_rights", "reset_password"),
+      "You don't have permission to send password links.",
+    ) ||
+    (await denyMembersOutOfReach(req, res, [userId]))
+  ) {
+    return;
+  }
+
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, name: true, email: true, password: true },
+    });
+    if (!user) {
+      return res.status(404).json({ message: "User not found", data: null });
+    }
+    if (!(await sendPasswordLinkTo(user, false))) {
+      return res.status(400).json({
+        message: "This user has no email address to send the link to",
+        data: null,
+      });
+    }
+    return res.status(200).json({
+      message: "Password link sent",
+      data: { user_id: user.id, email: user.email, expires_in: "15m" },
+    });
+  } catch (error: any) {
+    return res.status(500).json({ message: "Operation Failed", data: error?.message ?? null });
+  }
+};
+
+/**
+ * POST /user/give-access { user_id, branch_id, access_level_id, send_invite? }
+ * Lets a member sign in to the admin app: turns on their account, gives them
+ * a role in one branch and optionally emails them a link to set a password.
+ */
+export const giveAccess = async (req: Request, res: Response) => {
+  const userId = Number(req.body?.user_id);
+  const branchId = Number(req.body?.branch_id);
+  const accessLevelId = Number(req.body?.access_level_id);
+  const sendInvite = req.body?.send_invite !== false;
+
+  if (![userId, branchId, accessLevelId].every((id) => Number.isInteger(id) && id > 0)) {
+    return res.status(400).json({
+      message: "user_id, branch_id and access_level_id are required",
+      data: null,
+    });
+  }
+
+  try {
+    assertCanGrantInBranches([branchId]);
+
+    const [user, branch, level] = await Promise.all([
+      prisma.user.findUnique({
+        where: { id: userId },
+        select: { id: true, name: true, email: true, password: true, is_user: true },
+      }),
+      prisma.branch.findUnique({ where: { id: branchId }, select: { id: true } }),
+      prisma.access_level.findUnique({
+        where: { id: accessLevelId },
+        select: { id: true, deleted: true },
+      }),
+    ]);
+    if (!user) return res.status(404).json({ message: "Member not found", data: null });
+    if (!branch) return res.status(404).json({ message: "Branch not found", data: null });
+    if (!level || level.deleted) {
+      return res.status(404).json({ message: "Role not found", data: null });
+    }
+    if (sendInvite && !isRealEmail(user.email)) {
+      return res.status(400).json({
+        message: "This member has no email address, so they can't sign in yet",
+        data: null,
+      });
+    }
+
+    const newAccount = !user.is_user;
+    if (newAccount) {
+      await roleEligibilityService.assertEligible("ministry_worker", userId);
+    }
+    // Grant first: if it fails the member is not left as an admin with no role.
+    await setBranchGrants([userId], [branchId], accessLevelId);
+    if (newAccount) {
+      await prisma.user.update({
+        where: { id: userId },
+        data: { is_user: true, is_active: true },
+      });
+    }
+    void sessionChanged([userId], ["permissions", "profile"]);
+
+    const invited = sendInvite ? await sendPasswordLinkTo(user, newAccount) : false;
+
+    return res.status(200).json({
+      message: "Access given",
+      data: {
+        user_id: userId,
+        invited,
+        branch_access: await listUserBranchGrants(userId),
+      },
+    });
+  } catch (error: any) {
+    if (error instanceof BranchAccessError) {
+      return res
+        .status(403)
+        .json({ message: error.message, data: null, code: "BRANCH_FORBIDDEN" });
+    }
+    if (isRoleEligibilityValidationError(error)) {
+      return res
+        .status(error.statusCode)
+        .json(buildRoleEligibilityFailureResponse(error));
+    }
+    return res.status(500).json({ message: "Operation Failed", data: error?.message ?? null });
   }
 };

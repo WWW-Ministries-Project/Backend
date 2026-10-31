@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import { Prisma } from "@prisma/client";
+import { AppError } from "../../utils/custom-error-handlers";
 
 export class FinanceHttpError extends Error {
   statusCode: number;
@@ -81,6 +82,7 @@ export type FinanceApprovalConfigPayload = {
   notification_user_ids: number[];
   is_active?: boolean;
   branch_id?: number;
+  tithe_percentage?: number;
 };
 
 export type FinanceApprovalStatus = "DRAFT" | "PENDING_APPROVAL" | "APPROVED";
@@ -199,12 +201,14 @@ export const validateFinancialPayload = (body: unknown): FinancialPayload => {
   }
 
   const trimmedPeriodDate = periodDate.trim();
-  const periodDateRegex = /^\d{4}-(0[1-9]|1[0-2])$/;
+  // YYYY-MM-DD (the week's first day) for weekly records; YYYY-MM is still
+  // accepted so records saved before the weekly redesign can be edited.
+  const periodDateRegex = /^\d{4}-(0[1-9]|1[0-2])(-(0[1-9]|[12]\d|3[01]))?$/;
 
   if (!periodDateRegex.test(trimmedPeriodDate)) {
     throw new FinanceHttpError(
       422,
-      "metaData.periodDate must be in YYYY-MM format",
+      "metaData.periodDate must be in YYYY-MM-DD format",
     );
   }
 
@@ -274,6 +278,7 @@ export const validateFinanceApprovalConfigPayload = (
     notification_user_ids?: unknown;
     is_active?: unknown;
     branch_id?: unknown;
+    tithe_percentage?: unknown;
   };
 
   if (!isPositiveInteger(payload.finance_approver_user_id)) {
@@ -315,9 +320,18 @@ export const validateFinanceApprovalConfigPayload = (
     branchId = Number(payload.branch_id);
   }
 
+  let tithePercentage: number | undefined;
+  if (payload.tithe_percentage !== undefined && payload.tithe_percentage !== null) {
+    tithePercentage = Number(payload.tithe_percentage);
+    if (!Number.isFinite(tithePercentage) || tithePercentage < 0 || tithePercentage > 100) {
+      throw new FinanceHttpError(422, "tithe_percentage must be between 0 and 100");
+    }
+  }
+
   return {
     finance_approver_user_id: Number(payload.finance_approver_user_id),
     notification_user_ids: notificationUserIds,
+    ...(tithePercentage !== undefined && { tithe_percentage: tithePercentage }),
     is_active:
       payload.is_active === undefined ? true : Boolean(payload.is_active),
     ...(branchId !== undefined && { branch_id: branchId }),
@@ -330,6 +344,11 @@ export const resolveFinanceError = (
 ): FinanceHttpError => {
   if (error instanceof FinanceHttpError) {
     return error;
+  }
+
+  // e.g. BranchAccessError (403) from a by-id branch check.
+  if (error instanceof AppError) {
+    return new FinanceHttpError(error.statusCode, error.message);
   }
 
   if (error instanceof Prisma.PrismaClientKnownRequestError) {

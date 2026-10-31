@@ -22,6 +22,12 @@ import {
   getAttendanceVisitorCountsForRecord,
 } from "./attendanceVisitorCounts";
 import {
+  attendanceActionAllowed,
+  attendanceDepartmentIds,
+  branchReachable,
+  scopedImportRequest,
+} from "./attendanceAccess";
+import {
   applyOnlineLinks,
   onlineLinkSelect,
   parseOnlineLinksInput,
@@ -33,6 +39,13 @@ import {
   getRelationBranchScopedWhere,
   resolveBranchIdOrDefault,
 } from "../branches/branchService";
+import {
+  canViewEventRegistrations,
+  ensureEventInBranch,
+  ensureSeriesInBranch,
+  eventBranchesAllowed,
+  sendEventBranchForbidden,
+} from "./eventAccess";
 import type { event_category } from "@prisma/client";
 
 dotenv.config();
@@ -1209,6 +1222,10 @@ export class eventManagement {
         return res.status(400).json({ message: "No Event found", data: null });
       }
 
+      if (!eventBranchesAllowed([existance.branch_id])) {
+        return sendEventBranchForbidden(res);
+      }
+
       const resolvedStartDate = parsedStartDate ?? existance.start_date;
       const resolvedEndDate = parsedEndDate ?? existance.end_date;
       const resolvedRecurrenceEndDate = hasRecurrenceEndDateInput
@@ -1401,7 +1418,7 @@ export class eventManagement {
 
       const existing = await prisma.event_mgt.findUnique({
         where: { id: eventId },
-        select: { id: true },
+        select: { id: true, branch_id: true },
       });
 
       if (!existing) {
@@ -1409,6 +1426,10 @@ export class eventManagement {
           message: "Event not found",
           data: null,
         });
+      }
+
+      if (!eventBranchesAllowed([existing.branch_id])) {
+        return sendEventBranchForbidden(res);
       }
 
       const parsedLinks = parseOnlineLinksInput(req.body?.links);
@@ -1447,6 +1468,8 @@ export class eventManagement {
           data: null,
         });
       }
+
+      if (!(await ensureEventInBranch(res, eventId))) return;
 
       const actorUserId = Number((req as any)?.user?.id);
       const registeredUsers = await prisma.event_registers.findMany({
@@ -1556,6 +1579,8 @@ export class eventManagement {
 
       const actorUserId = this.getActorUserId(req);
 
+      if (!(await ensureSeriesInBranch(res, seriesId))) return;
+
       const events = await prisma.event_mgt.findMany({
         where: { recurrence_series_id: seriesId },
         select: { id: true },
@@ -1617,6 +1642,8 @@ export class eventManagement {
       }
 
       const actorUserId = this.getActorUserId(req);
+
+      if (!(await ensureSeriesInBranch(res, seriesId, fromDate))) return;
 
       const events = await prisma.event_mgt.findMany({
         where: {
@@ -1692,6 +1719,8 @@ export class eventManagement {
         return res.status(400).json({ message: "No updatable fields provided", data: null });
       }
 
+      if (!(await ensureSeriesInBranch(res, seriesId))) return;
+
       const events = await prisma.event_mgt.findMany({
         where: { recurrence_series_id: seriesId },
         select: { id: true },
@@ -1764,6 +1793,8 @@ export class eventManagement {
       if (!Object.keys(updatePayload).length) {
         return res.status(400).json({ message: "No updatable fields provided", data: null });
       }
+
+      if (!(await ensureSeriesInBranch(res, seriesId, fromDate))) return;
 
       const events = await prisma.event_mgt.findMany({
         where: {
@@ -2016,6 +2047,22 @@ export class eventManagement {
   listEventsLight = async (req: Request, res: Response) => {
     try {
       const { month, year, event_type, event_status }: any = req.query;
+      const { from, to, q }: any = req.query;
+      const parseDay = (v: unknown, end = false): Date | undefined => {
+        if (!v) return undefined;
+        const d = new Date(String(v));
+        if (Number.isNaN(d.getTime())) return undefined;
+        if (end) d.setHours(23, 59, 59, 999);
+        else d.setHours(0, 0, 0, 0);
+        return d;
+      };
+      const fromDate = parseDay(from);
+      const toDate = parseDay(to, true);
+      const explicitRange =
+        fromDate || toDate
+          ? { gte: fromDate ?? undefined, lte: toDate ?? undefined }
+          : null;
+      const hasQ = typeof q === "string" && q.trim().length > 0;
       const showPresentUpcoming =
         this.resolveShowPresentUpcomingFilter(req.query);
       const startDateRange = this.resolveLightEventDateRange({
@@ -2030,7 +2077,11 @@ export class eventManagement {
         id: eventFilterId ?? undefined,
         event_type,
         event_status,
-        start_date: startDateRange,
+        // q alone = global name search across all dates; q + from/to still honored via explicitRange.
+        start_date: explicitRange ?? (hasQ ? undefined : startDateRange),
+        ...(typeof q === "string" && q.trim()
+          ? { event: { event_name: { contains: q.trim() } } }
+          : {}),
         ...(getBranchScopedWhere(req.query?.branch_id) || {}),
       };
 
@@ -2226,6 +2277,11 @@ export class eventManagement {
         select: eventDetailSelect,
       });
       const flat_data = this.mapEventResponse(response);
+      // Registrants' names and contacts need Events.view_registrations; the
+      // count stays for everyone.
+      if (flat_data && !(await canViewEventRegistrations(req))) {
+        delete (flat_data as any).event_registers;
+      }
       res
         .status(200)
         .json({ message: "Operation successful", data: flat_data });
@@ -2625,11 +2681,15 @@ export class eventManagement {
 
       const event = await prisma.event_mgt.findUnique({
         where: { id: eventId },
-        select: { id: true, start_date: true, start_time: true },
+        select: { id: true, start_date: true, start_time: true, branch_id: true },
       });
 
       if (!event) {
         return res.status(404).json({ message: "Event not found", data: null });
+      }
+
+      if (!eventBranchesAllowed([event.branch_id])) {
+        return sendEventBranchForbidden(res);
       }
 
       // Replace existing reminders for this event
@@ -2660,6 +2720,12 @@ export class eventManagement {
       if (!reminderId) {
         return res.status(400).json({ message: "A valid reminder id is required", data: null });
       }
+
+      const reminder = await prisma.event_reminder.findUnique({
+        where: { id: reminderId },
+        select: { event_id: true },
+      });
+      if (reminder && !(await ensureEventInBranch(res, reminder.event_id))) return;
 
       await prisma.event_reminder.update({
         where: { id: reminderId },
@@ -3401,9 +3467,12 @@ export class eventManagement {
         });
       }
 
+      const eventId = Number(event_id);
+      if (Number.isInteger(eventId) && !(await ensureEventInBranch(res, eventId))) return;
+
       const members = await prisma.event_registers.findMany({
         where: {
-          event_id: Number(event_id),
+          event_id: eventId,
         },
         select: eventRegistrationSelect,
       });
@@ -3438,9 +3507,12 @@ export class eventManagement {
         });
       }
 
+      const eventId = Number(event_id);
+      if (Number.isInteger(eventId) && !(await ensureEventInBranch(res, eventId))) return;
+
       const member = await prisma.event_registers.findFirst({
         where: {
-          event_id: Number(event_id),
+          event_id: eventId,
           user_id: Number(user_id),
         },
         select: eventRegistrationSelect,
@@ -3480,8 +3552,12 @@ export class eventManagement {
         });
       }
 
+      const scoped = await scopedImportRequest(req);
+      if ("status" in scoped) {
+        return res.status(scoped.status).json({ success: false, message: scoped.message });
+      }
       const jobs = await biometricAttendanceService.createImportJobs(
-        req.body,
+        scoped.body,
         {
           id: actorUserId,
         },
@@ -3531,8 +3607,12 @@ export class eventManagement {
         });
       }
 
+      const scoped = await scopedImportRequest(req);
+      if ("status" in scoped) {
+        return res.status(scoped.status).json({ success: false, message: scoped.message });
+      }
       const batch = await biometricAttendanceService.stageAttendanceBatch(
-        req.body,
+        scoped.body,
         {
           id: actorUserId,
         },
@@ -3623,8 +3703,12 @@ export class eventManagement {
         });
       }
 
+      const scoped = await scopedImportRequest(req);
+      if ("status" in scoped) {
+        return res.status(scoped.status).json({ success: false, message: scoped.message });
+      }
       const batch = await biometricAttendanceService.importAttendanceFromUploadedFile(
-        req.body,
+        scoped.body,
         {
           id: actorUserId,
         },
@@ -3665,6 +3749,21 @@ export class eventManagement {
           success: false,
           message: "A valid job id is required",
         });
+      }
+
+      const jobAccess = await prisma.event_biometric_import_job.findUnique({
+        where: { id: jobId },
+        select: { created_by: true, event: { select: { branch_id: true } } },
+      });
+      if (jobAccess) {
+        // A department-scoped role only follows the imports it started.
+        const ownOnly = attendanceDepartmentIds(req) !== null;
+        if (
+          !branchReachable(jobAccess.event?.branch_id) ||
+          (ownOnly && jobAccess.created_by !== this.getActorUserId(req))
+        ) {
+          return res.status(403).json({ success: false, message: "Not authorized to view this import" });
+        }
       }
 
       const job = await biometricAttendanceService.getImportJob(jobId);
@@ -4296,7 +4395,7 @@ export class eventManagement {
         },
       });
 
-      if (!record) {
+      if (!record || !branchReachable(record.event?.branch_id)) {
         return res.status(404).json({ success: false, message: "Not found" });
       }
 
@@ -4334,6 +4433,24 @@ export class eventManagement {
         youthMale,
         youthFemale,
       } = req.body;
+
+      const existing = await prisma.event_attendance_summary.findUnique({
+        where: { id: Number(id) },
+        select: { date: true, event: { select: { branch_id: true } } },
+      });
+      if (!existing || !branchReachable(existing.event?.branch_id)) {
+        return res.status(404).json({ success: false, message: "Not found" });
+      }
+      // Headcounts are stored at midnight; anything before today is a past record.
+      const startOfToday = new Date();
+      startOfToday.setHours(0, 0, 0, 0);
+      if (existing.date < startOfToday && !attendanceActionAllowed(req, "edit_past")) {
+        return res.status(403).json({
+          success: false,
+          message: "Not authorized to edit past attendance",
+          code: "ACTION_FORBIDDEN",
+        });
+      }
 
       const updated = await prisma.event_attendance_summary.update({
         where: { id: Number(id) },
@@ -4383,6 +4500,14 @@ export class eventManagement {
   deleteAttendance = async (req: Request, res: Response) => {
     try {
       const { id } = req.query;
+
+      const existing = await prisma.event_attendance_summary.findUnique({
+        where: { id: Number(id) },
+        select: { event: { select: { branch_id: true } } },
+      });
+      if (!existing || !branchReachable(existing.event?.branch_id)) {
+        return res.status(404).json({ success: false, message: "Not found" });
+      }
 
       await prisma.event_attendance_summary.delete({
         where: { id: Number(id) },

@@ -4,6 +4,7 @@
 /.env
 /.package-lock.json
 /uploads
+/.transcripts-cache
 .codegpt
 .idea
 .vscode 

@@ -272,6 +272,47 @@ export class promotionController {
     }
   };
 
+  unpublish = async (req: Request, res: Response) => {
+    try {
+      const id = toPositiveInt(req.params?.id);
+      if (!id) {
+        return res.status(400).json({ message: "Invalid id", data: null });
+      }
+
+      const promotion = await promotionService.unpublishPromotion(id);
+      return res
+        .status(200)
+        .json({ message: "Promotion unpublished", data: promotion });
+    } catch (error) {
+      const statusCode = getStatusCode(error) ?? 500;
+      return res.status(statusCode).json({
+        message: (error as Error).message || "Failed to unpublish promotion",
+        data: null,
+      });
+    }
+  };
+
+  reorder = async (req: Request, res: Response) => {
+    try {
+      const raw = Array.isArray(req.body?.ids) ? req.body.ids : [];
+      const ids = raw.map((value: unknown) => toPositiveInt(value));
+      if (!ids.length || ids.some((id: number | null) => id === null)) {
+        return res
+          .status(400)
+          .json({ message: "Send ids as a list of promotion ids", data: null });
+      }
+
+      const data = await promotionService.reorderPromotions(ids as number[]);
+      return res.status(200).json({ message: "Promotions reordered", data });
+    } catch (error) {
+      const statusCode = getStatusCode(error) ?? 500;
+      return res.status(statusCode).json({
+        message: (error as Error).message || "Failed to reorder promotions",
+        data: null,
+      });
+    }
+  };
+
   /** Mobile Home carousel. Any authenticated member may call this — there is
    *  no `Promotions` permission on it, the same way the `/community` feed is
    *  open to every signed-in member. */

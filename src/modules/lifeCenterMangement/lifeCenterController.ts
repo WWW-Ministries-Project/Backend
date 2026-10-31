@@ -4,8 +4,80 @@ import {
   buildRoleEligibilityFailureResponse,
   isRoleEligibilityValidationError,
 } from "../settings/roleEligibilityService";
+import {
+  isLeaderReminderReason,
+  isLeaderRoleName,
+  isLifeCenterHttpError,
+  isMemberScope,
+  parseDateBoundary,
+  utcDayBounds,
+} from "./lifeCenterHelpers";
+import {
+  assertLifeCenterReachable,
+  lifeCenterActionAllowed,
+} from "./lifeCenterAccess";
+import { prisma } from "../../Models/context";
+import { AppError } from "../../utils/custom-error-handlers";
+import { assertBranchAccessible } from "../branches/branchService";
 
 const lifeCenterService = new LifeCenterService();
+
+const toPositiveInt = (value: unknown): number | undefined => {
+  const n = Number(value);
+  return Number.isInteger(n) && n > 0 ? n : undefined;
+};
+
+/** Optional leaderUserId: undefined when absent, null when invalid. */
+const parseLeaderUserId = (value: unknown): number | undefined | null => {
+  if (value === undefined || value === null || value === "") return undefined;
+  return toPositiveInt(value) ?? null;
+};
+
+/**
+ * Maps the errors shared by the life center writes; returns null for anything
+ * the caller should handle itself.
+ */
+const sendKnownError = (res: Response, error: any) => {
+  if (isLifeCenterHttpError(error) || error instanceof AppError) {
+    return res.status(error.statusCode).json({ message: error.message });
+  }
+  if (isRoleEligibilityValidationError(error)) {
+    return res
+      .status(error.statusCode)
+      .json(buildRoleEligibilityFailureResponse(error));
+  }
+  if (error?.code === "P2003") {
+    return res.status(400).json({ message: "User or life center not found" });
+  }
+  if (error?.code === "P2025") {
+    return res.status(404).json({ message: "Record not found" });
+  }
+  return null;
+};
+
+const forbidden = (res: Response, message: string) =>
+  res.status(403).json({ message, data: null, code: "ACTION_FORBIDDEN" });
+
+/** Whether `leaderUserId` would change who leads the center. */
+const changesLeader = async (lifeCenterId: number | null, leaderUserId: number | undefined) => {
+  if (leaderUserId === undefined) return false;
+  if (!lifeCenterId) return true;
+  const rows = await prisma.life_center_member.findMany({
+    where: { lifeCenterId },
+    select: { userId: true, role: { select: { name: true } } },
+  });
+  const current = rows.find((row) => isLeaderRoleName(row.role?.name));
+  return current?.userId !== leaderUserId;
+};
+
+const isLeaderRoleId = async (roleId: number) => {
+  if (!Number.isInteger(roleId) || roleId <= 0) return false;
+  const role = await prisma.life_center_role.findUnique({
+    where: { id: roleId },
+    select: { name: true },
+  });
+  return isLeaderRoleName(role?.name);
+};
 
 const mapSoulWonResponse = (soul: any) => ({
   ...soul,
@@ -57,6 +129,17 @@ export class LifeCenterController {
   async createLifeCenter(req: Request, res: Response) {
     try {
       const { name, description, location, meeting_dates, branch_id } = req.body;
+      const leaderUserId = parseLeaderUserId(req.body?.leaderUserId);
+      if (leaderUserId === null) {
+        return res.status(400).json({ message: "leaderUserId must be a valid user id" });
+      }
+      // A role limited to the centers it leads can't add new ones.
+      if (isMemberScope((req as any).lifeCenterScope)) {
+        return forbidden(res, "Not authorized to add life centers");
+      }
+      if (leaderUserId !== undefined && !(await lifeCenterActionAllowed(req, "assign_leader"))) {
+        return forbidden(res, "Not authorized to assign life center leaders");
+      }
 
       const meetingDays = Array.isArray(meeting_dates)
         ? meeting_dates.join(", ")
@@ -68,6 +151,7 @@ export class LifeCenterController {
         meetingLocation: location,
         meetingDays,
         branch_id,
+        leaderUserId,
       };
 
       const newLifeCenter = await lifeCenterService.create(data);
@@ -77,6 +161,7 @@ export class LifeCenterController {
         data: newLifeCenter,
       });
     } catch (error: any) {
+      if (sendKnownError(res, error)) return;
       return res.status(500).json({
         message: "Error creating life center",
         error: error.message,
@@ -123,9 +208,11 @@ export class LifeCenterController {
       const lifeCenter = await lifeCenterService.getLifeCenterById(parsedId);
       if (!lifeCenter)
         return res.status(404).json({ message: "life center not found" });
+      assertBranchAccessible(lifeCenter.branch_id);
 
       return res.status(200).json({ data: lifeCenter });
     } catch (error: any) {
+      if (sendKnownError(res, error)) return;
       return res
         .status(500)
         .json({ message: "Error fetching life center", error: error.message });
@@ -140,6 +227,17 @@ export class LifeCenterController {
       }
 
       const { name, description, location, meeting_dates, branch_id } = req.body;
+      const leaderUserId = parseLeaderUserId(req.body?.leaderUserId);
+      if (leaderUserId === null) {
+        return res.status(400).json({ message: "leaderUserId must be a valid user id" });
+      }
+      await assertLifeCenterReachable(req, id);
+      if (
+        (await changesLeader(id, leaderUserId)) &&
+        !(await lifeCenterActionAllowed(req, "assign_leader"))
+      ) {
+        return forbidden(res, "Not authorized to assign life center leaders");
+      }
 
       const meetingDays = Array.isArray(meeting_dates)
         ? meeting_dates.join(", ")
@@ -151,6 +249,7 @@ export class LifeCenterController {
         meetingLocation: location,
         meetingDays,
         branch_id,
+        leaderUserId,
       };
 
       const updatedLifeCenter = await lifeCenterService.updateLifeCenter(
@@ -163,6 +262,7 @@ export class LifeCenterController {
         data: updatedLifeCenter,
       });
     } catch (error: any) {
+      if (sendKnownError(res, error)) return;
       return res.status(500).json({
         message: "Error updating Life Center",
         error: error.message,
@@ -172,12 +272,17 @@ export class LifeCenterController {
 
   async deleteLifeCenter(req: Request, res: Response) {
     try {
-      const { id } = req.query;
-      await lifeCenterService.deleteLifeCenter(Number(id));
+      const id = toPositiveInt(req.query?.id);
+      if (!id) {
+        return res.status(400).json({ message: "Invalid Life Center ID" });
+      }
+      await assertLifeCenterReachable(req, id);
+      await lifeCenterService.deleteLifeCenter(id);
       return res
         .status(200)
         .json({ message: "Life center deleted successfully" });
     } catch (error: any) {
+      if (sendKnownError(res, error)) return;
       return res
         .status(500)
         .json({ message: "Error deleting life center", error: error.message });
@@ -193,22 +298,24 @@ export class LifeCenterController {
         lifeCenterId: Number(lifeCenterId),
         roleId: Number(roleId),
       };
+      await assertLifeCenterReachable(req, data.lifeCenterId);
+      if (
+        (await isLeaderRoleId(data.roleId)) &&
+        !(await lifeCenterActionAllowed(req, "assign_leader"))
+      ) {
+        return forbidden(res, "Not authorized to assign life center leaders");
+      }
 
       const member = await lifeCenterService.addMemberToLifeCenter(data);
 
       res.status(201).json(member);
     } catch (error: any) {
-      if (isRoleEligibilityValidationError(error)) {
-        return res
-          .status(error.statusCode)
-          .json(buildRoleEligibilityFailureResponse(error));
-      }
-
-      if (error.code === "P2002") {
+      if (error?.code === "P2002") {
         return res
           .status(400)
           .json({ message: "Member already exists in this Life Center" });
       }
+      if (sendKnownError(res, error)) return;
 
       return res.status(500).json({ error: error.message });
     }
@@ -223,16 +330,19 @@ export class LifeCenterController {
         lifeCenterId: Number(lifeCenterId),
         roleId: Number(roleId),
       };
+      await assertLifeCenterReachable(req, data.lifeCenterId);
+      if (
+        (await isLeaderRoleId(data.roleId)) &&
+        !(await lifeCenterActionAllowed(req, "assign_leader"))
+      ) {
+        return forbidden(res, "Not authorized to assign life center leaders");
+      }
 
       const member = await lifeCenterService.updateMemberRole(data);
 
       res.status(201).json({ message: "Operation successfull", data: member });
     } catch (error: any) {
-      if (isRoleEligibilityValidationError(error)) {
-        return res
-          .status(error.statusCode)
-          .json(buildRoleEligibilityFailureResponse(error));
-      }
+      if (sendKnownError(res, error)) return;
 
       res.status(500).json({ error: error.message });
     }
@@ -250,6 +360,7 @@ export class LifeCenterController {
         });
       }
 
+      await assertLifeCenterReachable(req, lifeCenterId);
       const data = { userId, lifeCenterId };
 
       const member = await lifeCenterService.removeMemberFromLifeCenter(data);
@@ -259,6 +370,7 @@ export class LifeCenterController {
         data: member,
       });
     } catch (error: any) {
+      if (sendKnownError(res, error)) return;
       return res.status(500).json({
         message: "Internal server error",
         error: error.message,
@@ -278,6 +390,7 @@ export class LifeCenterController {
       ) {
         return res.status(401).json({ message: "Not authorized to view members" });
       }
+      if (parsedId > 0) await assertLifeCenterReachable(req, parsedId);
 
       const members = await lifeCenterService.getAllLifeCenterMembers(
         parsedId,
@@ -285,6 +398,7 @@ export class LifeCenterController {
 
       res.status(201).json({ message: "Operation successfull", data: members });
     } catch (error: any) {
+      if (sendKnownError(res, error)) return;
       res.status(500).json({ error: error.message });
     }
   }
@@ -317,7 +431,10 @@ export class LifeCenterController {
         }
       }
 
-      const souls = await lifeCenterService.getSouls(filter);
+      const souls = await lifeCenterService.getSouls({
+        ...filter,
+        branchId: req.query?.branch_id,
+      });
       const scopedSouls =
         lifeCenterScope?.mode === "member" &&
         Array.isArray(lifeCenterScope?.lifeCenterIds)
@@ -350,6 +467,7 @@ export class LifeCenterController {
           .status(401)
           .json({ message: "Not authorized to view soul won data" });
       }
+      assertBranchAccessible((soul as any)?.lifeCenter?.branch_id);
 
       const returningSoul = mapSoulWonResponse(soul);
 
@@ -357,6 +475,7 @@ export class LifeCenterController {
         .status(200)
         .json({ message: "Operation successful", data: returningSoul });
     } catch (error: any) {
+      if (sendKnownError(res, error)) return;
       res.status(500).json({ error: error.message });
     }
   }
@@ -364,11 +483,18 @@ export class LifeCenterController {
   async removeSoulWon(req: Request, res: Response) {
     try {
       const { id } = req.query;
+      const existing = await prisma.soul_won.findUnique({
+        where: { id: Number(id) || 0 },
+        select: { lifeCenterId: true },
+      });
+      if (!existing) return res.status(404).json({ message: "Soul not found" });
+      await assertLifeCenterReachable(req, existing.lifeCenterId);
 
       const soul = await lifeCenterService.removeSoul(Number(id));
 
       res.status(200).json({ message: "Operation successful", data: soul });
     } catch (error: any) {
+      if (sendKnownError(res, error)) return;
       res.status(500).json({ error: error.message });
     }
   }
@@ -399,6 +525,7 @@ export class LifeCenterController {
           .status(401)
           .json({ message: "Not authorized to manage this life center" });
       }
+      await assertLifeCenterReachable(req, Number(lifeCenterId));
 
       const newSoul = await lifeCenterService.createSoulWon({
         title,
@@ -439,6 +566,7 @@ export class LifeCenterController {
         .status(201)
         .json({ message: "Soul won record created", data: returningSoul });
     } catch (error: any) {
+      if (sendKnownError(res, error)) return;
       return res.status(500).json({
         message: "Error creating soul won record",
         error: error.message,
@@ -447,7 +575,6 @@ export class LifeCenterController {
   }
   async updateSoulWon(req: Request, res: Response) {
     try {
-      const lifeCenterScope = (req as any).lifeCenterScope;
       const { id } = req.query;
       if (!id) return res.status(400).json({ message: "Missing soul ID" });
 
@@ -466,29 +593,22 @@ export class LifeCenterController {
         lifeCenterId,
       } = req.body;
 
+      // The soul's current center and the one it moves to must both be in
+      // reach: naming your own center in the body must not pull in a soul
+      // from another center.
+      const existingSoul = await prisma.soul_won.findUnique({
+        where: { id: Number(id) || 0 },
+        select: { lifeCenterId: true },
+      });
+      if (!existingSoul) return res.status(404).json({ message: "Soul not found" });
+      await assertLifeCenterReachable(req, existingSoul.lifeCenterId);
+      const targetLifeCenterId = Number(lifeCenterId);
       if (
-        lifeCenterScope?.mode === "member" &&
-        Array.isArray(lifeCenterScope?.lifeCenterIds)
+        Number.isInteger(targetLifeCenterId) &&
+        targetLifeCenterId > 0 &&
+        targetLifeCenterId !== existingSoul.lifeCenterId
       ) {
-        const targetLifeCenterId = Number(lifeCenterId);
-        if (Number.isInteger(targetLifeCenterId) && targetLifeCenterId > 0) {
-          if (!lifeCenterScope.lifeCenterIds.includes(targetLifeCenterId)) {
-            return res
-              .status(401)
-              .json({ message: "Not authorized to manage this life center" });
-          }
-        } else {
-          const existingSoul = await lifeCenterService.getSoul(Number(id));
-          if (
-            !lifeCenterScope.lifeCenterIds.includes(
-              Number((existingSoul as any)?.lifeCenterId),
-            )
-          ) {
-            return res
-              .status(401)
-              .json({ message: "Not authorized to manage this life center" });
-          }
-        }
+        await assertLifeCenterReachable(req, targetLifeCenterId);
       }
 
       const updated = await lifeCenterService.updateSoulWon(Number(id), {
@@ -530,6 +650,7 @@ export class LifeCenterController {
         data: updatedSoul,
       });
     } catch (error: any) {
+      if (sendKnownError(res, error)) return;
       return res.status(500).json({
         message: "Error updating soul won record",
         error: error.message,
@@ -539,7 +660,11 @@ export class LifeCenterController {
 
   async getStats(req: Request, res: Response) {
     try {
-      const response = await lifeCenterService.getLifeCenterStats();
+      const scope = (req as any).lifeCenterScope;
+      const response = await lifeCenterService.getLifeCenterStats({
+        branchId: req.query?.branch_id,
+        lifeCenterIds: isMemberScope(scope) ? scope.lifeCenterIds : undefined,
+      });
 
       return res.status(200).json({
         message: "Operation sucessfull",
@@ -548,6 +673,71 @@ export class LifeCenterController {
     } catch (error: any) {
       return res.status(500).json({
         message: "Error updating soul won record",
+        error: error.message,
+      });
+    }
+  }
+
+  async getOverview(req: Request, res: Response) {
+    try {
+      let from: Date | undefined;
+      let to: Date | undefined;
+      try {
+        // from omitted = all time; to omitted = through today (UTC).
+        from = parseDateBoundary(req.query?.from, "from");
+        to =
+          parseDateBoundary(req.query?.to, "to") ??
+          new Date(utcDayBounds(new Date()).end.getTime() - 1);
+      } catch (error: any) {
+        return res.status(400).json({ message: error.message });
+      }
+      const rawLifeCenterId = req.query?.lifeCenterId;
+      const lifeCenterId = toPositiveInt(rawLifeCenterId);
+      if (rawLifeCenterId !== undefined && rawLifeCenterId !== "" && !lifeCenterId) {
+        return res.status(400).json({ message: "lifeCenterId must be a valid id" });
+      }
+
+      const data = await lifeCenterService.getOverview({
+        branchId: req.query?.branch_id,
+        scope: (req as any).lifeCenterScope,
+        lifeCenterId,
+        from,
+        to,
+      });
+      return res.status(200).json({ message: "Operation successful", data });
+    } catch (error: any) {
+      if (sendKnownError(res, error)) return;
+      return res.status(500).json({
+        message: "Error fetching life center overview",
+        error: error.message,
+      });
+    }
+  }
+
+  async remindLeader(req: Request, res: Response) {
+    try {
+      const lifeCenterId = toPositiveInt(req.body?.lifeCenterId);
+      if (!lifeCenterId) {
+        return res.status(400).json({ message: "lifeCenterId is required" });
+      }
+      const reason = req.body?.reason;
+      if (!isLeaderReminderReason(reason)) {
+        return res.status(400).json({
+          message: "reason must be one of overdue, irregular, attendance",
+        });
+      }
+
+      await assertLifeCenterReachable(req, lifeCenterId);
+      const data = await lifeCenterService.remindLeader(
+        lifeCenterId,
+        reason,
+        toPositiveInt((req as any).user?.id),
+      );
+      return res.status(200).json({ message: "Reminder sent", data });
+    } catch (error: any) {
+      if (sendKnownError(res, error)) return;
+      return res.status(500).json({
+        message: "Error sending reminder",
         error: error.message,
       });
     }

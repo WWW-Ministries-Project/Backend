@@ -5,6 +5,8 @@ import { verifyPaystackSignature } from "../../../libs/paystack/paystackWebhook"
 import logger from "../../../utils/logger-config";
 import { FinanceHttpError, parsePagination, sendFinanceError } from "../common";
 import { GivingContributionService } from "./contributionService";
+import { getRequestAccess } from "../../../middleWare/authorization";
+import { actionAllowed } from "../../../permissions/access";
 import {
   parseContributionFilters,
   parsePreviewAmount,
@@ -129,13 +131,40 @@ export class GivingContributionController {
     }
   }
 
+  async recheck(req: Request, res: Response): Promise<Response> {
+    try {
+      const references = Array.isArray(req.body?.references) ? req.body.references : [];
+      const result = await service.recheck(references);
+      return res.status(200).json({ message: "Checked with Paystack", ...result });
+    } catch (error) {
+      return sendFinanceError(res, error);
+    }
+  }
+
+  async nudge(req: Request, res: Response): Promise<Response> {
+    try {
+      const reference = String(req.body?.reference ?? "").trim();
+      if (!reference) throw new FinanceHttpError(422, "reference is required");
+      const data = await service.nudge(reference, (req as any).user?.id);
+      return res.status(200).json({ message: "Giver notified", data });
+    } catch (error) {
+      return sendFinanceError(res, error);
+    }
+  }
+
   async listAll(req: Request, res: Response): Promise<Response> {
     try {
       const pagination = parsePagination(req);
       const filters = parseContributionFilters(
         req.query as Record<string, unknown>,
       );
-      const result = await service.listAll(pagination, filters);
+      const result = await service.listAll(pagination, filters, {
+        showDonor: actionAllowed(
+          getRequestAccess(req)?.permissions ?? {},
+          "Giving",
+          "view_donor_details",
+        ),
+      });
 
       return res
         .status(200)

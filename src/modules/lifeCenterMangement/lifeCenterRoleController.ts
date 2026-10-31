@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import { LifeCenterRoleService } from "./lifeCenterRoleService";
+import { isLifeCenterHttpError } from "./lifeCenterHelpers";
 
 const roleService = new LifeCenterRoleService();
 
@@ -77,13 +78,19 @@ export class LifeCenterRoleController {
 
   async deleteLifeCenterRole(req: Request, res: Response) {
     try {
-      const { id } = req.query;
-      await roleService.deleteLifeCenterRole(Number(id));
-      return res.status(200).json({ message: "Visitor deleted successfully" });
+      const id = Number(req.query?.id);
+      if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ message: "Invalid role id" });
+      }
+      await roleService.deleteLifeCenterRole(id);
+      return res.status(200).json({ message: "Role deleted" });
     } catch (error: any) {
+      if (isLifeCenterHttpError(error)) {
+        return res.status(error.statusCode).json({ message: error.message });
+      }
       return res
         .status(500)
-        .json({ message: "Error deleting visitor", error: error.message });
+        .json({ message: "Error deleting role", error: error.message });
     }
   }
 }

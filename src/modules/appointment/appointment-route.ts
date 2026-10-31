@@ -2,9 +2,17 @@ import { Router } from "express";
 import { Permissions } from "../../middleWare/authorization";
 import { AppointmentController } from "./appointment-controller";
 import { AppointmentReasonController } from "./appointment-reason-controller";
+import {
+  applyAppointmentViewScope,
+  guardAvailabilityChange,
+  guardBookingChange,
+  requireAppointmentConfigure,
+} from "./appointment-access";
 
 const permissions = new Permissions();
 const protect = permissions.protect;
+// Reads: the scoped view guard, then the role's own/branch scope (§7.12).
+const viewScoped = [protect, permissions.can_view_appointments_scoped, applyAppointmentViewScope];
 
 const appointmentRouter = Router();
 const appointmentController = new AppointmentController();
@@ -12,13 +20,15 @@ const reasonController = new AppointmentReasonController();
 
 // 1. Members book an appointment
 // URL: POST /appointment/book
-appointmentRouter.post("/book", [protect], appointmentController.bookNow);
+// `withAccess` (any signed-in user) gives the controller the live,
+// active-branch role for booking on someone's behalf.
+appointmentRouter.post("/book", [protect, permissions.withAccess], appointmentController.bookNow);
 
 // 2. Fetch all booking appointments (supports ?attendeeId=, ?requesterId=, ?email=, ?status=, ?date=YYYY-MM-DD)
 // URL: GET /appointment/bookings
 appointmentRouter.get(
   "/bookings",
-  [protect, permissions.can_view_appointments_scoped],
+  viewScoped,
   appointmentController.getBookings,
 );
 
@@ -26,7 +36,7 @@ appointmentRouter.get(
 // URL: GET /appointment/bookings/:id
 appointmentRouter.get(
   "/bookings/:id",
-  [protect, permissions.can_view_appointments_scoped],
+  viewScoped,
   appointmentController.getBookingById,
 );
 
@@ -34,7 +44,7 @@ appointmentRouter.get(
 // URL: PUT /appointment/bookings/:id
 appointmentRouter.put(
   "/bookings/:id",
-  [protect, permissions.can_manage_appointments_scoped],
+  [protect, permissions.can_manage_appointments_scoped, guardBookingChange()],
   appointmentController.updateBooking,
 );
 
@@ -48,11 +58,27 @@ appointmentRouter.put(
   appointmentController.cancelOwnBooking,
 );
 
+// 4c. Booking actions (appointments redesign)
+// URL: POST /appointment/bookings/:id/actions
+// Body: { action: "accept" | "reopen" | "suggest" | "decline" | "cancel" |
+//   "complete" | "no_show" | "remind" | "reassign" | "confirm_proposal", ... }
+// `protect`-only: the person booked may act on their own booking; manage
+// (and manage-only actions) is checked in the action service.
+appointmentRouter.post(
+  "/bookings/:id/actions",
+  [protect, permissions.withAccess],
+  appointmentController.bookingAction,
+);
+
 // 5. Delete booking appointment by id
 // URL: DELETE /appointment/bookings/:id
 appointmentRouter.delete(
   "/bookings/:id",
-  [protect, permissions.can_delete_appointments_scoped],
+  [
+    protect,
+    permissions.requireAction("Appointments", "delete", "Not authorized to delete appointments"),
+    guardBookingChange(),
+  ],
   appointmentController.deleteBooking,
 );
 
@@ -60,15 +86,17 @@ appointmentRouter.delete(
 // URL: GET /appointment/client
 appointmentRouter.get(
   "/client",
-  [protect, permissions.can_view_appointments_scoped],
+  viewScoped,
   appointmentController.getClientBookings,
 );
 
 // 7. Staff sets availability (Wipes old slots and creates new ones)
 // URL: POST /appointment/availability
+// Own schedule: manage_own_availability (View); anyone else's:
+// manage_others_availability (Manage). See appointment-access.ts.
 appointmentRouter.post(
   "/availability",
-  [protect, permissions.can_manage_appointments_scoped],
+  [protect, permissions.withAccess, guardAvailabilityChange()],
   appointmentController.setAvailability,
 );
 
@@ -76,7 +104,7 @@ appointmentRouter.post(
 // URL: GET /appointment/availability
 appointmentRouter.get(
   "/availability",
-  [protect, permissions.can_view_appointments_scoped],
+  viewScoped,
   appointmentController.getAvailability,
 );
 
@@ -85,7 +113,7 @@ appointmentRouter.get(
 // URL: GET /appointment/availability/status
 appointmentRouter.get(
   "/availability/status",
-  [protect, permissions.can_view_appointments_scoped],
+  viewScoped,
   appointmentController.getAvailabilityStatus,
 );
 
@@ -101,11 +129,35 @@ appointmentRouter.get(
   appointmentController.getBookingOptions,
 );
 
+// 9c. Pause / resume new bookings for a person. Body: { paused: boolean }
+// URL: PUT /appointment/availability/staff/:userId/pause
+appointmentRouter.put(
+  "/availability/staff/:userId/pause",
+  [protect, permissions.withAccess, guardAvailabilityChange()],
+  appointmentController.setStaffPaused,
+);
+
+// 9d. Add time off for a person. Body: { from, to, note? } (YYYY-MM-DD, inclusive)
+// URL: POST /appointment/availability/staff/:userId/time-off
+appointmentRouter.post(
+  "/availability/staff/:userId/time-off",
+  [protect, permissions.withAccess, guardAvailabilityChange()],
+  appointmentController.createTimeOff,
+);
+
+// 9e. Remove a time-off entry
+// URL: DELETE /appointment/availability/time-off/:id
+appointmentRouter.delete(
+  "/availability/time-off/:id",
+  [protect, permissions.withAccess, guardAvailabilityChange()],
+  appointmentController.deleteTimeOff,
+);
+
 // 10. Update one availability slot by id
 // URL: PUT /appointment/availability/:id
 appointmentRouter.put(
   "/availability/:id",
-  [protect, permissions.can_manage_appointments_scoped],
+  [protect, permissions.withAccess, guardAvailabilityChange()],
   appointmentController.updateAvailability,
 );
 
@@ -113,7 +165,9 @@ appointmentRouter.put(
 // URL: DELETE /appointment/availability/:id
 appointmentRouter.delete(
   "/availability/:id",
-  [protect, permissions.can_delete_appointments_scoped],
+  // Removing one of your own slots is part of managing your own schedule;
+  // anyone else's stays a Full delete.
+  [protect, permissions.withAccess, guardAvailabilityChange("delete")],
   appointmentController.deleteAvailability,
 );
 
@@ -121,7 +175,7 @@ appointmentRouter.delete(
 // URL: GET /appointment/staff
 appointmentRouter.get(
   "/staff",
-  [protect, permissions.can_view_appointments_scoped],
+  viewScoped,
   appointmentController.getStaffBookings,
 );
 
@@ -129,7 +183,7 @@ appointmentRouter.get(
 // URL: PUT /appointment/status
 appointmentRouter.put(
   "/status",
-  [protect, permissions.can_manage_appointments_scoped],
+  [protect, permissions.can_manage_appointments_scoped, guardBookingChange("respond")],
   appointmentController.toggleConfirmation,
 );
 
@@ -156,7 +210,7 @@ appointmentRouter.get(
 // URL: POST /appointment/reasons
 appointmentRouter.post(
   "/reasons",
-  [protect, permissions.can_manage_appointment_settings],
+  [protect, permissions.withAccess, requireAppointmentConfigure],
   reasonController.create,
 );
 
@@ -165,7 +219,7 @@ appointmentRouter.post(
 // URL: PUT /appointment/reasons/reorder
 appointmentRouter.put(
   "/reasons/reorder",
-  [protect, permissions.can_manage_appointment_settings],
+  [protect, permissions.withAccess, requireAppointmentConfigure],
   reasonController.reorder,
 );
 
@@ -173,7 +227,7 @@ appointmentRouter.put(
 // URL: PUT /appointment/reasons/:id
 appointmentRouter.put(
   "/reasons/:id",
-  [protect, permissions.can_manage_appointment_settings],
+  [protect, permissions.withAccess, requireAppointmentConfigure],
   reasonController.update,
 );
 
@@ -181,8 +235,26 @@ appointmentRouter.put(
 // URL: DELETE /appointment/reasons/:id
 appointmentRouter.delete(
   "/reasons/:id",
-  [protect, permissions.can_manage_appointment_settings],
+  [protect, permissions.withAccess, requireAppointmentConfigure],
   reasonController.remove,
+);
+
+// 15. Appointment rules + notification matrix (appointments redesign).
+// GET with view (any signed-in user passes the scoped view guard; members
+// need the cancel cutoff and booking rules too). PUT takes any subset and
+// returns the full object.
+// URL: GET /appointment/settings
+appointmentRouter.get(
+  "/settings",
+  viewScoped,
+  appointmentController.getSettings,
+);
+
+// URL: PUT /appointment/settings
+appointmentRouter.put(
+  "/settings",
+  [protect, permissions.withAccess, requireAppointmentConfigure],
+  appointmentController.updateSettings,
 );
 
 export default appointmentRouter;

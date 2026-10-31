@@ -8,9 +8,13 @@ import {
   roleEligibilityService,
 } from "../settings/roleEligibilityService";
 import {
+  assertBranchAccessible,
+  BranchAccessError,
   getBranchScopedWhere,
   resolveBranchIdOrDefault,
 } from "../branches/branchService";
+import { getRequestAccess } from "../../middleWare/authorization";
+import { actionAllowed, isLegacyRole } from "../../permissions/access";
 
 const toPositiveInt = (value: unknown) => {
   const parsedValue = Number(value);
@@ -72,6 +76,42 @@ const getDepartmentScopeWhere = (req: Request) => {
 const isDepartmentInScope = (req: Request, departmentId: number) => {
   const scope = getDepartmentScope(req);
   return scope.mode !== "assigned" || scope.departmentIds.includes(departmentId);
+};
+
+const departmentActionAllowed = (req: Request, action: string) => {
+  const access = getRequestAccess(req);
+  return Boolean(access) && actionAllowed(access!.permissions, "Departments", action);
+};
+
+/**
+ * Assigning a head is Full. Roles saved before actions existed keep the old
+ * rule (Manage could change the head).
+ */
+const canAssignHead = (req: Request) => {
+  const access = getRequestAccess(req);
+  if (!access) return false;
+  return (
+    actionAllowed(access.permissions, "Departments", "assign_head") ||
+    (isLegacyRole(access.permissions) &&
+      actionAllowed(access.permissions, "Departments", "edit"))
+  );
+};
+
+const actionForbidden = (res: Response, message: string) =>
+  res.status(403).json({ message, data: null, code: "ACTION_FORBIDDEN" });
+
+/** Sends 403 and returns false when the department is outside the caller's branches. */
+const ensureDepartmentBranch = (res: Response, branchId: unknown) => {
+  try {
+    assertBranchAccessible(branchId);
+    return true;
+  } catch (error) {
+    if (error instanceof BranchAccessError) {
+      res.status(403).json({ message: error.message, data: null, code: "BRANCH_FORBIDDEN" });
+      return false;
+    }
+    throw error;
+  }
 };
 
 const getDepartmentMemberWhere = (
@@ -196,6 +236,10 @@ export const createDepartment = async (req: Request, res: Response) => {
       });
     }
 
+    if (!departmentActionAllowed(req, "create")) {
+      return actionForbidden(res, "Not authorized to create departments");
+    }
+
     if (!name || name.trim() === "") {
       return res.status(400).json({
         message: "Empty Department Name",
@@ -204,6 +248,9 @@ export const createDepartment = async (req: Request, res: Response) => {
     }
 
     const departmentHeadId = toPositiveInt(department_head);
+    if (departmentHeadId && !canAssignHead(req)) {
+      return actionForbidden(res, "Not authorized to assign department heads");
+    }
     if (departmentHeadId) {
       await roleEligibilityService.assertEligible(
         "head_of_department",
@@ -322,6 +369,19 @@ export const updateDepartment = async (req: Request, res: Response) => {
         department_head: true,
       },
     });
+    if (existingDepartment && !ensureDepartmentBranch(res, existingDepartment.branch_id)) {
+      return;
+    }
+
+    if (!departmentActionAllowed(req, "edit")) {
+      return actionForbidden(res, "Not authorized to edit departments");
+    }
+    const headChanges =
+      department_head !== undefined &&
+      departmentHeadId !== (existingDepartment?.department_head ?? null);
+    if (headChanges && !canAssignHead(req)) {
+      return actionForbidden(res, "Not authorized to assign department heads");
+    }
 
     const response = await prisma.department.update({
       where: {
@@ -396,6 +456,15 @@ export const deleteDepartment = async (req: Request, res: Response) => {
         data: null,
       });
     }
+
+    if (!departmentActionAllowed(req, "delete")) {
+      return actionForbidden(res, "Not authorized to delete departments");
+    }
+    const target = await prisma.department.findUnique({
+      where: { id: departmentId },
+      select: { branch_id: true },
+    });
+    if (target && !ensureDepartmentBranch(res, target.branch_id)) return;
 
     const affected = await membersOfDepartment(departmentId);
     await prisma.department.delete({
@@ -598,6 +667,7 @@ export const getDepartment = async (req: Request, res: Response) => {
         },
       },
     });
+    if (response && !ensureDepartmentBranch(res, response.branch_id)) return;
     if (!response) {
       return res.status(200).json({
         message: "No department found",

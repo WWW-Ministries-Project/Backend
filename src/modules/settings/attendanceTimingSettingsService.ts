@@ -1,5 +1,5 @@
 import { Prisma } from "@prisma/client";
-import { prisma } from "../../Models/context";
+import { prisma, type PrismaTx } from "../../Models/context";
 import { InputValidationError } from "../../utils/custom-error-handlers";
 
 const ATTENDANCE_TIMING_SETTINGS_ID = 1;
@@ -37,7 +37,7 @@ type RuleVersionRow = {
 };
 
 type AttendanceTimingDb = Pick<
-  Prisma.TransactionClient,
+  PrismaTx,
   "attendance_timing_rule_version"
 >;
 

@@ -1,6 +1,7 @@
 import { prisma } from "../../Models/context";
 import { InputValidationError } from "../../utils/custom-error-handlers";
 import { roleEligibilityService } from "../settings/roleEligibilityService";
+import { getRelationBranchScopedWhere } from "../branches/branchService";
 
 export class CourseService {
   private toNullablePositiveInt(value: unknown): number | null {
@@ -64,8 +65,15 @@ export class CourseService {
     cohortId?: number;
     page?: number;
     take?: number;
+    programIds?: number[];
   }) {
-    const where = filters?.cohortId ? { cohortId: filters.cohortId } : undefined;
+    const where = {
+      ...(filters?.cohortId ? { cohortId: filters.cohortId } : {}),
+      cohort: {
+        ...(getRelationBranchScopedWhere(undefined, "program") ?? {}),
+        ...(filters?.programIds ? { programId: { in: filters.programIds } } : {}),
+      },
+    };
     const shouldPaginate =
       typeof filters?.page === "number" && typeof filters?.take === "number";
     const skip = shouldPaginate ? (filters.page! - 1) * filters.take! : undefined;

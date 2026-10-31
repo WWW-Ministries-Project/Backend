@@ -23,6 +23,12 @@ export interface RequisitionInterface {
   edit_justification_comment?: string;
   comment_id?: number;
   request_date?: string;
+  /** Date the items are needed by (YYYY-MM-DD). */
+  needed_by?: string | null;
+  /** Why it's needed. */
+  purpose?: string | null;
+  /** Set when the draft is a revision of a rejected requisition. */
+  revised_from_id?: number | null;
   department_id: number;
   event_id?: number | null;
   event_type_id?: number | null;
@@ -75,6 +81,9 @@ export interface RequisitionApprovalConfigPayload {
   approvers: RequisitionApprovalConfigApprover[];
   notification_user_ids?: number[];
   similar_item_lookback_days?: number;
+  approval_reply_days?: number;
+  /** EVENT_REPORT only: who signs off the financial section. */
+  finance_approver?: Omit<RequisitionApprovalConfigApprover, "order"> | null;
   is_active?: boolean;
 }
 
@@ -82,6 +91,8 @@ export interface RequisitionApprovalActionPayload {
   requisition_id: number;
   action: "APPROVE" | "REJECT";
   comment?: string;
+  /** Typed full name the approver signs with. */
+  user_sign?: string;
 }
 
 export interface RequisitionSimilarItemMatch {

@@ -2,6 +2,7 @@ import { Router } from "express";
 import { uploadImage } from "../uploadFile/uploads";
 import multer from "multer";
 import { Permissions } from "../../middleWare/authorization";
+import { uploadRateLimiter } from "./uploadRateLimiter";
 
 const allowedMimeTypes = new Set([
   "image/jpeg",
@@ -32,4 +33,4 @@ const permissions = new Permissions();
 const protect = permissions.protect;
 
 export const uploadRouter = Router();
-uploadRouter.post("/", [protect, upload.single("file")], uploadImage);
+uploadRouter.post("/", [protect, uploadRateLimiter, upload.single("file")], uploadImage);

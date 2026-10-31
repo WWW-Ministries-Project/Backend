@@ -35,6 +35,34 @@ const DEFAULT_CATEGORY = "Other";
 
 export const NOTIFICATION_PREFERENCE_OPTIONS: NotificationPreferenceOption[] = [
   {
+    type: "assistant.done_for_you",
+    title: "Done for you",
+    description: "When the assistant completes a task on your behalf.",
+    category: "Assistant",
+    availableChannels: IN_APP_ONLY_CHANNELS,
+  },
+  {
+    type: "assistant.status",
+    title: "Assistant status updates",
+    description: "Follow-ups on actions you took from the assistant (for example, a requisition you approved was paid).",
+    category: "Assistant",
+    availableChannels: IN_APP_ONLY_CHANNELS,
+  },
+  {
+    type: "assistant.announcement",
+    title: "Assistant announcements",
+    description: "Announcements surfaced to you through the assistant.",
+    category: "Assistant",
+    availableChannels: IN_APP_ONLY_CHANNELS,
+  },
+  {
+    type: "assistant.system_access",
+    title: "Access changes",
+    description: "When your access or role changes.",
+    category: "Assistant",
+    availableChannels: IN_APP_ONLY_CHANNELS,
+  },
+  {
     type: "messaging.message",
     title: "Messages from the church",
     description: "Welcome, birthday and church-wide messages sent by the church office.",
@@ -217,6 +245,20 @@ export const NOTIFICATION_PREFERENCE_OPTIONS: NotificationPreferenceOption[] = [
     availableChannels: ALL_CHANNELS,
   },
   {
+    type: "appointment.reminder",
+    title: "Appointment reminders",
+    description: "Reminders to reply to a request, before an appointment, and to record how it went.",
+    category: "Appointments",
+    availableChannels: ALL_CHANNELS,
+  },
+  {
+    type: "appointment.overdue",
+    title: "Unanswered appointment requests",
+    description: "Alerts when a request goes past its reply deadline or stays unanswered.",
+    category: "Appointments",
+    availableChannels: ALL_CHANNELS,
+  },
+  {
     type: "delivery.status_changed",
     title: "Delivery status changed",
     description: "Notify order owners when shipping or delivery status changes.",
@@ -263,6 +305,48 @@ export const NOTIFICATION_PREFERENCE_OPTIONS: NotificationPreferenceOption[] = [
     title: "Event report awaiting final approval",
     description: "Alert final approvers when an event report is ready for review.",
     category: "Event reports",
+    availableChannels: ALL_CHANNELS,
+  },
+  {
+    type: "department_report.submitted",
+    title: "Department report submitted",
+    description: "Tell leadership when a head of department submits a report.",
+    category: "Department reports",
+    availableChannels: ALL_CHANNELS,
+  },
+  {
+    type: "department_report.approved",
+    title: "Department report approved",
+    description: "Tell the head of department when leadership approves their report.",
+    category: "Department reports",
+    availableChannels: ALL_CHANNELS,
+  },
+  {
+    type: "department_report.returned",
+    title: "Department report returned",
+    description: "Tell the head of department when leadership returns their report for changes.",
+    category: "Department reports",
+    availableChannels: ALL_CHANNELS,
+  },
+  {
+    type: "department_report.reminder",
+    title: "Department report reminder",
+    description: "Remind heads of department about a report that is due or overdue.",
+    category: "Department reports",
+    availableChannels: ALL_CHANNELS,
+  },
+  {
+    type: "department_report.comment_added",
+    title: "Comment on a department report",
+    description: "Notify the report's author and leadership about new comments.",
+    category: "Department reports",
+    availableChannels: ALL_CHANNELS,
+  },
+  {
+    type: "department_report.request_decided",
+    title: "Leadership decided on a request",
+    description: "Tell the head of department when leadership approves or responds to a request.",
+    category: "Department reports",
     availableChannels: ALL_CHANNELS,
   },
   {
@@ -322,6 +406,49 @@ export const NOTIFICATION_PREFERENCE_OPTIONS: NotificationPreferenceOption[] = [
     availableChannels: ALL_CHANNELS,
   },
   {
+    type: "assets.stock_check_started",
+    title: "Stock check started",
+    description: "When you're asked to count the assets your department holds.",
+    category: "Assets",
+    availableChannels: ALL_CHANNELS,
+  },
+  {
+    type: "assets.stock_check_reminder",
+    title: "Stock check reminder",
+    description: "Reminders to finish your count, and recount requests.",
+    category: "Assets",
+    availableChannels: ALL_CHANNELS,
+  },
+  {
+    type: "assets.stock_check_submitted",
+    title: "Stock check count submitted",
+    description: "When a department submits its count for your review.",
+    category: "Assets",
+    availableChannels: IN_APP_AND_EMAIL_CHANNELS,
+  },
+  {
+    type: "assets.stock_check_cancelled",
+    title: "Stock check cancelled",
+    description: "When a stock check you were counting is cancelled.",
+    category: "Assets",
+    availableChannels: IN_APP_AND_EMAIL_CHANNELS,
+  },
+  {
+    type: "life_center.leader_reminder",
+    title: "Life center meeting reminders",
+    description: "When you're asked to record or check on your life center's meetings.",
+    category: "Life Center",
+    availableChannels: IN_APP_AND_EMAIL_CHANNELS,
+  },
+  {
+    type: "requisition.approval_reminder",
+    title: "Requisition approval reminder",
+    description:
+      "Remind the current approver when a requisition has waited past the reply time.",
+    category: "Requisitions",
+    availableChannels: ALL_CHANNELS,
+  },
+  {
     type: "requisition.comment_added",
     title: "Requisition comment added",
     description: "Notify participants when a new approval comment is posted.",
@@ -371,6 +498,13 @@ export const NOTIFICATION_PREFERENCE_OPTIONS: NotificationPreferenceOption[] = [
     category: "System",
     availableChannels: IN_APP_AND_EMAIL_CHANNELS,
   },
+  {
+    type: "sermon.ingested",
+    title: "New sermon imported",
+    description: "A new sermon was imported from YouTube and may need review.",
+    category: "Content",
+    availableChannels: IN_APP_AND_EMAIL_CHANNELS,
+  },
 ];
 
 const notificationPreferenceOptionByType = new Map(
@@ -401,6 +535,14 @@ export const getNotificationPreferenceOption = (
     category: DEFAULT_CATEGORY,
     availableChannels: ALL_CHANNELS,
   };
+};
+
+export const isKnownNotificationType = (notificationType: unknown): boolean => {
+  const normalizedType = String(notificationType || "").trim();
+  if (!normalizedType) {
+    return false;
+  }
+  return notificationPreferenceOptionByType.has(normalizedType);
 };
 
 export const listNotificationPreferenceTypes = (

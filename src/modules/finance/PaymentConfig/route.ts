@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { PaymentConfigController } from "./controller";
 import { Permissions } from "../../../middleWare/authorization";
+import { requireFinanceConfigAccess } from "../financeAccess";
 
 const paymentConfigRouter = Router();
 const controller = new PaymentConfigController();
@@ -9,22 +10,22 @@ const protect = permissions.protect;
 
 paymentConfigRouter.post(
   "/create-payment-config",
-  [protect, permissions.can_manage_settings],
+  [protect, permissions.withAccess, requireFinanceConfigAccess("manage")],
   controller.create,
 );
 paymentConfigRouter.get(
   "/get-payment-configs",
-  [protect, permissions.can_view_settings],
+  [protect, permissions.withAccess, requireFinanceConfigAccess("view")],
   controller.findAll,
 );
 paymentConfigRouter.put(
   "/update-payment-config",
-  [protect, permissions.can_manage_settings],
+  [protect, permissions.withAccess, requireFinanceConfigAccess("manage")],
   controller.update,
 );
 paymentConfigRouter.delete(
   "/delete-payment-config",
-  [protect, permissions.can_delete_settings],
+  [protect, permissions.withAccess, requireFinanceConfigAccess("admin")],
   controller.delete,
 );
 

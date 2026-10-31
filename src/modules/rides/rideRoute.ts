@@ -44,18 +44,22 @@ rideRouter.post("/requests/:id/dismiss", [protect], dismissRequest);
 rideRouter.post("/alerts", [protect], setPickupAlert);
 rideRouter.post("/reports", [protect], fileReport);
 
-// Safety team / church office: Membership_Management managers, checked in the
-// service so the same rule also picks who receives safety reports.
-rideRouter.get("/admin/overview", [protect], getAdminOverview);
-rideRouter.post("/admin/offers/:id/cancel", [protect], adminCancelOffer);
-rideRouter.get("/admin/blocks", [protect], listBlocks);
-rideRouter.delete("/admin/blocks/:id", [protect], removeBlock);
-rideRouter.get("/admin/reports", [protect], listReports);
-rideRouter.patch("/admin/reports/:id/resolve", [protect], resolveReport);
-rideRouter.get("/admin/catalog", [protect], getAdminCatalog);
-rideRouter.post("/admin/pickup-points", [protect], savePickupPoint);
-rideRouter.put("/admin/pickup-points/:id", [protect], savePickupPoint);
-rideRouter.post("/admin/areas", [protect], saveArea);
-rideRouter.put("/admin/areas/:id", [protect], saveArea);
+// Safety team / church office: Rides actions (view_overview, cancel_any_offer,
+// manage_pickup_points, resolve_safety_reports, lift_block, export_roster;
+// Rides falls back to Membership_Management for levels saved before it
+// existed), checked in the service on the live role for the active branch, so
+// the same rule also picks who receives safety reports. withAccess resolves
+// the caller's branch.
+rideRouter.get("/admin/overview", [protect, permissions.withAccess], getAdminOverview);
+rideRouter.post("/admin/offers/:id/cancel", [protect, permissions.withAccess], adminCancelOffer);
+rideRouter.get("/admin/blocks", [protect, permissions.withAccess], listBlocks);
+rideRouter.delete("/admin/blocks/:id", [protect, permissions.withAccess], removeBlock);
+rideRouter.get("/admin/reports", [protect, permissions.withAccess], listReports);
+rideRouter.patch("/admin/reports/:id/resolve", [protect, permissions.withAccess], resolveReport);
+rideRouter.get("/admin/catalog", [protect, permissions.withAccess], getAdminCatalog);
+rideRouter.post("/admin/pickup-points", [protect, permissions.withAccess], savePickupPoint);
+rideRouter.put("/admin/pickup-points/:id", [protect, permissions.withAccess], savePickupPoint);
+rideRouter.post("/admin/areas", [protect, permissions.withAccess], saveArea);
+rideRouter.put("/admin/areas/:id", [protect, permissions.withAccess], saveArea);
 
 export default rideRouter;

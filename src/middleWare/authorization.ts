@@ -1,8 +1,14 @@
+import { actionAllowed, domainScope, scopeDepartmentIds } from "../permissions/access";
 import { Request, Response, NextFunction } from "express";
 
 import JWT from "jsonwebtoken";
 import { prisma } from "../Models/context";
-import { canUserManageRequisitionByApproverRole } from "../modules/requisitions/requisition-approval-workflow";
+import {
+  BRANCH_FORBIDDEN_MESSAGE,
+  BranchScope,
+  readRequestedBranchIds,
+  setBranchScope,
+} from "../modules/branches/branchScope";
 
 const VIEW_PERMISSIONS = ["Can_View", "Can_Manage", "Super_Admin"];
 const MANAGE_PERMISSIONS = ["Can_Manage", "Super_Admin"];
@@ -60,6 +66,20 @@ const PERMISSION_KEY_ALIASES: Record<string, string[]> = {
   // fallback: bulk SMS costs money, so it is never inherited from Community.
   // The 20261010120000_messaging migration grants it to full admins.
   Messaging: ["Messaging"],
+  // Department reports and the executive summary. View reads them; admin is
+  // leadership sign-off (approve, return, decide on requests). Falls back to
+  // Settings so existing administrators keep access without a data migration.
+  // Mirrors DOMAIN_FALLBACKS in the Frontend's src/utils/accessControl.ts.
+  Reports: ["Reports", "Settings", "Access_rights", "Access rights"],
+  // Ride to church had no domain and borrowed Membership_Management, so an
+  // access level without a Rides value keeps whatever that gave it.
+  // Mirrors DOMAIN_FALLBACKS in the Frontend's src/utils/accessControl.ts.
+  Rides: [
+    "Rides",
+    "Membership_Management",
+    "Membership Management",
+    "Members",
+  ],
 };
 
 const parsePermissionsObject = (permissions: any): Record<string, any> => {
@@ -109,6 +129,9 @@ const resolvePermissionValue = (permissions: any, permissionType: string) => {
   return null;
 };
 
+/** The stored level for a domain, following aliases and fallbacks. */
+export const resolveDomainLevel = resolvePermissionValue;
+
 const toPositiveInt = (value: any) => {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed <= 0) {
@@ -154,6 +177,13 @@ const normalizeScopeValue = (value: any) => {
   const normalized = value.trim();
   if (normalized === "assigned_departments") {
     return normalized;
+  }
+  // The role editor now stores "department" (departments they lead) and
+  // "department_member" (any department they belong to). Until department
+  // leadership is enforced, both narrow the existing guards the way
+  // "assigned_departments" always has: to the caller's departments.
+  if (normalized === "department" || normalized === "department_member") {
+    return "assigned_departments";
   }
   return null;
 };
@@ -217,7 +247,7 @@ const resolveDomainExclusions = (permissions: any, permissionType: string) => {
   return [];
 };
 
-const resolveDomainScope = (permissions: any, permissionType: string) => {
+export const resolveDomainScope = (permissions: any, permissionType: string) => {
   const parsedPermissions = parsePermissionsObject(permissions);
   if (Object.keys(parsedPermissions).length === 0) {
     return null;
@@ -263,7 +293,7 @@ const resolveDomainScope = (permissions: any, permissionType: string) => {
   return null;
 };
 
-const hasActionPermission = (
+export const hasActionPermission = (
   permissions: any,
   permissionType: string,
   action: "view" | "manage" | "admin",
@@ -277,12 +307,122 @@ const hasActionPermission = (
   return ADMIN_PERMISSIONS.includes(permission);
 };
 
+type BranchGrant = {
+  branch_id: number;
+  access_level_id: number;
+  permissions: Record<string, any>;
+};
+
 type AccessContextSnapshot = {
   currentUser: any;
+  /** Every branch merged at its highest level; used when no branch is active. */
   permissions: Record<string, any>;
   isPrivilegedUser: boolean;
   departmentIds: number[];
+  /** Departments the user heads (the "departments they lead" scope). */
+  ledDepartmentIds: number[];
   lifeCenterIds: number[];
+  homeBranchId: number | null;
+  /** One role per branch. An admin can only act in these branches. */
+  branchGrants: BranchGrant[];
+};
+
+const PERMISSION_RANK: Record<string, number> = {
+  No_Access: 0,
+  Can_View: 1,
+  Can_Manage: 2,
+  Super_Admin: 3,
+};
+
+/**
+ * Merges per-branch permission objects, keeping each domain at its highest
+ * level. Non-level keys (exclusions, scopes) come from the first grant that
+ * sets them.
+ */
+const mergePermissionsAtHighest = (
+  list: Array<Record<string, any>>,
+): Record<string, any> => {
+  const merged: Record<string, any> = {};
+  for (const permissions of list) {
+    for (const [key, value] of Object.entries(permissions || {})) {
+      const current = merged[key];
+      if (typeof value === "string" && value in PERMISSION_RANK) {
+        if (
+          typeof current !== "string" ||
+          (PERMISSION_RANK[value] ?? 0) > (PERMISSION_RANK[current] ?? 0)
+        ) {
+          merged[key] = value;
+        }
+      } else if (current === undefined) {
+        merged[key] = value;
+      }
+    }
+  }
+  return merged;
+};
+
+/**
+ * The branch boundary for a request, or "forbidden" when an admin names a
+ * branch they hold no role in. Members are not clamped (their client sends
+ * their own branch); admins are clamped to the branches they hold a role in.
+ */
+const resolveRequestBranchScope = (
+  snapshot: AccessContextSnapshot,
+  req: Request | any,
+): BranchScope | "forbidden" => {
+  const requested = readRequestedBranchIds(req);
+  if (!snapshot.isPrivilegedUser) {
+    return { allowedBranchIds: null, activeBranchId: requested[0] ?? null };
+  }
+
+  const allowed = snapshot.branchGrants.map((grant) => grant.branch_id);
+  if (requested.some((id) => !allowed.includes(id))) {
+    return "forbidden";
+  }
+
+  return {
+    allowedBranchIds: allowed,
+    activeBranchId: requested[0] ?? (allowed.length === 1 ? allowed[0] : null),
+  };
+};
+
+/** The permissions that apply in the active branch (or across all, merged). */
+const resolveEffectivePermissions = (
+  snapshot: AccessContextSnapshot,
+  scope: BranchScope,
+): Record<string, any> => {
+  if (!snapshot.isPrivilegedUser || !scope.activeBranchId) {
+    return snapshot.permissions;
+  }
+  return (
+    snapshot.branchGrants.find((grant) => grant.branch_id === scope.activeBranchId)
+      ?.permissions ?? {}
+  );
+};
+
+/**
+ * Whether the action is allowed. With a branch active, that branch's role
+ * decides. With no branch active ("all my branches"), viewing needs the right
+ * in any branch, but changing needs it in every branch, so an admin who only
+ * manages one branch cannot edit another branch's records from the merged view.
+ */
+const hasScopedActionPermission = (
+  snapshot: AccessContextSnapshot,
+  scope: BranchScope,
+  permissionType: string,
+  action: "view" | "manage" | "admin",
+): boolean => {
+  if (!snapshot.isPrivilegedUser) return false;
+  if (scope.activeBranchId || action === "view") {
+    return hasActionPermission(
+      resolveEffectivePermissions(snapshot, scope),
+      permissionType,
+      action,
+    );
+  }
+  return snapshot.branchGrants.every((grant) =>
+    hasActionPermission(grant.permissions, permissionType, action),
+  );
 };
 
 type AccessContextCacheEntry = {
@@ -340,7 +480,13 @@ const cloneAccessContextSnapshot = (
   permissions: { ...snapshot.permissions },
   isPrivilegedUser: snapshot.isPrivilegedUser,
   departmentIds: [...snapshot.departmentIds],
+  ledDepartmentIds: [...(snapshot.ledDepartmentIds || [])],
   lifeCenterIds: [...snapshot.lifeCenterIds],
+  homeBranchId: snapshot.homeBranchId,
+  branchGrants: snapshot.branchGrants.map((grant) => ({
+    ...grant,
+    permissions: { ...grant.permissions },
+  })),
 });
 
 const pruneAuthContextCache = (now = Date.now()) => {
@@ -411,6 +557,7 @@ const fetchAuthContextSnapshotFromDb = async (
       is_active: boolean | number | null;
       access_level_id: number | null;
       department_id: number | null;
+      branch_id: number | null;
       permissions: string | null;
       scoped_department_id: number | null;
       headed_department_id: number | null;
@@ -423,6 +570,7 @@ const fetchAuthContextSnapshotFromDb = async (
       u.is_active,
       u.access_level_id,
       u.department_id,
+      u.branch_id,
       al.permissions,
       dp.department_id AS scoped_department_id,
       dh.id AS headed_department_id,
@@ -445,11 +593,28 @@ const fetchAuthContextSnapshotFromDb = async (
   }
 
   const firstRow = rows[0];
+  const grantRows = await prisma.user_branch_access.findMany({
+    where: { user_id: userId, access_level: { deleted: false } },
+    orderBy: { branch_id: "asc" },
+    select: {
+      branch_id: true,
+      access_level_id: true,
+      access_level: { select: { permissions: true } },
+    },
+  });
+  const branchGrants: BranchGrant[] = grantRows.map((grant) => ({
+    branch_id: grant.branch_id,
+    access_level_id: grant.access_level_id,
+    permissions: parsePermissionsObject(grant.access_level?.permissions),
+  }));
   const departmentIdsFromRows = toUniquePositiveIds(
     rows.flatMap((row) => [row.scoped_department_id, row.headed_department_id]),
   );
   const lifeCenterIdsFromRows = toUniquePositiveIds(
     rows.map((row) => row.life_center_id),
+  );
+  const ledDepartmentIds = toUniquePositiveIds(
+    rows.map((row) => row.headed_department_id),
   );
 
   const snapshotUser = {
@@ -471,7 +636,9 @@ const fetchAuthContextSnapshotFromDb = async (
       : null,
   };
 
-  const permissions = parsePermissionsObject(snapshotUser?.access?.permissions);
+  const permissions = mergePermissionsAtHighest(
+    branchGrants.map((grant) => grant.permissions),
+  );
   const departmentIds = Array.from(
     new Set(
       [
@@ -491,10 +658,10 @@ const fetchAuthContextSnapshotFromDb = async (
         .filter((id: number | null): id is number => Boolean(id)),
     ),
   );
+  // Admin access now comes from per-branch grants: a ministry worker with no
+  // branch role has no admin access anywhere.
   const isPrivilegedUser = Boolean(
-    snapshotUser?.is_user &&
-      snapshotUser?.access_level_id &&
-      snapshotUser?.access,
+    snapshotUser?.is_user && branchGrants.length > 0,
   );
 
   return {
@@ -502,7 +669,10 @@ const fetchAuthContextSnapshotFromDb = async (
     permissions,
     isPrivilegedUser,
     departmentIds,
+    ledDepartmentIds,
     lifeCenterIds,
+    homeBranchId: toPositiveInt(firstRow.branch_id),
+    branchGrants,
   };
 };
 
@@ -554,6 +724,186 @@ export const isSessionActive = (
 ): boolean => Boolean(snapshot) && snapshot?.currentUser?.is_active !== false;
 
 /**
+ * Whether a user may manage appointments, the same test as
+ * `can_manage_appointments_scoped`: a privileged user with Appointments manage
+ * who is not excluded from the given attendee. For controllers whose route is
+ * `protect`-only because members may also call them (booking actions, booking
+ * on someone's behalf).
+ */
+export const canUserManageAppointments = async (
+  userId: number,
+  attendeeId?: number | null,
+): Promise<boolean> => {
+  const snapshot = await getOrFetchAuthContextSnapshot(userId);
+  if (!snapshot || !isSessionActive(snapshot)) return false;
+  if (
+    !snapshot.isPrivilegedUser ||
+    !hasActionPermission(snapshot.permissions, "Appointments", "manage")
+  ) {
+    return false;
+  }
+  if (
+    attendeeId &&
+    resolveDomainExclusions(snapshot.permissions, "Appointments").includes(attendeeId)
+  ) {
+    return false;
+  }
+  return true;
+};
+
+/**
+ * Whether an active privileged user holds `action` on a permission domain in
+ * any branch they can access. For controllers whose required domain depends on
+ * the request (e.g. each department report reads a different module).
+ */
+/**
+ * Like `userHasDomainPermission`, but follows the branch rule used by route
+ * guards: with a branch selected that branch's role decides; with none, view
+ * needs the right in any branch and manage/admin in every branch.
+ */
+/**
+ * Whether the user instructs any course, read live (the login token's
+ * `instructor` claim lasts 12 hours and outlives a removed assignment).
+ */
+export const isInstructor = async (userId: number) =>
+  (await prisma.course.count({ where: { instructorId: userId } })) > 0;
+
+/** `hasScopedActionPermission` for catalogue actions. */
+const hasScopedAction = (
+  snapshot: AccessContextSnapshot,
+  scope: BranchScope,
+  domain: string,
+  action: string,
+): boolean => {
+  if (!snapshot.isPrivilegedUser) return false;
+  if (scope.activeBranchId) {
+    return actionAllowed(resolveEffectivePermissions(snapshot, scope), domain, action);
+  }
+  return snapshot.branchGrants.every((grant) =>
+    actionAllowed(grant.permissions, domain, action),
+  );
+};
+
+/** What a permission guard learnt about the caller (`req.access`). */
+export interface RequestAccess {
+  userId: number;
+  isPrivilegedUser: boolean;
+  /** Live, active-branch permissions. */
+  permissions: Record<string, any>;
+  departmentIds: number[];
+  ledDepartmentIds: number[];
+  lifeCenterIds: number[];
+}
+
+/** `req.access` from a permission guard, or null when none ran. */
+export const getRequestAccess = (req: any): RequestAccess | null =>
+  req?.access && typeof req.access === "object" ? (req.access as RequestAccess) : null;
+
+/** Whether `userId` may perform `domain.action` in `branchId` (null: every branch). */
+export const userHasAction = async (
+  userId: number,
+  domain: string,
+  action: string,
+  branchId: number | null,
+): Promise<boolean> => {
+  const snapshot = await getOrFetchAuthContextSnapshot(userId);
+  if (!snapshot || !isSessionActive(snapshot)) return false;
+  return hasScopedAction(
+    snapshot,
+    { allowedBranchIds: null, activeBranchId: branchId },
+    domain,
+    action,
+  );
+};
+
+export const userHasBranchDomainPermission = async (
+  userId: number,
+  permissionType: string,
+  action: "view" | "manage" | "admin",
+  branchId: number | null,
+): Promise<boolean> => {
+  const snapshot = await getOrFetchAuthContextSnapshot(userId);
+  if (!snapshot || !isSessionActive(snapshot)) return false;
+  return hasScopedActionPermission(
+    snapshot,
+    { allowedBranchIds: null, activeBranchId: branchId },
+    permissionType,
+    action,
+  );
+};
+
+export const userHasDomainPermission = async (
+  userId: number,
+  permissionType: string,
+  action: "view" | "manage" | "admin",
+): Promise<boolean> => {
+  const snapshot = await getOrFetchAuthContextSnapshot(userId);
+  if (!snapshot || !isSessionActive(snapshot) || !snapshot.isPrivilegedUser) {
+    return false;
+  }
+  return hasActionPermission(snapshot.permissions, permissionType, action);
+};
+
+/**
+ * A user's Departments access for checks made in services: view / manage in
+ * any branch, and whether the role is limited to `assigned_departments` (then
+ * only `departmentIds` — the departments the user belongs to — count).
+ */
+export const getUserDepartmentAccess = async (
+  userId: number,
+): Promise<{ view: boolean; manage: boolean; assignedOnly: boolean; departmentIds: number[] }> => {
+  const snapshot = await getOrFetchAuthContextSnapshot(userId);
+  if (!snapshot || !isSessionActive(snapshot) || !snapshot.isPrivilegedUser) {
+    return { view: false, manage: false, assignedOnly: false, departmentIds: [] };
+  }
+  const scopedIds = scopeDepartmentIds(domainScope(snapshot.permissions, "Departments"), {
+    userId,
+    departmentIds: snapshot.departmentIds,
+    ledDepartmentIds: snapshot.ledDepartmentIds || [],
+    lifeCenterIds: snapshot.lifeCenterIds,
+  });
+  return {
+    view: hasActionPermission(snapshot.permissions, "Departments", "view"),
+    manage: hasActionPermission(snapshot.permissions, "Departments", "manage"),
+    assignedOnly: scopedIds !== null,
+    departmentIds: scopedIds ?? snapshot.departmentIds,
+  };
+};
+
+/**
+ * Active privileged users holding `action` on a permission domain, resolved
+ * through PERMISSION_KEY_ALIASES like the route guards. Used to address
+ * "admins" of a domain (e.g. appointment overdue alerts).
+ */
+export const listUserIdsWithDomainPermission = async (
+  permissionType: string,
+  action: "view" | "manage" | "admin",
+): Promise<number[]> => {
+  const users = await prisma.user.findMany({
+    where: {
+      is_user: true,
+      branch_access: { some: {} },
+      NOT: { is_active: false },
+    },
+    select: {
+      id: true,
+      branch_access: {
+        where: { access_level: { deleted: false } },
+        select: { access_level: { select: { permissions: true } } },
+      },
+    },
+  });
+
+  return users
+    .filter((user) =>
+      user.branch_access.some((grant) =>
+        hasActionPermission(grant.access_level?.permissions, permissionType, action),
+      ),
+    )
+    .map((user) => user.id);
+};
+
+/**
  * Drops a user's cached auth snapshot so the next request reloads permissions,
  * departments and active status. Called by the realtime session notifier
  * right after those change.
@@ -571,6 +921,12 @@ export class Permissions {
 
   private unauthorized(res: Response, message: string) {
     return res.status(401).json({ message, data: null });
+  }
+
+  private branchForbidden(res: Response) {
+    return res
+      .status(403)
+      .json({ message: BRANCH_FORBIDDEN_MESSAGE, data: null, code: "BRANCH_FORBIDDEN" });
   }
 
   private async getAccessContext(
@@ -611,13 +967,17 @@ export class Permissions {
       return null;
     }
 
-    const {
-      currentUser,
-      permissions: livePermissions,
-      isPrivilegedUser,
-      departmentIds,
-      lifeCenterIds,
-    } = snapshot;
+    const branchScope = resolveRequestBranchScope(snapshot, req);
+    if (branchScope === "forbidden") {
+      this.branchForbidden(res);
+      return null;
+    }
+    setBranchScope(branchScope);
+
+    const { currentUser, isPrivilegedUser, departmentIds, lifeCenterIds } =
+      snapshot;
+    const ledDepartmentIds = snapshot.ledDepartmentIds || [];
+    const livePermissions = resolveEffectivePermissions(snapshot, branchScope);
 
     req.user = {
       ...decoded,
@@ -625,7 +985,20 @@ export class Permissions {
       permissions: livePermissions,
       ministry_worker: Boolean(currentUser?.is_user),
       user_category: isPrivilegedUser ? "admin" : "member",
+      branch_id: snapshot.homeBranchId,
+      active_branch_id: branchScope.activeBranchId,
+      allowed_branch_ids: branchScope.allowedBranchIds,
     };
+    // Who the caller is and what they may do, for services applying actions
+    // and scopes (see src/permissions/access.ts).
+    req.access = {
+      userId,
+      isPrivilegedUser,
+      permissions: livePermissions,
+      departmentIds,
+      ledDepartmentIds,
+      lifeCenterIds,
+    } satisfies RequestAccess;
 
     return {
       userId,
@@ -634,9 +1007,42 @@ export class Permissions {
       permissions: livePermissions,
       isPrivilegedUser,
       departmentIds,
+      ledDepartmentIds,
       lifeCenterIds,
+      snapshot,
+      branchScope,
     };
   }
+
+  /**
+   * Allows the request when the caller's role grants `domain.action` (an
+   * explicit switch in `Actions`, else the level's default; see
+   * src/permissions/catalog.ts). With no branch active, every branch role
+   * must allow it, like manage and delete.
+   */
+  requireAction = (domain: string, action: string, errorMessage: string) => {
+    return async (req: Request, res: Response, next: NextFunction) => {
+      const context = await this.getAccessContext(req, res, errorMessage);
+      if (!context) return;
+      if (hasScopedAction(context.snapshot, context.branchScope, domain, action)) {
+        return next();
+      }
+      return res.status(403).json({ message: errorMessage, data: null, code: "ACTION_FORBIDDEN" });
+    };
+  };
+
+  /**
+   * Allows the request for any signed-in caller with a live session and sets
+   * `req.access`, so the service can apply actions and scopes itself.
+   */
+  withAccess = async (req: Request, res: Response, next: NextFunction) => {
+    const context = await this.getAccessContext(req, res, "Not authorized");
+    if (!context) return;
+    if (!isSessionActive(context.snapshot)) {
+      return res.status(401).json({ message: "Account inactive", data: null });
+    }
+    return next();
+  };
 
   private isExcluded(
     permissions: any,
@@ -676,6 +1082,7 @@ export class Permissions {
     // A deactivated account keeps a valid JWT for up to 12h; refuse it here.
     // Cached for 30s and cleared early by the realtime session notifier.
     const userId = toPositiveInt(decoded?.id);
+    let branchScope: BranchScope | null = null;
     if (userId) {
       const snapshot = await getOrFetchAuthContextSnapshot(userId);
       if (!isSessionActive(snapshot)) {
@@ -683,9 +1090,19 @@ export class Permissions {
           .status(401)
           .json({ message: "Account inactive", data: null });
       }
+      const resolved = resolveRequestBranchScope(snapshot!, req);
+      if (resolved === "forbidden") {
+        return this.branchForbidden(res);
+      }
+      branchScope = resolved;
+      setBranchScope(branchScope);
     }
 
-    req.user = decoded;
+    req.user = {
+      ...decoded,
+      active_branch_id: branchScope?.activeBranchId ?? null,
+      allowed_branch_ids: branchScope?.allowedBranchIds ?? null,
+    };
     next();
   };
 
@@ -702,20 +1119,14 @@ export class Permissions {
       }
 
       if (
-        context.isPrivilegedUser &&
-        hasActionPermission(context.permissions, permissionType, action)
+        hasScopedActionPermission(
+          context.snapshot,
+          context.branchScope,
+          permissionType,
+          action,
+        )
       ) {
         return next();
-      }
-
-      if (permissionType === "Requisition" && action === "manage") {
-        const canManageAsApprover = await canUserManageRequisitionByApproverRole(
-          context.userId,
-        );
-
-        if (canManageAsApprover) {
-          return next();
-        }
       }
 
       return res.status(401).json({ message: errorMessage, data: null });
@@ -742,7 +1153,7 @@ export class Permissions {
     ].some((routeFragment) => routeKey.includes(routeFragment));
     const canViewAll =
       context.isPrivilegedUser &&
-      hasActionPermission(context.permissions, "Members", "view");
+      hasScopedActionPermission(context.snapshot, context.branchScope, "Members", "view");
 
     if (canViewAll) {
       if (
@@ -787,7 +1198,7 @@ export class Permissions {
 
     if (
       !context.isPrivilegedUser ||
-      !hasActionPermission(context.permissions, "Members", "manage")
+      !hasScopedActionPermission(context.snapshot, context.branchScope, "Members", "manage")
     ) {
       return this.unauthorized(res, errorMessage);
     }
@@ -815,7 +1226,7 @@ export class Permissions {
 
     if (
       !context.isPrivilegedUser ||
-      !hasActionPermission(context.permissions, "Members", "admin")
+      !hasScopedActionPermission(context.snapshot, context.branchScope, "Members", "admin")
     ) {
       return this.unauthorized(res, errorMessage);
     }
@@ -896,8 +1307,26 @@ export class Permissions {
       resource: "visitor" | "visit" | "follow_up" | "prayer_request";
       queryIdIsVisitorId?: boolean;
     },
-  ) {
+  ): Promise<number | null | "mismatch"> {
     const explicitVisitorId = this.getExplicitVisitorId(req);
+
+    // A visit, follow-up or prayer request decides its own visitor. Trusting
+    // a visitorId sent alongside it would let a responsible member of one
+    // visitor reach every other visitor's records.
+    if (options.resource !== "visitor") {
+      const resourceId = this.getResourceId(req);
+      if (resourceId) {
+        const owner = await this.resolveVisitorIdFromResourceId(
+          options.resource,
+          resourceId,
+        );
+        if (explicitVisitorId && owner && explicitVisitorId !== owner) {
+          return "mismatch";
+        }
+        if (owner) return owner;
+      }
+    }
+
     if (explicitVisitorId) {
       return explicitVisitorId;
     }
@@ -933,11 +1362,15 @@ export class Permissions {
 
       const canAccessAll =
         context.isPrivilegedUser &&
-        hasActionPermission(context.permissions, "Visitors", action);
-      const visitorId = await this.resolveVisitorTargetId(req, {
+        hasScopedActionPermission(context.snapshot, context.branchScope, "Visitors", action);
+      const target = await this.resolveVisitorTargetId(req, {
         resource: options.resource,
         queryIdIsVisitorId: options.queryIdIsVisitorId,
       });
+      if (target === "mismatch") {
+        return this.unauthorized(res, errorMessage);
+      }
+      const visitorId = target;
 
       if (canAccessAll) {
         (req as any).visitorScope = { mode: "all" };
@@ -1022,6 +1455,23 @@ export class Permissions {
     { resource: "prayer_request" },
   );
 
+  /** Visitors view on the whole branch (not "responsible member" scope). */
+  can_view_visitors = this.checkPermission(
+    "Visitors",
+    "view",
+    "Not authorized to view visitors",
+  );
+
+  /** Any staff member: someone with a role in at least one branch. */
+  requireStaff = async (req: Request, res: Response, next: NextFunction) => {
+    const context = await this.getAccessContext(req, res, "Not authorized");
+    if (!context) return;
+    if (!context.isPrivilegedUser) {
+      return res.status(403).json({ message: "Not authorized", data: null, code: "ACTION_FORBIDDEN" });
+    }
+    return next();
+  };
+
   can_delete_visitors_scoped = this.checkPermission(
     "Visitors",
     "admin",
@@ -1039,7 +1489,7 @@ export class Permissions {
 
     const hasGlobalView =
       context.isPrivilegedUser &&
-      hasActionPermission(context.permissions, "Appointments", "view");
+      hasScopedActionPermission(context.snapshot, context.branchScope, "Appointments", "view");
     const exclusions = resolveDomainExclusions(context.permissions, "Appointments");
     const bookingId = toPositiveInt(req.params?.id);
 
@@ -1105,7 +1555,7 @@ export class Permissions {
 
     if (
       !context.isPrivilegedUser ||
-      !hasActionPermission(context.permissions, "Appointments", "manage")
+      !hasScopedActionPermission(context.snapshot, context.branchScope, "Appointments", "manage")
     ) {
       return this.unauthorized(res, errorMessage);
     }
@@ -1118,16 +1568,24 @@ export class Permissions {
       toPositiveInt(req.query?.userId) ||
       toPositiveInt(req.query?.staffId) ||
       toPositiveInt(req.query?.attendeeId) ||
-      toPositiveInt(req.query?.attendee_id);
+      toPositiveInt(req.query?.attendee_id) ||
+      toPositiveInt(req.params?.userId);
 
     const bookingIdFromParams = toPositiveInt(req.params?.id);
     const bookingIdFromQuery = toPositiveInt(req.query?.id);
     const isAvailabilityPath = String(req.path || "").includes("availability");
+    const isTimeOffPath = String(req.path || "").includes("time-off");
 
     let targetAttendeeId = attendeeFromRequest;
 
     if (!targetAttendeeId && bookingIdFromParams) {
-      if (isAvailabilityPath) {
+      if (isTimeOffPath) {
+        const timeOff = await prisma.appointment_time_off.findUnique({
+          where: { id: bookingIdFromParams },
+          select: { user_id: true },
+        });
+        targetAttendeeId = timeOff?.user_id || null;
+      } else if (isAvailabilityPath) {
         const availability = await prisma.availability.findUnique({
           where: { id: bookingIdFromParams },
           select: { userId: true },
@@ -1171,7 +1629,7 @@ export class Permissions {
 
     if (
       !context.isPrivilegedUser ||
-      !hasActionPermission(context.permissions, "Appointments", "admin")
+      !hasScopedActionPermission(context.snapshot, context.branchScope, "Appointments", "admin")
     ) {
       return this.unauthorized(res, errorMessage);
     }
@@ -1218,7 +1676,19 @@ export class Permissions {
 
     const canViewAll =
       context.isPrivilegedUser &&
-      hasActionPermission(context.permissions, "Asset", "view");
+      hasScopedActionPermission(context.snapshot, context.branchScope, "Asset", "view");
+
+    // What the asset redesign endpoints may do for this viewer.
+    (req as any).assetAccess = {
+      canViewAll,
+      canManage:
+        context.isPrivilegedUser &&
+        hasScopedActionPermission(context.snapshot, context.branchScope, "Asset", "manage"),
+      canAdmin:
+        context.isPrivilegedUser &&
+        hasScopedActionPermission(context.snapshot, context.branchScope, "Asset", "admin"),
+      departmentIds: [...context.departmentIds],
+    };
 
     if (canViewAll) {
       (req as any).assetScope = { mode: "all" };
@@ -1262,32 +1732,38 @@ export class Permissions {
 
       if (
         !context.isPrivilegedUser ||
-        !hasActionPermission(context.permissions, "Departments", action)
+        !hasScopedActionPermission(context.snapshot, context.branchScope, "Departments", action)
       ) {
         return this.unauthorized(res, errorMessage);
       }
 
-      const scopeMode = resolveDomainScope(context.permissions, "Departments");
-      if (scopeMode !== "assigned_departments") {
+      // "Departments they lead" reaches the departments they head;
+      // "Departments they belong to" (and older roles) any they're in.
+      const scopedIds = scopeDepartmentIds(
+        domainScope(context.permissions, "Departments"),
+        context,
+      );
+      if (!scopedIds) {
         (req as any).departmentScope = { mode: "all", departmentIds: [] };
         return next();
       }
 
-      if (!context.departmentIds.length) {
+      if (!scopedIds.length) {
         return this.unauthorized(res, errorMessage);
       }
 
       const targetDepartmentId = this.getDepartmentTargetId(req);
-      if (
-        targetDepartmentId &&
-        !context.departmentIds.includes(targetDepartmentId)
-      ) {
+      if (targetDepartmentId && !scopedIds.includes(targetDepartmentId)) {
+        return this.unauthorized(res, errorMessage);
+      }
+      // A role limited to its departments can't add new ones.
+      if (!targetDepartmentId && action !== "view" && req.method === "POST") {
         return this.unauthorized(res, errorMessage);
       }
 
       (req as any).departmentScope = {
         mode: "assigned",
-        departmentIds: context.departmentIds,
+        departmentIds: scopedIds,
       };
       return next();
     };
@@ -1318,27 +1794,27 @@ export class Permissions {
 
       if (
         !context.isPrivilegedUser ||
-        !hasActionPermission(context.permissions, "Church_Attendance", action)
+        !hasScopedActionPermission(context.snapshot, context.branchScope, "Church_Attendance", action)
       ) {
         return this.unauthorized(res, errorMessage);
       }
 
-      const scopeMode = resolveDomainScope(
-        context.permissions,
-        "Church_Attendance",
+      const scopedIds = scopeDepartmentIds(
+        domainScope(context.permissions, "Church_Attendance"),
+        context,
       );
-      if (scopeMode !== "assigned_departments") {
+      if (!scopedIds) {
         (req as any).attendanceScope = { mode: "all", departmentIds: [] };
         return next();
       }
 
-      if (!context.departmentIds.length) {
+      if (!scopedIds.length) {
         return this.unauthorized(res, errorMessage);
       }
 
       (req as any).attendanceScope = {
         mode: "department",
-        departmentIds: context.departmentIds,
+        departmentIds: scopedIds,
       };
       return next();
     };
@@ -1360,7 +1836,7 @@ export class Permissions {
 
     const canViewAll =
       context.isPrivilegedUser &&
-      hasActionPermission(context.permissions, "Life Center", "view");
+      hasScopedActionPermission(context.snapshot, context.branchScope, "Life Center", "view");
 
     if (canViewAll) {
       (req as any).lifeCenterScope = { mode: "all", lifeCenterIds: [] };
@@ -1389,7 +1865,7 @@ export class Permissions {
 
     const canManageAll =
       context.isPrivilegedUser &&
-      hasActionPermission(context.permissions, "Life Center", "manage");
+      hasScopedActionPermission(context.snapshot, context.branchScope, "Life Center", "manage");
     if (canManageAll) {
       (req as any).lifeCenterScope = { mode: "all", lifeCenterIds: [] };
       return next();
@@ -1435,14 +1911,16 @@ export class Permissions {
 
     const canManageAll =
       context.isPrivilegedUser &&
-      (hasActionPermission(context.permissions, "School_of_ministry", "manage") ||
-        hasActionPermission(context.permissions, "Program", "manage"));
+      (hasScopedActionPermission(context.snapshot, context.branchScope, "School_of_ministry", "manage") ||
+        hasScopedActionPermission(context.snapshot, context.branchScope, "Program", "manage"));
 
-    const isFacilitator = Boolean((req as any).user?.instructor);
+    const isFacilitator = await isInstructor(context.userId);
     if (!canManageAll && !isFacilitator) {
       return this.unauthorized(res, errorMessage);
     }
 
+    // LMS services narrow facilitators to the programs they teach (lms/lmsAccess.ts).
+    (req as any).somScope = { manageAll: Boolean(canManageAll) };
     return next();
   };
 
@@ -1460,9 +1938,9 @@ export class Permissions {
 
     const canManageAll =
       context.isPrivilegedUser &&
-      (hasActionPermission(context.permissions, "School_of_ministry", "manage") ||
-        hasActionPermission(context.permissions, "Program", "manage"));
-    const isFacilitator = Boolean((req as any).user?.instructor);
+      (hasScopedActionPermission(context.snapshot, context.branchScope, "School_of_ministry", "manage") ||
+        hasScopedActionPermission(context.snapshot, context.branchScope, "Program", "manage"));
+    const isFacilitator = await isInstructor(context.userId);
 
     if (!(req as any).body || typeof (req as any).body !== "object") {
       (req as any).body = {};
@@ -1508,7 +1986,7 @@ export class Permissions {
 
     const canManageAll =
       context.isPrivilegedUser &&
-      hasActionPermission(context.permissions, "Marketplace", "manage");
+      hasScopedActionPermission(context.snapshot, context.branchScope, "Marketplace", "manage");
 
     const payloadUserId = toPositiveInt((req as any).body?.user_id);
     if (payloadUserId && payloadUserId !== context.userId && !canManageAll) {
@@ -1541,7 +2019,7 @@ export class Permissions {
 
     const canViewAll =
       context.isPrivilegedUser &&
-      hasActionPermission(context.permissions, "Marketplace", "view");
+      hasScopedActionPermission(context.snapshot, context.branchScope, "Marketplace", "view");
 
     if (canViewAll) {
       (req as any).orderScope = { mode: "all", userId: context.userId };
@@ -1605,7 +2083,7 @@ export class Permissions {
 
     const canManageAll =
       context.isPrivilegedUser &&
-      hasActionPermission(context.permissions, "Marketplace", "manage");
+      hasScopedActionPermission(context.snapshot, context.branchScope, "Marketplace", "manage");
 
     if (canManageAll) {
       return next();
@@ -1658,7 +2136,7 @@ export class Permissions {
 
     const canManageAll =
       context.isPrivilegedUser &&
-      hasActionPermission(context.permissions, "Marketplace", "manage");
+      hasScopedActionPermission(context.snapshot, context.branchScope, "Marketplace", "manage");
 
     if (canManageAll) {
       return next();
@@ -1699,7 +2177,7 @@ export class Permissions {
 
     const canManageAll =
       context.isPrivilegedUser &&
-      hasActionPermission(context.permissions, "Marketplace", "manage");
+      hasScopedActionPermission(context.snapshot, context.branchScope, "Marketplace", "manage");
 
     if (canManageAll) {
       return next();
@@ -2089,6 +2567,19 @@ export class Permissions {
     "Pledges",
     "admin",
     "Not authorized to delete pledges",
+  );
+
+  // Reports (department reports, executive summary)
+  can_view_reports = this.checkPermission(
+    "Reports",
+    "view",
+    "Not authorized to view reports",
+  );
+
+  can_admin_reports = this.checkPermission(
+    "Reports",
+    "admin",
+    "Not authorized to sign off reports",
   );
 
   // Settings

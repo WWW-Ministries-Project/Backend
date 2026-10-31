@@ -1,7 +1,26 @@
 import { Request, Response } from "express";
-import { AppointmentService, SlotUnavailableError } from "./appointment-service";
+import {
+  AppointmentForbiddenError,
+  AppointmentService,
+  SlotUnavailableError,
+} from "./appointment-service";
 import { notificationService } from "../notifications/notificationService";
-import { prisma } from "../../Models/context";
+import { getRequestAccess } from "../../middleWare/authorization";
+import { canActForOthers } from "./appointment-access";
+import {
+  AppError,
+  InputValidationError,
+} from "../../utils/custom-error-handlers";
+import { performBookingAction } from "./appointment-actions";
+import { AppointmentSettingsService } from "./appointment-settings";
+
+const parsePositiveIdParam = (value: unknown, label: string) => {
+  const id = Number(value);
+  if (!Number.isInteger(id) || id <= 0) {
+    throw new InputValidationError(`${label} has to be a positive number.`);
+  }
+  return id;
+};
 
 export class AppointmentController {
   /**
@@ -203,28 +222,35 @@ export class AppointmentController {
         return res.status(401).json({ error: "Unauthorized user" });
       }
 
+      // Booking for someone else needs `book_for_others`; confirming
+      // straight away answers for the person booked, so it needs `respond`
+      // on others' bookings unless that person is the caller. Both read the
+      // live, active-branch role (`withAccess` on the route); the service
+      // enforces the result. Notifications follow the settings matrix.
+      const access = getRequestAccess(req);
+      const attendeeId =
+        Number(
+          req.body?.userId ??
+            req.body?.staffId ??
+            req.body?.attendeeId ??
+            req.body?.attendee_id,
+        ) || null;
+      const forSomeoneElse =
+        req.body?.requesterId !== undefined &&
+        Number(req.body.requesterId) !== requesterId;
+      const confirmNow = String(req.body?.status ?? "").toUpperCase() === "CONFIRMED";
+      const canManage =
+        (forSomeoneElse || confirmNow) &&
+        (!forSomeoneElse || canActForOthers(access, "book_for_others", attendeeId)) &&
+        (!confirmNow ||
+          attendeeId === requesterId ||
+          canActForOthers(access, "respond", attendeeId));
+
       const newBooking = await AppointmentService.createAppointment(
         req.body,
         requesterId,
+        { canManage },
       );
-
-      const staffRecipientId = Number(newBooking.staffId);
-      if (Number.isInteger(staffRecipientId) && staffRecipientId > 0) {
-        await notificationService.createInAppNotification({
-          type: "appointment.booked",
-          title: "New appointment booking",
-          body: `${newBooking.fullName || "A member"} booked an appointment for ${newBooking.date} (${newBooking.session.start} - ${newBooking.session.end}).`,
-          recipientUserId: staffRecipientId,
-          actorUserId: requesterId,
-          entityType: "APPOINTMENT",
-          entityId: String(newBooking.id),
-          actionUrl: "/home/appointments",
-          priority: "MEDIUM",
-          dedupeKey: `appointment:${newBooking.id}:booked:recipient:${staffRecipientId}`,
-          sendSms: true,
-          smsBody: `${newBooking.fullName || "A member"} booked an appointment for ${newBooking.date} (${newBooking.session.start} - ${newBooking.session.end}).`,
-        });
-      }
 
       res.status(201).json({
         message: "Appointment booked successfully",
@@ -340,7 +366,11 @@ export class AppointmentController {
         return res.status(400).json({ error: "Booking ID must be a valid number" });
       }
 
-      const data = await AppointmentService.updateBooking(id, req.body);
+      const data = await AppointmentService.updateBooking(
+        id,
+        req.body,
+        Number((req as any).user?.id) || undefined,
+      );
       res.status(200).json({
         message: "Booking updated successfully",
         data,
@@ -380,43 +410,19 @@ export class AppointmentController {
         return res.status(400).json({ error: "Booking ID must be a valid number" });
       }
 
-      const booking = await prisma.appointment.findUnique({
-        where: { id },
-        select: { requesterId: true, status: true },
-      });
-      if (!booking) {
-        return res.status(404).json({ error: "Appointment not found" });
-      }
-      if (booking.requesterId !== callerId) {
-        return res.status(403).json({ error: "You can only cancel your own appointments" });
-      }
-      if (booking.status === "CANCELLED") {
-        return res.status(400).json({ error: "This appointment is already cancelled" });
-      }
-
-      const updated = await AppointmentService.updateStatus(id, "CANCELLED");
-
-      const staffRecipientId = Number(updated.staffId);
-      if (Number.isInteger(staffRecipientId) && staffRecipientId > 0 && staffRecipientId !== callerId) {
-        await notificationService.createInAppNotification({
-          type: "appointment.status_changed",
-          title: "Appointment cancelled",
-          body: `${updated.fullName || "A member"} cancelled their appointment on ${updated.date} (${updated.session.start} - ${updated.session.end}).`,
-          recipientUserId: staffRecipientId,
-          actorUserId: callerId,
-          entityType: "APPOINTMENT",
-          entityId: String(updated.id),
-          actionUrl: "/home/appointments",
-          priority: "MEDIUM",
-          dedupeKey: `appointment:${updated.id}:status:CANCELLED:recipient:${staffRecipientId}`,
-          sendSms: true,
-          smsBody: `${updated.fullName || "A member"} cancelled their appointment on ${updated.date} (${updated.session.start} - ${updated.session.end}).`,
-        });
-      }
+      // Ownership, state and the cancel cutoff (settings.cancelCutoffHours)
+      // are checked in the service; it also writes history and notifies.
+      const updated = await AppointmentService.cancelByRequester(id, callerId);
 
       res.status(200).json({ message: "Appointment cancelled successfully", data: updated });
     } catch (error: any) {
-      res.status(500).json({ error: error.message || "Cancellation failed" });
+      const statusCode =
+        error instanceof AppError
+          ? error.statusCode
+          : error instanceof AppointmentForbiddenError
+            ? 403
+            : 500;
+      res.status(statusCode).json({ error: error.message || "Cancellation failed" });
     }
   }
 
@@ -514,8 +520,12 @@ export class AppointmentController {
       }
 
       const newStatus = isConfirmed ? "CONFIRMED" : "PENDING";
-      const updated = await AppointmentService.updateStatus(parsedId, newStatus);
       const actorUserId = Number((req as any)?.user?.id);
+      const updated = await AppointmentService.updateStatus(
+        parsedId,
+        newStatus,
+        Number.isInteger(actorUserId) && actorUserId > 0 ? actorUserId : undefined,
+      );
       const statusWord = newStatus.toLowerCase();
 
       const recipientUserIds = Array.from(
@@ -567,6 +577,68 @@ export class AppointmentController {
     } catch (error: any) {
       res.status(500).json({ error: error.message || "Status update failed" });
     }
+  }
+
+  /*
+   * Appointments redesign. These throw (InputValidationError, NotFoundError,
+   * AppError) and let the global handler answer `{ message, data: null }`.
+   */
+
+  /**
+   * @route POST /appointment/bookings/:id/actions
+   * @body  { action, ...fields } — see appointment-actions.ts
+   */
+  async bookingAction(req: Request, res: Response) {
+    const callerId = Number((req as any).user?.id);
+    if (!Number.isInteger(callerId) || callerId <= 0) {
+      return res.status(401).json({ error: "Unauthorized user" });
+    }
+    const id = parsePositiveIdParam(req.params.id, "Booking ID");
+    const data = await performBookingAction(id, callerId, req.body, getRequestAccess(req));
+    res.status(200).json({ message: "Appointment updated", data });
+  }
+
+  /** @route PUT /appointment/availability/staff/:userId/pause — body { paused } */
+  async setStaffPaused(req: Request, res: Response) {
+    const userId = parsePositiveIdParam(req.params.userId, "User ID");
+    const data = await AppointmentService.setStaffPaused(userId, req.body?.paused);
+    res.status(200).json({
+      message: data.paused ? "Bookings paused" : "Bookings resumed",
+      data,
+    });
+  }
+
+  /** @route POST /appointment/availability/staff/:userId/time-off — body { from, to, note? } */
+  async createTimeOff(req: Request, res: Response) {
+    const userId = parsePositiveIdParam(req.params.userId, "User ID");
+    const data = await AppointmentService.createTimeOff(
+      userId,
+      req.body,
+      Number((req as any).user?.id) || undefined,
+    );
+    res.status(201).json({ message: "Time off added", data });
+  }
+
+  /** @route DELETE /appointment/availability/time-off/:id */
+  async deleteTimeOff(req: Request, res: Response) {
+    const id = parsePositiveIdParam(req.params.id, "Time off ID");
+    const data = await AppointmentService.deleteTimeOff(id);
+    res.status(200).json({ message: "Time off removed", data });
+  }
+
+  /** @route GET /appointment/settings */
+  async getSettings(_req: Request, res: Response) {
+    const data = await AppointmentSettingsService.get();
+    res.status(200).json({ message: "Appointment settings fetched", data });
+  }
+
+  /** @route PUT /appointment/settings — any subset; returns the full object */
+  async updateSettings(req: Request, res: Response) {
+    const data = await AppointmentSettingsService.update(
+      req.body,
+      Number((req as any).user?.id) || null,
+    );
+    res.status(200).json({ message: "Appointment settings saved", data });
   }
 }
 

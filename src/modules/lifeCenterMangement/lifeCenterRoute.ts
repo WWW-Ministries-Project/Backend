@@ -4,6 +4,7 @@ import { Permissions } from "../../middleWare/authorization";
 import { LifeCenterRoleController } from "./lifeCenterRoleController";
 import { LifeCenterController } from "./lifeCenterController";
 import { LifeCenterMeetingController } from "./lifeCenterMeetingController";
+import { lifeCenterGuard, lifeCenterRolesGuard } from "./lifeCenterAccess";
 
 const permissions = new Permissions();
 const protect = permissions.protect;
@@ -13,10 +14,21 @@ const roleController = new LifeCenterRoleController();
 const lifeCenterController = new LifeCenterController();
 const lifeCenterMeetingController = new LifeCenterMeetingController();
 
+// Actions and scopes (src/permissions/catalog.ts, "Life Center") are applied
+// by lifeCenterGuard after withAccess: the role's scope (whole branch or the
+// centers they lead), its actions, and leader tools for a center's leadership.
+const access = permissions.withAccess;
+const view = [protect, access, lifeCenterGuard()];
+const can = (action: string, options: { leaderTool?: boolean; wholeBranchOnly?: boolean } = {}) => [
+  protect,
+  access,
+  lifeCenterGuard({ action, ...options }),
+];
+
 //life center roles
 lifeCenterRouter.post(
   "/create-role",
-  [protect, permissions.can_manage_life_center],
+  [protect, access, lifeCenterRolesGuard],
   roleController.createLifeCenterRole,
 );
 lifeCenterRouter.get(
@@ -31,103 +43,113 @@ lifeCenterRouter.get(
 );
 lifeCenterRouter.put(
   "/update-role",
-  [protect, permissions.can_manage_life_center],
+  [protect, access, lifeCenterRolesGuard],
   roleController.updateLifeCenterRole,
 );
 lifeCenterRouter.delete(
   "/delete-role",
-  [protect, permissions.can_delete_life_center],
+  [protect, permissions.requireAction("Life Center", "manage_roles", "Not authorized to delete life center roles")],
   roleController.deleteLifeCenterRole,
 );
 
 //life center
 lifeCenterRouter.post(
   "/create-lifecenter",
-  [protect, permissions.can_manage_life_center],
+  [protect, permissions.can_manage_life_center, lifeCenterGuard()],
   lifeCenterController.createLifeCenter,
 );
 lifeCenterRouter.get(
   "/get-lifecenter",
-  [protect, permissions.can_view_life_center_scoped],
+  view,
   lifeCenterController.getLifeCenterById,
 );
 lifeCenterRouter.get(
+  "/overview",
+  view,
+  lifeCenterController.getOverview,
+);
+lifeCenterRouter.post(
+  "/remind-leader",
+  can("remind_leader"),
+  lifeCenterController.remindLeader,
+);
+lifeCenterRouter.get(
   "/get-lifecenters",
-  [protect, permissions.can_view_life_center_scoped],
+  view,
   lifeCenterController.getAllLifeCenters,
 );
 lifeCenterRouter.put(
   "/update-lifecenter",
-  [protect, permissions.can_manage_life_center],
+  [protect, permissions.can_manage_life_center, lifeCenterGuard()],
   lifeCenterController.updateLifeCenter,
 );
 lifeCenterRouter.delete(
   "/delete-lifecenter",
-  [protect, permissions.can_delete_life_center],
+  can("delete"),
   lifeCenterController.deleteLifeCenter,
 );
 
 //adding members to life center
 lifeCenterRouter.post(
   "/add-lifecenter-member",
-  [protect, permissions.can_manage_life_center],
+  can("assign_members"),
   lifeCenterController.addMemberToLifeCenter,
 );
 
 lifeCenterRouter.put(
   "/update-member-role",
-  [protect, permissions.can_manage_life_center],
+  can("assign_members"),
   lifeCenterController.updateMemberRole,
 );
 
 lifeCenterRouter.delete(
   "/remove-lifecenter-member",
-  [protect, permissions.can_delete_life_center],
+  can("delete"),
   lifeCenterController.removeMemberFromLifeCenter,
 );
 
 //getlifecentermembers
 lifeCenterRouter.get(
   "/get-lifecenter-members",
-  [protect, permissions.can_view_life_center_scoped],
+  view,
   lifeCenterController.getAllLifeCenterMembers,
 );
 
 //addsoul
 lifeCenterRouter.post(
   "/soulwon",
-  [protect, permissions.can_manage_life_center_scoped],
+  can("record_souls", { leaderTool: true }),
   lifeCenterController.createSoulWon,
 );
 //removesoul
 lifeCenterRouter.delete(
   "/soulwon",
-  [protect, permissions.can_delete_life_center],
+  can("delete"),
   lifeCenterController.removeSoulWon,
 );
 //updatesoul
 lifeCenterRouter.put(
   "/soulwon",
-  [protect, permissions.can_manage_life_center_scoped],
+  can("record_souls", { leaderTool: true }),
   lifeCenterController.updateSoulWon,
 );
 //getsouls
 lifeCenterRouter.get(
   "/soulswon",
-  [protect, permissions.can_view_life_center_scoped],
+  view,
   lifeCenterController.getSouls,
 );
 //getsoul
 lifeCenterRouter.get(
   "/soulwon",
-  [protect, permissions.can_view_life_center_scoped],
+  view,
   lifeCenterController.getSoul,
 );
 
 //lifecenter stats
 lifeCenterRouter.get(
   "/stats",
-  [protect, permissions.can_view_life_center],
+  view,
   lifeCenterController.getStats,
 );
 
@@ -137,37 +159,37 @@ lifeCenterRouter.get("/my-lifecenter", [protect], lifeCenterController.mylifecen
 //life center meetings
 lifeCenterRouter.post(
   "/meeting",
-  [protect, permissions.can_manage_life_center_scoped],
+  can("record_meeting", { leaderTool: true }),
   lifeCenterMeetingController.createMeeting,
 );
 lifeCenterRouter.put(
   "/meeting",
-  [protect, permissions.can_manage_life_center_scoped],
+  can("record_meeting", { leaderTool: true }),
   lifeCenterMeetingController.updateMeeting,
 );
 lifeCenterRouter.delete(
   "/meeting",
-  [protect, permissions.can_delete_life_center],
+  can("delete"),
   lifeCenterMeetingController.deleteMeeting,
 );
 lifeCenterRouter.get(
   "/meeting",
-  [protect, permissions.can_view_life_center_scoped],
+  view,
   lifeCenterMeetingController.getMeeting,
 );
 lifeCenterRouter.get(
   "/meetings",
-  [protect, permissions.can_view_life_center_scoped],
+  view,
   lifeCenterMeetingController.getMeetings,
 );
 lifeCenterRouter.get(
   "/meetings/export",
-  [protect, permissions.can_view_life_center_scoped],
+  can("export", { leaderTool: true }),
   lifeCenterMeetingController.exportMeetings,
 );
 lifeCenterRouter.get(
   "/soulswon-eligible-first-timers",
-  [protect, permissions.can_view_life_center_scoped],
+  view,
   lifeCenterMeetingController.getEligibleFirstTimers,
 );
 

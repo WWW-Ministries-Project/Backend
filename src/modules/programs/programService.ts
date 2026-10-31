@@ -1,6 +1,7 @@
 import { max, sub } from "date-fns";
 import { prisma } from "../../Models/context";
 import { notificationService } from "../notifications/notificationService";
+import { curriculumService } from "./lms/curriculumService";
 import {
   getBranchScopedWhere,
   resolveBranchIdOrDefault,
@@ -378,8 +379,13 @@ export class ProgramService {
     };
   }
 
-  async getAllProgramsWithEnrolledMembersAndCompletion() {
+  /** `programIds` limits the list to an instructor's programs (undefined: all in the caller's branches). */
+  async getAllProgramsWithEnrolledMembersAndCompletion(programIds?: number[]) {
     const programs = await prisma.program.findMany({
+      where: {
+        ...(getBranchScopedWhere(undefined) ?? {}),
+        ...(programIds ? { id: { in: programIds } } : {}),
+      },
       include: {
         topics: {
           orderBy: {
@@ -743,6 +749,9 @@ export class ProgramService {
               },
             },
           },
+        },
+        modules: {
+          orderBy: [{ order_number: "asc" }, { id: "asc" }],
         },
       },
     });
@@ -1142,6 +1151,7 @@ export class ProgramService {
       },
       include: {
         progress: true,
+        extensions: { select: { learningUnitId: true, dueDate: true } },
         submissions: {
           orderBy: [{ submittedAt: "desc" }, { attempt: "desc" }],
         },
@@ -1151,6 +1161,10 @@ export class ProgramService {
               include: {
                 program: {
                   include: {
+                    modules: {
+                      orderBy: [{ order_number: "asc" }, { id: "asc" }],
+                      select: { id: true, title: true, order_number: true },
+                    },
                     topics: {
                       orderBy: {
                         order_number: "asc",
@@ -1195,6 +1209,7 @@ export class ProgramService {
         id: topic.id,
         name: topic.name,
         description: topic.description,
+        moduleId: topic.moduleId,
         completed: progress?.completed ?? false,
         status: progress?.status ?? "PENDING",
         order_number: topic.order_number,
@@ -1228,7 +1243,10 @@ export class ProgramService {
           ? {
               isActive: activation.isActive,
               activatedAt: activation.activatedAt,
-              dueDate: activation.dueDate,
+              dueDate:
+                enrollment.extensions.find(
+                  (x) => x.learningUnitId === topic.LearningUnit?.id,
+                )?.dueDate ?? activation.dueDate,
               closedAt: activation.closedAt,
             }
           : {
@@ -1245,6 +1263,9 @@ export class ProgramService {
       title: program.title,
       description: program.description,
       completed: enrollment.completed ?? false,
+      cohortName: enrollment.course.cohort.name,
+      className: enrollment.course.name,
+      modules: program.modules,
       topics,
     };
   }
@@ -1295,6 +1316,15 @@ export class ProgramService {
       throw new Error("Only assignment learning units can be activated");
     }
 
+    // No explicit date: keep this cohort's override, else derive from the unit's due rule.
+    const parsedDueDate = dueDate ? new Date(dueDate) : null;
+    if (parsedDueDate && Number.isNaN(parsedDueDate.getTime())) {
+      throw new Error("dueDate must be a valid date");
+    }
+    const effectiveDueDate =
+      parsedDueDate ??
+      (await curriculumService.defaultDueDateForActivation(cohortId, topicId));
+
     return prisma.cohort_assignment.upsert({
       where: {
         cohortId_learningUnitId: {
@@ -1305,7 +1335,7 @@ export class ProgramService {
       update: {
         isActive: true,
         activatedAt: new Date(),
-        dueDate: new Date(dueDate!),
+        dueDate: effectiveDueDate,
         closedAt: null,
       },
       create: {
@@ -1313,7 +1343,7 @@ export class ProgramService {
         learningUnitId: learningUnit.id,
         isActive: true,
         activatedAt: new Date(),
-        dueDate,
+        dueDate: effectiveDueDate,
       },
     });
   }
@@ -1477,6 +1507,16 @@ export class ProgramService {
     const normalizedFileUrl = String(fileUrl || "").trim();
     if (!normalizedFileUrl) {
       throw new Error("fileUrl is required");
+    }
+    // Instructors open this link from the dashboard; never accept javascript:/data: URLs.
+    let parsedFileUrl: URL;
+    try {
+      parsedFileUrl = new URL(normalizedFileUrl);
+    } catch {
+      throw new Error("fileUrl must be a valid http(s) link");
+    }
+    if (parsedFileUrl.protocol !== "https:" && parsedFileUrl.protocol !== "http:") {
+      throw new Error("fileUrl must be a valid http(s) link");
     }
 
     const { learningUnit, enrollment, currentAttempt, maxAttempts } =
@@ -1987,21 +2027,30 @@ export class ProgramService {
 
     const now = new Date();
 
-    const activeAssignment = cohortAssignments.find(
-      (assignment) =>
-        assignment.isActive &&
-        assignment.closedAt === null &&
-        (!assignment.dueDate || assignment.dueDate >= now),
-    );
+    // A per-learner extension replaces the cohort due date for that learner.
+    const extensions = await prisma.assignment_extension.findMany({
+      where: {
+        learningUnitId: learningUnit.id,
+        enrollmentId: { in: enrollments.map((item) => item.id) },
+      },
+      select: { cohortId: true, dueDate: true },
+    });
+    const effectiveDue = (assignment: { cohortId: number; dueDate: Date | null }) =>
+      extensions.find((x) => x.cohortId === assignment.cohortId)?.dueDate ??
+      assignment.dueDate;
+
+    const activeAssignment = cohortAssignments.find((assignment) => {
+      const due = effectiveDue(assignment);
+      return assignment.isActive && assignment.closedAt === null && (!due || due >= now);
+    });
 
     if (!activeAssignment) {
-      const expiredAssignment = cohortAssignments.find(
-        (assignment) =>
-          assignment.isActive &&
-          assignment.closedAt === null &&
-          assignment.dueDate !== null &&
-          assignment.dueDate < now,
-      );
+      const expiredAssignment = cohortAssignments.find((assignment) => {
+        const due = effectiveDue(assignment);
+        return (
+          assignment.isActive && assignment.closedAt === null && due !== null && due < now
+        );
+      });
 
       if (expiredAssignment) {
         const expiredEnrollment =

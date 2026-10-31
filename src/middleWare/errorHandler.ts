@@ -10,7 +10,31 @@ import logger from "../utils/logger-config";
 const isDevelopment =
   process.env.NODE_ENV === "development" || process.env.NODE_ENV === "test";
 
+// Connection-level failures (server unreachable, timeouts, pool exhausted).
+// These are outages, not bad input, so they must surface as 503.
+const PRISMA_UNAVAILABLE_CODES = new Set([
+  "P1001",
+  "P1002",
+  "P1008",
+  "P1017",
+  "P2024",
+]);
+
+export const DATABASE_UNAVAILABLE_ERROR = {
+  statusCode: StatusCodes.SERVICE_UNAVAILABLE,
+  message: "The database is temporarily unavailable. Try again shortly.",
+};
+
+export const isDatabaseUnavailableError = (error: unknown) =>
+  error instanceof Prisma.PrismaClientInitializationError ||
+  (error instanceof Prisma.PrismaClientKnownRequestError &&
+    PRISMA_UNAVAILABLE_CODES.has(error.code));
+
 export const buildPrismaError = (error: Prisma.PrismaClientKnownRequestError) => {
+  if (isDatabaseUnavailableError(error)) {
+    return DATABASE_UNAVAILABLE_ERROR;
+  }
+
   if (error.code === "P2003") {
     const fieldName = String(error.meta?.field_name || "");
     const isRequisitionEventConstraint =
@@ -61,6 +85,13 @@ const normalizeError = (error: unknown) => {
       statusCode: StatusCodes.BAD_REQUEST,
       message: error.message,
       stack: error.stack,
+    };
+  }
+
+  if (isDatabaseUnavailableError(error)) {
+    return {
+      ...DATABASE_UNAVAILABLE_ERROR,
+      stack: (error as Error).stack,
     };
   }
 

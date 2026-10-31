@@ -9,6 +9,22 @@ import {
   initializeTransaction,
   verifyTransaction,
 } from "../../libs/paystack/paystackTransaction";
+import {
+  bulkTransitionSkipReason,
+  computeItemsSubtotal,
+  computeOrderTotal,
+  getMarketplaceDeliveryConfig,
+  resolveFulfilment,
+  resolveDbUnitPrice,
+  roundMoney,
+  toDateKey,
+  type DeliveryStatusValue,
+  type PaymentStatusValue,
+  type ResolvedFulfilment,
+} from "./marketplaceFulfilment";
+import { filterOrdersInBranches, orderBranchWhere } from "./marketplaceAccess";
+import { assertReturnUrls } from "./returnUrls";
+import { getBranchScopedWhere } from "../branches/branchService";
 
 export type StockShortage = {
   name: string;
@@ -34,6 +50,14 @@ export class InsufficientStockError extends Error {
   }
 }
 
+/** The order changed between read and write (concurrent update) — 409. */
+export class OrderConflictError extends Error {
+  constructor(message = "This order was changed by someone else while you were updating it. Refresh and try again") {
+    super(message);
+    this.name = "OrderConflictError";
+  }
+}
+
 type ResolvedOrderItem = {
   productId: number;
   color: string;
@@ -44,6 +68,12 @@ type ResolvedOrderItem = {
   productColourId: number | null;
   sizeId: number | null;
   availableStock: number;
+  /** Authoritative unit price from products.price_amount (never the client's). */
+  unitPrice: number;
+  /** products.price_currency, or the client's value when the product has none. */
+  priceCurrency: string;
+  /** products.market_id — fallback when the client omits market_id. */
+  marketId: number | null;
 };
 
 export type OrderItemEdit = {
@@ -70,6 +100,8 @@ export type UpdateOrderInput = {
   payment_status?: "pending" | "success" | "failed";
   delivery_status?: "pending" | "shipped" | "delivered" | "cancelled";
   items?: OrderItemEdit[];
+  /** Staff member making the change; recorded when they mark the order paid. */
+  actorUserId?: number | null;
 };
 
 export type CreateOrderForMemberInput = {
@@ -104,9 +136,21 @@ export type CreateOrderForMemberInput = {
   return_url?: string | null;
   cancellation_url?: string | null;
   placed_by_staff_id: number;
+  /** "pickup" (default) | "delivery". */
+  fulfilment_method?: string | null;
+  /** Required when fulfilment_method is "delivery". */
+  delivery_address?: string | null;
 };
 
 export class OrderService {
+  /** The order's buyer, or null when there is no such order. */
+  async findOrderOwner(orderId: number) {
+    return prisma.orders.findFirst({
+      where: { id: orderId, deleted_at: null },
+      select: { user_id: true },
+    });
+  }
+
   async findOrderByName(first_name?: string, last_name?: string) {
     const orders = await prisma.orders.findMany({
       where: {
@@ -131,8 +175,14 @@ export class OrderService {
   async create(
     data: {
     user_id?: number | null | string;
-    total_amount: number | string;
+    /** Client-computed total. Informational only — the stored/charged total is
+     * recomputed server-side from items + delivery fee (see below). */
+    total_amount?: number | string | null;
     payment_type: "paystack" | "hubtel" | null;
+    /** "pickup" (default — old clients omit it) | "delivery". */
+    fulfilment_method?: string | null;
+    /** Required when fulfilment_method is "delivery". */
+    delivery_address?: string | null;
     return_url: string | null;
     cancellation_url: string | null;
     billing: {
@@ -162,8 +212,43 @@ export class OrderService {
     },
     options: { reuseExistingPending?: boolean } = {},
   ) {
+    assertReturnUrls(data.return_url, data.cancellation_url);
     if (data.payment_type === "hubtel") {
       this.validateHubtelRedirectUrls(data.return_url, data.cancellation_url);
+    }
+
+    if (!Array.isArray(data.items) || data.items.length === 0) {
+      throw new Error("At least one item is required");
+    }
+    for (const item of data.items) {
+      const quantity = Number(item.quantity);
+      if (!Number.isInteger(quantity) || quantity <= 0) {
+        throw new Error(`Quantity for "${item.name}" must be a positive integer`);
+      }
+    }
+
+    // Fulfilment: pickup (default) or delivery. The fee always comes from
+    // server config, never from the client.
+    const fulfilment = resolveFulfilment(data, getMarketplaceDeliveryConfig());
+
+    // Resolves stock AND the authoritative unit price from the products
+    // table (client price_amount is ignored). Rejects missing/deleted/
+    // unpriced products. Shortages are checked further down, after the
+    // pending-order reuse check (a reused order already holds its stock).
+    const resolvedItems = await this.resolveItemStock(data.items);
+
+    // Authoritative total = DB-priced item subtotal + delivery fee, so the
+    // fee is counted exactly once whatever the client put in total_amount.
+    const pricedItems = this.toPricedItems(resolvedItems);
+    const totalAmount = computeOrderTotal(pricedItems, fulfilment.delivery_fee);
+    const clientTotal =
+      data.total_amount != null && String(data.total_amount).trim() !== ""
+        ? Number(data.total_amount)
+        : NaN;
+    if (Number.isFinite(clientTotal) && roundMoney(clientTotal) !== totalAmount) {
+      console.warn(
+        `create-order: client total_amount ${clientTotal} differs from server total ${totalAmount} (items ${computeItemsSubtotal(pricedItems)} + fee ${fulfilment.delivery_fee}); using server total`,
+      );
     }
 
     // Idempotency guard: retrying a failed/abandoned checkout (network
@@ -175,13 +260,12 @@ export class OrderService {
     // to match against.
     const existingPending =
       options.reuseExistingPending !== false
-        ? await this.findMatchingPendingOrder(data)
+        ? await this.findMatchingPendingOrder(data, fulfilment)
         : null;
     if (existingPending) {
       return this.reuseExistingPendingOrder(existingPending, data);
     }
 
-    const resolvedItems = await this.resolveItemStock(data.items);
     const shortages = resolvedItems.filter(
       (item) => item.stockManaged && item.availableStock < item.quantity,
     );
@@ -223,7 +307,10 @@ export class OrderService {
           // is NaN, and NaN is not nullish, so `?? null` never caught it — Prisma
           // would reject the NaN for this Int? column. Guard explicitly instead.
           user_id: data.user_id != null ? Number(data.user_id) : null,
-          total_amount: parseFloat(data.total_amount.toString()),
+          total_amount: totalAmount,
+          fulfilment_method: fulfilment.fulfilment_method,
+          delivery_address: fulfilment.delivery_address,
+          delivery_fee: fulfilment.delivery_fee,
           reference: clientReference,
           items: { create: this.buildItems(data.items, resolvedItems) },
           billing_details: { create: this.buildBilling(data.billing) },
@@ -334,32 +421,32 @@ export class OrderService {
           `Quantity for "${item.name}" must be a positive integer`,
         );
       }
-      if (typeof item.price_amount !== "number" || item.price_amount < 0) {
-        throw new Error(`Price for "${item.name}" must be zero or greater`);
-      }
     }
     if (data.payment_mode !== "manual" && data.payment_mode !== "gateway") {
       throw new Error('payment_mode must be "manual" or "gateway"');
     }
+    assertReturnUrls(data.return_url, data.cancellation_url);
 
     // Deliberately no member notification here (unlike updateOrderPayment/
     // updateDeliveryStatus/cancelOrder) — a manually-placed order implies
     // staff already spoke to the member out-of-band. Revisit if that
     // assumption turns out wrong.
+    // Validated up-front for both modes (create() re-resolves it for gateway).
+    const fulfilment = resolveFulfilment(data, getMarketplaceDeliveryConfig());
+
     if (data.payment_mode === "gateway") {
-      const total_amount = data.items.reduce(
-        (sum, item) => sum + item.price_amount * item.quantity,
-        0,
-      );
       const created = await this.create(
         {
           user_id: data.user_id,
-          total_amount,
+          // create() recomputes the total from items + delivery fee.
+          total_amount: null,
           payment_type: data.payment_type ?? "paystack",
           return_url: data.return_url ?? null,
           cancellation_url: data.cancellation_url ?? null,
           billing: data.billing,
           items: data.items,
+          fulfilment_method: fulfilment.fulfilment_method,
+          delivery_address: fulfilment.delivery_address,
         },
         { reuseExistingPending: false },
       );
@@ -387,9 +474,10 @@ export class OrderService {
       );
     }
 
-    const total_amount = data.items.reduce(
-      (sum, item) => sum + item.price_amount * item.quantity,
-      0,
+    // DB prices (resolveItemStock), not the client's price_amount.
+    const total_amount = computeOrderTotal(
+      this.toPricedItems(resolvedItems),
+      fulfilment.delivery_fee,
     );
     // Prefixed so the Hubtel reconciliation sweeps (which force-fail and
     // restock any pending order older than 48h) can recognize and skip
@@ -410,6 +498,13 @@ export class OrderService {
           reference: clientReference,
           payment_status: manualStatus,
           placed_by_staff_id: data.placed_by_staff_id,
+          ...(manualStatus === "success" && {
+            marked_paid_by_user_id: data.placed_by_staff_id,
+            marked_paid_at: new Date(),
+          }),
+          fulfilment_method: fulfilment.fulfilment_method,
+          delivery_address: fulfilment.delivery_address,
+          delivery_fee: fulfilment.delivery_fee,
           items: { create: this.buildItems(data.items, resolvedItems) },
           billing_details: { create: this.buildBilling(data.billing) },
         },
@@ -467,6 +562,7 @@ export class OrderService {
     cancellation_url: string | null,
   ) {
     this.validateHubtelRedirectUrls(return_url, cancellation_url);
+    assertReturnUrls(return_url, cancellation_url);
     const clientReference = this.generateReference();
 
     const order = await prisma.orders.findFirst({
@@ -515,9 +611,9 @@ export class OrderService {
     };
   }
 
-  async findAll() {
+  async findAll(branchId?: unknown) {
     const orders = await prisma.orders.findMany({
-      where: { deleted_at: null },
+      where: { deleted_at: null, ...(orderBranchWhere(branchId) ?? {}) },
       orderBy: {
         id: "desc",
       },
@@ -550,7 +646,12 @@ export class OrderService {
     });
 
     if (!order) throw new Error("Order not found");
-    return order;
+    const names = await this.markedPaidNames([order]);
+    return {
+      ...order,
+      marked_paid_by_name:
+        (order.marked_paid_by_user_id && names.get(order.marked_paid_by_user_id)) || null,
+    };
   }
 
   async updateOrder(data: UpdateOrderInput) {
@@ -591,9 +692,45 @@ export class OrderService {
       );
     }
 
+    if (order.delivery_status === "delivered" && data.delivery_status === "cancelled") {
+      throw new Error("Cannot cancel an order that has already been delivered");
+    }
+
     let restockedVariants: { productColourId: number; sizeId: number }[] = [];
+    const changingStatus = Boolean(data.payment_status || data.delivery_status);
 
     await prisma.$transaction(async (tx) => {
+      // Optimistic claim: every guard above and the restock decision below
+      // were made from `order` as read OUTSIDE this transaction. Re-assert
+      // that exact payment/delivery state while writing the new statuses —
+      // if a concurrent cancel/fail/webhook moved it in between, count is 0
+      // and we abort instead of double-restocking. The UPDATE also holds the
+      // row lock for the rest of this transaction.
+      if (changingStatus || editingItems) {
+        const claim = await tx.orders.updateMany({
+          where: {
+            id: order.id,
+            deleted_at: null,
+            payment_status: order.payment_status,
+            delivery_status: order.delivery_status,
+          },
+          data: changingStatus
+            ? {
+                ...(data.payment_status && { payment_status: data.payment_status }),
+                // Marking paid by hand records who did it (gateway payments go
+                // through updateOrderPayment and leave these empty).
+                ...(data.payment_status === "success" &&
+                  order.payment_status !== "success" && {
+                    marked_paid_by_user_id: data.actorUserId ?? null,
+                    marked_paid_at: new Date(),
+                  }),
+                ...(data.delivery_status && { delivery_status: data.delivery_status }),
+              }
+            : { updated_at: new Date() },
+        });
+        if (claim.count === 0) throw new OrderConflictError();
+      }
+
       if (editingItems) {
         restockedVariants = await this.applyItemEdits(tx, order.items, data.items!);
 
@@ -608,10 +745,8 @@ export class OrderService {
           );
         }
 
-        const newTotal = remainingItems.reduce(
-          (sum, item) => sum + item.price_amount * item.quantity,
-          0,
-        );
+        // Keep the delivery fee in the stored total when items change.
+        const newTotal = computeOrderTotal(remainingItems, order.delivery_fee ?? 0);
         await tx.orders.update({
           where: { id: order.id },
           data: { total_amount: newTotal },
@@ -645,26 +780,14 @@ export class OrderService {
       const movingToFailed =
         data.payment_status === "failed" && order.payment_status !== "failed";
       // Stock was already released via the OTHER status field — don't
-      // restock a second time (same double-restock class cancelOrder
-      // already guards against on its own endpoint).
+      // restock a second time. Safe to decide from `order` because the claim
+      // above proved that state was still current when we wrote.
       const stockAlreadyReleased =
         order.payment_status === "failed" || order.delivery_status === "cancelled";
 
       if ((movingToCancelled || movingToFailed) && !stockAlreadyReleased) {
         const additionallyRestocked = await this.restockAllItems(tx, order.id);
         restockedVariants.push(...additionallyRestocked);
-      }
-
-      if (data.payment_status || data.delivery_status) {
-        await tx.orders.update({
-          where: { id: order.id },
-          data: {
-            ...(data.payment_status && { payment_status: data.payment_status }),
-            ...(data.delivery_status && {
-              delivery_status: data.delivery_status,
-            }),
-          },
-        });
       }
     });
 
@@ -893,16 +1016,9 @@ export class OrderService {
     return await this.flattenOrders(await orders);
   }
 
+  // Read-only: pending Hubtel payments are reconciled by the cron job or the
+  // explicit reconcile action (POST reconcile-hubtel-pending-payments?market_id=).
   async findOneByMarketplaceId(marketplaceId: number) {
-    try {
-      await this.reconcilePendingHubtelPaymentsByMarket(marketplaceId, 20);
-    } catch (error: any) {
-      console.error(
-        "Market-level Hubtel reconciliation failed:",
-        error.message || error,
-      );
-    }
-
     const orders = await prisma.orders.findMany({
       orderBy: {
         id: "desc",
@@ -1222,46 +1338,448 @@ export class OrderService {
     status: "pending" | "shipped" | "delivered" | "cancelled",
     actorUserId?: number | null,
   ) {
-    const normalizedStatus = status.trim().toLowerCase();
+    const normalizedStatus = status.trim().toLowerCase() as DeliveryStatusValue;
     if (!["pending", "shipped", "delivered", "cancelled"].includes(normalizedStatus)) {
       throw new Error("delivery status must be pending, shipped, delivered, or cancelled");
     }
 
-    const updatedOrder = await prisma.orders.update({
-      where: {
-        id: orderId,
-      },
-      data: {
-        delivery_status: normalizedStatus as any,
-      },
-      include: {
-        items: true,
-        billing_details: true,
-      },
+    let restockedVariants: { productColourId: number; sizeId: number }[] = [];
+
+    const updatedOrder = await prisma.$transaction(async (tx) => {
+      const existing = await tx.orders.findFirst({
+        where: { id: orderId, deleted_at: null },
+        select: { id: true, payment_status: true, delivery_status: true },
+      });
+      if (!existing) throw new Error("Order not found");
+
+      // Same guard as updateOrder: a cancelled order's stock has been
+      // released, so moving it back to an active status would leave it
+      // fulfilling items it no longer holds.
+      const cancelledMessage =
+        "Cannot move a cancelled order back to an active delivery status";
+      const deliveredMessage =
+        "Cannot cancel an order that has already been delivered";
+
+      if (existing.delivery_status === "cancelled" && normalizedStatus !== "cancelled") {
+        throw new Error(cancelledMessage);
+      }
+      if (existing.delivery_status === "delivered" && normalizedStatus === "cancelled") {
+        throw new Error(deliveredMessage);
+      }
+
+      if (normalizedStatus === "cancelled") {
+        // Atomic claim (same updateMany + count idiom as cancelOrder): only
+        // the call that actually flips the order into "cancelled" restocks,
+        // so a duplicate/retried request can't double-restock. The claim is
+        // guarded on the not-yet-released state (not cancelled, payment not
+        // failed) at write time, so a concurrent fail/cancel can't make us
+        // restock a second time. Delivered orders are refused.
+        const claimWithRestock = await tx.orders.updateMany({
+          where: {
+            id: orderId,
+            deleted_at: null,
+            delivery_status: { notIn: ["cancelled", "delivered"] },
+            payment_status: { not: "failed" },
+          },
+          data: { delivery_status: "cancelled" },
+        });
+        if (claimWithRestock.count > 0) {
+          restockedVariants = await this.restockAllItems(tx, orderId);
+        } else {
+          // Payment already failed (stock already released by
+          // updateOrderPayment): cancel without restocking.
+          const claimNoRestock = await tx.orders.updateMany({
+            where: {
+              id: orderId,
+              deleted_at: null,
+              delivery_status: { notIn: ["cancelled", "delivered"] },
+            },
+            data: { delivery_status: "cancelled" },
+          });
+          if (claimNoRestock.count === 0) {
+            const latest = await tx.orders.findUnique({
+              where: { id: orderId },
+              select: { delivery_status: true },
+            });
+            if (latest?.delivery_status === "delivered") {
+              throw new Error(deliveredMessage);
+            }
+            // else already cancelled (duplicate request): idempotent no-op.
+          }
+        }
+      } else {
+        // Guarded write: a concurrent cancel between the read above and this
+        // write must not be silently reverted to an active status.
+        const moved = await tx.orders.updateMany({
+          where: { id: orderId, deleted_at: null, delivery_status: { not: "cancelled" } },
+          data: { delivery_status: normalizedStatus },
+        });
+        if (moved.count === 0) throw new Error(cancelledMessage);
+      }
+
+      return tx.orders.findUniqueOrThrow({
+        where: { id: orderId },
+        include: { items: true, billing_details: true },
+      });
     });
 
-    const recipientUserId = Number(updatedOrder.user_id);
-    if (Number.isInteger(recipientUserId) && recipientUserId > 0) {
-      await notificationService.createInAppNotification({
-        type: "delivery.status_changed",
-        title: "Delivery status updated",
-        body: `Delivery status for order ${updatedOrder.order_number || `#${updatedOrder.id}`} is now ${normalizedStatus}.`,
-        recipientUserId,
-        actorUserId:
-          Number.isInteger(Number(actorUserId)) && Number(actorUserId) > 0
-            ? Number(actorUserId)
-            : null,
-        entityType: "ORDER",
-        entityId: String(updatedOrder.id),
-        actionUrl: "/member/market/orders",
-        priority: "MEDIUM",
-        dedupeKey: `order:${updatedOrder.id}:delivery:${normalizedStatus}`,
-        sendSms: true,
-        smsBody: `Delivery status for order ${updatedOrder.order_number || `#${updatedOrder.id}`} is now ${normalizedStatus}.`,
-      });
+    // Back-in-stock notifications only after commit (see restockVariant).
+    for (const variant of restockedVariants) {
+      await stockNotificationService.notifyBackInStock(
+        variant.productColourId,
+        variant.sizeId,
+      );
     }
 
+    await this.notifyDeliveryStatusChanged(updatedOrder, normalizedStatus, actorUserId);
+
     return updatedOrder;
+  }
+
+  private async notifyDeliveryStatusChanged(
+    order: { id: number; user_id: number | null; order_number: string | null },
+    status: DeliveryStatusValue,
+    actorUserId?: number | null,
+  ) {
+    const recipientUserId = Number(order.user_id);
+    if (!Number.isInteger(recipientUserId) || recipientUserId <= 0) return;
+
+    await notificationService.createInAppNotification({
+      type: "delivery.status_changed",
+      title: "Delivery status updated",
+      body: `Delivery status for order ${order.order_number || `#${order.id}`} is now ${status}.`,
+      recipientUserId,
+      actorUserId:
+        Number.isInteger(Number(actorUserId)) && Number(actorUserId) > 0
+          ? Number(actorUserId)
+          : null,
+      entityType: "ORDER",
+      entityId: String(order.id),
+      actionUrl: "/member/market/orders",
+      priority: "MEDIUM",
+      dedupeKey: `order:${order.id}:delivery:${status}`,
+      sendSms: true,
+      smsBody: `Delivery status for order ${order.order_number || `#${order.id}`} is now ${status}.`,
+    });
+  }
+
+  /**
+   * Applies the same status change to many orders independently. Each order
+   * goes through updateOrder (identical transition guards, restock on
+   * cancel/fail) after a pre-check that skips non-sensical transitions
+   * (shipping unpaid orders, paying cancelled ones, no-op changes). Delivery
+   * changes notify the member exactly like update-delivery-status; payment
+   * changes do not notify, matching update-order.
+   */
+  async bulkUpdateStatus(
+    orderIds: number[],
+    changes: { payment_status?: PaymentStatusValue; delivery_status?: DeliveryStatusValue },
+    actorUserId?: number | null,
+  ) {
+    const { allowed: uniqueIds, denied } = await filterOrdersInBranches(
+      Array.from(new Set(orderIds)),
+    );
+    const updated: number[] = [];
+    const skipped: { id: number; reason: string }[] = denied.map((id) => ({
+      id,
+      reason: "Order not found",
+    }));
+
+    const existing = await prisma.orders.findMany({
+      where: { id: { in: uniqueIds }, deleted_at: null },
+      select: { id: true, payment_status: true, delivery_status: true },
+    });
+    const existingById = new Map(existing.map((order) => [order.id, order]));
+
+    const processOne = async (id: number) => {
+      const current = existingById.get(id);
+      if (!current) {
+        skipped.push({ id, reason: "Order not found" });
+        return;
+      }
+      const reason = bulkTransitionSkipReason(current, changes);
+      if (reason) {
+        skipped.push({ id, reason });
+        return;
+      }
+
+      try {
+        const result = await this.updateOrder({
+          id,
+          payment_status: changes.payment_status,
+          delivery_status: changes.delivery_status,
+          actorUserId,
+        });
+        updated.push(id);
+
+        if (
+          changes.delivery_status &&
+          changes.delivery_status !== current.delivery_status
+        ) {
+          try {
+            await this.notifyDeliveryStatusChanged(
+              result,
+              changes.delivery_status,
+              actorUserId,
+            );
+          } catch (error: any) {
+            console.error(
+              `bulkUpdateStatus: notification failed for order ${id}:`,
+              error?.message || error,
+            );
+          }
+        }
+      } catch (error: any) {
+        skipped.push({ id, reason: error?.message || "Failed to update order" });
+      }
+    };
+
+    const BATCH_SIZE = 10;
+    for (let i = 0; i < uniqueIds.length; i += BATCH_SIZE) {
+      await Promise.all(uniqueIds.slice(i, i + BATCH_SIZE).map(processOne));
+    }
+
+    updated.sort((a, b) => a - b);
+    skipped.sort((a, b) => a.id - b.id);
+    return { updated, skipped };
+  }
+
+  /**
+   * KPI snapshot for the admin marketplace overview. See
+   * docs/MARKETPLACE_FULFILMENT_AND_OVERVIEW.md for field definitions.
+   * A handful of bounded queries aggregated in JS — no per-order lookups.
+   */
+  async getMarketplaceOverview(filters: { market_id?: number; branch_id?: number }) {
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const nextMonthStart = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    const TREND_DAYS = 14;
+    const trendStart = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate() - (TREND_DAYS - 1),
+    );
+    const windowStart = trendStart < monthStart ? trendStart : monthStart;
+
+    // Market scope: explicit market, markets of a branch, or both (intersection).
+    let scopedMarketIds: number[] | null = null;
+    // No branch asked for: the active branch / the caller's branches.
+    const branchWhere = getBranchScopedWhere(filters.branch_id);
+    if (branchWhere) {
+      const branchMarkets = await prisma.markets.findMany({
+        where: {
+          ...branchWhere,
+          ...(filters.market_id != null && { id: filters.market_id }),
+        },
+        select: { id: true },
+      });
+      scopedMarketIds = branchMarkets.map((m) => m.id);
+    } else if (filters.market_id != null) {
+      scopedMarketIds = [filters.market_id];
+    }
+    // Delivery fees belong to the whole order, not a market or branch —
+    // only counted when the overview is unscoped (no market_id, no branch_id).
+    const includeDeliveryFees = scopedMarketIds == null;
+
+    const itemScope: Prisma.order_itemsWhereInput =
+      scopedMarketIds != null ? { market_id: { in: scopedMarketIds } } : {};
+    const orderScope: Prisma.ordersWhereInput =
+      scopedMarketIds != null ? { items: { some: itemScope } } : {};
+
+    const activeMarketWhere: Prisma.marketsWhereInput = {
+      deleted: false,
+      AND: [
+        { OR: [{ start_date: null }, { start_date: { lte: now } }] },
+        { OR: [{ end_date: null }, { end_date: { gte: now } }] },
+      ],
+      ...(scopedMarketIds != null && { id: { in: scopedMarketIds } }),
+    };
+    const notEndedMarketWhere: Prisma.marketsWhereInput = {
+      deleted: false,
+      OR: [{ end_date: null }, { end_date: { gte: now } }],
+      ...(scopedMarketIds != null && { id: { in: scopedMarketIds } }),
+    };
+    const paidOrderWhere: Prisma.ordersWhereInput = {
+      deleted_at: null,
+      payment_status: "success",
+      delivery_status: { not: "cancelled" },
+    };
+
+    const [windowOrders, toFulfil, awaitingPayment, lowStockVariants, topGroups] =
+      await Promise.all([
+        prisma.orders.findMany({
+          where: {
+            deleted_at: null,
+            created_at: { gte: windowStart, lt: nextMonthStart },
+            ...orderScope,
+          },
+          select: {
+            payment_status: true,
+            delivery_status: true,
+            delivery_fee: true,
+            created_at: true,
+            items: { where: itemScope, select: { price_amount: true, quantity: true } },
+          },
+        }),
+        prisma.orders.count({
+          where: {
+            deleted_at: null,
+            payment_status: "success",
+            delivery_status: "pending",
+            ...orderScope,
+          },
+        }),
+        prisma.orders.count({
+          where: {
+            deleted_at: null,
+            payment_status: { in: ["pending", "failed"] },
+            delivery_status: { not: "cancelled" },
+            ...orderScope,
+          },
+        }),
+        prisma.product_stock.count({
+          where: {
+            stock: { lte: 3 },
+            product_colour: {
+              product: {
+                deleted: false,
+                status: "published",
+                stock_managed: { not: "no" },
+                market: activeMarketWhere,
+              },
+            },
+          },
+        }),
+        prisma.order_items.groupBy({
+          by: ["product_id"],
+          where: {
+            product_id: { not: null },
+            order: paidOrderWhere,
+            market: notEndedMarketWhere,
+          },
+          _sum: { quantity: true },
+          orderBy: { _sum: { quantity: "desc" } },
+          take: 5,
+        }),
+      ]);
+
+    const isPaid = (o: { payment_status: string; delivery_status: string }) =>
+      o.payment_status === "success" && o.delivery_status !== "cancelled";
+    const orderRevenue = (o: (typeof windowOrders)[number]) =>
+      o.items.reduce((sum, item) => sum + item.price_amount * item.quantity, 0) +
+      (includeDeliveryFees ? o.delivery_fee ?? 0 : 0);
+
+    let revenue = 0;
+    let paidOrders = 0;
+    let ordersInPeriod = 0;
+    let cancelled = 0;
+    let itemsSold = 0;
+    const trendByDay = new Map<string, number>();
+
+    for (const order of windowOrders) {
+      const paid = isPaid(order);
+      if (order.created_at >= monthStart && order.created_at < nextMonthStart) {
+        ordersInPeriod += 1;
+        if (order.delivery_status === "cancelled") cancelled += 1;
+        if (paid) {
+          paidOrders += 1;
+          revenue += orderRevenue(order);
+          itemsSold += order.items.reduce((sum, item) => sum + item.quantity, 0);
+        }
+      }
+      if (paid && order.created_at >= trendStart) {
+        const key = toDateKey(order.created_at);
+        trendByDay.set(key, (trendByDay.get(key) ?? 0) + orderRevenue(order));
+      }
+    }
+
+    const trend: { date: string; revenue: number }[] = [];
+    for (let i = 0; i < TREND_DAYS; i += 1) {
+      const day = new Date(
+        trendStart.getFullYear(),
+        trendStart.getMonth(),
+        trendStart.getDate() + i,
+      );
+      const key = toDateKey(day);
+      trend.push({ date: key, revenue: roundMoney(trendByDay.get(key) ?? 0) });
+    }
+
+    // Top products: units from the groupBy, revenue + display data from two
+    // bounded follow-up queries over just those (<= 5) product ids.
+    const topProductIds = topGroups
+      .map((g) => g.product_id)
+      .filter((id): id is number => id != null);
+    const [topItems, topProductRows] = topProductIds.length
+      ? await Promise.all([
+          prisma.order_items.findMany({
+            where: {
+              product_id: { in: topProductIds },
+              order: paidOrderWhere,
+              market: notEndedMarketWhere,
+            },
+            select: { product_id: true, price_amount: true, quantity: true },
+          }),
+          prisma.products.findMany({
+            where: { id: { in: topProductIds } },
+            select: {
+              id: true,
+              name: true,
+              image_url: true,
+              market: { select: { name: true } },
+              product_colours: {
+                where: { image_url: { not: null } },
+                orderBy: { id: "asc" },
+                take: 1,
+                select: { image_url: true },
+              },
+            },
+          }),
+        ])
+      : [[], []];
+
+    const revenueByProduct = new Map<number, number>();
+    for (const item of topItems) {
+      if (item.product_id == null) continue;
+      revenueByProduct.set(
+        item.product_id,
+        (revenueByProduct.get(item.product_id) ?? 0) + item.price_amount * item.quantity,
+      );
+    }
+    const productById = new Map(topProductRows.map((p) => [p.id, p]));
+
+    const top_products = topGroups
+      .filter((g) => g.product_id != null)
+      .map((g) => {
+        const productId = g.product_id as number;
+        const product = productById.get(productId);
+        return {
+          product_id: productId,
+          name: product?.name ?? null,
+          market_name: product?.market?.name ?? null,
+          image_url:
+            product?.product_colours[0]?.image_url || product?.image_url || null,
+          units: g._sum.quantity ?? 0,
+          revenue: roundMoney(revenueByProduct.get(productId) ?? 0),
+        };
+      });
+
+    revenue = roundMoney(revenue);
+
+    return {
+      period: { from: toDateKey(monthStart), to: toDateKey(monthEnd) },
+      revenue,
+      paid_orders: paidOrders,
+      orders: ordersInPeriod,
+      cancelled,
+      average_order: paidOrders > 0 ? roundMoney(revenue / paidOrders) : 0,
+      items_sold: itemsSold,
+      to_fulfil: toFulfil,
+      awaiting_payment: awaitingPayment,
+      low_stock_variants: lowStockVariants,
+      trend,
+      top_products,
+    };
   }
 
   async cancelOrder(orderId: number, actorUserId?: number | null) {
@@ -1405,10 +1923,12 @@ export class OrderService {
 
   /** Soft-deletes many orders independently — one bad id doesn't block the rest. */
   async bulkDeleteOrders(orderIds: number[], actorUserId?: number | null) {
-    const uniqueIds = Array.from(new Set(orderIds));
+    const { allowed: uniqueIds, denied } = await filterOrdersInBranches(
+      Array.from(new Set(orderIds)),
+    );
     const BATCH_SIZE = 20;
     const deleted: number[] = [];
-    const skipped: number[] = [];
+    const skipped: number[] = [...denied];
 
     for (let i = 0; i < uniqueIds.length; i += BATCH_SIZE) {
       const batch = uniqueIds.slice(i, i + BATCH_SIZE);
@@ -1633,31 +2153,48 @@ export class OrderService {
    * any order. Scoped to identified users only; guest checkouts have no
    * stable identity to dedupe against.
    */
-  private async findMatchingPendingOrder(data: {
-    user_id?: number | string | null;
-    items: {
-      id?: number | string;
-      product_id?: number | string;
-      color: string;
-      size: string;
-      quantity: number;
-    }[];
-  }) {
+  private async findMatchingPendingOrder(
+    data: {
+      user_id?: number | string | null;
+      items: {
+        id?: number | string;
+        product_id?: number | string;
+        color: string;
+        size: string;
+        quantity: number;
+      }[];
+    },
+    fulfilment: ResolvedFulfilment,
+  ) {
     const userId = Number(data.user_id);
     if (!Number.isInteger(userId) || userId <= 0) return null;
 
     const incomingSignature = this.buildIncomingItemSignature(data.items);
 
     const candidates = await prisma.orders.findMany({
-      where: { user_id: userId, payment_status: "pending", deleted_at: null },
+      // Cancelled orders keep payment_status "pending" (cancelOrder only moves
+      // delivery_status) but their stock has been released — never reuse one.
+      where: {
+        user_id: userId,
+        payment_status: "pending",
+        delivery_status: { not: "cancelled" },
+        deleted_at: null,
+      },
       orderBy: { id: "desc" },
       take: 20,
       include: { items: true },
     });
 
+    // Fulfilment is part of the identity: switching pickup -> delivery (or
+    // changing the address / fee) must not reuse an order whose stored total
+    // was computed for a different fulfilment.
     return (
       candidates.find(
-        (order) => this.buildStoredItemSignature(order.items) === incomingSignature,
+        (order) =>
+          this.buildStoredItemSignature(order.items) === incomingSignature &&
+          order.fulfilment_method === fulfilment.fulfilment_method &&
+          (order.delivery_address ?? null) === fulfilment.delivery_address &&
+          roundMoney(order.delivery_fee ?? 0) === fulfilment.delivery_fee,
       ) ?? null
     );
   }
@@ -1751,6 +2288,7 @@ export class OrderService {
       color: string;
       size: string;
       quantity: number;
+      price_currency?: string;
     }[],
   ): Promise<ResolvedOrderItem[]> {
     // Web checkout items carry `product_id`, not `id` — fall back so both
@@ -1770,9 +2308,27 @@ export class OrderService {
 
     const products = await prisma.products.findMany({
       where: { id: { in: productIds } },
-      select: { id: true, stock_managed: true },
+      select: {
+        id: true,
+        stock_managed: true,
+        price_amount: true,
+        price_currency: true,
+        status: true,
+        deleted: true,
+        market_id: true,
+      },
     });
     const productById = new Map(products.map((p) => [p.id, p]));
+
+    // Server-authoritative pricing: reject the whole cart up-front if any
+    // product is gone or unpriced, before touching stock.
+    const priceByItemIndex = items.map((item) =>
+      resolveDbUnitPrice(
+        productById.get(Number(item.id ?? item.product_id)),
+        item.name,
+        item.price_currency,
+      ),
+    );
 
     const colours = await prisma.product_colour.findMany({
       where: { product_id: { in: productIds } },
@@ -1799,11 +2355,16 @@ export class OrderService {
       stockRows.map((row) => [`${row.product_colour_id}:${row.size_id}`, row.stock]),
     );
 
-    return items.map((item) => {
+    return items.map((item, index) => {
       const productId = Number(item.id ?? item.product_id);
       const product = productById.get(productId);
       const stockManaged = product?.stock_managed === "yes";
       const quantity = Number(item.quantity);
+      const pricing = {
+        unitPrice: priceByItemIndex[index].unitPrice,
+        priceCurrency: priceByItemIndex[index].priceCurrency,
+        marketId: product?.market_id ?? null,
+      };
 
       if (!stockManaged) {
         return {
@@ -1816,6 +2377,7 @@ export class OrderService {
           productColourId: null,
           sizeId: null,
           availableStock: Infinity,
+          ...pricing,
         };
       }
 
@@ -1836,8 +2398,17 @@ export class OrderService {
         productColourId,
         sizeId,
         availableStock,
+        ...pricing,
       };
     });
+  }
+
+  /** Line items shaped for computeOrderTotal, using DB unit prices. */
+  private toPricedItems(resolved: ResolvedOrderItem[]) {
+    return resolved.map((item) => ({
+      price_amount: item.unitPrice,
+      quantity: item.quantity,
+    }));
   }
 
   private buildItems(items: any[], resolved: ResolvedOrderItem[]) {
@@ -1846,9 +2417,14 @@ export class OrderService {
       return {
         name: item.name,
         product_id: Number(item.id ?? item.product_id),
-        price_amount: item.price_amount,
-        market_id: Number(item.market_id),
-        price_currency: item.price_currency,
+        // DB price, not the client's — keeps stored lines consistent with
+        // the server-computed orders.total_amount.
+        price_amount: match.unitPrice,
+        market_id:
+          item.market_id != null && Number.isInteger(Number(item.market_id))
+            ? Number(item.market_id)
+            : match.marketId ?? undefined,
+        price_currency: match.priceCurrency,
         quantity: item.quantity,
         product_type: item.product_type,
         product_category: item.product_category,
@@ -1942,7 +2518,7 @@ export class OrderService {
     return "pending";
   }
 
-  private async reconcilePendingHubtelPaymentsByMarket(
+  async reconcilePendingHubtelPaymentsByMarket(
     marketplaceId: number,
     limit: number,
   ) {
@@ -1970,14 +2546,36 @@ export class OrderService {
       select: { reference: true },
     });
 
-    await Promise.allSettled(
+    const results = await Promise.allSettled(
       pendingOrders.map((order) =>
         this.checkHubtelTransactionStatus(order.reference),
       ),
     );
+    return {
+      checked: pendingOrders.length,
+      failed: results.filter((result) => result.status === "rejected").length,
+    };
+  }
+
+  /** Names of the staff who marked these orders paid, by user id. */
+  async markedPaidNames(orders: { marked_paid_by_user_id?: number | null }[]) {
+    const ids = Array.from(
+      new Set(
+        orders
+          .map((order) => order.marked_paid_by_user_id)
+          .filter((id): id is number => typeof id === "number"),
+      ),
+    );
+    if (!ids.length) return new Map<number, string>();
+    const users = await prisma.user.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, name: true },
+    });
+    return new Map(users.map((user) => [user.id, user.name ?? ""]));
   }
 
   private async flattenOrders(orders: any[]) {
+    const markedPaidNames = await this.markedPaidNames(orders);
     return orders.flatMap((order) => {
       const billingDetails = order.billing_details;
 
@@ -2051,6 +2649,16 @@ export class OrderService {
               delivery_status: order.delivery_status,
               reference: order.reference,
               created_at: order.created_at,
+              fulfilment_method: order.fulfilment_method ?? "pickup",
+              delivery_address: order.delivery_address ?? null,
+              delivery_fee: order.delivery_fee ?? 0,
+              placed_by_staff_id: order.placed_by_staff_id ?? null,
+              marked_paid_by_user_id: order.marked_paid_by_user_id ?? null,
+              marked_paid_by_name: markedPaidNames.get(order.marked_paid_by_user_id) ?? null,
+              marked_paid_at: order.marked_paid_at ?? null,
+              // Whole-order stored total (items + delivery fee). Distinct from
+              // the per-item `total_amount` below, which must stay as-is.
+              order_total: order.total_amount,
 
               // Flattened product fields
               product_name: item.product?.name,

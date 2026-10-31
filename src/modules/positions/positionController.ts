@@ -1,13 +1,31 @@
 import { prisma } from "../../Models/context";
 import { Request, Response } from "express";
 import {
+  assertBranchAccessible,
   getBranchScopedWhere,
   resolveBranchIdOrDefault,
 } from "../branches/branchService";
 
+/**
+ * By-id reads and writes stay inside the caller's branches (403 otherwise).
+ * Thrown outside the handlers' try blocks so the global handler answers 403.
+ */
+const assertPositionInBranch = async (id: unknown) => {
+  const positionId = Number(id);
+  if (!Number.isInteger(positionId) || positionId <= 0) return;
+  const position = await prisma.position.findUnique({
+    where: { id: positionId },
+    select: { branch_id: true },
+  });
+  if (position) assertBranchAccessible(position.branch_id);
+};
+
 export const createPosition = async (req: Request, res: Response) => {
   const { name, department_id, description, created_by, branch_id } = req.body;
   const actorId = (req as any).user?.id ?? created_by;
+  if (branch_id !== undefined && branch_id !== null && branch_id !== "") {
+    assertBranchAccessible(branch_id);
+  }
   try {
     if (!name || name.trim() === "") {
       return res.status(400).json({
@@ -82,6 +100,10 @@ export const createPosition = async (req: Request, res: Response) => {
 export const updatePosition = async (req: Request, res: Response) => {
   const { id, name, department_id, description, updated_by, branch_id } = req.body;
   const actorId = (req as any).user?.id ?? updated_by;
+  await assertPositionInBranch(id);
+  if (branch_id !== undefined && branch_id !== null && branch_id !== "") {
+    assertBranchAccessible(branch_id);
+  }
 
   try {
     const response = await prisma.position.update({
@@ -130,6 +152,7 @@ export const updatePosition = async (req: Request, res: Response) => {
 
 export const deletePosition = async (req: Request, res: Response) => {
   const { id } = req.query;
+  await assertPositionInBranch(id);
 
   try {
     const response = await prisma.position.delete({
@@ -239,6 +262,7 @@ export const listPositionsLight = async (req: Request, res: Response) => {
 
 export const getPosition = async (req: Request, res: Response) => {
   const { id } = req.body;
+  await assertPositionInBranch(id);
 
   try {
     const response = await prisma.position.findUnique({

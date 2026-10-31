@@ -7,6 +7,7 @@ import {
   sendFinanceError,
 } from "../common";
 import { FinancialsService } from "./service";
+import { financePermissions } from "../financeAccess";
 
 const financialsService = new FinancialsService();
 
@@ -30,6 +31,7 @@ export class FinancialsController {
       const config = await financialsService.upsertApprovalConfig(
         payload,
         (req as any).user?.id,
+        financePermissions(req),
       );
 
       return res.status(200).json({
@@ -44,7 +46,11 @@ export class FinancialsController {
   async create(req: Request, res: Response): Promise<Response> {
     try {
       const payload = validateFinancialMutationPayload(req.body);
-      const result = await financialsService.create(payload, (req as any).user?.id);
+      const result = await financialsService.create(
+        payload,
+        (req as any).user?.id,
+        financePermissions(req),
+      );
 
       return res.status(201).json({
         message:
@@ -67,6 +73,7 @@ export class FinancialsController {
         pagination,
         (req as any).user?.id,
         req.query?.branch_id,
+        financePermissions(req),
       );
 
       return res.status(200).json({
@@ -90,6 +97,7 @@ export class FinancialsController {
         id,
         (req as any).user?.id,
         req.query?.branch_id,
+        financePermissions(req),
       );
 
       return res.status(200).json({
@@ -109,6 +117,7 @@ export class FinancialsController {
         id,
         payload,
         (req as any).user?.id,
+        financePermissions(req),
       );
 
       return res.status(200).json({
@@ -134,6 +143,48 @@ export class FinancialsController {
         message: "Deleted successfully",
         data: deleted,
       });
+    } catch (error) {
+      return sendFinanceError(res, error);
+    }
+  }
+
+  async approve(req: Request, res: Response): Promise<Response> {
+    try {
+      const id = parseIdFromQuery(req);
+      const record = await financialsService.approve(
+        id,
+        (req as any).user?.id,
+        financePermissions(req),
+      );
+      return res.status(200).json({ message: "Record approved", data: record });
+    } catch (error) {
+      return sendFinanceError(res, error);
+    }
+  }
+
+  async returnRecord(req: Request, res: Response): Promise<Response> {
+    try {
+      const id = parseIdFromQuery(req);
+      const record = await financialsService.returnRecord(
+        id,
+        String(req.body?.note ?? ""),
+        (req as any).user?.id,
+        financePermissions(req),
+      );
+      return res.status(200).json({ message: "Record returned", data: record });
+    } catch (error) {
+      return sendFinanceError(res, error);
+    }
+  }
+
+  async autoAmounts(req: Request, res: Response): Promise<Response> {
+    try {
+      const data = await financialsService.autoAmounts(
+        String(req.query?.from ?? ""),
+        String(req.query?.to ?? ""),
+        req.query?.branch_id,
+      );
+      return res.status(200).json({ message: "Success", data });
     } catch (error) {
       return sendFinanceError(res, error);
     }

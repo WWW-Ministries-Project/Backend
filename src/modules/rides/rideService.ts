@@ -6,7 +6,9 @@ import {
   NotFoundError,
   UnauthorizedError,
 } from "../../utils/custom-error-handlers";
-import { userHasMinimumDomainAccess } from "../../utils/permissionResolver";
+import { userHasAction } from "../../middleWare/authorization";
+import { actionAllowed } from "../../permissions/access";
+import { getBranchScope } from "../branches/branchScope";
 import { notificationService } from "../notifications/notificationService";
 import { emitRideChange } from "./rideEvents";
 import {
@@ -37,7 +39,7 @@ import {
 } from "./rideHelpers";
 
 /** Who handles safety reports and curates areas/pickup points. */
-export const RIDE_SAFETY_DOMAIN = "Membership_Management";
+export const RIDE_SAFETY_DOMAIN = "Rides";
 const MEMBER_ACTION_URL = "/member/rides";
 
 class ConflictError extends AppError {
@@ -994,15 +996,40 @@ export const setPickupAlert = async (userId: number, body: any) => {
 /* Safety reports + blocks                                             */
 /* ------------------------------------------------------------------ */
 
-/** Everyone who can manage membership — the church safety team for rides. */
-const safetyTeamIds = async (excludeIds: number[]): Promise<number[]> => {
-  const candidates = await prisma.user.findMany({
-    where: { is_active: true, access: { isNot: null }, id: { notIn: excludeIds } },
-    select: { id: true, access: { select: { permissions: true } } },
+/**
+ * The safety team: active staff whose role allows Rides › Resolve safety
+ * reports in the ride's branch (any branch when the ride has none). Read from
+ * the live branch roles; Rides falls back to Membership management for roles
+ * saved before it existed.
+ */
+const safetyTeamIds = async (excludeIds: number[], branchId: number | null): Promise<number[]> => {
+  const grants = await prisma.user_branch_access.findMany({
+    where: {
+      access_level: { deleted: false },
+      ...(branchId ? { branch_id: branchId } : {}),
+      user: { is_user: true, NOT: { is_active: false }, id: { notIn: excludeIds } },
+    },
+    select: { user_id: true, access_level: { select: { permissions: true } } },
   });
-  return candidates
-    .filter((candidate) => userHasMinimumDomainAccess(candidate.access?.permissions, RIDE_SAFETY_DOMAIN, "manage"))
-    .map((candidate) => candidate.id);
+  const ids = grants
+    .filter((grant) =>
+      actionAllowed(parsePermissions(grant.access_level?.permissions), RIDE_SAFETY_DOMAIN, "resolve_safety_reports"),
+    )
+    .map((grant) => grant.user_id);
+  return Array.from(new Set(ids));
+};
+
+const parsePermissions = (raw: unknown): Record<string, unknown> => {
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) return raw as Record<string, unknown>;
+  if (typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+  return {};
 };
 
 export const fileReport = async (userId: number, body: any) => {
@@ -1020,6 +1047,7 @@ export const fileReport = async (userId: number, body: any) => {
       id: true,
       driver_id: true,
       driver: { select: { name: true } },
+      event: { select: { branch_id: true } },
       requests: {
         where: { status: { in: ["PENDING", "ACCEPTED", "DECLINED", "CANCELLED"] } },
         select: { id: true, passenger_id: true, status: true, passenger: { select: { name: true } } },
@@ -1070,7 +1098,10 @@ export const fileReport = async (userId: number, body: any) => {
     });
   }
 
-  const team = await safetyTeamIds([userId, ...(reportedUserId ? [reportedUserId] : [])]);
+  const team = await safetyTeamIds(
+    [userId, ...(reportedUserId ? [reportedUserId] : [])],
+    offer.event?.branch_id ?? null,
+  );
   if (team.length) {
     const reportedName = reportedUserId
       ? offer.driver_id === reportedUserId
@@ -1099,18 +1130,40 @@ export const fileReport = async (userId: number, body: any) => {
 /* Safety team / church office                                         */
 /* ------------------------------------------------------------------ */
 
-const assertSafetyTeam = async (userId: number) => {
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { access: { select: { permissions: true } } },
+/**
+ * Whether the caller's live role allows `Rides.<action>` in the active branch.
+ * With no branch active, viewing needs it in any branch they hold a role in
+ * and changing needs it in every one (like the route guards).
+ */
+export const rideActionAllowed = async (userId: number, action: string, view = false) => {
+  const branchId = getBranchScope()?.activeBranchId ?? null;
+  if (branchId || !view) return userHasAction(userId, RIDE_SAFETY_DOMAIN, action, branchId);
+  const grants = await prisma.user_branch_access.findMany({
+    where: { user_id: userId, access_level: { deleted: false } },
+    select: { branch_id: true },
   });
-  if (!userHasMinimumDomainAccess(user?.access?.permissions, RIDE_SAFETY_DOMAIN, "manage")) {
-    throw new UnauthorizedError("Not authorized to manage rides");
+  for (const grant of grants) {
+    if (await userHasAction(userId, RIDE_SAFETY_DOMAIN, action, grant.branch_id)) return true;
   }
+  return false;
+};
+
+class RideForbiddenError extends AppError {
+  constructor(message = "Not authorized to manage rides") {
+    super(message, 403);
+  }
+}
+
+/** Throws unless the role allows any of `actions` (see rideActionAllowed). */
+const assertRideAction = async (userId: number, actions: string[], view = false) => {
+  for (const action of actions) {
+    if (await rideActionAllowed(userId, action, view)) return;
+  }
+  throw new RideForbiddenError();
 };
 
 export const listReports = async (userId: number, statusRaw: unknown) => {
-  await assertSafetyTeam(userId);
+  await assertRideAction(userId, ["resolve_safety_reports"]);
   const status = String(statusRaw ?? "OPEN").toUpperCase();
   const reports = await prisma.ride_report.findMany({
     where: status === "ALL" ? {} : { status: status === "RESOLVED" ? "RESOLVED" : "OPEN" },
@@ -1143,7 +1196,7 @@ export const listReports = async (userId: number, statusRaw: unknown) => {
 };
 
 export const resolveReport = async (userId: number, reportIdRaw: unknown, body: any) => {
-  await assertSafetyTeam(userId);
+  await assertRideAction(userId, ["resolve_safety_reports"]);
   const reportId = toPositiveInt(reportIdRaw);
   if (!reportId) throw new InputValidationError("Report id is required");
   const report = await prisma.ride_report.findUnique({ where: { id: reportId }, select: { id: true } });
@@ -1161,7 +1214,7 @@ export const resolveReport = async (userId: number, reportIdRaw: unknown, body: 
 };
 
 export const getAdminCatalog = async (userId: number) => {
-  await assertSafetyTeam(userId);
+  await assertRideAction(userId, ["view_overview", "manage_pickup_points"], true);
   const [areas, points] = await Promise.all([
     prisma.ride_area.findMany({
       orderBy: [{ sort_order: "asc" }, { name: "asc" }],
@@ -1185,7 +1238,7 @@ export const getAdminCatalog = async (userId: number) => {
 };
 
 export const savePickupPoint = async (userId: number, idRaw: unknown, body: any) => {
-  await assertSafetyTeam(userId);
+  await assertRideAction(userId, ["manage_pickup_points"]);
   const id = toPositiveInt(idRaw);
   const name = cleanText(body?.name, 120);
   const areaLabel = cleanText(body?.area_label, 120);
@@ -1203,7 +1256,7 @@ export const savePickupPoint = async (userId: number, idRaw: unknown, body: any)
 };
 
 export const saveArea = async (userId: number, idRaw: unknown, body: any) => {
-  await assertSafetyTeam(userId);
+  await assertRideAction(userId, ["manage_pickup_points"]);
   const id = toPositiveInt(idRaw);
   const name = cleanText(body?.name, 120);
   const route: { pickup_point_id: number; minutes: number }[] | null = Array.isArray(body?.route)
@@ -1260,7 +1313,10 @@ const serviceDateFrom = async (raw: unknown): Promise<Date> => {
  * people.
  */
 export const getAdminOverview = async (userId: number, serviceDateRaw: unknown) => {
-  await assertSafetyTeam(userId);
+  await assertRideAction(userId, ["view_overview"], true);
+  // Phone numbers are the roster: only for roles allowed to export it.
+  const showPhones = await rideActionAllowed(userId, "export_roster", true);
+  const phoneFor = (user: Parameters<typeof phoneOf>[0]) => (showPhones ? phoneOf(user) : null);
   const serviceDate = await serviceDateFrom(serviceDateRaw);
   const [offers, recentDates, openReports] = await Promise.all([
     prisma.ride_offer.findMany({
@@ -1310,13 +1366,13 @@ export const getAdminOverview = async (userId: number, serviceDateRaw: unknown) 
       car_details: offer.car_details,
       cancelled_at: offer.cancelled_at,
       created_at: offer.created_at,
-      driver: { id: offer.driver.id, name: offer.driver.name, phone: phoneOf(offer.driver) },
+      driver: { id: offer.driver.id, name: offer.driver.name, phone: phoneFor(offer.driver) },
       stops: offer.stops.map((stop) => ({ ...pointView(stop.pickup_point), pickup_time: stop.pickup_time })),
       route: routeNames(offer),
       requests: offer.requests.map((request) => ({
         id: request.id,
         status: request.status,
-        passenger: { id: request.passenger.id, name: request.passenger.name, phone: phoneOf(request.passenger) },
+        passenger: { id: request.passenger.id, name: request.passenger.name, phone: phoneFor(request.passenger) },
         pickup_point: pointView(request.pickup_point),
         pickup_time: request.pickup_time,
         decline_reason: request.decline_reason,
@@ -1333,7 +1389,7 @@ export const getAdminOverview = async (userId: number, serviceDateRaw: unknown) 
  * the driver is told the church office removed it.
  */
 export const adminCancelOffer = async (userId: number, offerIdRaw: unknown, body: any) => {
-  await assertSafetyTeam(userId);
+  await assertRideAction(userId, ["cancel_any_offer"]);
   const offerId = toPositiveInt(offerIdRaw);
   if (!offerId) throw new InputValidationError("Ride id is required");
   const offer = await prisma.ride_offer.findUnique({ where: { id: offerId }, include: offerInclude });
@@ -1385,7 +1441,7 @@ export const adminCancelOffer = async (userId: number, offerIdRaw: unknown, body
 
 /** Every member-to-member ride block, newest first. */
 export const listBlocks = async (userId: number) => {
-  await assertSafetyTeam(userId);
+  await assertRideAction(userId, ["lift_block", "resolve_safety_reports"], true);
   const rows = await prisma.ride_block.findMany({
     orderBy: { created_at: "desc" },
     select: {
@@ -1400,7 +1456,7 @@ export const listBlocks = async (userId: number) => {
 
 /** Lifts a block, e.g. once the safety team has resolved the concern. */
 export const removeBlock = async (userId: number, blockIdRaw: unknown) => {
-  await assertSafetyTeam(userId);
+  await assertRideAction(userId, ["lift_block"]);
   const blockId = toPositiveInt(blockIdRaw);
   if (!blockId) throw new InputValidationError("Block id is required");
   const deleted = await prisma.ride_block.deleteMany({ where: { id: blockId } });

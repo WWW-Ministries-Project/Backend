@@ -4,11 +4,14 @@ import {
   createAccessLevel,
   listAllAccessLevel,
   updateAccessLevel,
+  updateAccessLevelWorkspaces,
   assignAccessLevelToUser,
   deleteAccessLevel,
   getAccessLevel,
   listAssignableUsers,
   bulkAssignAccessLevel,
+  getUserBranchAccess,
+  setUserBranchAccess,
 } from "../accessLevels/accessLevelController";
 import { Permissions } from "../../middleWare/authorization";
 const permissions = new Permissions();
@@ -24,6 +27,11 @@ accessRouter.put(
   "/update-access-level",
   [permissions.protect, permissions.can_manage_access],
   updateAccessLevel,
+);
+accessRouter.put(
+  "/access-level-workspaces",
+  [permissions.protect, permissions.can_manage_access],
+  updateAccessLevelWorkspaces,
 );
 accessRouter.put(
   "/assign_access_to_user",
@@ -54,4 +62,14 @@ accessRouter.get(
   "/get-access-level",
   [permissions.protect, permissions.can_view_access],
   getAccessLevel,
+);
+accessRouter.get(
+  "/user-branch-access",
+  [permissions.protect, permissions.can_view_access],
+  getUserBranchAccess,
+);
+accessRouter.put(
+  "/user-branch-access",
+  [permissions.protect, permissions.can_manage_access],
+  setUserBranchAccess,
 );

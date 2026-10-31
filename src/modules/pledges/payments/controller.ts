@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import { PledgeHttpError, sendPledgeError } from "../common";
-import { PledgePaymentService } from "./service";
+import { PledgePaymentService, creditPaymentById } from "./service";
+import { assertPledgeReachable, pledgeIdFor, pledgeViewer } from "../pledgeAccess";
 import {
   parsePreviewAmount,
   parseReferenceQuery,
@@ -131,6 +132,7 @@ export const listPledgePayments = async (req: Request, res: Response) => {
       throw new PledgeHttpError(400, "pledge_id must be a positive integer");
     }
 
+    await assertPledgeReachable(pledgeId, pledgeViewer(req));
     const pagination = parsePagination(req);
     const result = await service.listForPledge(pledgeId, pagination);
 
@@ -148,3 +150,15 @@ export const listPledgePayments = async (req: Request, res: Response) => {
 // verify against an undefined body and reject every genuine event. Pledge
 // payments are settled from there via paystackSettlement's reference-prefix
 // dispatch.
+
+export const creditPledgePayment = async (req: Request, res: Response) => {
+  try {
+    const id = String(req.body?.payment_id ?? "").trim();
+    if (!id) throw new PledgeHttpError(400, "payment_id is required");
+    await assertPledgeReachable(await pledgeIdFor("payment", id), pledgeViewer(req));
+    const data = await creditPaymentById(id);
+    return res.status(200).json({ message: "Payment credited", data });
+  } catch (e) {
+    return sendPledgeError(res, e);
+  }
+};

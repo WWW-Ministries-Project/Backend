@@ -179,6 +179,45 @@ const archivePromotion = async (id: number) => {
   });
 };
 
+/** Back to DRAFT: the banner leaves the Home screen and shows under Drafts in
+ *  the admin list. Archive stays for callers that want it out of every list. */
+const unpublishPromotion = async (id: number) => {
+  const existing = await prisma.promotion.findUnique({ where: { id } });
+  if (!existing) {
+    throw httpError("Promotion not found", 404);
+  }
+
+  return prisma.promotion.update({
+    where: { id },
+    data: { status: "DRAFT" },
+    include: promotionInclude,
+  });
+};
+
+/** Rewrites sort_order to 1..n in the order given. The admin Home preview
+ *  sends the full list of live promotions after each arrow press, so the
+ *  positions the mobile carousel reads always match what the admin saw. */
+const reorderPromotions = async (ids: number[]) => {
+  const unique = Array.from(new Set(ids));
+  if (!unique.length) throw httpError("Send the promotion ids in order", 400);
+  if (unique.length > 100) throw httpError("Reorder at most 100 promotions at once", 400);
+
+  const found = await prisma.promotion.count({ where: { id: { in: unique } } });
+  if (found !== unique.length) throw httpError("Promotion not found", 404);
+
+  await prisma.$transaction(
+    unique.map((id, index) =>
+      prisma.promotion.update({ where: { id }, data: { sort_order: index + 1 } }),
+    ),
+  );
+
+  return prisma.promotion.findMany({
+    where: { id: { in: unique } },
+    include: promotionInclude,
+    orderBy: { sort_order: "asc" },
+  });
+};
+
 /** The mobile Home carousel's only data source. Window filtering, ordering
  *  and the slide cap all happen here so the client holds no business logic. */
 const listActiveForUser = async (userId: number, limit?: number) => {
@@ -239,4 +278,6 @@ export const promotionService = {
   publishPromotion,
   archivePromotion,
   listActiveForUser,
+  unpublishPromotion,
+  reorderPromotions,
 };

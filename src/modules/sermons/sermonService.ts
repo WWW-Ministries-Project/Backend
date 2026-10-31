@@ -5,6 +5,7 @@ import {
   resolveBranchIdOrDefault,
 } from "../branches/branchService";
 import { resolveTagIds, toTagSlug } from "./sermonTagService";
+import { IngestSermonFields } from "./youtubeIngest/videoMapping";
 
 export type CreateSermonSeriesInput = {
   title: string;
@@ -24,6 +25,7 @@ export type CreateSermonInput = {
   youtube_url: string;
   series_id?: number | null;
   tags?: string[];
+  preached_at?: string | null;
   branch_id?: number | null;
   created_by: number;
 };
@@ -34,11 +36,14 @@ export type UpdateSermonInput = {
   youtube_url?: string;
   series_id?: number | null;
   tags?: string[];
+  /** YYYY-MM-DD; null clears it, undefined leaves it untouched. */
+  preached_at?: string | null;
 };
 
-// Ascending, deliberately: a series is watched front-to-back. `position` is no
-// longer written by any path, so every row ties at 0 and ordering by it is
-// arbitrary; created_at is the closest stand-in for the order they were added.
+// Ascending, deliberately: a series is watched front-to-back. `position` is now
+// written only by the series sync (assignPlaylistItems), so rows outside a synced
+// playlist still tie at 0 and ordering by it would be inconsistent across the
+// collection; created_at is the closest uniform stand-in for the order they were added.
 //
 // The nested sermons are filtered too, not just the series row: a PUBLISHED
 // series can contain DRAFT sermons, so hydrating them unconditionally would
@@ -48,7 +53,9 @@ const sermonSeriesIncludeFor = (
 ): Prisma.sermon_seriesInclude => ({
   sermons: {
     ...(publishedOnly ? { where: { status: "PUBLISHED" as const } } : {}),
-    orderBy: { created_at: "asc" },
+    // Follow the YouTube playlist order the series sync records in `position`;
+    // created_at is only a tie-breaker for rows not placed by a playlist.
+    orderBy: [{ position: "asc" }, { created_at: "asc" }],
   },
 });
 
@@ -131,6 +138,22 @@ const resolveYoutube = async (url: string): Promise<ResolvedVideo> => {
     );
     return { video_id: videoId, title: videoId };
   }
+};
+
+// Accepts YYYY-MM-DD (or a full ISO string) and stores midnight UTC, which is
+// what a @db.Date column holds. Anything unparseable is a 400, not a silent null.
+const parsePreachedAt = (value: string | null | undefined): Date | null | undefined => {
+  if (value === undefined) return undefined;
+  if (value === null || String(value).trim() === "") return null;
+  const day = String(value).trim().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+    throw httpError("Enter the preached date as YYYY-MM-DD", 400);
+  }
+  const date = new Date(`${day}T00:00:00.000Z`);
+  if (Number.isNaN(date.getTime())) {
+    throw httpError("Enter the preached date as YYYY-MM-DD", 400);
+  }
+  return date;
 };
 
 const thumbnailForVideoId = (videoId: string | null): string | null =>
@@ -261,6 +284,7 @@ const createSermon = async (input: CreateSermonInput) => {
   // this create fails, and tags committed ahead of a failed insert would be
   // stranded in the vocabulary with no way to remove them.
   if (input.series_id) await assertSeriesExists(input.series_id);
+  const preachedAt = parsePreachedAt(input.preached_at) ?? null;
 
   const sermon = await prisma.$transaction(async (tx) => {
     const tagIds = await resolveTagIds(input.tags, tx);
@@ -272,6 +296,7 @@ const createSermon = async (input: CreateSermonInput) => {
         video_id: video.video_id,
         thumbnail_url: thumbnailForVideoId(video.video_id),
         series_id: input.series_id ?? null,
+        preached_at: preachedAt,
         branch_id: branchId,
         created_by: input.created_by,
         status: "DRAFT",
@@ -321,7 +346,9 @@ const listSermons = async (params: {
     prisma.sermon.findMany({
       where,
       include: sermonInclude,
-      orderBy: { created_at: "desc" },
+      // Newest preached first; sermons without a date fall back to when they
+      // were added (MySQL sorts NULLs last on DESC).
+      orderBy: [{ preached_at: "desc" }, { created_at: "desc" }],
       skip: params.skip ?? 0,
       // Capped: this route is member-accessible and each row hydrates its
       // series and tags.
@@ -358,6 +385,9 @@ const updateSermon = async (id: number, input: UpdateSermonInput) => {
   if (input.description !== undefined) {
     data.description = input.description?.trim() || null;
   }
+
+  const preachedAt = parsePreachedAt(input.preached_at);
+  if (preachedAt !== undefined) data.preached_at = preachedAt;
 
   // Only re-hit YouTube when the URL actually changed.
   if (input.youtube_url !== undefined) {
@@ -423,6 +453,157 @@ const setSermonStatus = async (id: number, publish: boolean) => {
   return shapeSermon(sermon);
 };
 
+const INGEST_AUTHOR_USER_ID = Number(
+  process.env.SERMON_INGEST_AUTHOR_USER_ID || 1,
+);
+const INGEST_BRANCH_ID = Number(process.env.SERMON_INGEST_BRANCH_ID || 1);
+
+/**
+ * Create (and auto-publish) a sermon from ingested YouTube metadata, keyed on
+ * video_id. If a row with this video_id already exists it is LEFT UNTOUCHED
+ * (dedupe: re-sync skips) so a manager's manual edits are never clobbered.
+ */
+const ingestSermon = async (
+  fields: IngestSermonFields,
+): Promise<{ sermon: ReturnType<typeof shapeSermon>; created: boolean }> => {
+  const existing = await prisma.sermon.findUnique({
+    where: { video_id: fields.video_id },
+    include: sermonInclude,
+  });
+  if (existing) return { sermon: shapeSermon(existing), created: false };
+
+  // Resolve (upsert) tags OUTSIDE any interactive transaction. Tags are shared,
+  // idempotent lookup rows, so a tag created here that never gets linked (if the
+  // create below fails) is harmless — and keeping the N sequential tag upserts
+  // out of a transaction avoids holding one open across many round trips, which
+  // blew Prisma's interactive-transaction timeout (P2028) during bulk ingest
+  // over a high-latency link. The create is a single atomic statement, so no
+  // wrapping transaction is needed.
+  const tagIds = await resolveTagIds(fields.tags);
+  const sermon = await prisma.sermon.create({
+    data: {
+      title: fields.title,
+      description: fields.description,
+      youtube_url: fields.youtube_url,
+      video_id: fields.video_id,
+      thumbnail_url: fields.thumbnail_url,
+      preached_at: fields.preached_at ? new Date(fields.preached_at) : undefined,
+      branch_id: INGEST_BRANCH_ID,
+      created_by: INGEST_AUTHOR_USER_ID,
+      status: "PUBLISHED",
+      published_at: new Date(),
+      tags: { create: tagIds.map((tag_id) => ({ tag_id })) },
+    },
+    include: sermonInclude,
+  });
+  return { sermon: shapeSermon(sermon), created: true };
+};
+
+/**
+ * Bulk variant of ingestSermon for the one-time backfill. Instead of one
+ * findUnique + create per video, it works a batch (e.g. 50 at a time) with a
+ * handful of set-based statements: pre-filter the ones already stored, bulk
+ * createMany the tags, bulk createMany the sermons, then bulk createMany the
+ * tag links. All idempotent (`skipDuplicates` + the unique `video_id`), so a
+ * re-run skips what already exists. Auto-publishes; does NOT notify (the
+ * backfill is silent by design).
+ */
+const ingestSermonsBatch = async (
+  fieldsList: IngestSermonFields[],
+): Promise<{ created: number; skipped: number }> => {
+  // Dedupe the input by video_id (a video can appear on more than one page).
+  const byVideo = new Map<string, IngestSermonFields>();
+  for (const f of fieldsList) {
+    if (f.video_id && !byVideo.has(f.video_id)) byVideo.set(f.video_id, f);
+  }
+  const videoIds = [...byVideo.keys()];
+  if (videoIds.length === 0) return { created: 0, skipped: 0 };
+
+  // Skip the ones we already hold (one query, not one findUnique per video).
+  const existing = await prisma.sermon.findMany({
+    where: { video_id: { in: videoIds } },
+    select: { video_id: true },
+  });
+  const existingSet = new Set(existing.map((r) => r.video_id));
+  const fresh = videoIds
+    .filter((id) => !existingSet.has(id))
+    .map((id) => byVideo.get(id)!);
+  if (fresh.length === 0) return { created: 0, skipped: videoIds.length };
+
+  // Bulk-upsert every distinct tag across the batch, then map slug -> id.
+  const nameBySlug = new Map<string, string>();
+  for (const f of fresh) {
+    for (const name of f.tags) {
+      const slug = toTagSlug(name);
+      if (slug && !nameBySlug.has(slug)) nameBySlug.set(slug, name);
+    }
+  }
+  if (nameBySlug.size > 0) {
+    await prisma.sermon_tag.createMany({
+      data: [...nameBySlug].map(([slug, name]) => ({ name, slug })),
+      skipDuplicates: true,
+    });
+  }
+  const tagRows =
+    nameBySlug.size > 0
+      ? await prisma.sermon_tag.findMany({
+          where: { slug: { in: [...nameBySlug.keys()] } },
+          select: { id: true, slug: true },
+        })
+      : [];
+  const tagIdBySlug = new Map(tagRows.map((t) => [t.slug, t.id]));
+
+  // Bulk-create the sermons (createMany cannot nest relations).
+  const now = new Date();
+  await prisma.sermon.createMany({
+    data: fresh.map((f) => ({
+      title: f.title,
+      description: f.description,
+      youtube_url: f.youtube_url,
+      video_id: f.video_id,
+      thumbnail_url: f.thumbnail_url,
+      preached_at: f.preached_at ? new Date(f.preached_at) : null,
+      branch_id: INGEST_BRANCH_ID,
+      created_by: INGEST_AUTHOR_USER_ID,
+      status: "PUBLISHED" as const,
+      published_at: now,
+    })),
+    skipDuplicates: true,
+  });
+
+  // Read back the new ids and bulk-link the tags.
+  const createdRows = await prisma.sermon.findMany({
+    where: { video_id: { in: fresh.map((f) => f.video_id) } },
+    select: { id: true, video_id: true },
+  });
+  const sermonIdByVideo = new Map(
+    createdRows
+      .filter((r): r is { id: number; video_id: string } => r.video_id !== null)
+      .map((r) => [r.video_id, r.id]),
+  );
+  const assignments: { sermon_id: number; tag_id: number }[] = [];
+  for (const f of fresh) {
+    const sermonId = sermonIdByVideo.get(f.video_id);
+    if (!sermonId) continue;
+    const seen = new Set<number>();
+    for (const name of f.tags) {
+      const tagId = tagIdBySlug.get(toTagSlug(name));
+      if (tagId && !seen.has(tagId)) {
+        seen.add(tagId);
+        assignments.push({ sermon_id: sermonId, tag_id: tagId });
+      }
+    }
+  }
+  if (assignments.length > 0) {
+    await prisma.sermon_tag_assignment.createMany({
+      data: assignments,
+      skipDuplicates: true,
+    });
+  }
+
+  return { created: fresh.length, skipped: videoIds.length - fresh.length };
+};
+
 export const sermonService = {
   createSermonSeries,
   listSermonSeries,
@@ -435,4 +616,6 @@ export const sermonService = {
   updateSermon,
   deleteSermon,
   setSermonStatus,
+  ingestSermon,
+  ingestSermonsBatch,
 };

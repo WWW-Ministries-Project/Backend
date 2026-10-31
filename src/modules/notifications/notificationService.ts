@@ -1,6 +1,5 @@
 import { Prisma } from "@prisma/client";
 import client from "prom-client";
-import { Response } from "express";
 import { prisma } from "../../Models/context";
 import { sendEmail } from "../../utils/emailService";
 import { buildUnifiedEmailTemplate } from "../../utils/mail_templates/unifiedEmailTemplate";
@@ -11,6 +10,7 @@ import {
 import { systemNotificationSettingsService } from "../settings/systemNotificationSettingsService";
 import {
   getNotificationPreferenceOption,
+  isKnownNotificationType,
   listNotificationPreferenceTypes,
   type NotificationPreferenceChannelAvailability,
 } from "./notificationPreferenceCatalog";
@@ -97,6 +97,18 @@ export type CreateNotificationInput = {
    * post queued for hundreds of members can't hold up a ride being accepted.
    */
   bulk?: boolean;
+  /**
+   * Web/Expo push for the in-app row. Default true. False keeps the in-app
+   * row (bell) but sends no push.
+   */
+  sendPush?: boolean;
+  /**
+   * The caller (an admin-configured policy, e.g. the appointment
+   * notification matrix) decides email/SMS: `sendEmail`/`sendSms` are honoured
+   * unless the recipient explicitly turned that channel off for this type.
+   * Without it SMS also needs the recipient to have opted in.
+   */
+  channelsFromPolicy?: boolean;
 };
 
 type NotificationListArgs = {
@@ -135,34 +147,10 @@ export type UpdateNotificationPreferenceInput = {
 
 type NotificationPreferenceChannel = "inApp" | "email" | "sms";
 
-type SseClient = {
-  res: Response;
-  heartbeat: NodeJS.Timeout;
-};
-
-type SseEventEnvelope = {
-  id: number;
-  event: string;
-  data: unknown;
-  createdAt: number;
-};
-
-type SseBroadcastOptions = {
-  persistForReplay?: boolean;
-};
-
-type StartSseStreamOptions = {
-  lastEventId?: number | null;
-};
-
 type NotificationDeliveryTask = () => Promise<void>;
 
 const MAX_PAGE_SIZE = 100;
 const DEFAULT_PAGE_SIZE = 20;
-const SSE_HEARTBEAT_MS = 20_000;
-const SSE_RETRY_MS = 5_000;
-const SSE_REPLAY_TTL_MS = 5 * 60 * 1000;
-const SSE_REPLAY_MAX_EVENTS_PER_USER = 500;
 const ACTION_URL_FALLBACK = "/home/notifications";
 const NOTIFICATION_DELIVERY_CONCURRENCY = (() => {
   const parsed = Number(process.env.NOTIFICATION_DELIVERY_CONCURRENCY);
@@ -172,11 +160,8 @@ const NOTIFICATION_DELIVERY_CONCURRENCY = (() => {
   return Math.min(parsed, 10);
 })();
 
-const sseClientsByUserId = new Map<number, Set<SseClient>>();
-const sseReplayBufferByUserId = new Map<number, SseEventEnvelope[]>();
 const notificationDeliveryTaskQueue: NotificationDeliveryTask[] = [];
 const bulkNotificationDeliveryTaskQueue: NotificationDeliveryTask[] = [];
-let sseEventIdCounter = 0;
 let activeNotificationDeliveryWorkers = 0;
 
 const getOrCreateCounter = (
@@ -342,195 +327,16 @@ const toPayload = (row: NotificationRow): NotificationPayload => ({
   createdAt: row.created_at.toISOString(),
 });
 
-const createSseEnvelope = (event: string, data: unknown): SseEventEnvelope => {
-  sseEventIdCounter += 1;
-  return {
-    id: sseEventIdCounter,
-    event,
-    data,
-    createdAt: Date.now(),
-  };
-};
-
-const writeSseEnvelope = (res: Response, envelope: SseEventEnvelope) => {
-  res.write(`id: ${envelope.id}\n`);
-  res.write(`event: ${envelope.event}\n`);
-  res.write(`data: ${JSON.stringify(envelope.data)}\n\n`);
-};
-
-const parseLastEventId = (value: unknown): number | null => {
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed < 0) {
-    return null;
-  }
-  return parsed;
-};
-
-const pruneReplayEvents = (
-  events: SseEventEnvelope[],
-  nowMs = Date.now(),
-): SseEventEnvelope[] => {
-  const cutoff = nowMs - SSE_REPLAY_TTL_MS;
-  const freshEvents = events.filter((event) => event.createdAt >= cutoff);
-  if (freshEvents.length <= SSE_REPLAY_MAX_EVENTS_PER_USER) {
-    return freshEvents;
-  }
-
-  return freshEvents.slice(
-    freshEvents.length - SSE_REPLAY_MAX_EVENTS_PER_USER,
-  );
-};
-
-const addReplayEvent = (userId: number, envelope: SseEventEnvelope) => {
-  const existingEvents = sseReplayBufferByUserId.get(userId) || [];
-  existingEvents.push(envelope);
-  const prunedEvents = pruneReplayEvents(existingEvents, envelope.createdAt);
-
-  if (!prunedEvents.length) {
-    sseReplayBufferByUserId.delete(userId);
-    return;
-  }
-
-  sseReplayBufferByUserId.set(userId, prunedEvents);
-};
-
-const getReplayEventsAfter = (
-  userId: number,
-  lastEventId: number,
-): SseEventEnvelope[] => {
-  const existingEvents = sseReplayBufferByUserId.get(userId);
-  if (!existingEvents?.length) {
-    return [];
-  }
-
-  const prunedEvents = pruneReplayEvents(existingEvents);
-  if (!prunedEvents.length) {
-    sseReplayBufferByUserId.delete(userId);
-    return [];
-  }
-
-  if (prunedEvents.length !== existingEvents.length) {
-    sseReplayBufferByUserId.set(userId, prunedEvents);
-  }
-
-  return prunedEvents.filter((event) => event.id > lastEventId);
-};
-
-const removeSseClient = (userId: number, clientState: SseClient) => {
-  clearInterval(clientState.heartbeat);
-  const userClients = sseClientsByUserId.get(userId);
-  if (!userClients) return;
-
-  userClients.delete(clientState);
-  if (userClients.size === 0) {
-    sseClientsByUserId.delete(userId);
-  }
-};
-
-const sendEnvelopeToClient = (clientState: SseClient, envelope: SseEventEnvelope) => {
-  writeSseEnvelope(clientState.res, envelope);
-};
-
-const sendSseToClient = (
-  clientState: SseClient,
-  event: string,
-  data: unknown,
-) => {
-  const envelope = createSseEnvelope(event, data);
-  sendEnvelopeToClient(clientState, envelope);
-};
-
-const replayMissedEventsToClient = (
-  userId: number,
-  clientState: SseClient,
-  lastEventId: number | null,
-): number => {
-  const parsedLastEventId = parseLastEventId(lastEventId);
-  if (parsedLastEventId === null) {
-    return 0;
-  }
-
-  const missedEvents = getReplayEventsAfter(userId, parsedLastEventId);
-  let replayed = 0;
-
-  for (const eventEnvelope of missedEvents) {
-    try {
-      sendEnvelopeToClient(clientState, eventEnvelope);
-      replayed += 1;
-    } catch (error) {
-      removeSseClient(userId, clientState);
-      break;
-    }
-  }
-
-  return replayed;
-};
-
-const registerSseClient = (userId: number, res: Response): SseClient => {
-  const clientState: SseClient = {
-    res,
-    heartbeat: setInterval(() => {
-      const heartbeat = createSseEnvelope("heartbeat", {
-        now: new Date().toISOString(),
-      });
-
-      try {
-        sendEnvelopeToClient(clientState, heartbeat);
-      } catch (error) {
-        removeSseClient(userId, clientState);
-      }
-    }, SSE_HEARTBEAT_MS),
-  };
-
-  const existingClients = sseClientsByUserId.get(userId) || new Set<SseClient>();
-  existingClients.add(clientState);
-  sseClientsByUserId.set(userId, existingClients);
-
-  res.write(`retry: ${SSE_RETRY_MS}\n\n`);
-  const onClose = () => removeSseClient(userId, clientState);
-
-  res.on("close", onClose);
-  res.on("error", onClose);
-
-  return clientState;
-};
-
-// `event` strings passed here must be keys of RealtimeEventMap (realtimeEvents.ts).
+// Realtime delivery to the web dashboard is socket.io only. `event` strings
+// must be keys of RealtimeEventMap (realtimeEvents.ts).
 const broadcastToUser = (
   userId: number,
   event: RealtimeEventName,
   data: unknown,
-  options: SseBroadcastOptions = {},
 ) => {
-  const envelope = createSseEnvelope(event, data);
-  if (options.persistForReplay !== false) {
-    addReplayEvent(userId, envelope);
-  }
-
-  // Same event, same body, over socket.io. Runs alongside SSE until the web
-  // dashboard moves to sockets (realtime sub-project 2), then SSE goes.
   if (data && typeof data === "object") {
     emitToUserSocket(userId, event, data as RealtimeEventMap[RealtimeEventName]);
   }
-
-  const userClients = sseClientsByUserId.get(userId);
-  if (!userClients?.size) {
-    return envelope;
-  }
-
-  for (const clientState of userClients) {
-    try {
-      sendEnvelopeToClient(clientState, envelope);
-    } catch (error) {
-      removeSseClient(userId, clientState);
-    }
-  }
-
-  if (userClients.size === 0) {
-    sseClientsByUserId.delete(userId);
-  }
-
-  return envelope;
 };
 
 // The gauge counts unread rows across every user, and every created or read
@@ -657,6 +463,9 @@ const getNotificationPreference = async (
   notificationType: string,
 ): Promise<NotificationPreference> => {
   const normalizedType = normalizeNotificationType(notificationType);
+  if (!isKnownNotificationType(normalizedType)) {
+    throw new NotFoundError(`Unknown notification type: ${normalizedType}`);
+  }
   const preference = await prisma.notification_preference.findUnique({
     where: {
       user_id_type: {
@@ -733,6 +542,17 @@ const updateNotificationPreference = async (
   updates: UpdateNotificationPreferenceInput,
 ): Promise<NotificationPreferencePayload> => {
   const normalizedType = normalizeNotificationType(notificationType);
+  // Only catalog-known types may be stored — otherwise any authenticated caller
+  // can upsert unbounded junk preference rows for arbitrary type strings.
+  if (!isKnownNotificationType(normalizedType)) {
+    throw new NotFoundError(`Unknown notification type: ${normalizedType}`);
+  }
+
+  // Writes are clamped to the type's available channels so a stored flag can
+  // never enable a channel the catalog/UI marks unavailable (the send-side
+  // channel filter trusts the stored boolean).
+  const availableChannels = getNotificationPreferenceOption(normalizedType)
+    .availableChannels;
   const data: {
     in_app_enabled?: boolean;
     email_enabled?: boolean;
@@ -740,13 +560,13 @@ const updateNotificationPreference = async (
   } = {};
 
   if (updates.inAppEnabled !== undefined) {
-    data.in_app_enabled = updates.inAppEnabled;
+    data.in_app_enabled = availableChannels.inApp && updates.inAppEnabled;
   }
   if (updates.emailEnabled !== undefined) {
-    data.email_enabled = updates.emailEnabled;
+    data.email_enabled = availableChannels.email && updates.emailEnabled;
   }
   if (updates.smsEnabled !== undefined) {
-    data.sms_enabled = updates.smsEnabled;
+    data.sms_enabled = availableChannels.sms && updates.smsEnabled;
   }
 
   if (!Object.keys(data).length) {
@@ -764,9 +584,9 @@ const updateNotificationPreference = async (
     create: {
       user_id: userId,
       type: normalizedType,
-      in_app_enabled: updates.inAppEnabled ?? true,
-      email_enabled: updates.emailEnabled ?? true,
-      sms_enabled: updates.smsEnabled ?? false,
+      in_app_enabled: availableChannels.inApp && (updates.inAppEnabled ?? true),
+      email_enabled: availableChannels.email && (updates.emailEnabled ?? true),
+      sms_enabled: availableChannels.sms && (updates.smsEnabled ?? false),
     },
     select: {
       type: true,
@@ -889,29 +709,22 @@ const getUnreadCountForUser = async (userId: number): Promise<number> =>
     },
   });
 
-const emitUnreadCountToUser = (
-  userId: number,
-  unreadCount: number,
-  options: SseBroadcastOptions = {},
-) => {
-  broadcastToUser(
-    userId,
-    "unread_count",
-    {
-      unreadCount,
-    },
-    options,
-  );
+const emitUnreadCountToUser = (userId: number, unreadCount: number) => {
+  broadcastToUser(userId, "unread_count", {
+    unreadCount,
+  });
 };
 
-const sendUnreadCountToUser = async (
-  userId: number,
-  options: SseBroadcastOptions = {},
-): Promise<number> => {
-  const unreadCount = await getUnreadCountForUser(userId);
-
-  emitUnreadCountToUser(userId, unreadCount, options);
-  return unreadCount;
+const sendUnreadCountToUser = async (userId: number): Promise<number> => {
+  // Callers fire-and-forget this (`void sendUnreadCountToUser(...)`). A transient
+  // DB error in the count must not surface as an unhandled rejection.
+  try {
+    const unreadCount = await getUnreadCountForUser(userId);
+    emitUnreadCountToUser(userId, unreadCount);
+    return unreadCount;
+  } catch (error) {
+    return 0;
+  }
 };
 
 const createInAppNotification = async (
@@ -976,6 +789,7 @@ const createInAppNotification = async (
   }
 
   let row: NotificationRow | null = null;
+  let isDuplicate = false;
 
   if (preference.inAppEnabled) {
     try {
@@ -1023,9 +837,19 @@ const createInAppNotification = async (
       if (!row) {
         throw error;
       }
+      isDuplicate = true;
     }
   }
 
+  // A duplicate dedupe hit means the original notification was already created
+  // and dispatched on all channels. Dedupe must suppress DELIVERY, not just the
+  // inbox row — re-running email/SMS/push/expo here would double-send. Return
+  // the existing payload without re-dispatching or re-broadcasting.
+  if (isDuplicate) {
+    return row ? toPayload(row) : null;
+  }
+
+  const policyChannels = input.channelsFromPolicy === true;
   const shouldSendEmail =
     (input.sendEmail ?? true) && preference.emailEnabled;
   const recipientEmail = recipientUser.email?.trim() || "";
@@ -1063,7 +887,9 @@ const createInAppNotification = async (
   }
 
   const shouldSendSms =
-    input.sendSms === true && preference.smsEnabled;
+    input.sendSms === true &&
+    (preference.smsEnabled ||
+      (policyChannels && !preference.hasStoredPreference));
   if (shouldSendSms) {
     const smsBody = String(input.smsBody || trimmedBody).trim();
     if (smsBody) {
@@ -1095,6 +921,10 @@ const createInAppNotification = async (
   broadcastToUser(recipientUserId, "notification", payload);
   void sendUnreadCountToUser(recipientUserId);
   void updateUnreadBacklogMetric();
+
+  if (input.sendPush === false) {
+    return payload;
+  }
 
   enqueueNotificationDelivery(async () => {
     try {
@@ -1153,15 +983,33 @@ const createInAppNotification = async (
   return payload;
 };
 
+// Each notification targets its own recipient, so a fan-out can run with
+// bounded concurrency instead of one-at-a-time (serial N queries per recipient).
+const CREATE_MANY_CONCURRENCY = 5;
+
 const createManyInAppNotifications = async (
   inputs: CreateNotificationInput[],
 ): Promise<NotificationPayload[]> => {
   const notifications: NotificationPayload[] = [];
 
-  for (const input of inputs) {
-    const created = await createInAppNotification(input);
-    if (created) {
-      notifications.push(created);
+  for (let start = 0; start < inputs.length; start += CREATE_MANY_CONCURRENCY) {
+    const batch = inputs.slice(start, start + CREATE_MANY_CONCURRENCY);
+    const settled = await Promise.allSettled(
+      batch.map((input) => createInAppNotification(input)),
+    );
+
+    for (const result of settled) {
+      if (result.status === "fulfilled" && result.value) {
+        notifications.push(result.value);
+      } else if (result.status === "rejected") {
+        console.error(
+          `[ERROR] createManyInAppNotifications item failed: ${
+            result.reason instanceof Error
+              ? result.reason.message
+              : String(result.reason)
+          }`,
+        );
+      }
     }
   }
 
@@ -1446,28 +1294,6 @@ const deleteNotifications = async (
   return { deleted: result.count };
 };
 
-const startSseStream = async (
-  userId: number,
-  res: Response,
-  options: StartSseStreamOptions = {},
-): Promise<void> => {
-  const clientState = registerSseClient(userId, res);
-  const replayedEvents = replayMissedEventsToClient(
-    userId,
-    clientState,
-    options.lastEventId ?? null,
-  );
-
-  sendSseToClient(clientState, "connected", {
-    userId: String(userId),
-    replayedEvents,
-    now: new Date().toISOString(),
-  });
-
-  const unreadCount = await getUnreadCountForUser(userId);
-  sendSseToClient(clientState, "unread_count", { unreadCount });
-};
-
 const pruneOldNotifications = async (
   retentionDays = 90,
 ): Promise<{ deleted: number }> => {
@@ -1509,6 +1335,49 @@ const listAdminUserIds = async (): Promise<number[]> => {
   return users
     .filter((user) => canManageSystemSettings(user.access?.permissions))
     .map((user) => user.id);
+};
+
+// Mirrors hasActionPermission(permissions, "Visitors", "manage") in
+// src/middleWare/authorization.ts: the first alias key holding a string wins
+// (Visitors, then the Members fallback), and Can_Manage / Super_Admin both
+// satisfy the "manage" action.
+const VISITOR_PERMISSION_KEYS = ["Visitors", "Members"];
+
+const canManageVisitors = (permissions: unknown): boolean => {
+  const permissionObject = parsePermissionsObject(permissions);
+  for (const key of VISITOR_PERMISSION_KEYS) {
+    const value = permissionObject[key];
+    if (typeof value === "string") {
+      return SETTINGS_MANAGE_VALUES.has(value);
+    }
+  }
+  return false;
+};
+
+const listUserIdsWithVisitorManageAccess = async (): Promise<number[]> => {
+  const users = await prisma.user.findMany({
+    where: {
+      NOT: {
+        is_active: false,
+      },
+    },
+    select: {
+      id: true,
+      access: {
+        select: {
+          permissions: true,
+        },
+      },
+    },
+  });
+
+  return Array.from(
+    new Set(
+      users
+        .filter((user) => canManageVisitors(user.access?.permissions))
+        .map((user) => user.id),
+    ),
+  );
 };
 
 const listSystemFailureRecipientUserIds = async (): Promise<number[]> => {
@@ -1592,7 +1461,7 @@ export const notificationService = {
   markAllNotificationsAsRead,
   clearAllNotifications,
   deleteNotifications,
-  startSseStream,
   pruneOldNotifications,
   notifyAdminsJobFailed,
+  listUserIdsWithVisitorManageAccess,
 };

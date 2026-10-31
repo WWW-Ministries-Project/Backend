@@ -1,4 +1,6 @@
 import { prisma } from "../../Models/context";
+import { getBranchScopedWhere } from "../branches/branchService";
+import { parseResponsibleMemberIds } from "./visitorAccess";
 import { notificationService } from "../notifications/notificationService";
 
 const toPositiveInt = (value: any) => {
@@ -9,17 +11,9 @@ const toPositiveInt = (value: any) => {
   return parsed;
 };
 
-const parseResponsibleMembers = (responsibleMembers: any): number[] => {
-  if (!Array.isArray(responsibleMembers)) {
-    return [];
-  }
-
-  const ids = responsibleMembers
-    .map((memberId) => toPositiveInt(memberId))
-    .filter((memberId): memberId is number => Boolean(memberId));
-
-  return Array.from(new Set(ids));
-};
+// `responsibleMembers` is stored as a JSON string; an array-only parser
+// matched nobody, so responsible members saw empty lists.
+const parseResponsibleMembers = parseResponsibleMemberIds;
 
 export class FollowUpService {
   async createFollowUp(data: any) {
@@ -68,7 +62,9 @@ export class FollowUpService {
       ? Number(scope?.memberId)
       : null;
 
+    const branchWhere = getBranchScopedWhere(undefined);
     const followUps = await prisma.follow_up.findMany({
+      ...(branchWhere ? { where: { visitor: branchWhere } } : {}),
       include: {
         visitor: {
           select: {

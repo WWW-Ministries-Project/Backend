@@ -122,7 +122,7 @@ export const positionRouter = Router();
  */
 positionRouter.post(
   "/create-position",
-  [protect, permissions.can_manage_positions],
+  [protect, permissions.requireAction("Positions", "create", "Not authorized to create positions")],
   createPosition,
 );
 
@@ -156,7 +156,7 @@ positionRouter.post(
  */
 positionRouter.put(
   "/update-position",
-  [protect, permissions.can_manage_positions],
+  [protect, permissions.requireAction("Positions", "edit", "Not authorized to edit positions")],
   updatePosition,
 );
 
@@ -181,7 +181,7 @@ positionRouter.put(
  */
 positionRouter.delete(
   "/delete-position",
-  [protect, permissions.can_delete_positions],
+  [protect, permissions.requireAction("Positions", "delete", "Not authorized to delete positions")],
   deletePosition,
 );
 
@@ -211,7 +211,8 @@ positionRouter.delete(
  */
 positionRouter.get(
   "/list-positions",
-  [protect],
+  // Staff only: the admin shell and pickers load it; no member-facing client does.
+  [protect, permissions.requireStaff],
   listPositions,
 );
 

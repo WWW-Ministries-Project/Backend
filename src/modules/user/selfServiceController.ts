@@ -5,6 +5,7 @@ import { prisma } from "../../Models/context";
 import { hashPassword, sendEmail } from "../../utils";
 import { selfRegistrationTemplate } from "../../utils/mail_templates/selfRegistrationTemplate";
 import { getBranchScopedWhere, resolveBranchIdOrDefault } from "../branches/branchService";
+import { getBranchScope, isBranchAllowed } from "../branches/branchScope";
 import { enqueueWelcome } from "../messaging/messagingService";
 import { notificationService } from "../notifications/notificationService";
 import { issueSessionTokenForUser } from "./userController";
@@ -444,6 +445,7 @@ const loadPendingRequest = async (requestId: number) =>
       id: true,
       status: true,
       user_id: true,
+      branch_id: true,
       user: { select: { id: true, name: true, password: true, member_id: true, is_guest: true } },
     },
   });
@@ -462,6 +464,9 @@ export const approveMembershipRequest = async (req: Request, res: Response) => {
   try {
     const request = await loadPendingRequest(requestId);
     if (!request) return fail(res, 404, "Membership request not found.");
+    if (request.branch_id && !isBranchAllowed(getBranchScope(), request.branch_id)) {
+      return fail(res, 403, "This request belongs to a branch you don't have access to.");
+    }
     if (request.status !== "PENDING") {
       return fail(res, 400, `This request was already ${request.status.toLowerCase()}.`);
     }
@@ -473,7 +478,9 @@ export const approveMembershipRequest = async (req: Request, res: Response) => {
       }),
       prisma.user.update({
         where: { id: request.user_id },
-        data: { is_guest: false, status: null },
+        // Guests carry no stage stamps; clear defensively so the confirmation
+        // below stamps confirmed_at fresh.
+        data: { is_guest: false, status: null, confirmed_at: null, functional_at: null },
       }),
     ]);
 
@@ -503,6 +510,9 @@ export const declineMembershipRequest = async (req: Request, res: Response) => {
   try {
     const request = await loadPendingRequest(requestId);
     if (!request) return fail(res, 404, "Membership request not found.");
+    if (request.branch_id && !isBranchAllowed(getBranchScope(), request.branch_id)) {
+      return fail(res, 403, "This request belongs to a branch you don't have access to.");
+    }
     if (request.status !== "PENDING") {
       return fail(res, 400, `This request was already ${request.status.toLowerCase()}.`);
     }

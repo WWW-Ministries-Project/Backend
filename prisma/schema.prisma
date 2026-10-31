@@ -23,7 +23,6 @@ model user {
   updated_at                                   DateTime?
   access_level_id                              Int?
   membership_type                              membership_type?
-  parent_id                                    Int?
   status                                       status_type?
   is_sync                                      Boolean?                                @default(false)
   sync_id                                      Int?
@@ -35,7 +34,22 @@ model user {
   /// Where the account was created: null for dashboard-created records,
   /// "MOBILE_APP" for self-registration from the member app.
   registration_source                          String?
+  /// When the member reached CONFIRMED. Cleared if moved back to UNCONFIRMED.
+  confirmed_at                                 DateTime?
+  /// When the member reached MEMBER (functional member). Cleared if moved back.
+  functional_at                                DateTime?
+  /// When the user last signed in or opened the app (updated at most every few minutes).
+  last_active_at                               DateTime?
+  /// Visitor record this member was converted from (null when not converted
+  /// from a visitor, or the visitor was deleted).
+  source_visitor_id                            Int?
+  /// Soul-won record this member was converted from.
+  source_soul_won_id                           Int?
+  source_visitor                               visitor?                                @relation("user_source_visitor", fields: [source_visitor_id], references: [id], onDelete: SetNull)
+  source_soul_won                              soul_won?                               @relation("user_source_soul_won", fields: [source_soul_won_id], references: [id], onDelete: SetNull)
   appointments                                 appointment[]
+  appointment_staff_profile                    appointment_staff_profile?
+  appointment_time_off                         appointment_time_off[]
   asset_history                                asset_history[]
   assignment_submission                        assignment_submission[]
   timeSlots                                    availability[]
@@ -57,6 +71,8 @@ model user {
   received_notifications                       in_app_notification[]                   @relation("notification_recipient")
   acted_notifications                          in_app_notification[]                   @relation("notification_actor")
   notification_preferences                     notification_preference[]
+  assistant_preference                         assistant_preference?
+  assistant_task_states                        assistant_task_state[]
   push_subscriptions                           notification_push_subscription[]
   device_tokens                                notification_device_token[]
   push_delivery_jobs                           notification_push_delivery_job[]        @relation("notification_push_delivery_user")
@@ -64,6 +80,7 @@ model user {
   system_failure_notification_settings         system_notification_settings[]          @relation("system_failure_notification_recipient")
   system_failure_notification_settings_updates system_notification_settings[]          @relation("system_failure_notification_updated_by")
   attendance_timing_settings_updates           attendance_timing_settings[]            @relation("attendance_timing_settings_updated_by")
+  visitor_follow_up_settings_updates           visitor_follow_up_settings[]            @relation("visitor_follow_up_settings_updated_by")
   attendance_timing_rule_versions_created      attendance_timing_rule_version[]        @relation("attendance_timing_rule_version_created_by")
   event_report_exclusion                       event_report_exclusion?                 @relation("event_report_exclusion_user")
   event_report_exclusions_created              event_report_exclusion[]                @relation("event_report_exclusion_created_by")
@@ -91,14 +108,13 @@ model user {
   life_center_meetings_created                 life_center_meeting[]                   @relation("life_center_meeting_created_by")
   soul_won_membership                          soul_won?                               @relation("soul_won_member")
   access                                       access_level?                           @relation(fields: [access_level_id], references: [id])
-  parent                                       user?                                   @relation("UserParent", fields: [parent_id], references: [id])
-  children                                     user[]                                  @relation("UserParent")
   position                                     position?                               @relation(fields: [position_id], references: [id])
   spouse                                       user?                                   @relation("SpouseRelation", fields: [spouse_id], references: [id])
   spouse_of                                    user?                                   @relation("SpouseRelation")
   branch_id                                    Int?
   branch                                       branch?                                 @relation(fields: [branch_id], references: [id])
   pastor_in_charge_branches                    branch[]                                @relation("branch_pastor_in_charge")
+  branch_access                                user_branch_access[]
   department                                   user_departments?
   department_join_requests                     department_join_request[]               @relation("JoinRequestUser")
   decided_join_requests                        department_join_request[]               @relation("JoinRequestDecider")
@@ -131,10 +147,11 @@ model user {
   community_blocks_received                    community_block[]                       @relation("CommunityBlockBlocked")
   community_reports_filed                      community_report[]                      @relation("CommunityReportReporter")
   community_moderation_actions                 community_moderation_log[]              @relation("CommunityModerationActor")
+  lms_applications                             lms_application[]
+  program_instructor_roles                     program_instructor[]
 
   @@index([access_level_id], map: "user_access_level_id_fkey")
   @@index([position_id], map: "user_position_id_fkey")
-  @@index([parent_id], map: "user_parent_id_fkey")
   @@index([department_id], map: "user_department_id_idx")
   @@index([membership_type], map: "user_membership_type_idx")
   @@index([is_user], map: "user_is_user_idx")
@@ -142,6 +159,8 @@ model user {
   @@index([name], map: "user_name_idx")
   @@index([branch_id], map: "user_branch_id_idx")
   @@index([is_guest], map: "user_is_guest_idx")
+  @@index([source_visitor_id], map: "user_source_visitor_id_idx")
+  @@index([source_soul_won_id], map: "user_source_soul_won_id_idx")
 }
 
 model branch {
@@ -183,8 +202,29 @@ model branch {
   sermon_series            sermon_series[]
   sermons                  sermon[]
   community_posts          community_post[]
+  user_access              user_branch_access[]
 
   @@index([pastor_in_charge_id], map: "branch_pastor_in_charge_id_idx")
+}
+
+/// The branches an admin may work in, with the role (access level) that
+/// applies in each one. Roles are global; grants are per branch. An admin with
+/// no rows has no admin access. `user.access_level_id` mirrors one grant so
+/// older code paths that only read it keep working.
+model user_branch_access {
+  id              Int          @id @default(autoincrement())
+  user_id         Int
+  branch_id       Int
+  access_level_id Int
+  created_at      DateTime     @default(now())
+  updated_at      DateTime     @updatedAt
+  user            user         @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  branch          branch       @relation(fields: [branch_id], references: [id], onDelete: Cascade)
+  access_level    access_level @relation(fields: [access_level_id], references: [id], onDelete: Cascade)
+
+  @@unique([user_id, branch_id], map: "user_branch_access_user_id_branch_id_key")
+  @@index([branch_id], map: "user_branch_access_branch_id_idx")
+  @@index([access_level_id], map: "user_branch_access_access_level_id_idx")
 }
 
 model system_notification_settings {
@@ -234,6 +274,17 @@ model attendance_timing_settings {
   updated_by         user?                  @relation("attendance_timing_settings_updated_by", fields: [updated_by_user_id], references: [id], map: "attendance_timing_settings_updated_by_fk")
 
   @@index([updated_by_user_id], map: "attendance_timing_settings_updated_by_idx")
+}
+
+model visitor_follow_up_settings {
+  id                   Int      @id @default(1)
+  follow_ups_per_month Int      @default(2)
+  enabled              Boolean  @default(false)
+  updated_at           DateTime @updatedAt
+  updated_by_user_id   Int?
+  updated_by           user?    @relation("visitor_follow_up_settings_updated_by", fields: [updated_by_user_id], references: [id], map: "visitor_follow_up_settings_updated_by_fk")
+
+  @@index([updated_by_user_id], map: "visitor_follow_up_settings_updated_by_idx")
 }
 
 /// One row per save of the attendance timing rules. A rule applies to an
@@ -404,6 +455,8 @@ model department_join_request {
   start_date     DateTime?
   instructions   String?
   decline_reason String?
+  /// Optional note from the member when requesting (max 500 chars).
+  note           String?             @db.Text
   decided_by     Int?
   decided_at     DateTime?
   branch_id      Int?
@@ -441,21 +494,24 @@ model position {
 }
 
 model access_level {
-  id             Int       @id @default(autoincrement())
-  name           String    @unique
+  id             Int                  @id @default(autoincrement())
+  name           String               @unique
   description    String?
-  permissions    String?   @db.LongText
+  permissions    String?              @db.LongText
+  /// Home workspace keys (prelate | admin | finance | hod | generic). NULL = derive from permissions.
+  workspaces     Json?
   created_by     Int?
   updated_by     Int?
   deleted_at     DateTime?
-  deleted        Boolean   @default(false)
-  created_at     DateTime? @default(now())
+  deleted        Boolean              @default(false)
+  created_at     DateTime?            @default(now())
   updated_at     DateTime?
   users_assigned user[]
+  branch_access  user_branch_access[]
 }
 
 model assets {
-  id                  Int           @id @default(autoincrement())
+  id                  Int                      @id @default(autoincrement())
   name                String
   date_assigned       DateTime?
   date_purchased      DateTime?
@@ -467,27 +523,130 @@ model assets {
   photo               String?
   created_by          Int?
   updated_by          Int?
-  created_at          DateTime      @default(now())
+  created_at          DateTime                 @default(now())
   department_assigned Int?
   branch_id           Int?
   asset_id            String?
-  assigned_to         department?   @relation(fields: [department_assigned], references: [id])
-  branch              branch?       @relation(fields: [branch_id], references: [id])
+  /// sound | music | media | furniture | appliance | vehicle | other
+  category            String?                  @db.VarChar(32)
+  /// When the current status (or holder) started.
+  status_since        DateTime?
+  /// Fault, repairer or loss details for the current status.
+  status_note         String?                  @db.Text
+  lost_confirmed_at   DateTime?
+  last_counted_at     DateTime?
+  repair_request_id   Int?
+  assigned_to         department?              @relation(fields: [department_assigned], references: [id])
+  branch              branch?                  @relation(fields: [branch_id], references: [id])
+  repair_request      request?                 @relation("AssetRepairRequest", fields: [repair_request_id], references: [id], onDelete: SetNull)
+  history             asset_history[]
+  stock_check_items   asset_stock_check_item[]
 
   @@index([department_assigned], map: "assets_department_assigned_fkey")
   @@index([branch_id], map: "assets_branch_id_idx")
+  @@index([repair_request_id])
 }
 
 model asset_history {
-  id            Int          @id @default(autoincrement())
+  id            Int           @id @default(autoincrement())
   title         String
   description   String?
-  status_update asset_status
+  status_update asset_status?
   update_date   DateTime
   userId        Int?
-  related_user  user?        @relation(fields: [userId], references: [id])
+  asset_id      Int?
+  /// neutral | info | success | warning | danger
+  tone          String?       @db.VarChar(16)
+  related_user  user?         @relation(fields: [userId], references: [id])
+  asset         assets?       @relation(fields: [asset_id], references: [id], onDelete: Cascade)
 
   @@index([userId], map: "asset_history_userId_fkey")
+  @@index([asset_id, update_date])
+}
+
+/// A reconciliation round: counters mark what they physically find, the
+/// administrator settles differences, closing applies them to the register.
+model asset_stock_check {
+  id                  Int                            @id @default(autoincrement())
+  name                String
+  /// null = all departments
+  scope_department_id Int?
+  scope_store_only    Boolean                        @default(false)
+  scope_category      String?                        @db.VarChar(32)
+  status              asset_stock_check_status       @default(OPEN)
+  started_at          DateTime                       @default(now())
+  due_date            DateTime
+  closed_at           DateTime?
+  created_by          Int?
+  closed_by           Int?
+  branch_id           Int?
+  items               asset_stock_check_item[]
+  extras              asset_stock_check_extra[]
+  departments         asset_stock_check_department[]
+
+  @@index([status])
+  @@index([branch_id])
+}
+
+model asset_stock_check_item {
+  id                     Int               @id @default(autoincrement())
+  check_id               Int
+  asset_id               Int
+  /// Department the register expected it with; null = the store.
+  expected_department_id Int?
+  /// found | elsewhere | damaged | missing | atrepair | back
+  result                 String?           @db.VarChar(16)
+  /// For elsewhere: where it was found (null with found_in_store = store).
+  found_department_id    Int?
+  found_in_store         Boolean           @default(false)
+  /// Administrator's decision for a difference (move, return, needs, ...).
+  fix                    String?           @db.VarChar(16)
+  counted_at             DateTime?
+  counted_by             Int?
+  counted_by_name        String?
+  check                  asset_stock_check @relation(fields: [check_id], references: [id], onDelete: Cascade)
+  asset                  assets            @relation(fields: [asset_id], references: [id], onDelete: Cascade)
+
+  @@unique([check_id, asset_id])
+  @@index([asset_id])
+}
+
+model asset_stock_check_extra {
+  id                  Int               @id @default(autoincrement())
+  check_id            Int
+  name                String
+  category            String?           @db.VarChar(32)
+  found_department_id Int?
+  found_in_store      Boolean           @default(false)
+  note                String?           @db.Text
+  /// add | ignore
+  fix                 String            @default("add") @db.VarChar(16)
+  recorded_at         DateTime          @default(now())
+  recorded_by         Int?
+  recorded_by_name    String?
+  created_asset_id    Int?
+  check               asset_stock_check @relation(fields: [check_id], references: [id], onDelete: Cascade)
+
+  @@index([check_id])
+}
+
+/// Per-department sign-off. department_key 0 = the store (unassigned items).
+model asset_stock_check_department {
+  id                Int               @id @default(autoincrement())
+  check_id          Int
+  department_key    Int
+  submitted_at      DateTime?
+  submitted_by      Int?
+  submitted_by_name String?
+  reminded_at       DateTime?
+  check             asset_stock_check @relation(fields: [check_id], references: [id], onDelete: Cascade)
+
+  @@unique([check_id, department_key])
+}
+
+enum asset_stock_check_status {
+  OPEN
+  CLOSED
 }
 
 model event_act {
@@ -758,6 +917,22 @@ model request {
   updated_by_user_id      Int?
   updated_at              DateTime?
   branch_id               Int?
+  /// Date the requester needs the items by.
+  needed_by               DateTime?
+  /// Why it's needed. Approvers read this first.
+  purpose                 String?                           @db.Text
+  created_at              DateTime?                         @default(now())
+  /// When the requester signed and submitted it.
+  submitted_at            DateTime?
+  /// Last reminder sent to the current approver (manual or automatic).
+  last_reminder_at        DateTime?
+  /// Set on a draft created with "Revise as new draft".
+  revised_from_id         Int?
+  /// Server-written JSON list of events that have no other record (reminders, revisions).
+  history                 Json?
+  /// Who marked an approved requisition as disbursed (paid out / items handed over), and when.
+  disbursed_by_user_id    Int?
+  disbursed_at            DateTime?
   attachmentsList         request_attachment[]
   branch                  branch?                           @relation(fields: [branch_id], references: [id])
   department              department                        @relation(fields: [department_id], references: [id])
@@ -769,6 +944,7 @@ model request {
   products                requested_item[]                  @relation("ProductRequest")
   approval_instances      requisition_approval_instances[]
   notification_events     requisition_notification_events[]
+  repair_assets           assets[]                          @relation("AssetRepairRequest")
 
   @@index([user_id], map: "request_user_id_fkey")
   @@index([department_id], map: "request_department_id_fkey")
@@ -777,6 +953,7 @@ model request {
   @@index([branch_id], map: "request_branch_id_idx")
   @@index([updated_by_user_id], map: "request_updated_by_user_id_idx")
   @@index([request_approval_status], map: "request_approval_status_idx")
+  @@index([revised_from_id], map: "request_revised_from_id_idx")
 }
 
 model event_reports {
@@ -804,6 +981,8 @@ model event_reports {
   viewers                  event_report_viewers[]
   final_approval_instances event_report_final_approval_instances[]
   notification_events      event_report_notification_events[]
+  comments                 event_report_comments[]
+  activity                 event_report_activity[]
 
   @@unique([event_id, event_date])
   @@index([event_id])
@@ -1010,6 +1189,8 @@ model requisition_approval_configs {
   module                     RequisitionApprovalModule                   @unique
   is_active                  Boolean                                     @default(true)
   similar_item_lookback_days Int                                         @default(30)
+  /// Days an approver has to act before a requisition counts as overdue and is chased.
+  approval_reply_days        Int                                         @default(3)
   finance_approver_type      RequisitionApproverType?
   finance_position_id        Int?
   finance_user_id            Int?
@@ -1077,6 +1258,8 @@ model requisition_approval_instances {
   acted_by_user_id   Int?
   acted_at           DateTime?
   comment            String?
+  /// Typed full name the approver signed with.
+  signature          String?
   created_at         DateTime                          @default(now())
   updated_at         DateTime                          @default(now()) @updatedAt
   config             requisition_approval_configs      @relation(fields: [config_id], references: [id], onDelete: Cascade)
@@ -1171,6 +1354,38 @@ model notification_preference {
   @@index([user_id], map: "notification_preference_user_id_idx")
 }
 
+model assistant_preference {
+  id             Int      @id @default(autoincrement())
+  user_id        Int      @unique
+  brief          Boolean  @default(true)
+  nudges         Boolean  @default(true)
+  quiet          Boolean  @default(true)
+  email_copy     Boolean  @default(false)
+  approval_after String   @default("24 hours")
+  report_lead    String   @default("2 days before")
+  visitor_after  String   @default("48 hours")
+  created_at     DateTime @default(now())
+  updated_at     DateTime @default(now()) @updatedAt
+  user           user     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id], map: "assistant_preference_user_id_idx")
+}
+
+model assistant_task_state {
+  id            Int       @id @default(autoincrement())
+  user_id       Int
+  task_key      String
+  state         String
+  snoozed_until DateTime?
+  label         String?
+  created_at    DateTime  @default(now())
+  updated_at    DateTime  @default(now()) @updatedAt
+  user          user      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@unique([user_id, task_key], map: "assistant_task_state_user_id_task_key_key")
+  @@index([user_id], map: "assistant_task_state_user_id_idx")
+}
+
 model notification_push_subscription {
   id                 String                           @id @default(uuid())
   user_id            Int
@@ -1242,6 +1457,21 @@ model notification_device_token {
   @@map("notification_device_tokens")
 }
 
+// Expo returns a push TICKET at send time, but DeviceNotRegistered (the signal
+// that a token is dead) only arrives later in the delivery RECEIPT. We persist
+// one row per outstanding receipt id so a background job can poll Expo and
+// deactivate tokens whose receipts report them gone. Rows are deleted once the
+// receipt has been resolved.
+model notification_push_receipt {
+  id         String   @id @default(uuid())
+  receipt_id String   @unique @db.VarChar(191)
+  token_id   String   @db.VarChar(191)
+  created_at DateTime @default(now())
+
+  @@index([created_at], map: "notification_push_receipts_created_idx")
+  @@map("notification_push_receipts")
+}
+
 model notification_sms_delivery_job {
   id                 String                           @id @default(uuid())
   notification_id    Int?                             @unique
@@ -1288,6 +1518,17 @@ model program {
   topics                     topic[]
   eligibility_rules          role_eligibility_rules[]
   position_eligibility_rules position_eligibility_rules[]
+  modules                    program_module[]
+  /// "PASS_FAIL" (every graded unit passed) or "WEIGHTED" (category weights roll up to a final grade)
+  grading_mode               String                       @default("PASS_FAIL") @db.VarChar(20)
+  pass_mark                  Int                          @default(50)
+  /// { quiz, essay, exam, attendance } percentages summing to 100; used when grading_mode = WEIGHTED
+  grading_weights            Json?
+  /// { requireGrade, requireAllUnits, minAttendance: number | null }
+  completion_rules           Json?
+  auto_certificate           Boolean                      @default(true)
+  instructors_roster         program_instructor[]
+  lms_applications           lms_application[]
 
   @@index([branch_id], map: "program_branch_id_idx")
 }
@@ -1329,16 +1570,34 @@ model program_prerequisites {
 }
 
 model topic {
-  id           Int           @id @default(autoincrement())
+  id           Int             @id @default(autoincrement())
   name         String
   programId    Int
   description  String?
   order_number Int?
+  moduleId     Int?
   LearningUnit LearningUnit?
   progress     progress[]
-  program      program       @relation(fields: [programId], references: [id], onDelete: Cascade)
+  program      program         @relation(fields: [programId], references: [id], onDelete: Cascade)
+  module       program_module? @relation(fields: [moduleId], references: [id], onDelete: SetNull)
 
   @@index([programId], map: "topic_programId_fkey")
+  @@index([moduleId])
+}
+
+model program_module {
+  id           Int      @id @default(autoincrement())
+  programId    Int
+  title        String
+  description  String?  @db.Text
+  order_number Int      @default(0)
+  weeks        Int?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  program      program  @relation(fields: [programId], references: [id], onDelete: Cascade)
+  topics       topic[]
+
+  @@index([programId])
 }
 
 model LearningUnit {
@@ -1348,13 +1607,229 @@ model LearningUnit {
   data              String                  @db.LongText
   version           Int                     @default(1)
   maxAttempts       Int?                    @default(3)
+  /// { week, mode: "day" | "after", day?: "Mon".."Sun", days?: number }; due date per cohort is derived from cohort.startDate
+  due_rule          Json?
+  /// "quiz" | "essay" | "exam"; defaults from type when null
+  grading_category  String?                 @db.VarChar(20)
   topic             topic                   @relation(fields: [topicId], references: [id], onDelete: Cascade)
   submissions       assignment_submission[]
   cohortAssignments cohort_assignment[]
+  extensions        assignment_extension[]
+  /// Rubric used to grade essay submissions (optional)
+  rubricId          Int?
+  rubric            lms_rubric?             @relation(fields: [rubricId], references: [id], onDelete: SetNull)
+  gradeOverrides    lms_grade_override[]
+
+  /// Content library item this unit was created from; URL edits on the item propagate to the unit
+  libraryItemId Int?
+  libraryItem   lms_library_item? @relation(fields: [libraryItemId], references: [id], onDelete: SetNull)
+
+  @@index([rubricId])
+  @@index([libraryItemId])
+}
+
+model assignment_extension {
+  id             Int          @id @default(autoincrement())
+  cohortId       Int
+  learningUnitId Int
+  enrollmentId   Int
+  dueDate        DateTime
+  reason         String?      @db.Text
+  grantedById    Int?
+  createdAt      DateTime     @default(now())
+  cohort         cohort       @relation(fields: [cohortId], references: [id], onDelete: Cascade)
+  learningUnit   LearningUnit @relation(fields: [learningUnitId], references: [id], onDelete: Cascade)
+  enrollment     enrollment   @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+
+  @@unique([learningUnitId, enrollmentId])
+  @@index([cohortId])
+  @@index([enrollmentId])
+}
+
+/// Shared question bank for School of Ministry quizzes and exams
+model lms_question {
+  id                Int      @id @default(autoincrement())
+  /// MULTIPLE_CHOICE | TRUE_FALSE | SHORT_ANSWER | ESSAY
+  type              String   @db.VarChar(20)
+  prompt            String   @db.Text
+  /// [{ id, text }] for MULTIPLE_CHOICE / TRUE_FALSE
+  options           Json?
+  correct_option_id String?  @db.VarChar(64)
+  /// string[]
+  tags              Json?
+  /// EASY | MEDIUM | HARD
+  difficulty        String   @default("MEDIUM") @db.VarChar(10)
+  created_by        Int?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+/// Reusable grading rubric: criteria (weights total 100) × levels (score factor 0–1)
+model lms_rubric {
+  id         Int            @id @default(autoincrement())
+  title      String
+  /// [{ id, label, weight }]
+  criteria   Json
+  /// [{ id, label, factor }]
+  levels     Json
+  created_by Int?
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+  units      LearningUnit[]
+}
+
+/// Gradebook override for one learner and unit: a set score or an excusal, without a submission
+model lms_grade_override {
+  id             Int          @id @default(autoincrement())
+  enrollmentId   Int
+  learningUnitId Int
+  score          Int?
+  excused        Boolean      @default(false)
+  note           String?      @db.Text
+  /// Learner's progress row before the first override ({ score, status, completed, completedAt } or null); restored on clear
+  prev_progress  Json?
+  updated_by     Int?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  enrollment     enrollment   @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  learningUnit   LearningUnit @relation(fields: [learningUnitId], references: [id], onDelete: Cascade)
+
+  @@unique([enrollmentId, learningUnitId])
+  @@index([learningUnitId])
+}
+
+/// Teaching session (class meeting) for a cohort, optionally for one class
+model lms_session {
+  id           Int              @id @default(autoincrement())
+  cohortId     Int
+  /// null = whole cohort
+  courseId     Int?
+  title        String
+  starts_at    DateTime
+  ends_at      DateTime?
+  /// IN_PERSON | ONLINE | HYBRID
+  mode         String           @db.VarChar(20)
+  location     String?
+  meeting_link String?          @db.Text
+  week         Int?
+  cancelled    Boolean          @default(false)
+  notes        String?          @db.Text
+  created_by   Int?
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+  cohort       cohort           @relation(fields: [cohortId], references: [id], onDelete: Cascade)
+  course       course?          @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  attendance   lms_attendance[]
+
+  @@index([cohortId, starts_at])
+  @@index([courseId])
+}
+
+model lms_attendance {
+  id           Int         @id @default(autoincrement())
+  sessionId    Int
+  enrollmentId Int
+  /// PRESENT | LATE | ABSENT | EXCUSED
+  status       String      @db.VarChar(10)
+  note         String?
+  recorded_by  Int?
+  updatedAt    DateTime    @updatedAt
+  session      lms_session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  enrollment   enrollment  @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, enrollmentId])
+  @@index([enrollmentId])
+}
+
+/// Announcement to a cohort, one class, or its at-risk learners; delivered through the messaging outbox
+model lms_announcement {
+  id              Int       @id @default(autoincrement())
+  cohortId        Int
+  courseId        Int?
+  /// COHORT | CLASS | AT_RISK
+  audience        String    @db.VarChar(20)
+  title           String
+  body            String    @db.Text
+  /// { inApp, email, sms }
+  channels        Json
+  recipient_count Int       @default(0)
+  /// message_dispatch.id (no FK: the outbox prunes independently)
+  dispatch_id     Int?
+  scheduled_for   DateTime?
+  sent_by         Int?
+  createdAt       DateTime  @default(now())
+  cohort          cohort    @relation(fields: [cohortId], references: [id], onDelete: Cascade)
+  course          course?   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@index([cohortId])
+}
+
+/// Application held back by eligibility or capacity, for admin review
+model lms_application {
+  id           Int       @id @default(autoincrement())
+  programId    Int
+  cohortId     Int?
+  courseId     Int?
+  userId       Int
+  /// PENDING | APPROVED | DECLINED
+  status       String    @default("PENDING") @db.VarChar(10)
+  /// string[] of reasons the rules held the applicant back
+  reasons      Json?
+  note         String?   @db.Text
+  decided_by   Int?
+  decided_at   DateTime?
+  enrollmentId Int?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  program      program   @relation(fields: [programId], references: [id], onDelete: Cascade)
+  cohort       cohort?   @relation(fields: [cohortId], references: [id], onDelete: SetNull)
+  course       course?   @relation(fields: [courseId], references: [id], onDelete: SetNull)
+  user         user      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+  @@index([programId])
+  @@index([userId])
+}
+
+/// Instructors attached to a program, with what they may do in its cohorts
+model program_instructor {
+  id                  Int      @id @default(autoincrement())
+  programId           Int
+  userId              Int
+  can_grade           Boolean  @default(true)
+  can_attendance      Boolean  @default(true)
+  can_message         Boolean  @default(true)
+  can_edit_curriculum Boolean  @default(false)
+  added_by            Int?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  program             program  @relation(fields: [programId], references: [id], onDelete: Cascade)
+  user                user     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([programId, userId])
+  @@index([userId])
+}
+
+/// Shared content (files, videos, links) reused across programs
+model lms_library_item {
+  id               Int            @id @default(autoincrement())
+  title            String
+  /// VIDEO | PDF | SLIDES | DOCUMENT | LINK | IMAGE
+  type             String         @db.VarChar(20)
+  url              String         @db.Text
+  size_bytes       Int?
+  duration_minutes Int?
+  pages            Int?
+  /// string[]
+  tags             Json?
+  created_by       Int?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  units            LearningUnit[]
 }
 
 model cohort {
-  id                  Int                 @id @default(autoincrement())
+  id                  Int                    @id @default(autoincrement())
   name                String
   startDate           DateTime
   status              String
@@ -1362,47 +1837,57 @@ model cohort {
   duration            String
   applicationDeadline DateTime
   programId           Int
-  createdAt           DateTime            @default(now())
-  updatedAt           DateTime            @updatedAt
-  program             program             @relation(fields: [programId], references: [id], onDelete: Cascade)
+  createdAt           DateTime               @default(now())
+  updatedAt           DateTime               @updatedAt
+  program             program                @relation(fields: [programId], references: [id], onDelete: Cascade)
   assignments         cohort_assignment[]
   courses             course[]
+  extensions          assignment_extension[]
+  lms_sessions        lms_session[]
+  lms_announcements   lms_announcement[]
+  lms_applications    lms_application[]
 
   @@index([programId], map: "cohort_programId_fkey")
 }
 
 model course {
-  id           Int          @id @default(autoincrement())
-  name         String
-  capacity     Int
-  enrolled     Int          @default(0)
-  schedule     String
-  cohortId     Int
-  classFormat  classFormat?
-  location     String?
-  meetingLink  String?
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
-  instructorId Int?
-  cohort       cohort       @relation(fields: [cohortId], references: [id], onDelete: Cascade)
-  instructor   user?        @relation(fields: [instructorId], references: [id], onDelete: Cascade)
-  enrollments  enrollment[]
+  id                Int                @id @default(autoincrement())
+  name              String
+  capacity          Int
+  enrolled          Int                @default(0)
+  schedule          String
+  cohortId          Int
+  classFormat       classFormat?
+  location          String?
+  meetingLink       String?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  instructorId      Int?
+  cohort            cohort             @relation(fields: [cohortId], references: [id], onDelete: Cascade)
+  instructor        user?              @relation(fields: [instructorId], references: [id], onDelete: Cascade)
+  enrollments       enrollment[]
+  lms_sessions      lms_session[]
+  lms_announcements lms_announcement[]
+  lms_applications  lms_application[]
 
   @@index([cohortId], map: "course_cohortId_fkey")
   @@index([instructorId], map: "course_instructorId_fkey")
 }
 
 model enrollment {
-  id          Int                     @id @default(autoincrement())
-  enrolledAt  DateTime                @default(now())
-  course_id   Int
-  user_id     Int?
-  completed   Boolean?                @default(false)
-  completedAt DateTime?
-  submissions assignment_submission[]
-  course      course                  @relation(fields: [course_id], references: [id], onDelete: Cascade)
-  user        user?                   @relation(fields: [user_id], references: [id], onDelete: Cascade)
-  progress    progress[]
+  id             Int                     @id @default(autoincrement())
+  enrolledAt     DateTime                @default(now())
+  course_id      Int
+  user_id        Int?
+  completed      Boolean?                @default(false)
+  completedAt    DateTime?
+  submissions    assignment_submission[]
+  extensions     assignment_extension[]
+  gradeOverrides lms_grade_override[]
+  course         course                  @relation(fields: [course_id], references: [id], onDelete: Cascade)
+  user           user?                   @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  progress       progress[]
+  lms_attendance lms_attendance[]
 
   @@unique([user_id, course_id])
   @@index([course_id], map: "enrollment_course_id_fkey")
@@ -1452,6 +1937,8 @@ model assignment_submission {
   feedback       String?
   gradedById     Int?
   gradedAt       DateTime?
+  /// { [criterionId]: levelId } when graded with a rubric
+  rubric_scores  Json?
   enrollment     enrollment        @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
   gradedBy       user?             @relation(fields: [gradedById], references: [id])
   learningUnit   LearningUnit      @relation(fields: [learningUnitId], references: [id], onDelete: Cascade)
@@ -1494,6 +1981,7 @@ model visitor {
   notes              note[]
   prayerRequests     prayer_request[]
   visits             visit[]
+  converted_members  user[]           @relation("user_source_visitor")
 
   @@index([branch_id], map: "visitor_branch_id_idx")
 }
@@ -1578,6 +2066,10 @@ model life_center {
   meetingLocation     String
   meetingDays         String
   branch_id           Int?
+  /// Scheduled meetings are counted from this day.
+  createdAt           DateTime              @default(now())
+  /// Last remind-leader send (24h cooldown).
+  lastRemindedAt      DateTime?
   branch              branch?               @relation(fields: [branch_id], references: [id])
   life_center_member  life_center_member[]
   soul_won            soul_won[]            @relation("life_center_soul_won")
@@ -1620,6 +2112,7 @@ model soul_won {
   wonBy                        user                           @relation("user_soul_winner", fields: [wonById], references: [id], map: "soulwon_wonby_fkey")
   member                       user?                          @relation("soul_won_member", fields: [memberId], references: [id], map: "soulwon_member_fkey")
   life_center_meeting_attendee life_center_meeting_attendee[]
+  converted_members            user[]                         @relation("user_source_soul_won")
 
   @@index([lifeCenterId], map: "soulwon_lifecenter_fkey")
   @@index([wonById], map: "soulwon_wonby_fkey")
@@ -1787,20 +2280,26 @@ model product_stock {
 }
 
 model orders {
-  id                 Int              @id @default(autoincrement())
-  order_number       String?
-  total_amount       Float
-  user_id            Int?
-  payment_status     payment_status   @default(pending)
-  delivery_status    delivery_status  @default(pending)
-  created_at         DateTime         @default(now())
-  updated_at         DateTime         @updatedAt
-  reference          String
-  deleted_at         DateTime?
-  placed_by_staff_id Int?
-  billing_details    billing_details?
-  items              order_items[]
-  user               user?            @relation(fields: [user_id], references: [id])
+  id                     Int               @id @default(autoincrement())
+  order_number           String?
+  total_amount           Float
+  user_id                Int?
+  payment_status         payment_status    @default(pending)
+  delivery_status        delivery_status   @default(pending)
+  created_at             DateTime          @default(now())
+  updated_at             DateTime          @updatedAt
+  reference              String
+  deleted_at             DateTime?
+  placed_by_staff_id     Int?
+  fulfilment_method      fulfilment_method @default(pickup)
+  delivery_address       String?           @db.Text
+  delivery_fee           Float             @default(0)
+  /// Staff member who marked the order paid by hand, and when (null for Paystack-confirmed payments).
+  marked_paid_by_user_id Int?
+  marked_paid_at         DateTime?
+  billing_details        billing_details?
+  items                  order_items[]
+  user                   user?             @relation(fields: [user_id], references: [id])
 
   @@index([user_id], map: "orders_user_id_fkey")
   @@index([reference], map: "orders_reference_idx")
@@ -2018,7 +2517,9 @@ model financials {
   payload              String    @db.LongText
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
-  periodDate           String?   @unique
+  // One record per week per branch: YYYY-MM-DD of the week's first day.
+  // Records saved before the weekly redesign hold a YYYY-MM month key.
+  periodDate           String?
   status               String    @default("DRAFT")
   created_by_user_id   Int?
   updated_by_user_id   Int?
@@ -2026,9 +2527,14 @@ model financials {
   submitted_at         DateTime?
   approved_by_user_id  Int?
   approved_at          DateTime?
+  // Set when the finance approver sends a submitted record back as a draft.
+  returned_by_user_id  Int?
+  returned_at          DateTime?
+  return_note          String?   @db.Text
   branch_id            Int?
   branch               branch?   @relation(fields: [branch_id], references: [id])
 
+  @@unique([branch_id, periodDate], map: "financials_branch_id_periodDate_key")
   @@index([status], map: "financials_status_idx")
   @@index([branch_id], map: "financials_branch_id_idx")
   @@index([created_by_user_id], map: "financials_created_by_user_id_idx")
@@ -2042,6 +2548,8 @@ model finance_approval_config {
   config_key               String                                 @unique @default("FINANCE")
   finance_approver_user_id Int
   is_active                Boolean                                @default(true)
+  // Share of total receipts taken as tithe on new weekly records.
+  tithe_percentage         Decimal                                @default(10) @db.Decimal(5, 2)
   branch_id                Int?
   branch                   branch?                                @relation(fields: [branch_id], references: [id])
   created_by_user_id       Int?
@@ -2095,23 +2603,48 @@ model session_slot {
 }
 
 model appointment {
-  id          Int                @id @default(autoincrement())
-  fullName    String
-  email       String
-  phone       String
-  purpose     String
-  note        String?
-  date        DateTime
-  startTime   String
-  endTime     String
-  status      appointment_status @default(PENDING)
-  createdAt   DateTime           @default(now())
-  userId      Int
-  requesterId Int?
-  branch_id   Int?
-  branch      branch?            @relation(fields: [branch_id], references: [id])
-  user        user               @relation(fields: [userId], references: [id])
+  id                   Int                @id @default(autoincrement())
+  fullName             String
+  email                String
+  phone                String
+  purpose              String
+  note                 String?
+  date                 DateTime
+  startTime            String
+  endTime              String
+  status               appointment_status @default(PENDING)
+  createdAt            DateTime           @default(now())
+  userId               Int
+  requesterId          Int?
+  branch_id            Int?
+  /// The appointment_reason picked when booking; `purpose` keeps the label.
+  /// No FK, so deleting a reason never touches past bookings.
+  reasonId             Int?
+  /// First accept, suggest or decline by the person booked.
+  respondedAt          DateTime?
+  /// Last accept; `reopen` (undo) is allowed for 10 minutes after it.
+  acceptedAt           DateTime?
+  /// The slot suggested while RESCHEDULED.
+  proposedDate         DateTime?
+  proposedStartTime    String?
+  proposedEndTime      String?
+  declineReason        String?            @db.VarChar(120)
+  responseMessage      String?            @db.Text
+  /// Last time an admin reminded the person booked.
+  remindedAt           DateTime?
+  /// Server-written timeline: [{ at, text, tone }], oldest first.
+  history              Json?
+  /// Scheduled-job markers: each notification goes out once per booking.
+  nudgedAt             DateTime?
+  overdueNotifiedAt    DateTime?
+  unansweredNotifiedAt DateTime?
+  reminderSentAt       DateTime?
+  outcomePromptedAt    DateTime?
+  branch               branch?            @relation(fields: [branch_id], references: [id])
+  user                 user               @relation(fields: [userId], references: [id])
 
+  @@index([status, createdAt], map: "appointment_status_created_at_idx")
+  @@index([status, date], map: "appointment_status_date_idx")
   @@index([email])
   @@index([branch_id], map: "appointment_branch_id_idx")
   @@index([userId])
@@ -2132,6 +2665,47 @@ model appointment_reason {
   updated_at  DateTime @updatedAt
 
   @@index([is_active, sort_order])
+}
+
+// Per-person appointment settings for whoever takes bookings: the break
+// between sessions and a pause switch (no new bookings while paused).
+model appointment_staff_profile {
+  id             Int      @id @default(autoincrement())
+  user_id        Int      @unique
+  buffer_minutes Int      @default(0)
+  paused         Boolean  @default(false)
+  updated_at     DateTime @updatedAt
+  user           user     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+}
+
+// Days a person takes no new bookings. `from_date`/`to_date` are inclusive
+// church-calendar days. Bookings already in the period stay as they are.
+model appointment_time_off {
+  id         Int      @id @default(autoincrement())
+  user_id    Int
+  from_date  DateTime @db.Date
+  to_date    DateTime @db.Date
+  note       String?  @db.VarChar(255)
+  created_by Int?
+  created_at DateTime @default(now())
+  user       user     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id, to_date])
+}
+
+// Singleton (id = 1) holding the appointment rules and notification matrix.
+// No row means the defaults in appointment-settings.ts apply.
+model appointment_settings {
+  id                     Int      @id @default(1)
+  reply_deadline_hours   Int      @default(24)
+  unanswered_after_hours Int      @default(72)
+  min_notice_hours       Int      @default(12)
+  book_ahead_days        Int      @default(60)
+  reminder_hours         Int      @default(24)
+  cancel_cutoff_hours    Int      @default(12)
+  notifications          Json?
+  updated_by             Int?
+  updated_at             DateTime @updatedAt
 }
 
 model ai_conversation {
@@ -2310,6 +2884,7 @@ enum RequestApprovalStatus {
   Awaiting_Executive_Pastor_Approval
   APPROVED
   REJECTED
+  DISBURSED
 }
 
 enum RequisitionApprovalModule {
@@ -2362,6 +2937,7 @@ enum asset_status {
   NOT_FIXABLE
   OUT_OF_REPAIRS
   LOST_OR_STOLEN
+  NEEDS_REPAIR
 }
 
 enum family_relation_type {
@@ -2424,10 +3000,19 @@ enum delivery_status {
   cancelled
 }
 
+enum fulfilment_method {
+  pickup
+  delivery
+}
+
 enum appointment_status {
   PENDING
   CONFIRMED
+  RESCHEDULED
+  DECLINED
   CANCELLED
+  COMPLETED
+  NO_SHOW
 }
 
 enum notification_priority {
@@ -2527,6 +3112,7 @@ model pledger {
   guest_name     String?
   guest_phone    String?
   pledged_amount Decimal             @db.Decimal(15, 2)
+  reminded_at    DateTime?
   group          pledge_group        @relation(fields: [group_id], references: [id], onDelete: Cascade)
   user           user?               @relation("pledger_user", fields: [user_id], references: [id])
   redemptions    pledge_redemption[]
@@ -2729,6 +3315,7 @@ model sermon_series {
   branch_id    Int?
   created_by   Int
   published_at DateTime?
+  youtube_playlist_id String? @unique
   created_at   DateTime      @default(now())
   updated_at   DateTime      @updatedAt
 
@@ -2746,23 +3333,26 @@ model sermon {
   title         String
   description   String?       @db.Text
   youtube_url   String
-  video_id      String?
+  video_id      String?       @unique
   thumbnail_url String?
   status        sermon_status @default(DRAFT)
   branch_id     Int?
   created_by    Int
   published_at  DateTime?
+  /// Day the sermon was preached; may be in the future for planned sermons.
+  preached_at   DateTime?     @db.Date
   position      Int           @default(0)
   created_at    DateTime      @default(now())
   updated_at    DateTime      @updatedAt
 
-  series  sermon_series? @relation(fields: [series_id], references: [id], onDelete: SetNull)
-  branch  branch?        @relation(fields: [branch_id], references: [id])
-  creator user           @relation("sermon_creator", fields: [created_by], references: [id])
+  series  sermon_series?          @relation(fields: [series_id], references: [id], onDelete: SetNull)
+  branch  branch?                 @relation(fields: [branch_id], references: [id])
+  creator user                    @relation("sermon_creator", fields: [created_by], references: [id])
   tags    sermon_tag_assignment[]
 
   @@index([series_id])
   @@index([branch_id, status])
+  @@index([preached_at])
   @@index([created_by])
 }
 
@@ -2784,6 +3374,19 @@ model sermon_tag_assignment {
 
   @@id([sermon_id, tag_id])
   @@index([tag_id])
+}
+
+// Stored spoken-word transcript for a YouTube sermon, keyed by its video id
+// (sermons on mobile come straight from YouTube, so there is no sermon row to
+// hang this off). `segments` is the array of { text, offset, duration } cues.
+// Source is "captions" (free YouTube track) or "whisper" (OpenAI fallback).
+model sermon_transcript {
+  video_id   String   @id
+  segments   Json
+  source     String
+  model      String
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
 }
 
 model stock_notification_requests {
@@ -3054,6 +3657,9 @@ enum community_moderation_action {
   REMOVE
   RESTORE
   WARN
+  PIN
+  UNPIN
+  POST_MESSAGE
 }
 
 /// A member's post to the church community. `author_id` is always the real
@@ -3068,6 +3674,11 @@ model community_post {
   author_id              Int
   is_anonymous           Boolean                    @default(false)
   is_important           Boolean                    @default(false)
+  /// Pinned by a Community manager; stays above the feed until unpinned.
+  /// Separate from is_important, which only auto-pins for a week and pushes.
+  is_pinned              Boolean                    @default(false)
+  /// False stops new comments; existing ones stay visible.
+  comments_enabled       Boolean                    @default(true)
   status                 community_content_status   @default(ACTIVE)
   branch_id              Int?
   deleted_at             DateTime?
@@ -3089,6 +3700,7 @@ model community_post {
 
   @@index([status, deleted_at, created_at])
   @@index([is_important, created_at])
+  @@index([is_pinned])
   @@index([audience, branch_id])
   @@index([author_id])
   @@index([department_id])
@@ -3357,4 +3969,138 @@ model message_recipient {
   @@unique([dispatch_id, channel, recipient_key])
   @@index([status, next_attempt_at])
   @@index([user_id])
+}
+
+// ---------------------------------------------------------------------------
+// Event report sign-off: leadership comments and an activity trail. User ids
+// are plain columns (no relation) so the large `user` model stays untouched.
+// ---------------------------------------------------------------------------
+
+model event_report_comments {
+  id              Int           @id @default(autoincrement())
+  event_report_id Int
+  author_user_id  Int
+  body            String        @db.Text
+  created_at      DateTime      @default(now())
+  event_report    event_reports @relation(fields: [event_report_id], references: [id], onDelete: Cascade)
+
+  @@index([event_report_id])
+}
+
+model event_report_activity {
+  id              Int           @id @default(autoincrement())
+  event_report_id Int
+  action          String        @db.VarChar(64)
+  actor_user_id   Int?
+  note            String?       @db.Text
+  created_at      DateTime      @default(now())
+  event_report    event_reports @relation(fields: [event_report_id], references: [id], onDelete: Cascade)
+
+  @@index([event_report_id])
+}
+
+// ---------------------------------------------------------------------------
+// Department reports: one row per report (membership, visitors, events,
+// attendance, assets, finance, lifecenters) per period per branch. Numbers are
+// computed live; these tables hold only the human workflow around them.
+// branch_key 0 means "All branches".
+// ---------------------------------------------------------------------------
+
+enum DepartmentReportStatus {
+  DRAFT
+  SUBMITTED
+  RETURNED
+  APPROVED
+}
+
+enum DepartmentReportRequestOutcome {
+  APPROVED
+  RESPONDED
+}
+
+model department_reports {
+  id                   Int                          @id @default(autoincrement())
+  report_key           String                       @db.VarChar(32)
+  period_type          String                       @db.VarChar(16)
+  period_key           String                       @db.VarChar(32)
+  period_start         DateTime
+  period_end           DateTime
+  branch_key           Int                          @default(0)
+  status               DepartmentReportStatus       @default(DRAFT)
+  wins                 String?                      @db.Text
+  challenges           String?                      @db.Text
+  plans                String?                      @db.Text
+  testimonies          String?                      @db.Text
+  prepared_by_user_id  Int?
+  submitted_by_user_id Int?
+  submitted_at         DateTime?
+  acted_by_user_id     Int?
+  approved_at          DateTime?
+  returned_at          DateTime?
+  created_at           DateTime                     @default(now())
+  updated_at           DateTime                     @default(now()) @updatedAt
+  comments             department_report_comments[]
+  activity             department_report_activity[]
+  requests             department_report_requests[]
+
+  @@unique([report_key, period_type, period_key, branch_key], map: "dept_report_period_uk")
+  @@index([period_type, period_key])
+  @@index([status])
+}
+
+model department_report_comments {
+  id             Int                @id @default(autoincrement())
+  report_id      Int
+  author_user_id Int
+  body           String             @db.Text
+  created_at     DateTime           @default(now())
+  report         department_reports @relation(fields: [report_id], references: [id], onDelete: Cascade)
+
+  @@index([report_id])
+}
+
+model department_report_activity {
+  id            Int                @id @default(autoincrement())
+  report_id     Int
+  action        String             @db.VarChar(64)
+  actor_user_id Int?
+  note          String?            @db.Text
+  created_at    DateTime           @default(now())
+  report        department_reports @relation(fields: [report_id], references: [id], onDelete: Cascade)
+
+  @@index([report_id])
+}
+
+model department_report_requests {
+  id                 Int                             @id @default(autoincrement())
+  report_id          Int
+  position           Int                             @default(0)
+  body               String                          @db.Text
+  needs_decision     Boolean                         @default(true)
+  outcome            DepartmentReportRequestOutcome?
+  response           String?                         @db.Text
+  decided_by_user_id Int?
+  decided_at         DateTime?
+  created_at         DateTime                        @default(now())
+  updated_at         DateTime                        @default(now()) @updatedAt
+  report             department_reports              @relation(fields: [report_id], references: [id], onDelete: Cascade)
+
+  @@index([report_id])
+  @@index([needs_decision, outcome])
+}
+
+/// Settings › General configuration › Reports. One row (id 1): which
+/// department is responsible for each church-wide department report, and the
+/// department attendance report settings.
+/// Contract: Frontend/docs/WORKSPACES_AND_REPORT_CONFIG_BACKEND_CONTRACT.md
+model report_config {
+  id                                      Int      @id
+  /// { [report_key]: department_id | null }
+  owners                                  Json?
+  dept_attendance_due_day                 Int      @default(5)
+  /// number[] of department ids that get no department attendance report.
+  dept_attendance_disabled_department_ids Json?
+  updated_by_user_id                      Int?
+  created_at                              DateTime @default(now())
+  updated_at                              DateTime @default(now()) @updatedAt
 }

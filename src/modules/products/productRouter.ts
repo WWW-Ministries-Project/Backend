@@ -359,19 +359,19 @@ const protect = permissions.protect;
  */
 productRouter.post(
   "/create-size",
-  [protect, permissions.can_manage_marketplace],
+  [protect, permissions.requireAction("Marketplace", "manage_catalog", "Not authorized to manage the catalogue")],
   productController.createSize,
 );
 productRouter.put(
   "/update-size",
-  [protect, permissions.can_manage_marketplace],
+  [protect, permissions.requireAction("Marketplace", "manage_catalog", "Not authorized to manage the catalogue")],
   productController.updateSize,
 );
 productRouter.get("/list-sizes", [protect], productController.listSizes);
 //products
 productRouter.post(
   "/create-product",
-  [protect, permissions.can_manage_marketplace],
+  [protect, permissions.requireAction("Marketplace", "manage_catalog", "Not authorized to manage the catalogue")],
   productController.createProduct,
 );
 /**
@@ -547,7 +547,7 @@ productRouter.post(
  */
 productRouter.put(
   "/update-product",
-  [protect, permissions.can_manage_marketplace],
+  [protect, permissions.requireAction("Marketplace", "manage_catalog", "Not authorized to manage the catalogue")],
   productController.updateProduct,
 );
 /**
@@ -778,7 +778,7 @@ productRouter.put(
  */
 productRouter.put(
   "/update-product-colour-stock",
-  [protect, permissions.can_manage_marketplace],
+  [protect, permissions.requireAction("Marketplace", "manage_catalog", "Not authorized to manage the catalogue")],
   productController.updateProductColourStock,
 );
 /**
@@ -998,12 +998,12 @@ productRouter.put(
  */
 productRouter.delete(
   "/delete-product",
-  [protect, permissions.can_delete_marketplace],
+  [protect, permissions.requireAction("Marketplace", "delete", "Not authorized to delete from the catalogue")],
   productController.deleteProduct,
 );
 productRouter.put(
   "/restore-product",
-  [protect, permissions.can_manage_marketplace],
+  [protect, permissions.requireAction("Marketplace", "manage_catalog", "Not authorized to manage the catalogue")],
   productController.restoreProduct,
 );
 // Public storefront reads: guests browsing /out/products must not be forced to sign in.
@@ -1016,44 +1016,44 @@ productRouter.get("/get-product-by-id", productController.getProductById);
 //product type
 productRouter.post(
   "/create-product-type",
-  [protect, permissions.can_manage_marketplace],
+  [protect, permissions.requireAction("Marketplace", "manage_catalog", "Not authorized to manage the catalogue")],
   productController.createProductType,
 );
 productRouter.put(
   "/update-product-type",
-  [protect, permissions.can_manage_marketplace],
+  [protect, permissions.requireAction("Marketplace", "manage_catalog", "Not authorized to manage the catalogue")],
   productController.updateProductType,
 );
 productRouter.delete(
   "/delete-product-type",
-  [protect, permissions.can_delete_marketplace],
+  [protect, permissions.requireAction("Marketplace", "delete", "Not authorized to delete from the catalogue")],
   productController.deleteProductType,
 );
 productRouter.put(
   "/restore-product-type",
-  [protect, permissions.can_manage_marketplace],
+  [protect, permissions.requireAction("Marketplace", "manage_catalog", "Not authorized to manage the catalogue")],
   productController.restoreProductType,
 );
 productRouter.get("/list-product-type", [protect], productController.listProductTypes);
 //product category
 productRouter.post(
   "/create-product-category",
-  [protect, permissions.can_manage_marketplace],
+  [protect, permissions.requireAction("Marketplace", "manage_catalog", "Not authorized to manage the catalogue")],
   productController.createProductCategory,
 );
 productRouter.put(
   "/update-product-category",
-  [protect, permissions.can_manage_marketplace],
+  [protect, permissions.requireAction("Marketplace", "manage_catalog", "Not authorized to manage the catalogue")],
   productController.updateProductCategory,
 );
 productRouter.delete(
   "/delete-product-category",
-  [protect, permissions.can_delete_marketplace],
+  [protect, permissions.requireAction("Marketplace", "delete", "Not authorized to delete from the catalogue")],
   productController.deleteProductCategory,
 );
 productRouter.put(
   "/restore-product-category",
-  [protect, permissions.can_manage_marketplace],
+  [protect, permissions.requireAction("Marketplace", "manage_catalog", "Not authorized to manage the catalogue")],
   productController.restoreProductCategory,
 );
 productRouter.get(

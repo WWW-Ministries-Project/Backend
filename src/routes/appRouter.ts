@@ -16,6 +16,7 @@ import {
 import programRouter from "../modules/programs/programRoute";
 import promotionRouter from "../modules/promotions/promotionRoute";
 import sermonRouter from "../modules/sermons/sermonRoute";
+import youtubeWebhookRouter from "../modules/sermons/youtubeIngest/youtubeWebhookRoute";
 import visitorRouter from "../modules/visitorManagement/visitorRoute";
 import lifeCenterRouter from "../modules/lifeCenterMangement/lifeCenterRoute";
 import deviceRouter from "../modules/devices/devicesRoute";
@@ -39,6 +40,8 @@ import joinRequestRouter from "../modules/departmentJoinRequests/joinRequestRout
 import rideRouter from "../modules/rides/rideRoute";
 import communityRouter from "../modules/community/communityRoute";
 import messagingRouter from "../modules/messaging/messagingRoute";
+import { departmentReportRouter } from "../modules/departmentReports/departmentReportRoute";
+import { workspaceRouter } from "../modules/workspaces/workspaceRoute";
 import { FollowUPController } from "../modules/visitorManagement/followUpController";
 import { Permissions } from "../middleWare/authorization";
 dotenv.config();
@@ -60,7 +63,10 @@ appRouter.use("/assets", assetRouter);
 appRouter.use("/event", eventRouter);
 appRouter.use("/promotions", promotionRouter);
 appRouter.use("/sermons", sermonRouter);
+appRouter.use("/webhooks/youtube", youtubeWebhookRouter);
 appRouter.use("/event-reports", eventReportRouter);
+appRouter.use("/department-reports", departmentReportRouter);
+appRouter.use("/workspaces", workspaceRouter);
 appRouter.use("/requisitions", requisitionRouter);
 appRouter.use("/program", programRouter);
 appRouter.use("/visitor", visitorRouter);

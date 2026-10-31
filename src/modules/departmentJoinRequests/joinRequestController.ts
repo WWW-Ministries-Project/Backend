@@ -1,7 +1,10 @@
 import { Request, Response } from "express";
 import { prisma } from "../../Models/context";
 import { getBranchScopedWhere } from "../branches/branchService";
-import { userHasMinimumDomainAccess } from "../../utils/permissionResolver";
+import { parsePermissionsObject } from "../../utils/permissionResolver";
+import { getRequestAccess } from "../../middleWare/authorization";
+import { actionAllowed, domainScope, scopeDepartmentIds } from "../../permissions/access";
+import { getBranchScope, isBranchAllowed } from "../branches/branchScope";
 import { notificationService } from "../notifications/notificationService";
 import { sessionChanged } from "../realtime/realtimeSession";
 import {
@@ -11,6 +14,7 @@ import {
 } from "../settings/roleEligibilityService";
 
 const APPROVER_DOMAIN = "Membership_Management";
+const APPROVER_ACTION = "decide_join_request";
 
 const toPositiveInt = (value: unknown) => {
   const parsedValue = Number(value);
@@ -20,31 +24,56 @@ const toPositiveInt = (value: unknown) => {
   return parsedValue;
 };
 
+const JOIN_REQUEST_NOTE_MAX_LENGTH = 500;
+
+/** Optional member note: trimmed, empty → null. Length is checked by the caller. */
+const normalizeJoinRequestNote = (value: unknown): string | null => {
+  if (value === undefined || value === null) return null;
+  const trimmed = String(value).trim();
+  return trimmed || null;
+};
+
 const getRequestUserId = (req: Request) =>
   toPositiveInt((req as any)?.user?.id);
 
-/** Load the JSON permission blob for a user. */
-const getUserPermissions = async (userId: number): Promise<unknown> => {
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { access: { select: { permissions: true } } },
-  });
-  return user?.access?.permissions ?? null;
-};
+/**
+ * Departments whose join requests the caller may decide: every department
+ * (`all`) with Membership management › Decide join requests on the whole
+ * branch, else the departments that action's scope reaches plus any they
+ * head (heads always decide for their own department).
+ */
+type DepartmentReach = { all: boolean; departmentIds: number[] };
 
-/** A user may act on a request when they can manage membership OR head the department. */
-const canActOnDepartment = (
-  permissions: unknown,
-  userId: number,
-  departmentHead: number | null | undefined,
-): boolean => {
-  if (userHasMinimumDomainAccess(permissions, APPROVER_DOMAIN, "manage")) {
-    return true;
+const resolveDepartmentReach = (
+  req: Request,
+  action: string = APPROVER_ACTION,
+): DepartmentReach => {
+  const access = getRequestAccess(req);
+  if (!access) return { all: false, departmentIds: [] };
+  const led = access.ledDepartmentIds || [];
+  if (!actionAllowed(access.permissions, APPROVER_DOMAIN, action)) {
+    return { all: false, departmentIds: led };
   }
-  return Boolean(departmentHead) && departmentHead === userId;
+  const scoped = scopeDepartmentIds(domainScope(access.permissions, APPROVER_DOMAIN), access);
+  if (!scoped) return { all: true, departmentIds: [] };
+  return { all: false, departmentIds: Array.from(new Set([...scoped, ...led])) };
 };
 
-/** Find every user id that should be notified of / can act on a request for this department. */
+const canActOnDepartment = (
+  reach: DepartmentReach,
+  departmentId: number | null | undefined,
+  branchId: number | null | undefined,
+): boolean => {
+  if (branchId && !isBranchAllowed(getBranchScope(), branchId)) return false;
+  if (reach.all) return true;
+  return Boolean(departmentId) && reach.departmentIds.includes(Number(departmentId));
+};
+
+/**
+ * Who to notify of a new request: the department head, and everyone whose
+ * role in the department's branch lets them decide join requests for the
+ * whole branch (a department-scoped role is reached as head).
+ */
 const findApproverIds = async (
   departmentId: number,
   departmentHead: number | null | undefined,
@@ -55,40 +84,34 @@ const findApproverIds = async (
     approverIds.add(departmentHead);
   }
 
-  const candidates = await prisma.user.findMany({
+  const grants = await prisma.user_branch_access.findMany({
     where: {
-      is_active: true,
-      access: { isNot: null },
       ...(branchId ? { branch_id: branchId } : {}),
+      access_level: { deleted: false },
+      user: { is_user: true, NOT: { is_active: false } },
     },
     select: {
-      id: true,
-      access: { select: { permissions: true } },
+      user_id: true,
+      access_level: { select: { permissions: true } },
     },
   });
 
-  for (const candidate of candidates) {
+  for (const grant of grants) {
+    const permissions = parsePermissionsObject(grant.access_level?.permissions);
     if (
-      userHasMinimumDomainAccess(
-        candidate.access?.permissions,
-        APPROVER_DOMAIN,
-        "manage",
-      )
+      actionAllowed(permissions, APPROVER_DOMAIN, APPROVER_ACTION) &&
+      scopeDepartmentIds(domainScope(permissions, APPROVER_DOMAIN), {
+        userId: grant.user_id,
+        departmentIds: [],
+        ledDepartmentIds: [],
+        lifeCenterIds: [],
+      }) === null
     ) {
-      approverIds.add(candidate.id);
+      approverIds.add(grant.user_id);
     }
   }
 
   return Array.from(approverIds);
-};
-
-/** Departments a user heads (used to scope the list view for non-managers). */
-const getHeadedDepartmentIds = async (userId: number): Promise<number[]> => {
-  const departments = await prisma.department.findMany({
-    where: { department_head: userId },
-    select: { id: true },
-  });
-  return departments.map((department) => department.id);
 };
 
 /* ------------------------------------------------------------------ */
@@ -186,6 +209,7 @@ export const listMyJoinRequests = async (req: Request, res: Response) => {
       decline_reason: true,
       start_date: true,
       instructions: true,
+      note: true,
       department: {
         select: {
           id: true,
@@ -222,6 +246,7 @@ export const listMyJoinRequests = async (req: Request, res: Response) => {
 export const createJoinRequest = async (req: Request, res: Response) => {
   const userId = getRequestUserId(req);
   const departmentId = toPositiveInt(req.body?.department_id);
+  const note = normalizeJoinRequestNote(req.body?.note);
 
   try {
     if (!userId) {
@@ -231,6 +256,12 @@ export const createJoinRequest = async (req: Request, res: Response) => {
       return res
         .status(400)
         .json({ message: "Department id is required", data: null });
+    }
+    if (note && note.length > JOIN_REQUEST_NOTE_MAX_LENGTH) {
+      return res.status(400).json({
+        message: `Note must be ${JOIN_REQUEST_NOTE_MAX_LENGTH} characters or fewer`,
+        data: null,
+      });
     }
 
     const department = await prisma.department.findUnique({
@@ -300,6 +331,7 @@ export const createJoinRequest = async (req: Request, res: Response) => {
         department_id: departmentId,
         branch_id: department.branch_id,
         status: "PENDING",
+        note,
       },
       select: { id: true },
     });
@@ -359,16 +391,11 @@ export const listJoinRequests = async (req: Request, res: Response) => {
       return res.status(401).json({ message: "Not authorized", data: null });
     }
 
-    const permissions = await getUserPermissions(userId);
-    const canManageAll = userHasMinimumDomainAccess(
-      permissions,
-      APPROVER_DOMAIN,
-      "manage",
-    );
-
+    // Looking at the queue is Membership management › View pipelines.
+    const reach = resolveDepartmentReach(req, "view_pipelines");
     let departmentScope: number[] | null = null;
-    if (!canManageAll) {
-      departmentScope = await getHeadedDepartmentIds(userId);
+    if (!reach.all) {
+      departmentScope = reach.departmentIds;
       if (!departmentScope.length) {
         return res
           .status(403)
@@ -382,13 +409,27 @@ export const listJoinRequests = async (req: Request, res: Response) => {
         : "PENDING";
     const validStatuses = ["PENDING", "APPROVED", "DECLINED"];
     const branchWhere = getBranchScopedWhere(req.query?.branch_id);
+    // Optional `department_id` narrows within what the approver may see.
+    const requestedDepartmentId = toPositiveInt(req.query?.department_id);
+    if (
+      requestedDepartmentId &&
+      departmentScope &&
+      !departmentScope.includes(requestedDepartmentId)
+    ) {
+      return res.status(200).json({ message: "Success", data: [] });
+    }
+    const departmentWhere = requestedDepartmentId
+      ? { department_id: requestedDepartmentId }
+      : departmentScope
+        ? { department_id: { in: departmentScope } }
+        : {};
 
     const requests = await prisma.department_join_request.findMany({
       where: {
         ...(validStatuses.includes(statusFilter)
           ? { status: statusFilter as any }
           : {}),
-        ...(departmentScope ? { department_id: { in: departmentScope } } : {}),
+        ...departmentWhere,
         ...(branchWhere ?? {}),
       },
       orderBy: { requested_at: "desc" },
@@ -398,6 +439,10 @@ export const listJoinRequests = async (req: Request, res: Response) => {
         requested_at: true,
         decided_at: true,
         decline_reason: true,
+        note: true,
+        position_id: true,
+        start_date: true,
+        instructions: true,
         department: { select: { id: true, name: true } },
         user: {
           select: {
@@ -408,6 +453,24 @@ export const listJoinRequests = async (req: Request, res: Response) => {
         },
       },
     });
+
+    // No Prisma relation from a join request to its position — resolve by id.
+    const positionIds = Array.from(
+      new Set(
+        requests
+          .map((request) => request.position_id)
+          .filter((id): id is number => Boolean(id)),
+      ),
+    );
+    const positions = positionIds.length
+      ? await prisma.position.findMany({
+          where: { id: { in: positionIds } },
+          select: { id: true, name: true },
+        })
+      : [];
+    const positionNameById = new Map(
+      positions.map((position) => [position.id, position.name]),
+    );
 
     const data = requests.map((request) => ({
       id: request.id,
@@ -420,6 +483,13 @@ export const listJoinRequests = async (req: Request, res: Response) => {
       member_id: request.user?.id,
       member_name: request.user?.name,
       phone_number: request.user?.user_info?.primary_number ?? null,
+      note: request.note ?? null,
+      position_id: request.position_id ?? null,
+      position_name: request.position_id
+        ? (positionNameById.get(request.position_id) ?? null)
+        : null,
+      start_date: request.start_date ?? null,
+      instructions: request.instructions ?? null,
     }));
 
     return res.status(200).json({ message: "Success", data });
@@ -434,7 +504,7 @@ export const listJoinRequests = async (req: Request, res: Response) => {
 const approveOne = async (
   requestId: number,
   actorId: number,
-  permissions: unknown,
+  reach: DepartmentReach,
   payload: {
     position_id?: number | null;
     start_date?: Date | null;
@@ -448,6 +518,7 @@ const approveOne = async (
       status: true,
       user_id: true,
       department_id: true,
+      branch_id: true,
       department: { select: { name: true, department_head: true } },
     },
   });
@@ -458,9 +529,7 @@ const approveOne = async (
   if (request.status !== "PENDING") {
     return { ok: false, message: "Request already decided" };
   }
-  if (
-    !canActOnDepartment(permissions, actorId, request.department?.department_head)
-  ) {
+  if (!canActOnDepartment(reach, request.department_id, request.branch_id)) {
     return { ok: false, message: "Not authorized for this department" };
   }
 
@@ -517,7 +586,7 @@ const approveOne = async (
 const declineOne = async (
   requestId: number,
   actorId: number,
-  permissions: unknown,
+  reach: DepartmentReach,
   reason: string | null,
 ): Promise<{ ok: boolean; message: string }> => {
   const request = await prisma.department_join_request.findUnique({
@@ -526,6 +595,8 @@ const declineOne = async (
       id: true,
       status: true,
       user_id: true,
+      department_id: true,
+      branch_id: true,
       department: { select: { name: true, department_head: true } },
     },
   });
@@ -536,9 +607,7 @@ const declineOne = async (
   if (request.status !== "PENDING") {
     return { ok: false, message: "Request already decided" };
   }
-  if (
-    !canActOnDepartment(permissions, actorId, request.department?.department_head)
-  ) {
+  if (!canActOnDepartment(reach, request.department_id, request.branch_id)) {
     return { ok: false, message: "Not authorized for this department" };
   }
 
@@ -583,8 +652,7 @@ export const approveJoinRequest = async (req: Request, res: Response) => {
         .json({ message: "Request id is required", data: null });
     }
 
-    const permissions = await getUserPermissions(actorId);
-    const result = await approveOne(requestId, actorId, permissions, {
+    const result = await approveOne(requestId, actorId, resolveDepartmentReach(req), {
       position_id: toPositiveInt(req.body?.position_id),
       start_date: req.body?.start_date ? new Date(req.body.start_date) : null,
       instructions: req.body?.instructions?.trim() || null,
@@ -622,11 +690,10 @@ export const declineJoinRequest = async (req: Request, res: Response) => {
         .json({ message: "Request id is required", data: null });
     }
 
-    const permissions = await getUserPermissions(actorId);
     const result = await declineOne(
       requestId,
       actorId,
-      permissions,
+      resolveDepartmentReach(req),
       req.body?.decline_reason?.trim() || null,
     );
 
@@ -671,13 +738,13 @@ export const bulkJoinRequestAction = async (req: Request, res: Response) => {
         .json({ message: "No request ids provided", data: null });
     }
 
-    const permissions = await getUserPermissions(actorId);
+    const reach = resolveDepartmentReach(req);
     const results: { id: number; ok: boolean; message: string }[] = [];
 
     for (const id of ids) {
       const result =
         action === "approve"
-          ? await approveOne(id, actorId, permissions, {
+          ? await approveOne(id, actorId, reach, {
               position_id: toPositiveInt(req.body?.position_id),
               start_date: req.body?.start_date
                 ? new Date(req.body.start_date)
@@ -687,7 +754,7 @@ export const bulkJoinRequestAction = async (req: Request, res: Response) => {
           : await declineOne(
               id,
               actorId,
-              permissions,
+              reach,
               req.body?.decline_reason?.trim() || null,
             );
       results.push({ id, ...result });

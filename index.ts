@@ -2,6 +2,7 @@ import "express-async-errors";
 import express, { Request as ExpressRequest } from "express";
 import * as dotenv from "dotenv";
 import cors from "cors";
+import { branchScopeContext } from "./src/modules/branches/branchScope";
 import { appRouter } from "./src/routes/appRouter";
 import logger from "./src/utils/logger-config";
 import { PAYSTACK_WEBHOOK_PATH } from "./src/libs/paystack/paystackWebhook";
@@ -28,14 +29,21 @@ if (shouldRunBackgroundJobs) {
   require("./src/cron-jobs/pledgePaymentReconciliationCron");
   require("./src/cron-jobs/requisitionNotificationCron");
   require("./src/cron-jobs/followUpNotificationCron");
+  require("./src/cron-jobs/visitorFollowUpGenerationCron");
   require("./src/cron-jobs/notificationRetentionCron");
   require("./src/cron-jobs/notificationPushRetryCron");
+  require("./src/cron-jobs/notificationPushReceiptCron");
   require("./src/cron-jobs/notificationSmsRetryCron");
   require("./src/cron-jobs/eventReminderCron");
   require("./src/cron-jobs/liveStreamCron");
   require("./src/cron-jobs/rideReminderCron");
   require("./src/cron-jobs/messagingDispatchCron");
   require("./src/cron-jobs/messagingBirthdayCron");
+  require("./src/cron-jobs/appointmentNotificationCron");
+  require("./src/cron-jobs/assetStockCheckCron");
+  require("./src/cron-jobs/sermonTranscribeCron");
+  require("./src/cron-jobs/youtubeWebsubRenewalCron");
+  require("./src/cron-jobs/sermonSeriesSyncCron");
 } else {
   logger.info("Background cron jobs are disabled for this process.");
 }
@@ -66,6 +74,7 @@ app.use(
   }),
 );
 app.use(express.urlencoded({ extended: true, limit: "25mb" }));
+app.use(branchScopeContext);
 app.use(logRequests);
 app.use(responseMessageEnhancer);
 app.use(appRouter);

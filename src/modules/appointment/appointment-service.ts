@@ -4,6 +4,30 @@ import {
   getBranchScopedWhere,
   resolveBranchIdOrDefault,
 } from "../branches/branchService";
+import {
+  InputValidationError,
+  NotFoundError,
+} from "../../utils/custom-error-handlers";
+import {
+  ALL_APPOINTMENT_STATUSES,
+  RELEASED_STATUSES,
+  appendHistory,
+  bookingRuleViolation,
+  churchTodayIso,
+  formatSlotLabel,
+  isoDay,
+  parseIsoDay,
+  readHistory,
+  slotInstant,
+} from "./appointment-rules";
+import {
+  AppointmentSettings,
+  AppointmentSettingsService,
+} from "./appointment-settings";
+import {
+  NotifiableBooking,
+  notifyAppointmentEvent,
+} from "./appointment-notifications";
 
 const availabilityInclude = {
   sessions: true,
@@ -232,6 +256,21 @@ function normalizeStatus(value: string) {
   return parsed as appointment_status;
 }
 
+// Filters (GET /bookings?status=) accept every status; writes through
+// PUT /bookings/:id and PUT /status stay limited by normalizeStatus.
+function normalizeStatusFilter(value: string) {
+  const parsed = value.toUpperCase() as appointment_status;
+  if (!ALL_APPOINTMENT_STATUSES.includes(parsed)) {
+    throw new Error(
+      `status must be one of ${ALL_APPOINTMENT_STATUSES.join(", ")}`,
+    );
+  }
+  return parsed;
+}
+
+const toIsoOrNull = (value: Date | null | undefined) =>
+  value instanceof Date ? value.toISOString() : null;
+
 function mapAppointmentOutput(
   appointment: any,
   requester: RequesterDetails | null = null,
@@ -266,6 +305,19 @@ function mapAppointmentOutput(
     },
     status: appointment.status,
     createdAt: appointment.createdAt,
+    // Appointments redesign (additive)
+    reasonId: appointment.reasonId ?? null,
+    respondedAt: toIsoOrNull(appointment.respondedAt),
+    proposedDate:
+      appointment.proposedDate instanceof Date
+        ? formatDateUTC(appointment.proposedDate)
+        : null,
+    proposedStartTime: appointment.proposedStartTime ?? null,
+    proposedEndTime: appointment.proposedEndTime ?? null,
+    declineReason: appointment.declineReason ?? null,
+    responseMessage: appointment.responseMessage ?? null,
+    remindedAt: toIsoOrNull(appointment.remindedAt),
+    history: readHistory(appointment.history),
   };
 }
 
@@ -353,6 +405,7 @@ function mapAvailabilityPayload(records: any[]) {
     {
       userId: string;
       fullName: string | null;
+      position: string | null;
       slotLimits: number[];
       timeSlots: Array<{
         day: string;
@@ -369,6 +422,7 @@ function mapAvailabilityPayload(records: any[]) {
       grouped.set(availability.userId, {
         userId: String(availability.userId),
         fullName: availability.user?.name ?? null,
+        position: availability.user?.position?.name ?? null,
         slotLimits: [],
         timeSlots: [],
       });
@@ -400,6 +454,7 @@ function mapAvailabilityPayload(records: any[]) {
     return {
       userId: entry.userId,
       fullName: entry.fullName,
+      position: entry.position,
       maxBookingsPerSlot: resolvedMaxBookingsPerSlot,
       timeSlots: entry.timeSlots.sort((a, b) => {
         const dayDiff = WEEK_DAYS.indexOf(a.day) - WEEK_DAYS.indexOf(b.day);
@@ -410,6 +465,154 @@ function mapAvailabilityPayload(records: any[]) {
       }),
     };
   });
+}
+
+type StaffExtras = {
+  bufferMinutes: number;
+  paused: boolean;
+  timeOff: Array<{ id: number; from: string; to: string; note: string | null }>;
+};
+
+const EMPTY_STAFF_EXTRAS: StaffExtras = { bufferMinutes: 0, paused: false, timeOff: [] };
+
+const mapTimeOff = (row: {
+  id: number;
+  user_id: number;
+  from_date: Date;
+  to_date: Date;
+  note: string | null;
+}) => ({
+  id: row.id,
+  userId: row.user_id,
+  from: isoDay(row.from_date),
+  to: isoDay(row.to_date),
+  note: row.note ?? null,
+});
+
+/**
+ * Break, pause switch and current/upcoming time off (entries ending today or
+ * later) for each person.
+ */
+async function loadStaffExtras(
+  db: Prisma.TransactionClient | typeof prisma,
+  userIds: number[],
+  now: Date = new Date(),
+): Promise<Map<number, StaffExtras>> {
+  const ids = Array.from(new Set(userIds.filter((id) => Number.isInteger(id) && id > 0)));
+  const map = new Map<number, StaffExtras>();
+  if (!ids.length) return map;
+
+  const today = parseIsoDay(churchTodayIso(now))!;
+  const [profiles, timeOff] = await Promise.all([
+    db.appointment_staff_profile.findMany({ where: { user_id: { in: ids } } }),
+    db.appointment_time_off.findMany({
+      where: { user_id: { in: ids }, to_date: { gte: today } },
+      orderBy: [{ from_date: "asc" }, { id: "asc" }],
+    }),
+  ]);
+
+  for (const id of ids) {
+    map.set(id, { bufferMinutes: 0, paused: false, timeOff: [] });
+  }
+  for (const profile of profiles) {
+    const entry = map.get(profile.user_id)!;
+    entry.bufferMinutes = profile.buffer_minutes;
+    entry.paused = profile.paused;
+  }
+  for (const row of timeOff) {
+    const { userId: _userId, ...entry } = mapTimeOff(row);
+    map.get(row.user_id)!.timeOff.push(entry);
+  }
+  return map;
+}
+
+async function withStaffExtras<T extends { userId: string }>(entries: T[]) {
+  const extras = await loadStaffExtras(
+    prisma,
+    entries.map((entry) => Number(entry.userId)),
+  );
+  return entries.map((entry) => ({
+    ...entry,
+    ...(extras.get(Number(entry.userId)) ?? EMPTY_STAFF_EXTRAS),
+  }));
+}
+
+/**
+ * Booking rules for a person and slot: paused, time off, minimum notice and
+ * the book-ahead limit. Throws a 400 with a toast-ready message.
+ */
+async function assertBookingRules(
+  db: Prisma.TransactionClient,
+  params: {
+    staffId: number;
+    date: string;
+    startTime: string;
+    settings: AppointmentSettings;
+    now?: Date;
+  },
+) {
+  const now = params.now ?? new Date();
+  const [person, extras] = await Promise.all([
+    db.user.findUnique({ where: { id: params.staffId }, select: { name: true } }),
+    loadStaffExtras(db, [params.staffId], now),
+  ]);
+  const staff = extras.get(params.staffId) ?? EMPTY_STAFF_EXTRAS;
+  const violation = bookingRuleViolation({
+    personName: person?.name ?? "",
+    paused: staff.paused,
+    timeOff: staff.timeOff,
+    settings: params.settings,
+    date: params.date,
+    startTime: params.startTime,
+    now,
+  });
+  if (violation) {
+    throw new InputValidationError(violation);
+  }
+}
+
+/**
+ * Bookings that hold a place on a person's day. A RESCHEDULED booking holds
+ * its proposed slot (the frontend shows it there); cancelled and declined
+ * ones hold nothing.
+ */
+async function findOccupiedSessions(
+  db: Prisma.TransactionClient,
+  params: {
+    staffId: number;
+    dayStart: Date;
+    dayEnd: Date;
+    excludeAppointmentId?: number;
+  },
+) {
+  const { staffId, dayStart, dayEnd, excludeAppointmentId } = params;
+  const rows = await db.appointment.findMany({
+    where: {
+      userId: staffId,
+      status: { notIn: RELEASED_STATUSES },
+      OR: [
+        { status: { not: "RESCHEDULED" }, date: { gte: dayStart, lte: dayEnd } },
+        { status: "RESCHEDULED", proposedDate: { gte: dayStart, lte: dayEnd } },
+      ],
+      ...(excludeAppointmentId ? { id: { not: excludeAppointmentId } } : {}),
+    },
+    select: {
+      status: true,
+      startTime: true,
+      endTime: true,
+      proposedStartTime: true,
+      proposedEndTime: true,
+    },
+  });
+
+  return rows.map((row) =>
+    row.status === "RESCHEDULED" && row.proposedStartTime
+      ? {
+          startTime: row.proposedStartTime,
+          endTime: row.proposedEndTime ?? row.proposedStartTime,
+        }
+      : { startTime: row.startTime, endTime: row.endTime },
+  );
 }
 
 /**
@@ -470,67 +673,30 @@ async function validateBookingWindow(
     throw new Error("Selected session is not available for this user");
   }
 
-  const existingSessionBooking = await db.appointment.findFirst({
-    where: {
-      userId: staffId,
-      date: {
-        gte: dayStart,
-        lte: dayEnd,
-      },
-      startTime: session.start,
-      endTime: session.end,
-      status: {
-        not: "CANCELLED",
-      },
-      ...(excludeAppointmentId
-        ? {
-            id: {
-              not: excludeAppointmentId,
-            },
-          }
-        : {}),
-    },
-    select: { id: true },
+  const occupied = await findOccupiedSessions(db, {
+    staffId,
+    dayStart,
+    dayEnd,
+    excludeAppointmentId,
   });
+
+  const existingSessionBooking = occupied.some(
+    (booking) =>
+      booking.startTime === session.start && booking.endTime === session.end,
+  );
 
   if (existingSessionBooking) {
     throw new SlotUnavailableError("This session is already booked");
   }
 
-  const sessionFilters = availabilityForSession.sessions.map((s) => ({
-    startTime: s.start,
-    endTime: s.end,
-  }));
-
-  const bookedSessionsInBlock = await db.appointment.findMany({
-    where: {
-      userId: staffId,
-      date: {
-        gte: dayStart,
-        lte: dayEnd,
-      },
-      status: {
-        not: "CANCELLED",
-      },
-      OR: sessionFilters,
-      ...(excludeAppointmentId
-        ? {
-            id: {
-              not: excludeAppointmentId,
-            },
-          }
-        : {}),
-    },
-    select: {
-      startTime: true,
-      endTime: true,
-    },
-  });
+  const blockSessionKeys = new Set(
+    availabilityForSession.sessions.map((s) => `${s.start}|${s.end}`),
+  );
 
   const uniqueBookedSessions = new Set(
-    bookedSessionsInBlock.map(
-      (booking) => `${booking.startTime}|${booking.endTime}`,
-    ),
+    occupied
+      .map((booking) => `${booking.startTime}|${booking.endTime}`)
+      .filter((key) => blockSessionKeys.has(key)),
   );
 
   const limit = availabilityForSession.maxBookingsPerSlot || 1;
@@ -543,15 +709,147 @@ async function validateBookingWindow(
   return appointmentDate;
 }
 
+/** 403 for a signed-in user acting on a booking that isn't theirs. */
+export class AppointmentForbiddenError extends Error {
+  readonly statusCode = 403;
+}
+
+async function assertUserExists(userId: number) {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true },
+  });
+  if (!user) {
+    throw new NotFoundError("We couldn't find that person.");
+  }
+}
+
+function statusHistoryLine(
+  status: appointment_status,
+  byActor: string,
+): { text: string; tone: "neutral" | "success" | "warning" } {
+  if (status === "CONFIRMED") return { text: `Confirmed${byActor}`, tone: "success" };
+  if (status === "CANCELLED") return { text: `Cancelled${byActor}`, tone: "warning" };
+  return { text: `Moved back to waiting for a reply${byActor}`, tone: "neutral" };
+}
+
+/** Shape the notifier needs from a booking row loaded with appointmentInclude. */
+export function toNotifiableBooking(
+  appointment: any,
+  requesterName?: string | null,
+): NotifiableBooking {
+  return {
+    id: appointment.id,
+    userId: appointment.userId,
+    requesterId: appointment.requesterId ?? null,
+    date: appointment.date,
+    startTime: appointment.startTime,
+    endTime: appointment.endTime,
+    fullName: appointment.fullName,
+    attendeeName: appointment.user?.name ?? "",
+    requesterName: requesterName || appointment.fullName || "",
+    proposedDate: appointment.proposedDate ?? null,
+    proposedStartTime: appointment.proposedStartTime ?? null,
+    declineReason: appointment.declineReason ?? null,
+    responseMessage: appointment.responseMessage ?? null,
+  };
+}
+
+export async function getUserName(userId: number | null | undefined) {
+  if (!userId) return "";
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { name: true },
+  });
+  return user?.name ?? "";
+}
+
+export {
+  appointmentInclude,
+  assertBookingRules,
+  findOccupiedSessions,
+  lockStaffForBooking,
+  mapAppointmentWithRequester,
+  validateBookingWindow,
+};
+
 export const AppointmentService = {
   // CREATE APPOINTMENT (With Overbooking Protection)
-  async createAppointment(payload: any, requesterId: number) {
-    const { fullName, email, phone, purpose, note } = payload;
+  // `callerId` is the signed-in user. A caller with manage permission
+  // (`options.canManage`) may book for another member (`requesterId`) and
+  // confirm straight away (`status: "CONFIRMED"`).
+  async createAppointment(
+    payload: any,
+    callerId: number,
+    options: { canManage?: boolean } = {},
+  ) {
     const staffId = resolvestaffId(payload);
-    if (!Number.isInteger(requesterId) || requesterId <= 0) {
+    if (!Number.isInteger(callerId) || callerId <= 0) {
       throw new Error("requesterId must be a valid number");
     }
-    await validateRequesterExists(requesterId);
+
+    const requestedFor = resolveRequesterId(payload);
+    const requesterId = requestedFor ?? callerId;
+    if (requesterId !== callerId && !options.canManage) {
+      throw new InputValidationError("You can only book appointments for yourself.");
+    }
+
+    const rawStatus =
+      payload?.status === undefined || payload?.status === null || payload?.status === ""
+        ? "PENDING"
+        : String(payload.status).toUpperCase();
+    if (rawStatus !== "PENDING" && rawStatus !== "CONFIRMED") {
+      throw new InputValidationError("A new booking can only start as PENDING or CONFIRMED.");
+    }
+    if (rawStatus === "CONFIRMED" && !options.canManage) {
+      throw new InputValidationError(
+        "Only appointment managers can confirm a booking straight away.",
+      );
+    }
+    const status = rawStatus as appointment_status;
+
+    const requester = await prisma.user.findUnique({
+      where: { id: requesterId },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        user_info: { select: { primary_number: true, country_code: true } },
+      },
+    });
+    if (!requester) {
+      throw new Error("Requester user not found");
+    }
+
+    let reasonId: number | null = null;
+    let reasonLabel: string | undefined;
+    if (payload?.reasonId !== undefined && payload?.reasonId !== null && payload?.reasonId !== "") {
+      reasonId = Number(payload.reasonId);
+      if (!Number.isInteger(reasonId) || reasonId <= 0) {
+        throw new InputValidationError("That reason isn't valid. Choose one from the list.");
+      }
+      const reason = await prisma.appointment_reason.findUnique({
+        where: { id: reasonId },
+        select: { label: true },
+      });
+      if (!reason) {
+        throw new InputValidationError("That reason is no longer available. Choose another one.");
+      }
+      reasonLabel = reason.label;
+    }
+
+    const fullName = firstValidString(payload?.fullName, requester.name);
+    const email = firstValidString(payload?.email, requester.email) ?? "";
+    const phone =
+      firstValidString(payload?.phone, requester.user_info?.primary_number) ?? "";
+    const purpose = firstValidString(payload?.purpose, reasonLabel);
+    if (!fullName) {
+      throw new InputValidationError("Add the name of the person booking.");
+    }
+    if (!purpose) {
+      throw new InputValidationError("Choose a reason for the appointment.");
+    }
+
     const session = resolveSession(payload);
 
     if (!payload?.date || typeof payload.date !== "string") {
@@ -559,6 +857,17 @@ export const AppointmentService = {
     }
 
     const branchId = await resolveBranchIdOrDefault(payload?.branch_id);
+    const settings = await AppointmentSettingsService.get();
+    const now = new Date();
+
+    const callerName =
+      callerId === requesterId ? requester.name : await getUserName(callerId);
+    const historyText =
+      callerId === requesterId
+        ? `Requested by ${requester.name} in the app`
+        : status === "CONFIRMED"
+          ? `Booked by ${callerName} for ${requester.name} and confirmed`
+          : `Booked by ${callerName} for ${requester.name}`;
 
     const created = await prisma.$transaction(async (tx) => {
       await lockStaffForBooking(tx, staffId);
@@ -567,6 +876,13 @@ export const AppointmentService = {
         date: payload.date,
         session,
       });
+      await assertBookingRules(tx, {
+        staffId,
+        date: payload.date,
+        startTime: session.start,
+        settings,
+        now,
+      });
 
       return tx.appointment.create({
         data: {
@@ -574,18 +890,56 @@ export const AppointmentService = {
           email,
           phone,
           purpose,
-          note: note || "",
+          note: payload?.note || "",
           date: appointmentDate,
           startTime: session.start,
           endTime: session.end,
           userId: staffId,
           requesterId,
           branch_id: branchId,
-          status: "PENDING",
+          status,
+          reasonId,
+          ...(status === "CONFIRMED" ? { respondedAt: now, acceptedAt: now } : {}),
+          history: appendHistory(
+            [],
+            historyText,
+            status === "CONFIRMED" ? "success" : callerId === requesterId ? "neutral" : "info",
+            now,
+          ) as unknown as Prisma.InputJsonValue,
         },
         include: appointmentInclude,
       });
     });
+
+    const notifiable = toNotifiableBooking(created, requester.name);
+    if (status === "CONFIRMED") {
+      // Both sides hear about it: the person booked through their "new"
+      // channels, the member through their "accepted" channels.
+      await notifyAppointmentEvent({
+        event: "accepted",
+        matrixEvent: "new",
+        audiences: ["attendee"],
+        booking: notifiable,
+        settings,
+        actorId: callerId,
+      });
+      await notifyAppointmentEvent({
+        event: "accepted",
+        audiences: ["requester", "admins"],
+        booking: notifiable,
+        settings,
+        actorId: callerId,
+      });
+    } else {
+      await notifyAppointmentEvent({
+        event: "new",
+        booking: notifiable,
+        settings,
+        actorId: callerId,
+        // The member's own "request sent" receipt (new → requester).
+        notifyActor: callerId === requesterId,
+      });
+    }
 
     return mapAppointmentWithRequester(created);
   },
@@ -606,7 +960,25 @@ export const AppointmentService = {
       throw new Error("timeSlots must be a non-empty array");
     }
 
-    return await prisma.$transaction(async (tx) => {
+    // Break between sessions (redesign). Sessions arrive already spaced by
+    // the client; this is stored so the editor can show it again.
+    let bufferMinutes: number | undefined;
+    if (payload.bufferMinutes !== undefined && payload.bufferMinutes !== null) {
+      bufferMinutes = Number(payload.bufferMinutes);
+      if (!Number.isInteger(bufferMinutes) || bufferMinutes < 0 || bufferMinutes > 240) {
+        throw new Error("bufferMinutes must be a whole number of minutes from 0 to 240");
+      }
+    }
+
+    const saved = await prisma.$transaction(async (tx) => {
+      if (bufferMinutes !== undefined) {
+        await tx.appointment_staff_profile.upsert({
+          where: { user_id: parsedUserId },
+          create: { user_id: parsedUserId, buffer_minutes: bufferMinutes },
+          update: { buffer_minutes: bufferMinutes },
+        });
+      }
+
       // Update the user's max booking limit
       await tx.availability.deleteMany({ where: { userId: parsedUserId } });
 
@@ -672,6 +1044,8 @@ export const AppointmentService = {
         timeSlots: [],
       };
     });
+
+    return (await withStaffExtras([saved]))[0];
   },
 
   // FETCH ALL AVAILABILITY (OPTIONAL STAFF FILTER)
@@ -701,7 +1075,7 @@ export const AppointmentService = {
       orderBy: [{ userId: "asc" }, { day: "asc" }, { startTime: "asc" }],
     });
 
-    return mapAvailabilityPayload(availability);
+    return withStaffExtras(mapAvailabilityPayload(availability));
   },
 
   // UPDATE AVAILABILITY SLOT
@@ -789,7 +1163,7 @@ export const AppointmentService = {
       }
     }
 
-    return prisma.$transaction(async (tx) => {
+    const updated = await prisma.$transaction(async (tx) => {
       const updatedAvailability = await tx.availability.update({
         where: { id },
         data: {
@@ -831,6 +1205,8 @@ export const AppointmentService = {
         timeSlots: [],
       };
     });
+
+    return (await withStaffExtras([updated]))[0];
   },
 
   // DELETE AVAILABILITY SLOT
@@ -890,10 +1266,27 @@ export const AppointmentService = {
       return [];
     }
 
-    const userIds = Array.from(new Set(allAvailabilities.map((a) => a.userId)));
+    // Paused people take no new bookings, and days on time off are left out
+    // (below, once each slot's date is known).
+    const staffExtras = await loadStaffExtras(
+      prisma,
+      allAvailabilities.map((a) => a.userId),
+    );
+    const isAwayOn = (userId: number, day: string) =>
+      (staffExtras.get(userId)?.timeOff ?? []).some(
+        (entry) => day >= entry.from && day <= entry.to,
+      );
+    const bookableAvailabilities = allAvailabilities.filter(
+      (a) => !staffExtras.get(a.userId)?.paused,
+    );
+    if (bookableAvailabilities.length === 0) {
+      return [];
+    }
+
+    const userIds = Array.from(new Set(bookableAvailabilities.map((a) => a.userId)));
     const availabilityDays = Array.from(
       new Set(
-        allAvailabilities
+        bookableAvailabilities
           .map((availability) => String(availability.day).toLowerCase())
           .filter((day) => WEEK_DAYS.includes(day)),
       ),
@@ -917,25 +1310,52 @@ export const AppointmentService = {
       }
     }
 
-    const appointments =
+    // A RESCHEDULED booking holds its proposed slot; cancelled and declined
+    // ones hold nothing (same rule as validateBookingWindow).
+    const appointmentRows =
       rangeStart && rangeEnd
         ? await prisma.appointment.findMany({
             where: {
               userId: { in: userIds },
-              date: {
-                gte: rangeStart,
-                lte: rangeEnd,
-              },
-              status: { not: "CANCELLED" },
+              status: { notIn: RELEASED_STATUSES },
+              OR: [
+                {
+                  status: { not: "RESCHEDULED" },
+                  date: { gte: rangeStart, lte: rangeEnd },
+                },
+                {
+                  status: "RESCHEDULED",
+                  proposedDate: { gte: rangeStart, lte: rangeEnd },
+                },
+              ],
             },
             select: {
               userId: true,
               startTime: true,
               endTime: true,
               date: true,
+              status: true,
+              proposedDate: true,
+              proposedStartTime: true,
+              proposedEndTime: true,
             },
           })
         : [];
+    const appointments = appointmentRows.map((row) =>
+      row.status === "RESCHEDULED" && row.proposedDate && row.proposedStartTime
+        ? {
+            userId: row.userId,
+            date: row.proposedDate,
+            startTime: row.proposedStartTime,
+            endTime: row.proposedEndTime ?? row.proposedStartTime,
+          }
+        : {
+            userId: row.userId,
+            date: row.date,
+            startTime: row.startTime,
+            endTime: row.endTime,
+          },
+    );
 
     const appointmentsByUserDay = new Map<
       string,
@@ -1001,7 +1421,11 @@ export const AppointmentService = {
       }
     >();
 
-    for (const availability of allAvailabilities) {
+    for (const availability of bookableAvailabilities) {
+      const window = dayWindows.get(String(availability.day).toLowerCase());
+      if (window && isAwayOn(availability.userId, isoDay(window.dayStart))) {
+        continue;
+      }
       if (!grouped.has(availability.userId)) {
         const userBookedSessions = Array.from(
           bookedSessionsByUser.get(availability.userId)?.values() ?? [],
@@ -1115,7 +1539,7 @@ export const AppointmentService = {
     }
 
     if (filters.status) {
-      whereAnd.push({ status: normalizeStatus(filters.status) });
+      whereAnd.push({ status: normalizeStatusFilter(filters.status) });
     }
 
     if (filters.date) {
@@ -1170,7 +1594,7 @@ export const AppointmentService = {
   },
 
   // UPDATE APPOINTMENT BOOKING
-  async updateBooking(id: number, payload: any) {
+  async updateBooking(id: number, payload: any, actorId?: number) {
     const existing = await prisma.appointment.findUnique({
       where: { id },
       include: appointmentInclude,
@@ -1230,6 +1654,22 @@ export const AppointmentService = {
         ? await resolveBranchIdOrDefault(payload.branch_id)
         : undefined;
 
+    const actorName = await getUserName(actorId);
+    const byActor = actorName ? ` by ${actorName}` : "";
+    let history: unknown = existing.history;
+    if (shouldRevalidate) {
+      history = appendHistory(
+        history,
+        `Moved to ${formatSlotLabel(nextDate, nextSession.start)}${byActor}`,
+        "info",
+      );
+    }
+    if (status !== existing.status) {
+      const line = statusHistoryLine(status, byActor);
+      history = appendHistory(history, line.text, line.tone);
+    }
+    const now = new Date();
+
     const updated = await prisma.$transaction(async (tx) => {
       // Moving to another time competes with new bookings for it, so it
       // takes the same lock; edits that keep the time skip both.
@@ -1260,6 +1700,13 @@ export const AppointmentService = {
           requesterId: nextRequesterId,
           ...(branchId !== undefined ? { branch_id: branchId } : {}),
           status,
+          ...(status === "CONFIRMED" && existing.status !== "CONFIRMED"
+            ? { acceptedAt: now, respondedAt: existing.respondedAt ?? now }
+            : {}),
+          ...(shouldRevalidate
+            ? { reminderSentAt: null, outcomePromptedAt: null }
+            : {}),
+          history: history as Prisma.InputJsonValue,
         },
         include: appointmentInclude,
       });
@@ -1293,14 +1740,155 @@ export const AppointmentService = {
     return AppointmentService.getAllBookings({ email }, scope);
   },
 
-  // UPDATE STATUS
-  async updateStatus(id: number, app_status: appointment_status) {
+  // UPDATE STATUS (PUT /status). Appends a history line when it changes.
+  async updateStatus(
+    id: number,
+    app_status: appointment_status,
+    actorId?: number,
+  ) {
+    const existing = await prisma.appointment.findUnique({
+      where: { id },
+      select: { status: true, history: true, respondedAt: true },
+    });
+    if (!existing) {
+      throw new Error("Appointment not found");
+    }
+
+    const now = new Date();
+    let data: Prisma.appointmentUpdateInput = { status: app_status };
+    if (existing.status !== app_status) {
+      const actorName = await getUserName(actorId);
+      const line = statusHistoryLine(app_status, actorName ? ` by ${actorName}` : "");
+      data = {
+        ...data,
+        history: appendHistory(existing.history, line.text, line.tone, now) as Prisma.InputJsonValue,
+        ...(app_status === "CONFIRMED"
+          ? { acceptedAt: now, respondedAt: existing.respondedAt ?? now }
+          : {}),
+      };
+    }
+
     const updated = await prisma.appointment.update({
       where: { id },
-      data: { status: app_status },
+      data,
       include: appointmentInclude,
     });
 
     return mapAppointmentWithRequester(updated);
+  },
+
+  // The member who requested a booking cancels it (PUT /bookings/:id/cancel).
+  // Allowed until `cancelCutoffHours` before the start.
+  async cancelByRequester(id: number, callerId: number) {
+    const booking = await prisma.appointment.findUnique({
+      where: { id },
+      include: appointmentInclude,
+    });
+    if (!booking) {
+      throw new NotFoundError("Appointment not found");
+    }
+    if (booking.requesterId !== callerId) {
+      throw new AppointmentForbiddenError("You can only cancel your own appointments");
+    }
+    if (booking.status === "CANCELLED") {
+      throw new InputValidationError("This appointment is already cancelled");
+    }
+    if (!["PENDING", "CONFIRMED", "RESCHEDULED"].includes(booking.status)) {
+      throw new InputValidationError("This appointment can't be cancelled any more.");
+    }
+
+    const settings = await AppointmentSettingsService.get();
+    const now = new Date();
+    const start = slotInstant(booking.date, booking.startTime);
+    if (
+      start &&
+      start.getTime() - settings.cancelCutoffHours * 3_600_000 < now.getTime()
+    ) {
+      throw new InputValidationError(
+        "It's too close to the appointment to cancel here. Call the church office instead.",
+      );
+    }
+
+    const requesterName = (await getUserName(callerId)) || booking.fullName;
+    const updated = await prisma.appointment.update({
+      where: { id },
+      data: {
+        status: "CANCELLED",
+        history: appendHistory(
+          booking.history,
+          `Cancelled by ${requesterName}`,
+          "warning",
+          now,
+        ) as Prisma.InputJsonValue,
+      },
+      include: appointmentInclude,
+    });
+
+    await notifyAppointmentEvent({
+      event: "cancelled",
+      booking: toNotifiableBooking(updated, requesterName),
+      settings,
+      actorId: callerId,
+      dedupeSuffix: String(now.getTime()),
+    });
+
+    return mapAppointmentWithRequester(updated);
+  },
+
+  // PUT /appointment/availability/staff/:userId/pause
+  async setStaffPaused(userId: number, paused: unknown) {
+    if (typeof paused !== "boolean") {
+      throw new InputValidationError("Send paused as true or false.");
+    }
+    await assertUserExists(userId);
+    const profile = await prisma.appointment_staff_profile.upsert({
+      where: { user_id: userId },
+      create: { user_id: userId, paused },
+      update: { paused },
+    });
+    return { userId, paused: profile.paused };
+  },
+
+  // POST /appointment/availability/staff/:userId/time-off
+  async createTimeOff(userId: number, payload: any, actorId?: number) {
+    const from = parseIsoDay(payload?.from);
+    const to = parseIsoDay(payload?.to);
+    if (!from || !to) {
+      throw new InputValidationError("Choose a start and end date (YYYY-MM-DD).");
+    }
+    if (to.getTime() < from.getTime()) {
+      throw new InputValidationError("The end date has to be on or after the start date.");
+    }
+    let note: string | null = null;
+    if (payload?.note !== undefined && payload?.note !== null) {
+      if (typeof payload.note !== "string") {
+        throw new InputValidationError("The note has to be text.");
+      }
+      note = payload.note.trim() || null;
+      if (note && note.length > 255) {
+        throw new InputValidationError("Keep the note to 255 characters or fewer.");
+      }
+    }
+    await assertUserExists(userId);
+    const created = await prisma.appointment_time_off.create({
+      data: {
+        user_id: userId,
+        from_date: from,
+        to_date: to,
+        note,
+        created_by: actorId && actorId > 0 ? actorId : null,
+      },
+    });
+    return mapTimeOff(created);
+  },
+
+  // DELETE /appointment/availability/time-off/:id
+  async deleteTimeOff(id: number) {
+    const existing = await prisma.appointment_time_off.findUnique({ where: { id } });
+    if (!existing) {
+      throw new NotFoundError("We couldn't find that time off. It may already be removed.");
+    }
+    await prisma.appointment_time_off.delete({ where: { id } });
+    return mapTimeOff(existing);
   },
 };

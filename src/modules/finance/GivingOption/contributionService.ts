@@ -10,12 +10,28 @@ import {
 import { sendEmail } from "../../../utils/emailService";
 import { givingReceiptTemplate } from "../../../utils/mail_templates/givingReceiptTemplate";
 import logger from "../../../utils/logger-config";
+import { notificationService } from "../../notifications/notificationService";
 import { FinanceHttpError, PaginationQuery } from "../common";
+import {
+  BranchAccessError,
+  assertBranchAccessible,
+  getBranchScopedWhere,
+} from "../../branches/branchService";
 import type {
   ContributionListFilters,
   InitializeContributionPayload,
   RetryContributionPayload,
 } from "./contributionValidation";
+
+/** By-id records must sit in one of the caller's branches. */
+const assertOwnBranch = (branchId: number | null) => {
+  try {
+    assertBranchAccessible(branchId);
+  } catch (error) {
+    if (error instanceof BranchAccessError) throw new FinanceHttpError(403, error.message);
+    throw error;
+  }
+};
 
 /**
  * paystack_response holds the raw processor payload. It is useful for disputes
@@ -950,11 +966,23 @@ export class GivingContributionService {
     return { data, total };
   }
 
-  async listAll(pagination: PaginationQuery, filters: ContributionListFilters) {
+  /**
+   * Staff list. Always clamped to the caller's branches (the asked-for or
+   * active branch, else every branch they hold a role in), so leaving out
+   * `branch_id` no longer returns other branches' gifts. Without
+   * `Giving.view_donor_details` the giver's name, email and member id are
+   * blanked and `donor_hidden` is set.
+   */
+  async listAll(
+    pagination: PaginationQuery,
+    filters: ContributionListFilters,
+    options: { showDonor?: boolean } = {},
+  ) {
     const { skip, take } = clampPagination(pagination);
+    const showDonor = options.showDonor !== false;
 
     const where = {
-      ...(filters.branch_id !== undefined && { branch_id: filters.branch_id }),
+      ...getBranchScopedWhere(filters.branch_id),
       ...(filters.giving_option_id !== undefined && {
         giving_option_id: filters.giving_option_id,
       }),
@@ -978,6 +1006,104 @@ export class GivingContributionService {
       prisma.givingContribution.count({ where }),
     ]);
 
-    return { data, total };
+    if (showDonor) return { data, total };
+    return {
+      data: data.map((row) => ({
+        ...row,
+        user_id: null,
+        donor_name: null,
+        donor_email: null,
+        donor_hidden: true,
+      })),
+      total,
+    };
+  }
+
+  /**
+   * Finance staff ask Paystack for the latest status of payments that never
+   * settled (a donor closed the tab, a webhook was missed). Same idempotent
+   * settle path as verify; a reference Paystack can't confirm is left as is.
+   */
+  async recheck(references: string[]) {
+    const unique = Array.from(new Set(references.map((r) => String(r).trim()).filter(Boolean))).slice(0, 50);
+    if (!unique.length) {
+      throw new FinanceHttpError(422, "references must list at least one payment reference");
+    }
+
+    const rows = await prisma.givingContribution.findMany({
+      // Only payments in the caller's branches.
+      where: { reference: { in: unique }, ...getBranchScopedWhere(undefined) },
+      select: { reference: true, branch_id: true, status: true },
+    });
+
+    let failed = 0;
+    for (const row of rows) {
+      if (row.status === "success") continue;
+      try {
+        const transaction = await verifyTransaction(row.reference, row.branch_id);
+        await settleContribution(transaction);
+      } catch (error) {
+        failed += 1;
+        logger.warn(
+          `[giving] recheck of ${row.reference} failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+
+    const data = await prisma.givingContribution.findMany({
+      where: { reference: { in: rows.map((r) => r.reference) } },
+      select: CONTRIBUTION_SELECT,
+    });
+
+    return { data, checked: rows.length, failed };
+  }
+
+  /**
+   * Invites a member whose gift failed or was abandoned to try again: an in-app
+   * notification and email linking to the Give page with the option selected.
+   */
+  async nudge(reference: string, actorUserId?: number) {
+    const row = await prisma.givingContribution.findUnique({
+      where: { reference },
+      select: {
+        id: true,
+        user_id: true,
+        status: true,
+        giving_option_id: true,
+        giving_option_name: true,
+        amount: true,
+        currency: true,
+        branch_id: true,
+      },
+    });
+
+    if (!row) throw new FinanceHttpError(404, "Contribution not found");
+    assertOwnBranch(row.branch_id);
+    if (row.status !== "failed" && row.status !== "abandoned") {
+      throw new FinanceHttpError(409, "Only failed or abandoned gifts can be retried.");
+    }
+    if (!row.user_id) {
+      throw new FinanceHttpError(409, "This giver has no member account to notify.");
+    }
+
+    const amount = (row.amount / 100).toLocaleString("en-US", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+
+    await notificationService.createInAppNotification({
+      type: "giving.retry_invite",
+      title: "Your gift didn't go through",
+      body: `Your ${row.currency} ${amount} gift to ${row.giving_option_name} wasn't completed. You can give again from the Give page.`,
+      recipientUserId: row.user_id,
+      actorUserId: actorUserId ?? null,
+      entityType: "giving_contribution",
+      entityId: row.id,
+      actionUrl: `/member/giving?option=${encodeURIComponent(row.giving_option_id)}`,
+      priority: "MEDIUM",
+      sendEmail: true,
+    });
+
+    return { reference, notified: true };
   }
 }

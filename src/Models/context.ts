@@ -53,6 +53,12 @@ const buildDatasourceUrl = (): string => {
 };
 
 export const prisma = new PrismaClient({
+  // Never return a password hash unless a query asks for it by name
+  // (`select: { password: true }` or `omit: { password: false }`). This
+  // covers nested `include: { user: true }` too.
+  omit: {
+    user: { password: true },
+  },
   datasources: {
     db: {
       url: buildDatasourceUrl(),
@@ -63,3 +69,13 @@ export const prisma = new PrismaClient({
     timeout: prismaTransactionTimeoutMs,
   },
 });
+
+/**
+ * The client a `prisma.$transaction(async (tx) => …)` callback receives.
+ * Use it instead of `Prisma.TransactionClient`, which doesn't know about the
+ * client's global `omit` and so doesn't match `prisma` or `tx`.
+ */
+export type PrismaTx = Omit<
+  typeof prisma,
+  "$connect" | "$disconnect" | "$on" | "$transaction" | "$extends"
+>;

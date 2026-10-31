@@ -100,6 +100,9 @@ const DEFAULT_PUSH_TTL_SECONDS = 86_400;
 const TRANSIENT_STATUS_CODES = new Set([429, 500, 502, 503, 504]);
 const INVALID_SUBSCRIPTION_STATUS_CODES = new Set([404, 410]);
 const MAX_TRANSIENT_RETRIES = 3;
+// A job left PROCESSING longer than this was almost certainly orphaned by a
+// crash/restart mid-send; reclaim it to PENDING so it is retried.
+const STALE_PROCESSING_RECLAIM_MS = 5 * 60 * 1000;
 const TRANSIENT_RETRY_DELAYS_MS = [30_000, 120_000, 600_000];
 const DEFAULT_RETRY_BATCH_SIZE = 50;
 const MAX_LOG_ERROR_MESSAGE_LENGTH = 1000;
@@ -742,56 +745,32 @@ const subscribe = async (userId: number, body: unknown): Promise<{ ok: true }> =
   const normalized = normalizeSubscribePayload(body);
   const now = new Date();
 
-  const existing = await prisma.notification_push_subscription.findUnique({
+  // Upsert on the unique endpoint: a findUnique-then-create race lets two
+  // concurrent subscribes both miss the row and both create, throwing P2002.
+  const mutableFields = {
+    user_id: parsedUserId,
+    p256dh: normalized.p256dh,
+    auth: normalized.auth,
+    expiration_time: normalized.expirationTime,
+    is_active: true,
+    user_agent: normalized.metadata.userAgent || null,
+    platform: normalized.metadata.platform || null,
+    language: normalized.metadata.language || null,
+    timezone: normalized.metadata.timezone || null,
+    last_seen_at: now,
+    last_error_code: null,
+    last_error_message: null,
+    last_error_at: null,
+  };
+
+  await prisma.notification_push_subscription.upsert({
     where: {
       endpoint: normalized.endpoint,
     },
-    select: {
-      id: true,
-    },
-  });
-
-  if (!existing) {
-    await prisma.notification_push_subscription.create({
-      data: {
-        user_id: parsedUserId,
-        endpoint: normalized.endpoint,
-        p256dh: normalized.p256dh,
-        auth: normalized.auth,
-        expiration_time: normalized.expirationTime,
-        is_active: true,
-        user_agent: normalized.metadata.userAgent || null,
-        platform: normalized.metadata.platform || null,
-        language: normalized.metadata.language || null,
-        timezone: normalized.metadata.timezone || null,
-        last_seen_at: now,
-        last_error_code: null,
-        last_error_message: null,
-        last_error_at: null,
-      },
-    });
-
-    return { ok: true };
-  }
-
-  await prisma.notification_push_subscription.update({
-    where: {
-      id: existing.id,
-    },
-    data: {
-      user_id: parsedUserId,
-      p256dh: normalized.p256dh,
-      auth: normalized.auth,
-      expiration_time: normalized.expirationTime,
-      is_active: true,
-      user_agent: normalized.metadata.userAgent || null,
-      platform: normalized.metadata.platform || null,
-      language: normalized.metadata.language || null,
-      timezone: normalized.metadata.timezone || null,
-      last_seen_at: now,
-      last_error_code: null,
-      last_error_message: null,
-      last_error_at: null,
+    update: mutableFields,
+    create: {
+      endpoint: normalized.endpoint,
+      ...mutableFields,
     },
   });
 
@@ -869,10 +848,16 @@ const deliverNotificationPush = async (
     };
   }
 
+  // Skip subscriptions whose browser-provided expiration has already passed —
+  // sending to them only wastes a request waiting on the push service's 410.
   const subscriptions = await prisma.notification_push_subscription.findMany({
     where: {
       user_id: recipientUserId,
       is_active: true,
+      OR: [
+        { expiration_time: null },
+        { expiration_time: { gt: new Date() } },
+      ],
     },
     select: {
       id: true,
@@ -1002,6 +987,21 @@ const processPendingPushDeliveryJobs = async (args?: {
   const batchSize = getRetryBatchSize(args?.batchSize);
   const now = new Date();
 
+  // Reclaim jobs stuck in PROCESSING by a crash/restart mid-send: without this
+  // they are never picked up again (the due query only looks at PENDING).
+  await prisma.notification_push_delivery_job.updateMany({
+    where: {
+      status: "PROCESSING",
+      updated_at: {
+        lt: new Date(now.getTime() - STALE_PROCESSING_RECLAIM_MS),
+      },
+    },
+    data: {
+      status: "PENDING",
+      next_attempt_at: now,
+    },
+  });
+
   const dueJobs = await prisma.notification_push_delivery_job.findMany({
     where: {
       status: "PENDING",
@@ -1122,19 +1122,44 @@ const processPendingPushDeliveryJobs = async (args?: {
       }
     } catch (error) {
       const normalizedError = normalizePushError(error);
-      await prisma.notification_push_delivery_job.updateMany({
-        where: {
-          id: dueJob.id,
-          status: "PROCESSING",
-        },
-        data: {
-          status: "PENDING",
-          next_attempt_at: new Date(Date.now() + withJitter(getRetryDelayMs(1))),
-          last_error_code: "PROCESSING_ERROR",
-          last_error_message: truncate(normalizedError.message, 1024),
-          last_error_at: new Date(),
-        },
-      });
+      // Count this as an attempt and cap it, otherwise a job whose non-send
+      // path (claim/update) errors every run would requeue forever and never
+      // reach DEAD.
+      const nextAttempts = dueJob.attempts + 1;
+      if (nextAttempts >= MAX_TRANSIENT_RETRIES) {
+        await prisma.notification_push_delivery_job.updateMany({
+          where: {
+            id: dueJob.id,
+            status: "PROCESSING",
+          },
+          data: {
+            status: "DEAD",
+            attempts: nextAttempts,
+            last_error_code: "PROCESSING_ERROR",
+            last_error_message: truncate(normalizedError.message, 1024),
+            last_error_at: new Date(),
+          },
+        });
+        dead += 1;
+      } else {
+        await prisma.notification_push_delivery_job.updateMany({
+          where: {
+            id: dueJob.id,
+            status: "PROCESSING",
+          },
+          data: {
+            status: "PENDING",
+            attempts: nextAttempts,
+            next_attempt_at: new Date(
+              Date.now() + withJitter(getRetryDelayMs(nextAttempts + 1)),
+            ),
+            last_error_code: "PROCESSING_ERROR",
+            last_error_message: truncate(normalizedError.message, 1024),
+            last_error_at: new Date(),
+          },
+        });
+        requeued += 1;
+      }
 
       console.error(
         `[ERROR] Push retry processing failed for job=${dueJob.id}: ${normalizedError.message}`,

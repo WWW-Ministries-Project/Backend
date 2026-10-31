@@ -132,7 +132,7 @@ givingOptionRouter.get(
  */
 givingOptionRouter.post(
   "/create-giving-option",
-  [protect, permissions.can_manage_giving],
+  [protect, permissions.requireAction("Giving", "manage_options", "Not authorized to manage giving options")],
   controller.create,
 );
 
@@ -198,7 +198,7 @@ givingOptionRouter.get(
  */
 givingOptionRouter.put(
   "/update-giving-option",
-  [protect, permissions.can_manage_giving],
+  [protect, permissions.requireAction("Giving", "manage_options", "Not authorized to manage giving options")],
   controller.update,
 );
 
@@ -223,7 +223,7 @@ givingOptionRouter.put(
  */
 givingOptionRouter.put(
   "/restore-giving-option",
-  [protect, permissions.can_manage_giving],
+  [protect, permissions.requireAction("Giving", "manage_options", "Not authorized to manage giving options")],
   controller.restore,
 );
 
@@ -251,7 +251,7 @@ givingOptionRouter.put(
  */
 givingOptionRouter.delete(
   "/delete-giving-option",
-  [protect, permissions.can_delete_giving],
+  [protect, permissions.requireAction("Giving", "archive", "Not authorized to archive giving options")],
   controller.archive,
 );
 
@@ -525,6 +525,62 @@ givingOptionRouter.get(
   "/contributions",
   [protect, permissions.can_view_giving],
   contributionController.listAll,
+);
+
+/**
+ * @swagger
+ * /givingoption/contributions/recheck:
+ *   post:
+ *     summary: Ask Paystack for the latest status of unsettled contributions
+ *     tags: [Giving Options]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               references:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *     responses:
+ *       200:
+ *         description: The contributions after checking ({ data, checked, failed })
+ */
+givingOptionRouter.post(
+  "/contributions/recheck",
+  [protect, permissions.requireAction("Giving", "reconcile_payment", "Not authorized to reconcile payments")],
+  contributionController.recheck,
+);
+
+/**
+ * @swagger
+ * /givingoption/contributions/nudge:
+ *   post:
+ *     summary: Invite a member whose gift failed or was abandoned to give again
+ *     tags: [Giving Options]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               reference:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Notified
+ *       409:
+ *         description: Gift succeeded, or the giver has no member account
+ */
+givingOptionRouter.post(
+  "/contributions/nudge",
+  [protect, permissions.requireAction("Giving", "message_donor", "Not authorized to message givers")],
+  contributionController.nudge,
 );
 
 /**

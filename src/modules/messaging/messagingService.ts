@@ -11,6 +11,14 @@ import { buildRecipientRows, insertRecipients } from "./recipients";
 import { findUsers, findVisitorPerson, parseAudience, resolveAudience } from "./audience";
 import { refreshDispatch, triggerDispatchProcessing } from "./worker";
 import {
+  MessagingAccess,
+  assertAudienceAllowed,
+  assertChannelsAllowed,
+  assertMessagingAction,
+  retryableChannels,
+} from "./messagingAccess";
+import {
+  Audience,
   Channels,
   hasAnyChannel,
   Person,
@@ -56,7 +64,9 @@ const httpsOrNull = (value: unknown, field: string): string | null => {
   return text;
 };
 
-export const updateSettings = async (body: any, actorId: number | null) => {
+export const updateSettings = async (body: any, actorId: number | null, access: MessagingAccess) => {
+  // Store links and the birthday send time shape the automatic messages.
+  assertMessagingAction(access, "edit_templates");
   const time = String(body?.birthdaySendTime ?? "").trim();
   if (time && !/^([01]\d|2[0-3]):([0-5]\d)$/.test(time)) {
     throw new InputValidationError("birthdaySendTime must be HH:mm");
@@ -130,10 +140,27 @@ const parseKey = (value: unknown): TemplateKey => {
   return key as TemplateKey;
 };
 
-export const updateTemplate = async (rawKey: unknown, body: any, actorId: number | null) => {
+export const updateTemplate = async (
+  rawKey: unknown,
+  body: any,
+  actorId: number | null,
+  access: MessagingAccess,
+) => {
   const key = parseKey(rawKey);
   const channels = toChannels(body?.channels);
   const enabled = body?.enabled === true;
+  const current = await prisma.message_template.findUnique({ where: { key } });
+  if (!current) throw new NotFoundError("Unknown template");
+  // Switching a template on or off and changing its content are separate
+  // rights; each is checked only when that part changes.
+  if (current.enabled !== enabled) assertMessagingAction(access, "toggle_automatic");
+  const before = toTemplateDto(current);
+  const contentChanged =
+    JSON.stringify(before.channels) !== JSON.stringify(channels) ||
+    before.body !== String(body?.body ?? "").trim() ||
+    (before.emailSubject ?? "") !== String(body?.emailSubject ?? "").trim() ||
+    before.includeAppLink !== (key === "WELCOME_VISITOR" && body?.includeAppLink === true);
+  if (contentChanged) assertMessagingAction(access, "edit_templates");
   const message = validateMessage({
     body: body?.body,
     subject: body?.emailSubject,
@@ -394,7 +421,15 @@ const fillGeneralDispatch = async (dispatchId: number) => {
   );
 };
 
-export const createGeneralDispatch = async (body: any, actorId: number | null) => {
+/**
+ * `access` is the HTTP caller's Messaging rights. Internal callers that
+ * enforce their own rule (School of Ministry cohort announcements) omit it.
+ */
+export const createGeneralDispatch = async (
+  body: any,
+  actorId: number | null,
+  access?: MessagingAccess,
+) => {
   const title = String(body?.title ?? "").trim().slice(0, MAX_TITLE);
   if (!title) throw new InputValidationError("Title is required");
   const channels = toChannels(body?.channels);
@@ -407,6 +442,11 @@ export const createGeneralDispatch = async (body: any, actorId: number | null) =
   });
   const audience = parseAudience(body?.audience);
   const scheduledFor = parseSchedule(body?.scheduledFor);
+  if (access) {
+    assertChannelsAllowed(access, channels);
+    await assertAudienceAllowed(access, audience);
+    if (scheduledFor) assertMessagingAction(access, "schedule");
+  }
 
   const dispatch = await prisma.message_dispatch.create({
     data: {
@@ -496,23 +536,123 @@ const toDispatchDto = (d: Prisma.message_dispatchGetPayload<{}>) => ({
   createdAt: d.created_at,
 });
 
+/** History filter chips on the admin Messaging page. "sent" includes QUEUED
+ *  (still sending); "failed" is any message with at least one failed send. */
+const DISPATCH_FILTERS: Record<string, Prisma.message_dispatchWhereInput> = {
+  all: {},
+  scheduled: { status: "SCHEDULED" },
+  sent: { status: { in: ["SENT", "QUEUED"] } },
+  failed: { status: { not: "SCHEDULED" }, recipients: { some: { status: "FAILED" } } },
+};
+
+/** "Whole church", one department's name, "Departments (3)" or "4 people". */
+const audienceLabelOf = (audience: unknown, departmentNames: Map<number, string>): string | null => {
+  if (!audience || typeof audience !== "object") return null;
+  const a = audience as Partial<Audience>;
+  if (a.scope === "CHURCH") return "Whole church";
+  if (a.scope === "DEPARTMENTS") {
+    const ids = Array.isArray(a.departmentIds) ? a.departmentIds : [];
+    if (ids.length === 1) return departmentNames.get(ids[0]) ?? "1 department";
+    return `Departments (${ids.length})`;
+  }
+  if (a.scope === "PEOPLE") {
+    const n = Array.isArray(a.userIds) ? a.userIds.length : 0;
+    return `${n} ${n === 1 ? "person" : "people"}`;
+  }
+  return null;
+};
+
 export const listDispatches = async (query: any) => {
   const kind = ["WELCOME", "BIRTHDAY", "GENERAL"].includes(String(query?.kind)) ? String(query.kind) : undefined;
+  const filterKey = String(query?.filter ?? "all");
+  const filter = DISPATCH_FILTERS[filterKey] ?? DISPATCH_FILTERS.all;
   const page = Math.min(Math.max(Math.trunc(Number(query?.page)) || 1, 1), 10000);
   const limit = Math.min(Math.max(Math.trunc(Number(query?.limit)) || 20, 1), 100);
-  const where: Prisma.message_dispatchWhereInput = kind ? { kind: kind as any } : {};
-  const [rows, total] = await Promise.all([
-    prisma.message_dispatch.findMany({ where, orderBy: { id: "desc" }, skip: (page - 1) * limit, take: limit }),
+  const base: Prisma.message_dispatchWhereInput = kind ? { kind: kind as any } : {};
+  const where: Prisma.message_dispatchWhereInput = { AND: [base, filter] };
+  const [rows, total, ...facetCounts] = await Promise.all([
+    prisma.message_dispatch.findMany({
+      where,
+      orderBy: { id: "desc" },
+      skip: (page - 1) * limit,
+      take: limit,
+    }),
     prisma.message_dispatch.count({ where }),
+    ...Object.values(DISPATCH_FILTERS).map((f) => prisma.message_dispatch.count({ where: { AND: [base, f] } })),
   ]);
+  const facets = Object.fromEntries(Object.keys(DISPATCH_FILTERS).map((key, i) => [key, facetCounts[i]]));
+
   const creatorIds = Array.from(new Set(rows.map((r) => r.created_by).filter((id): id is number => !!id)));
-  const creators = creatorIds.length
-    ? await prisma.user.findMany({ where: { id: { in: creatorIds } }, select: { id: true, name: true } })
-    : [];
+  const departmentIds = Array.from(
+    new Set(
+      rows.flatMap((r) => {
+        const a = r.audience as Partial<Audience> | null;
+        return a?.scope === "DEPARTMENTS" && Array.isArray(a.departmentIds) && a.departmentIds.length === 1
+          ? a.departmentIds
+          : [];
+      }),
+    ),
+  );
+  const [creators, departments] = await Promise.all([
+    creatorIds.length
+      ? prisma.user.findMany({ where: { id: { in: creatorIds } }, select: { id: true, name: true } })
+      : Promise.resolve([]),
+    departmentIds.length
+      ? prisma.department.findMany({ where: { id: { in: departmentIds } }, select: { id: true, name: true } })
+      : Promise.resolve([]),
+  ]);
   const names = new Map(creators.map((c) => [c.id, c.name]));
+  const departmentNames = new Map(departments.map((d) => [d.id, d.name]));
   return {
-    data: rows.map((r) => ({ ...toDispatchDto(r), createdByName: r.created_by ? names.get(r.created_by) ?? null : null })),
+    data: rows.map((r) => ({
+      ...toDispatchDto(r),
+      createdByName: r.created_by ? names.get(r.created_by) ?? null : null,
+      audienceLabel: audienceLabelOf(r.audience, departmentNames),
+    })),
+    facets,
+    // The web client's fetch wrapper only forwards `meta.status_counts`.
+    meta: { status_counts: facets },
     ...pageMeta(page, limit, total),
+  };
+};
+
+/** Cap on SMS rows read to count segments; past it the figure is a floor. */
+const MAX_SEGMENT_ROWS = 20000;
+
+/** KPI tiles on the admin Messaging page: one-off (GENERAL) messages only —
+ *  automatic messages report their own numbers on their template cards. */
+export const overviewStats = async (rawDays: number, now: Date = new Date()) => {
+  const days = Number.isInteger(rawDays) && rawDays > 0 ? Math.min(rawDays, 365) : 30;
+  const since = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+  const dispatchWhere: Prisma.message_dispatchWhereInput = {
+    kind: "GENERAL",
+    status: { in: ["QUEUED", "SENT", "FAILED"] },
+    created_at: { gte: since },
+  };
+  const [messagesSent, groups, smsRows] = await Promise.all([
+    prisma.message_dispatch.count({ where: dispatchWhere }),
+    prisma.message_recipient.groupBy({
+      by: ["status"],
+      where: { dispatch: dispatchWhere },
+      _count: { _all: true },
+    }),
+    prisma.message_recipient.findMany({
+      where: { dispatch: dispatchWhere, channel: "SMS", status: { in: ["SENT", "FAILED"] } },
+      select: { rendered_body: true },
+      take: MAX_SEGMENT_ROWS,
+    }),
+  ]);
+  const count = (status: string) => groups.find((g) => g.status === status)?._count._all ?? 0;
+  const delivered = count("SENT");
+  const failed = count("FAILED");
+  const smsSegmentsUsed = smsRows.reduce((sum, row) => sum + Math.max(1, smsSegments(row.rendered_body).segments), 0);
+  return {
+    days,
+    messagesSent,
+    delivered,
+    failed,
+    deliveryRate: delivered + failed ? Math.round((delivered * 1000) / (delivered + failed)) / 10 : null,
+    smsSegmentsUsed,
   };
 };
 
@@ -527,7 +667,7 @@ export const getDispatch = async (id: number) => {
   return toDispatchDto(d);
 };
 
-export const listDispatchRecipients = async (id: number, query: any) => {
+export const listDispatchRecipients = async (id: number, query: any, access: MessagingAccess) => {
   assertValidId(id);
   await getDispatch(id);
   const page = Math.min(Math.max(Math.trunc(Number(query?.page)) || 1, 1), 10000);
@@ -550,10 +690,15 @@ export const listDispatchRecipients = async (id: number, query: any) => {
     }),
     prisma.message_recipient.count({ where }),
   ]);
-  return { data: rows, ...pageMeta(page, limit, total) };
+  // Phone numbers and email addresses need view_recipient_contacts.
+  const data = access.actions.view_recipient_contacts
+    ? rows
+    : rows.map((row) => ({ ...row, address: null }));
+  return { data, ...pageMeta(page, limit, total) };
 };
 
-export const cancelDispatch = async (id: number) => {
+export const cancelDispatch = async (id: number, access: MessagingAccess) => {
+  assertMessagingAction(access, "schedule");
   assertValidId(id);
   await getDispatch(id);
   const result = await prisma.message_dispatch.updateMany({
@@ -564,12 +709,15 @@ export const cancelDispatch = async (id: number) => {
   return getDispatch(id);
 };
 
-export const retryFailed = async (id: number) => {
+export const retryFailed = async (id: number, access: MessagingAccess) => {
   assertValidId(id);
   await getDispatch(id);
+  // Only channels the caller may resend; failed SMS also needs retry_paid.
+  const channels = retryableChannels(access);
+  if (!channels.length) assertMessagingAction(access, "retry_paid");
   const [result] = await prisma.$transaction([
     prisma.message_recipient.updateMany({
-      where: { dispatch_id: id, status: "FAILED" },
+      where: { dispatch_id: id, status: "FAILED", channel: { in: channels } },
       data: { status: "PENDING", attempts: 0, next_attempt_at: null, error: null },
     }),
     prisma.message_dispatch.updateMany({ where: { id, status: "SENT" }, data: { status: "QUEUED" } }),
@@ -608,8 +756,12 @@ export const preview = async (body: any) => {
   };
 };
 
-export const audienceCount = async (body: any) => {
-  const people = await resolveAudience(parseAudience(body?.audience));
+export const audienceCount = async (body: any, access: MessagingAccess) => {
+  const { send_in_app, send_email, send_sms } = access.actions;
+  if (!send_in_app && !send_email && !send_sms) assertMessagingAction(access, "send_in_app");
+  const audience = parseAudience(body?.audience);
+  await assertAudienceAllowed(access, audience);
+  const people = await resolveAudience(audience);
   const seen = new Set<string>();
   const unique = people.filter((p) => {
     const key = p.userId ? `u:${p.userId}` : `v:${p.visitorId}`;
