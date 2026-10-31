@@ -73,6 +73,7 @@ model user {
   acted_notifications                          in_app_notification[]                   @relation("notification_actor")
   notification_preferences                     notification_preference[]
   assistant_preference                         assistant_preference?
+  assistant_task_states                        assistant_task_state[]
   push_subscriptions                           notification_push_subscription[]
   device_tokens                                notification_device_token[]
   push_delivery_jobs                           notification_push_delivery_job[]        @relation("notification_push_delivery_user")
@@ -1372,6 +1373,21 @@ model assistant_preference {
   user           user     @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
   @@index([user_id], map: "assistant_preference_user_id_idx")
+}
+
+model assistant_task_state {
+  id            Int       @id @default(autoincrement())
+  user_id       Int
+  task_key      String
+  state         String
+  snoozed_until DateTime?
+  label         String?
+  created_at    DateTime  @default(now())
+  updated_at    DateTime  @default(now()) @updatedAt
+  user          user      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@unique([user_id, task_key], map: "assistant_task_state_user_id_task_key_key")
+  @@index([user_id], map: "assistant_task_state_user_id_idx")
 }
 
 model notification_push_subscription {

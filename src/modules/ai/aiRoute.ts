@@ -135,6 +135,18 @@ aiRouter.get(
   (req: Request, res: Response) => aiController.tasks(req, res),
 );
 
+aiRouter.post(
+  "/tasks/state",
+  [protect, viewTasks],
+  (req: Request, res: Response) => aiController.setTaskState(req, res),
+);
+
+aiRouter.delete(
+  "/tasks/state/:taskKey",
+  [protect, viewTasks],
+  (req: Request, res: Response) => aiController.clearTaskState(req, res),
+);
+
 aiRouter.get(
   "/preferences",
   [protect],
