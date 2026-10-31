@@ -35,6 +35,34 @@ const DEFAULT_CATEGORY = "Other";
 
 export const NOTIFICATION_PREFERENCE_OPTIONS: NotificationPreferenceOption[] = [
   {
+    type: "assistant.done_for_you",
+    title: "Done for you",
+    description: "When the assistant completes a task on your behalf.",
+    category: "Assistant",
+    availableChannels: IN_APP_ONLY_CHANNELS,
+  },
+  {
+    type: "assistant.status",
+    title: "Assistant status updates",
+    description: "Follow-ups on actions you took from the assistant (for example, a requisition you approved was paid).",
+    category: "Assistant",
+    availableChannels: IN_APP_ONLY_CHANNELS,
+  },
+  {
+    type: "assistant.announcement",
+    title: "Assistant announcements",
+    description: "Announcements surfaced to you through the assistant.",
+    category: "Assistant",
+    availableChannels: IN_APP_ONLY_CHANNELS,
+  },
+  {
+    type: "assistant.system_access",
+    title: "Access changes",
+    description: "When your access or role changes.",
+    category: "Assistant",
+    availableChannels: IN_APP_ONLY_CHANNELS,
+  },
+  {
     type: "messaging.message",
     title: "Messages from the church",
     description: "Welcome, birthday and church-wide messages sent by the church office.",

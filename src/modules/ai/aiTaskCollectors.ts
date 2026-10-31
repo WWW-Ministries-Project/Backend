@@ -45,9 +45,9 @@ const requisitionCollector: TaskCollector = {
         },
       },
       select: {
-        id: true,
         request: {
           select: {
+            id: true,
             request_id: true,
             purpose: true,
             needed_by: true,
@@ -63,7 +63,8 @@ const requisitionCollector: TaskCollector = {
     return rows.map<RawTask>((row) => {
       const request = row.request;
       return {
-        id: String(row.id),
+        // id = requisition (request) id so the frontend can call approval-action.
+        id: String(request.id),
         source: "requisition",
         type: "approval",
         title: `Requisition ${request.request_id}${request.purpose ? ` · ${request.purpose}` : ""}`,
