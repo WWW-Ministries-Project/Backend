@@ -6,10 +6,10 @@ const SUPPORTED_PROVIDERS = new Set<string>(SUPPORTED_PROVIDER_LIST);
 
 type CredentialProvider = (typeof SUPPORTED_PROVIDER_LIST)[number];
 
-// Env var that supplies each provider's API key. When set it takes precedence
-// over any stored `ai_provider_credential` row (see getActiveCredential), so
-// the platform can run on an env-provided key (e.g. OPENAI_API_KEY) without the
-// admin UI. When unset, key resolution falls back to the DB credential.
+// Env var that supplies each provider's API key. The active credential stored
+// from the AI Console is the source of truth (see getActiveCredential); the env
+// key (e.g. OPENAI_API_KEY) is only a fallback used when no active DB credential
+// exists for the provider, so the platform can still run without the admin UI.
 const PROVIDER_ENV_KEYS: Record<CredentialProvider, string> = {
   openai: "OPENAI_API_KEY",
   gemini: "GEMINI_API_KEY",
@@ -202,14 +202,9 @@ export class AiCredentialService {
   async getActiveCredential(providerInput: string) {
     const provider = this.normalizeProvider(providerInput);
 
-    // An env-provided key takes precedence over any stored credential. When set
-    // it is used directly and the DB is not consulted, so operators can run on
-    // an env key (e.g. OPENAI_API_KEY) regardless of what the admin UI holds.
-    const envKey = this.getEnvApiKey(provider);
-    if (envKey) {
-      return { id: "env", provider, api_key: envKey, api_secret: null };
-    }
-
+    // The active credential stored from the AI Console is the source of truth.
+    // It is consulted first; the env key is only a fallback when no active DB
+    // credential exists for the provider.
     const credential = await prisma.ai_provider_credential.findFirst({
       where: {
         provider,
@@ -220,28 +215,34 @@ export class AiCredentialService {
       },
     });
 
-    if (!credential) {
-      throw new AiCredentialServiceError(
-        `No active ${provider} credentials configured`,
-        500,
-      );
+    if (credential) {
+      try {
+        return {
+          id: credential.id,
+          provider,
+          api_key: this.crypto.decrypt(credential.encrypted_key),
+          api_secret: credential.encrypted_secret
+            ? this.crypto.decrypt(credential.encrypted_secret)
+            : null,
+        };
+      } catch (error) {
+        if (error instanceof AiCredentialCryptoError) {
+          throw new AiCredentialServiceError(error.message, error.status_code);
+        }
+        throw error;
+      }
     }
 
-    try {
-      return {
-        id: credential.id,
-        provider,
-        api_key: this.crypto.decrypt(credential.encrypted_key),
-        api_secret: credential.encrypted_secret
-          ? this.crypto.decrypt(credential.encrypted_secret)
-          : null,
-      };
-    } catch (error) {
-      if (error instanceof AiCredentialCryptoError) {
-        throw new AiCredentialServiceError(error.message, error.status_code);
-      }
-      throw error;
+    // Fallback: an env-provided key keeps the platform working without the UI.
+    const envKey = this.getEnvApiKey(provider);
+    if (envKey) {
+      return { id: "env", provider, api_key: envKey, api_secret: null };
     }
+
+    throw new AiCredentialServiceError(
+      `No active ${provider} credentials configured`,
+      500,
+    );
   }
 
   async listAvailableChatbotModels(): Promise<AiChatbotModelOption[]> {
