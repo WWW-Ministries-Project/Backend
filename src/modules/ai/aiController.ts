@@ -559,6 +559,33 @@ export class AiController {
     }
   }
 
+  /**
+   * Assistant "For you" feed. Phase 1 returns an empty, well-formed payload so
+   * the drawer renders against the real contract; aggregation across modules
+   * (requisitions, finance, appointments, visitors, reports, pledges, assets)
+   * lands in a later phase, permission- and branch-scoped per source.
+   */
+  async tasks(req: Request, res: Response) {
+    const actorId = this.getActorId(req);
+    if (!actorId) {
+      return res.status(401).json({ message: "Not authorized. Token not found", data: null });
+    }
+
+    try {
+      const data = {
+        summary: { total: 0, overdue: 0, doneToday: 0 },
+        groups: [] as unknown[],
+        warnings: [] as string[],
+      };
+      return res.status(200).json({ data });
+    } catch (error: any) {
+      return res.status(500).json({
+        message: "Failed to load assistant tasks",
+        data: null,
+      });
+    }
+  }
+
   async queryContracts(req: Request, res: Response) {
     const moduleName =
       typeof req.query?.module === "string" ? req.query.module.trim() : undefined;

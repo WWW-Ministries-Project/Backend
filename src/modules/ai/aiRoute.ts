@@ -40,6 +40,11 @@ const generateInsightsAction = permissions.requireAction(
 );
 const generateInsights = [generateInsightsAction, legacyNeedsAiManage];
 const queryData = permissions.requireAction("AI", "query_data", "Not authorized to query data with AI");
+const viewTasks = permissions.requireAction(
+  "AI",
+  "view_tasks",
+  "Not authorized to view assistant tasks",
+);
 const viewUsage = permissions.requireAction("AI", "view_usage", "Not authorized to view AI usage");
 
 /**
@@ -122,6 +127,12 @@ aiRouter.get(
   "/usage/history",
   [protect, viewUsage],
   (req: Request, res: Response) => aiController.usageHistory(req, res),
+);
+
+aiRouter.get(
+  "/tasks",
+  [protect, viewTasks],
+  (req: Request, res: Response) => aiController.tasks(req, res),
 );
 
 aiRouter.get(
