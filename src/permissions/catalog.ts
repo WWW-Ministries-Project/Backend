@@ -367,6 +367,7 @@ export const PERMISSION_CATALOG: Record<string, DomainCatalog> = {
       ["chat", 1],
       ["generate_insights", 1],
       ["query_data", 1],
+      ["view_tasks", 1],
       ["view_usage", 1],
       ["manage_credentials", 3, true],
     ],
