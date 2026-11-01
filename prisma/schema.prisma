@@ -2824,6 +2824,16 @@ model ai_provider_credential {
   @@index([created_at])
 }
 
+model ai_setting {
+  key        String   @id
+  value      String   @db.LongText
+  updated_by Int?
+  created_at DateTime @default(now())
+  updated_at DateTime @default(now()) @updatedAt
+
+  @@index([updated_at])
+}
+
 enum status_type {
   UNCONFIRMED
   CONFIRMED
