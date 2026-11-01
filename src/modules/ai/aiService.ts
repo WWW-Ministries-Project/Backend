@@ -4,6 +4,7 @@ import { AiPolicyService } from "./aiPolicyService";
 import { AiChatHistoryMessage, AiContext, AiProviderResult, AiUsage } from "./aiTypes";
 import { AiCredentialService, AiCredentialServiceError } from "./aiCredentialService";
 import { AiReadOnlyDataService } from "./aiReadOnlyDataService";
+import { AiSettingsService } from "./aiSettingsService";
 
 const DEFAULT_TEMPERATURE = 0.3;
 const DEFAULT_OPENAI_MAX_TOKENS = 400;
@@ -59,16 +60,6 @@ type AiGenerationOptions = {
   actorId?: number;
 };
 
-const getPositiveIntEnv = (key: string, fallback: number): number => {
-  const parsed = Number(process.env[key]);
-  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
-};
-
-const getNumberEnv = (key: string, fallback: number): number => {
-  const parsed = Number(process.env[key]);
-  return Number.isFinite(parsed) ? parsed : fallback;
-};
-
 type OpenAiChatMessage = {
   role: "system" | "user" | "assistant" | "tool";
   content: string;
@@ -116,6 +107,7 @@ export class AiService {
   private policy = new AiPolicyService();
   private credentialService = new AiCredentialService();
   private readOnlyDataService = new AiReadOnlyDataService();
+  private settings = new AiSettingsService();
 
   async generateReply(
     message: string,
@@ -123,6 +115,7 @@ export class AiService {
     history: AiChatHistoryMessage[] = [],
     options: AiGenerationOptions = {},
   ): Promise<AiProviderResult> {
+    await this.settings.ensureLoaded();
     const sanitizedMessage = this.policy.sanitizeMessage(message);
     const sanitizedContext = this.policy.sanitizeContext(context);
     const sanitizedHistory = this.sanitizeHistory(history);
@@ -1204,18 +1197,19 @@ export class AiService {
   }
 
   private getTemperature(): number {
-    const value = getNumberEnv("AI_TEMPERATURE", DEFAULT_TEMPERATURE);
+    const value = this.settings.getFloat("temperature");
+    if (!Number.isFinite(value)) return DEFAULT_TEMPERATURE;
     if (value < 0) return 0;
     if (value > 2) return 2;
     return value;
   }
 
   private getOpenAiMaxTokens(): number {
-    return getPositiveIntEnv("OPENAI_MAX_TOKENS", DEFAULT_OPENAI_MAX_TOKENS);
+    return this.settings.getInt("openai_max_tokens");
   }
 
   private getClaudeMaxTokens(): number {
-    return getPositiveIntEnv("CLAUDE_MAX_TOKENS", DEFAULT_CLAUDE_MAX_TOKENS);
+    return this.settings.getInt("claude_max_tokens");
   }
 
   private getClaudeTemperature(): number {
@@ -1226,21 +1220,15 @@ export class AiService {
   }
 
   private getGeminiMaxOutputTokens(): number {
-    return getPositiveIntEnv(
-      "GEMINI_MAX_OUTPUT_TOKENS",
-      DEFAULT_GEMINI_MAX_OUTPUT_TOKENS,
-    );
+    return this.settings.getInt("gemini_max_output_tokens");
   }
 
   private getToolMaxRounds(): number {
-    return getPositiveIntEnv("AI_TOOL_MAX_ROUNDS", AI_TOOL_MAX_ROUNDS);
+    return this.settings.getInt("tool_max_rounds");
   }
 
   private getToolMaxCallsPerRound(): number {
-    return getPositiveIntEnv(
-      "AI_TOOL_MAX_CALLS_PER_ROUND",
-      AI_TOOL_MAX_CALLS_PER_ROUND,
-    );
+    return this.settings.getInt("tool_max_calls_per_round");
   }
 
   private normalizeRequestedModel(modelInput?: string): string | null {
@@ -1434,7 +1422,9 @@ export class AiService {
   }
 
   private getGeminiApiVersion(): "v1" | "v1beta" | "v1alpha" {
-    const value = String(process.env.GEMINI_API_VERSION || DEFAULT_GEMINI_API_VERSION)
+    const value = String(
+      this.settings.getString("gemini_api_version") || DEFAULT_GEMINI_API_VERSION,
+    )
       .trim()
       .toLowerCase();
 
