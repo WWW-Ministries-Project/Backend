@@ -1,5 +1,6 @@
 import { prisma } from "../../Models/context";
 import { AiReservation, AiUsageCommitPayload, AiUsageSnapshot } from "./aiTypes";
+import { AiSettingsService } from "./aiSettingsService";
 
 type ReservationCounter = {
   messages: number;
@@ -43,12 +44,12 @@ export class AiQuotaExceededError extends Error {
 }
 
 export class AiUsageService {
+  private settings = new AiSettingsService();
+
   async reserveQuota(): Promise<AiReservation> {
+    await this.settings.ensureLoaded();
     const quota = await this.getOrCreateCurrentQuota();
-    const reservationTokens = getEnvInt(
-      "AI_SOFT_RESERVED_TOKENS",
-      DEFAULT_SOFT_RESERVED_TOKENS,
-    );
+    const reservationTokens = this.settings.getInt("soft_reserved_tokens");
     const reservationKey = quota.period_start.toISOString();
     const currentReservations = reservationByPeriod.get(reservationKey) || {
       messages: 0,
@@ -245,12 +246,13 @@ export class AiUsageService {
     }
 
     try {
+      await this.settings.ensureLoaded();
       return await prisma.ai_usage_quota.create({
         data: {
           period_start: periodStart,
           period_end: periodEnd,
-          message_limit: getEnvInt("AI_MESSAGE_LIMIT_MONTHLY", DEFAULT_MESSAGE_LIMIT),
-          token_limit: getEnvInt("AI_TOKEN_LIMIT_MONTHLY", DEFAULT_TOKEN_LIMIT),
+          message_limit: this.settings.getInt("message_limit_monthly"),
+          token_limit: this.settings.getInt("token_limit_monthly"),
         },
       });
     } catch (error: any) {

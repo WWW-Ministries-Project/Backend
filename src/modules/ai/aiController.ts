@@ -4,6 +4,7 @@ import { prisma } from "../../Models/context";
 import { AiProviderError, AiService } from "./aiService";
 import { AiQuotaExceededError, AiUsageService } from "./aiUsageService";
 import { AiCredentialService, AiCredentialServiceError } from "./aiCredentialService";
+import { AiSettingsService, AiSettingsServiceError } from "./aiSettingsService";
 import { AiBusinessContextService } from "./aiBusinessContextService";
 import { AiReadOnlyDataService, AiReadOnlyDataServiceError } from "./aiReadOnlyDataService";
 import { AiResponseFormatter } from "./aiResponseFormatter";
@@ -46,6 +47,7 @@ export class AiController {
   private responseFormatter = new AiResponseFormatter();
   private preferenceService = new AiPreferenceService();
   private taskStateService = new AiTaskStateService();
+  private settingsService = new AiSettingsService();
 
   async listCredentials(req: Request, res: Response) {
     const provider =
@@ -157,6 +159,73 @@ export class AiController {
     }
   }
 
+  async getSettings(req: Request, res: Response) {
+    if (!this.getActorId(req)) {
+      return res.status(401).json({ message: "Not authorized. Token not found", data: null });
+    }
+
+    try {
+      const data = await this.settingsService.getAllForConsole();
+      return res.status(200).json({ data });
+    } catch (error: any) {
+      return res.status(500).json({
+        message: "Failed to load AI settings",
+        data: null,
+      });
+    }
+  }
+
+  async updateSettings(req: Request, res: Response) {
+    const actorId = this.getActorId(req);
+    if (!actorId) {
+      return res.status(401).json({ message: "Not authorized. Token not found", data: null });
+    }
+
+    const patch =
+      req.body && typeof req.body === "object" && !Array.isArray(req.body)
+        ? (req.body.settings && typeof req.body.settings === "object"
+            ? req.body.settings
+            : req.body)
+        : null;
+
+    if (!patch) {
+      return res.status(400).json({
+        message: "A settings object is required",
+        data: null,
+      });
+    }
+
+    try {
+      const data = await this.settingsService.updateMany(
+        actorId,
+        patch as Record<string, unknown>,
+      );
+
+      await prisma.ai_audit_log.create({
+        data: {
+          actor_id: actorId,
+          action: "ai_settings_update",
+          resource: "/ai/settings",
+          metadata: JSON.stringify({ keys: Object.keys(patch) }),
+        },
+      });
+
+      return res.status(200).json({ data });
+    } catch (error: any) {
+      if (error instanceof AiSettingsServiceError) {
+        return res.status(error.status_code).json({
+          message: error.message,
+          data: null,
+        });
+      }
+
+      return res.status(500).json({
+        message: "Failed to update AI settings",
+        data: null,
+      });
+    }
+  }
+
   async chatbotConfig(req: Request, res: Response) {
     if (!this.getActorId(req)) {
       return res.status(401).json({
@@ -168,7 +237,12 @@ export class AiController {
     try {
       const availableModels =
         await this.credentialService.listAvailableChatbotModels();
-      const defaultModel = availableModels[0] ?? null;
+      await this.settingsService.ensureLoaded();
+      const preferredModel = this.settingsService.getString("default_chat_model");
+      const defaultModel =
+        availableModels.find((option) => option.model === preferredModel) ??
+        availableModels[0] ??
+        null;
       const enabled = Boolean(defaultModel);
 
       return res.status(200).json({
@@ -917,7 +991,10 @@ export class AiController {
       }
 
       const history = params.conversationId
-        ? await this.getConversationHistory(conversation.id, this.getChatHistoryLimit())
+        ? await this.getConversationHistory(
+            conversation.id,
+            await this.getChatHistoryLimit(),
+          )
         : [];
 
       await prisma.ai_message.create({
@@ -1139,9 +1216,9 @@ export class AiController {
       }));
   }
 
-  private getChatHistoryLimit(): number {
-    const parsed = Number(process.env.AI_CHAT_HISTORY_LIMIT);
-    return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 8;
+  private async getChatHistoryLimit(): Promise<number> {
+    await this.settingsService.ensureLoaded();
+    return this.settingsService.getInt("chat_history_limit");
   }
 
   private buildChatResponseData(result: ChatExecutionResult): Record<string, unknown> {
