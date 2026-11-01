@@ -753,7 +753,7 @@ export class AiService {
               operation: {
                 type: "string",
                 description:
-                  "Operation name from the selected module contract (for example summary, recent, search, queue, attendance_lookup, early_arrivals, attendance_timing).",
+                  "Operation name from the selected module contract (for example summary, recent, search, queue, trend, aggregate, attendance_lookup, early_arrivals, attendance_timing).",
               },
               input: {
                 type: "object",
@@ -804,7 +804,7 @@ export class AiService {
             operation: {
               type: "string",
               description:
-                "Operation name from the selected module contract (for example summary, recent, search, queue, attendance_lookup, early_arrivals, attendance_timing).",
+                "Operation name from the selected module contract (for example summary, recent, search, queue, trend, aggregate, attendance_lookup, early_arrivals, attendance_timing).",
             },
             input: {
               type: "object",
@@ -856,7 +856,7 @@ export class AiService {
                 operation: {
                 type: "string",
                 description:
-                    "Operation name from the selected module contract (for example summary, recent, search, queue, attendance_lookup, early_arrivals, attendance_timing).",
+                    "Operation name from the selected module contract (for example summary, recent, search, queue, trend, aggregate, attendance_lookup, early_arrivals, attendance_timing).",
                 },
                 input: {
                   type: "object",

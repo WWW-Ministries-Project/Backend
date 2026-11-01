@@ -30,7 +30,9 @@ export type AiReadOnlyOperationName =
   | "queue"
   | "attendance_lookup"
   | "early_arrivals"
-  | "attendance_timing";
+  | "attendance_timing"
+  | "trend"
+  | "aggregate";
 
 export type AiReadOnlyOperationContract = {
   name: AiReadOnlyOperationName;
@@ -413,6 +415,98 @@ const CONTRACTS: Record<AiModuleName, AiModuleQueryContract> = {
     ],
   },
 };
+
+export const MAX_TREND_BUCKETS = 24;
+export const DEFAULT_TREND_BUCKETS = 12;
+
+const TREND_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    ...DATE_RANGE_PROPERTIES,
+    interval: {
+      type: "string",
+      enum: ["day", "week", "month"],
+      description: "Time bucket size. Defaults to month.",
+    },
+    limit: {
+      type: "integer",
+      minimum: 1,
+      maximum: MAX_TREND_BUCKETS,
+      description: `Number of buckets ending today when no date range is given (default ${DEFAULT_TREND_BUCKETS}).`,
+    },
+  },
+};
+
+const AGGREGATE_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["dimension"],
+  properties: {
+    ...DATE_RANGE_PROPERTIES,
+    dimension: {
+      type: "string",
+      description:
+        "Field to group by. Allowed values are listed in this operation's description.",
+    },
+    limit: {
+      type: "integer",
+      minimum: 1,
+      maximum: MAX_RECENT_LIMIT,
+      description: `Max groups to return (default ${DEFAULT_RECENT_LIMIT}).`,
+    },
+  },
+};
+
+const trendOp: AiReadOnlyOperationContract = {
+  name: "trend",
+  description:
+    "Count records grouped into time buckets (day/week/month) over this module's primary date field. Use for growth/decline trends over time.",
+  input_schema: TREND_SCHEMA,
+};
+
+const aggregateOp = (dimensions: string): AiReadOnlyOperationContract => ({
+  name: "aggregate",
+  description: `Group records by a dimension and count each group. Supported dimensions: ${dimensions}.`,
+  input_schema: AGGREGATE_SCHEMA,
+});
+
+const searchOp = (description: string): AiReadOnlyOperationContract => ({
+  name: "search",
+  description,
+  input_schema: BASE_SEARCH_SCHEMA,
+});
+
+// Analytics (trend/aggregate) and widened search, layered on so the base
+// contract table above stays readable. Only modules with a verified date field
+// get `trend`; only modules with verified groupable columns get `aggregate`.
+CONTRACTS.user.operations.push(
+  trendOp,
+  aggregateOp("membership_type, gender, active"),
+);
+CONTRACTS.event.operations.push(trendOp, aggregateOp("status"));
+CONTRACTS.requisitions.operations.push(trendOp, aggregateOp("status"));
+CONTRACTS.visitor.operations.push(trendOp);
+CONTRACTS.orders.operations.push(trendOp, aggregateOp("payment_status"));
+CONTRACTS.appointment.operations.push(trendOp, aggregateOp("status"));
+CONTRACTS.product.operations.push(trendOp, aggregateOp("status"));
+CONTRACTS.market.operations.push(trendOp);
+CONTRACTS.program.operations.push(trendOp);
+CONTRACTS.assets.operations.push(trendOp, aggregateOp("status"));
+CONTRACTS.department.operations.push(
+  trendOp,
+  aggregateOp("status"),
+  searchOp("Search departments by name."),
+);
+CONTRACTS.position.operations.push(
+  trendOp,
+  searchOp("Search positions by name."),
+);
+CONTRACTS.access.operations.push(searchOp("Search access levels by name."));
+CONTRACTS.lifecenter.operations.push(
+  trendOp,
+  searchOp("Search life centers by name."),
+);
 
 export const AI_MODULE_QUERY_CONTRACTS = CONTRACTS;
 
