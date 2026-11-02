@@ -420,6 +420,7 @@ export class AssessmentService {
                 id: true,
                 user_id: true,
                 completed: true,
+                enrolled_source: true,
                 user: { select: { name: true, user_info: { select: { first_name: true, last_name: true } } } },
                 progress: { select: { topicId: true, score: true, status: true, completed: true } },
                 submissions: {
@@ -499,6 +500,7 @@ export class AssessmentService {
           classId: course.id,
           className: course.name,
           classFormat: course.classFormat,
+          enrolledSource: enrollment.enrolled_source,
           attendance: att,
           cells,
           ...summary,

@@ -1881,6 +1881,11 @@ model enrollment {
   user_id        Int?
   completed      Boolean?                @default(false)
   completedAt    DateTime?
+  // How the learner joined this class: "AUTO" (met the criteria and was
+  // enrolled automatically on apply) or "MANUAL" (staff enrolled them, or an
+  // application was approved). Defaulted so existing rows and the mobile app
+  // stay valid without a backfill.
+  enrolled_source String                 @default("AUTO") @db.VarChar(10)
   submissions    assignment_submission[]
   extensions     assignment_extension[]
   gradeOverrides lms_grade_override[]
