@@ -1452,6 +1452,14 @@ export class ProgramService {
     const totalQuestions = questions.length;
     const percentageScore = (score / questions.length) * 100;
 
+    // Opt-in hold: auto-graded quizzes stay hidden too when the program holds grades.
+    const program = await prisma.program.findUnique({
+      where: { id: programId },
+      select: { hold_grades: true },
+    });
+    const holdGrades = Boolean(program?.hold_grades);
+    const now = new Date();
+
     const submission = await prisma.assignment_submission.create({
       data: {
         enrollmentId: enrollment.id,
@@ -1460,7 +1468,9 @@ export class ProgramService {
         attempt: currentAttempt,
         status: "GRADED",
         score,
-        gradedAt: new Date(),
+        gradedAt: now,
+        grade_released: !holdGrades,
+        released_at: holdGrades ? null : now,
       },
     });
 
@@ -1800,6 +1810,11 @@ export class ProgramService {
                 cohort: {
                   select: {
                     programId: true,
+                    program: {
+                      select: {
+                        hold_grades: true,
+                      },
+                    },
                   },
                 },
               },
@@ -1829,6 +1844,12 @@ export class ProgramService {
     const nextStatus = grade >= passMark ? "PASS" : "FAIL";
     const normalizedFeedback = String(args.feedback || "").trim() || null;
 
+    // Opt-in hold: grades are visible immediately unless the owning program has
+    // hold_grades on, in which case the grade is withheld until staff release it.
+    const holdGrades = Boolean(
+      submission.enrollment.course.cohort.program?.hold_grades,
+    );
+
     const result = await prisma.$transaction(async (tx) => {
       const updatedSubmission = await tx.assignment_submission.update({
         where: { id: submission.id },
@@ -1841,6 +1862,8 @@ export class ProgramService {
               ? args.actorUserId
               : null,
           gradedAt: now,
+          grade_released: !holdGrades,
+          released_at: holdGrades ? null : now,
         },
       });
 
@@ -1887,14 +1910,17 @@ export class ProgramService {
       return updatedSubmission;
     });
 
-    await this.notifyStudentOfAssignmentGrade({
-      recipientUserId: submission.enrollment.user?.id,
-      actorUserId: args.actorUserId ?? null,
-      topicName: submission.learningUnit.topic.name,
-      programId: submission.enrollment.course.cohort.programId,
-      topicId: submission.learningUnit.topic.id,
-      grade,
-    });
+    // Defer the learner notification when the grade is held; it fires on release.
+    if (!holdGrades) {
+      await this.notifyStudentOfAssignmentGrade({
+        recipientUserId: submission.enrollment.user?.id,
+        actorUserId: args.actorUserId ?? null,
+        topicName: submission.learningUnit.topic.name,
+        programId: submission.enrollment.course.cohort.programId,
+        topicId: submission.learningUnit.topic.id,
+        grade,
+      });
+    }
 
     return {
       submissionId: result.id,
@@ -1936,6 +1962,70 @@ export class ProgramService {
     }
 
     return results;
+  }
+
+  /**
+   * Releases previously held grades for a cohort (optionally narrowed to a single
+   * topic/learning unit or a single course): flips `grade_released` to true, stamps
+   * `released_at`, and fires the deferred learner notification for each newly
+   * released submission. Returns the number of submissions released.
+   */
+  async releaseGrades(args: {
+    cohortId: number;
+    topicId?: number | null;
+    courseId?: number | null;
+    actorUserId?: number | null;
+  }) {
+    const submissions = await prisma.assignment_submission.findMany({
+      where: {
+        grade_released: false,
+        enrollment: {
+          course: {
+            cohortId: args.cohortId,
+            ...(args.courseId ? { id: args.courseId } : {}),
+          },
+        },
+        ...(args.topicId ? { learningUnit: { topicId: args.topicId } } : {}),
+      },
+      select: {
+        id: true,
+        score: true,
+        enrollment: {
+          select: {
+            user: { select: { id: true } },
+            course: {
+              select: { cohort: { select: { programId: true } } },
+            },
+          },
+        },
+        learningUnit: {
+          select: { topic: { select: { id: true, name: true } } },
+        },
+      },
+    });
+
+    if (submissions.length === 0) {
+      return { released: 0 };
+    }
+
+    const now = new Date();
+    await prisma.assignment_submission.updateMany({
+      where: { id: { in: submissions.map((submission) => submission.id) } },
+      data: { grade_released: true, released_at: now },
+    });
+
+    for (const submission of submissions) {
+      await this.notifyStudentOfAssignmentGrade({
+        recipientUserId: submission.enrollment.user?.id,
+        actorUserId: args.actorUserId ?? null,
+        topicName: submission.learningUnit.topic.name,
+        programId: submission.enrollment.course.cohort.programId,
+        topicId: submission.learningUnit.topic.id,
+        grade: submission.score ?? 0,
+      });
+    }
+
+    return { released: submissions.length };
   }
 
   private getAssignmentConfig(learningUnit: {

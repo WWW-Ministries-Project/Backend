@@ -66,3 +66,29 @@ FE `ClassOption` should add `mode`, `location`, `meetingLink`, `startDate`.
 now also return `usedInPrograms` = distinct count of programs the item is used in.
 (Question-bank per-question usage is NOT relational — questions are copied into a
 unit's JSON — so a "used in N" count there needs a join table; deferred.)
+
+---
+
+## 5. Grade release (opt-in hold) — shipped
+
+**Why:** the prototype has a "Release grades" action so learners don't see scores
+until staff publish them. Opt-in so default behaviour (and the mobile app) is
+unchanged.
+
+**Schema (migration `20261102140000_add_submission_grade_release`):**
+`assignment_submission.grade_released BOOLEAN NOT NULL DEFAULT true` + `released_at DATETIME NULL`.
+Toggle lives on `program.hold_grades` (§2).
+
+**Grading:** `gradeAssignmentSubmission` and `submitMCQAssignment` set
+`grade_released = !program.hold_grades`; when held, `released_at` stays null and
+the learner grade notification is deferred.
+
+**New endpoint:** `PUT /release-grades` — body `{ cohortId, topicId?, courseId? }`,
+guard `som("grade", … target: cohort)`. Flips held submissions to released (sets
+`released_at`), fires the deferred notifications, returns `{ released: <count> }`.
+
+**Learner reads gated** (`learnerService.overview` + `submission`): when a grade is
+held, `score/passed/feedback/gradedAt/rubric` come back null, `status:"awaiting_release"`,
+quiz correct answers are not revealed, and `progress.score`/pass-fail are concealed —
+**all keys preserved** (mobile safety). Known v1 limitation: the `finalGrade`
+aggregate in `overview` can still reflect a held component grade.

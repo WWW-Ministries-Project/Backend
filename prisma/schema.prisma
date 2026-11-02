@@ -1949,6 +1949,11 @@ model assignment_submission {
   gradedAt       DateTime?
   /// { [criterionId]: levelId } when graded with a rubric
   rubric_scores  Json?
+  /// Whether the grade is visible to the learner. Defaulted true so existing
+  /// grades and the mobile app keep showing scores; set false only when the
+  /// program has hold_grades on, then flipped true by the release action.
+  grade_released Boolean           @default(true)
+  released_at    DateTime?
   enrollment     enrollment        @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
   gradedBy       user?             @relation(fields: [gradedById], references: [id])
   learningUnit   LearningUnit      @relation(fields: [learningUnitId], references: [id], onDelete: Cascade)

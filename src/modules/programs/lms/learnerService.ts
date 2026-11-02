@@ -87,7 +87,7 @@ export class LearnerService {
       prisma.assignment_submission.findMany({
         where: { enrollmentId: { in: enrollments.map((e) => e.id) } },
         orderBy: [{ submittedAt: "desc" }, { attempt: "desc" }],
-        select: { id: true, feedback: true, gradedAt: true },
+        select: { id: true, feedback: true, gradedAt: true, grade_released: true },
       }),
       Promise.all(
         enrollments.map((e) => assessmentService.getGradebook(e.course.cohort.id, e.course.id).catch(() => null)),
@@ -112,6 +112,9 @@ export class LearnerService {
       const assessments = (book?.columns ?? []).map((col, i) => {
         const cell = row?.cells[i] ?? null;
         const sub = cell?.submissionId ? feedbackById.get(cell.submissionId) : undefined;
+        // Opt-in hold: when a submission's grade is not yet released, keep every
+        // key present (mobile safety) but withhold the grade values.
+        const held = sub ? sub.grade_released === false : false;
         return {
           topicId: col.topicId,
           name: col.name,
@@ -121,12 +124,12 @@ export class LearnerService {
           passMark: col.passMark,
           isActive: col.isActive,
           dueDate: cell?.extendedTo ?? col.dueDate,
-          status: cell?.status ?? "open",
-          score: cell?.score ?? null,
-          passed: cell?.passed ?? null,
+          status: held ? "awaiting_release" : (cell?.status ?? "open"),
+          score: held ? null : (cell?.score ?? null),
+          passed: held ? null : (cell?.passed ?? null),
           submissionId: cell?.submissionId ?? null,
-          feedback: sub?.feedback ?? cell?.note ?? null,
-          gradedAt: sub?.gradedAt ?? null,
+          feedback: held ? null : (sub?.feedback ?? cell?.note ?? null),
+          gradedAt: held ? null : (sub?.gradedAt ?? null),
         };
       });
 
@@ -325,17 +328,21 @@ export class LearnerService {
         score: true,
         feedback: true,
         gradedAt: true,
+        grade_released: true,
         rubric_scores: true,
         gradedBy: { select: userSelect },
       },
     });
     const latest = submissions[0] ?? null;
+    // Opt-in hold: grade stays hidden until released. Keep all keys (mobile safety).
+    const held = latest ? latest.grade_released === false : false;
     const data = parseJson(unit.data) ?? {};
     const progress = enrollment.progress[0] ?? null;
     const attemptsUsed = submissions.length;
     const maxAttempts = unit.maxAttempts ?? null;
     const passed = progress?.status === "PASS";
-    const revealAnswers = passed || (maxAttempts !== null && attemptsUsed >= maxAttempts);
+    // When the grade is held, don't reveal correct answers either (that would leak the outcome).
+    const revealAnswers = !held && (passed || (maxAttempts !== null && attemptsUsed >= maxAttempts));
 
     let quiz: { prompt: string; yours: string | null; correct: string | null; isCorrect: boolean }[] | null = null;
     if (unit.type === "assignment" && latest) {
@@ -358,7 +365,7 @@ export class LearnerService {
 
     let rubric: { label: string; level: string | null; factor: number | null; weight: number }[] | null = null;
     let rubricScore: number | null = null;
-    if (unit.rubric && latest?.rubric_scores && typeof latest.rubric_scores === "object") {
+    if (!held && unit.rubric && latest?.rubric_scores && typeof latest.rubric_scores === "object") {
       const criteria = asArray<RubricCriterion>(unit.rubric.criteria);
       const levels = asArray<RubricLevel>(unit.rubric.levels);
       const scores = latest.rubric_scores as Record<string, string>;
@@ -382,18 +389,21 @@ export class LearnerService {
       prompt: typeof data.question === "string" ? data.question : null,
       maxAttempts,
       attemptsUsed,
-      progress: progress ? { score: progress.score, status: progress.status } : null,
+      // Held grades conceal the score and the pass/fail outcome; keys stay present.
+      progress: progress
+        ? { score: held ? null : progress.score, status: held ? "PENDING" : progress.status }
+        : null,
       submission: latest
         ? {
             id: latest.id,
             attempt: latest.attempt,
-            status: latest.status,
+            status: held ? "awaiting_release" : latest.status,
             submittedAt: latest.submittedAt,
             fileUrl: latest.fileUrl,
-            score: latest.score,
-            feedback: latest.feedback,
-            gradedAt: latest.gradedAt,
-            gradedByName: personName(latest.gradedBy),
+            score: held ? null : latest.score,
+            feedback: held ? null : latest.feedback,
+            gradedAt: held ? null : latest.gradedAt,
+            gradedByName: held ? null : personName(latest.gradedBy),
           }
         : null,
       quiz,

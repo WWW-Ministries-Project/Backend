@@ -728,6 +728,59 @@ export class ProgramController {
     }
   }
 
+  async releaseGrades(req: Request, res: Response) {
+    try {
+      const cohortId = Number(req.body?.cohortId);
+      const actorUserId = Number((req as any)?.user?.id);
+      const topicIdRaw = req.body?.topicId;
+      const courseIdRaw = req.body?.courseId;
+
+      if (!Number.isInteger(cohortId) || cohortId <= 0) {
+        return res.status(400).json({
+          message: "cohortId must be a positive integer",
+        });
+      }
+
+      const topicId =
+        topicIdRaw === undefined || topicIdRaw === null || topicIdRaw === ""
+          ? null
+          : Number(topicIdRaw);
+      if (topicId !== null && (!Number.isInteger(topicId) || topicId <= 0)) {
+        return res.status(400).json({
+          message: "topicId must be a positive integer",
+        });
+      }
+
+      const courseId =
+        courseIdRaw === undefined || courseIdRaw === null || courseIdRaw === ""
+          ? null
+          : Number(courseIdRaw);
+      if (courseId !== null && (!Number.isInteger(courseId) || courseId <= 0)) {
+        return res.status(400).json({
+          message: "courseId must be a positive integer",
+        });
+      }
+
+      const result = await programService.releaseGrades({
+        cohortId,
+        topicId,
+        courseId,
+        actorUserId:
+          Number.isInteger(actorUserId) && actorUserId > 0 ? actorUserId : null,
+      });
+
+      return res.status(200).json({
+        message: "Grades released",
+        data: result,
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        message: "Error releasing grades",
+        error: error.message,
+      });
+    }
+  }
+
   async getAssignmentsByCohort(req: Request, res: Response) {
     try {
       const { cohortId } = req.query;
