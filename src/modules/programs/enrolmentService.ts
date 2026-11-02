@@ -43,9 +43,15 @@ const CERTIFICATE_NUMBER_MAX = 1000000;
 const CERTIFICATE_VERIFICATION_PATH = "/certificate/verify";
 
 export class EnrollmentService {
-  async enrollUser(payload: { course_id: number; user_id: number }) {
+  async enrollUser(payload: {
+    course_id: number;
+    user_id: number;
+    /** "AUTO" when the learner met the criteria on apply; "MANUAL" when staff enrol them. */
+    source?: "AUTO" | "MANUAL";
+  }) {
     // Step 1: Validate inputs
     const { course_id, user_id } = payload;
+    const source = payload.source ?? "AUTO";
     if (!course_id || !user_id || course_id <= 0 || user_id <= 0) {
       throw new InputValidationError("Please provide a valid user and course");
     }
@@ -155,6 +161,7 @@ export class EnrollmentService {
             user_id,
             course_id,
             enrolledAt: new Date(),
+            enrolled_source: source,
           },
           select: { id: true },
         }),

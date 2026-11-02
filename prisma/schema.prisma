@@ -1519,6 +1519,11 @@ model program {
   eligibility_rules          role_eligibility_rules[]
   position_eligibility_rules position_eligibility_rules[]
   modules                    program_module[]
+  /// "DRAFT" (being set up) or "PUBLISHED" (visible/open). Defaulted PUBLISHED so
+  /// existing programs and the mobile catalogue keep their current visibility.
+  status                     String                       @default("PUBLISHED") @db.VarChar(20)
+  /// Opt-in: when true, new grades are withheld from learners until staff release them.
+  hold_grades                Boolean                      @default(false)
   /// "PASS_FAIL" (every graded unit passed) or "WEIGHTED" (category weights roll up to a final grade)
   grading_mode               String                       @default("PASS_FAIL") @db.VarChar(20)
   pass_mark                  Int                          @default(50)
@@ -1881,6 +1886,11 @@ model enrollment {
   user_id        Int?
   completed      Boolean?                @default(false)
   completedAt    DateTime?
+  // How the learner joined this class: "AUTO" (met the criteria and was
+  // enrolled automatically on apply) or "MANUAL" (staff enrolled them, or an
+  // application was approved). Defaulted so existing rows and the mobile app
+  // stay valid without a backfill.
+  enrolled_source String                 @default("AUTO") @db.VarChar(10)
   submissions    assignment_submission[]
   extensions     assignment_extension[]
   gradeOverrides lms_grade_override[]
@@ -1939,6 +1949,14 @@ model assignment_submission {
   gradedAt       DateTime?
   /// { [criterionId]: levelId } when graded with a rubric
   rubric_scores  Json?
+  /// Inline feedback left on the submission during grading:
+  /// [{ id, text, quote?, kind?: "praise" | "improve" }]
+  inline_comments Json?
+  /// Whether the grade is visible to the learner. Defaulted true so existing
+  /// grades and the mobile app keep showing scores; set false only when the
+  /// program has hold_grades on, then flipped true by the release action.
+  grade_released Boolean           @default(true)
+  released_at    DateTime?
   enrollment     enrollment        @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
   gradedBy       user?             @relation(fields: [gradedById], references: [id])
   learningUnit   LearningUnit      @relation(fields: [learningUnitId], references: [id], onDelete: Cascade)
@@ -2822,6 +2840,16 @@ model ai_provider_credential {
 
   @@index([provider, is_active])
   @@index([created_at])
+}
+
+model ai_setting {
+  key        String   @id
+  value      String   @db.LongText
+  updated_by Int?
+  created_at DateTime @default(now())
+  updated_at DateTime @default(now()) @updatedAt
+
+  @@index([updated_at])
 }
 
 enum status_type {

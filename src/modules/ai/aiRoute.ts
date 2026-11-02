@@ -88,6 +88,18 @@ aiRouter.put(
 );
 
 aiRouter.get(
+  "/settings",
+  [protect, permissions.can_view_ai],
+  (req: Request, res: Response) => aiController.getSettings(req, res),
+);
+
+aiRouter.put(
+  "/settings",
+  [protect, permissions.withAccess, canManageCredentials],
+  (req: Request, res: Response) => aiController.updateSettings(req, res),
+);
+
+aiRouter.get(
   "/chatbot/config",
   [protect, ...chat],
   (req: Request, res: Response) => aiController.chatbotConfig(req, res),

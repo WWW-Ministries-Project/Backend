@@ -251,6 +251,11 @@ programRouter.put(
   som("grade", { ...fallback, assigned: "target", target: submissionFrom("body", "submissionIds") }),
   programController.gradeAssignmentSubmissions,
 );
+programRouter.put(
+  "/release-grades",
+  som("grade", { ...fallback, assigned: "target", target: cohortFrom("body", "cohortId") }),
+  programController.releaseGrades,
+);
 
 programRouter.get(
   "/get-cohort-assigments",

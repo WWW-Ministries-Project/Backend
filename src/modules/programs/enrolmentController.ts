@@ -64,6 +64,9 @@ export class EnrollmentController {
       const newEnrollment = await enrollment.enrollUser({
         course_id: parsedCourseId,
         user_id: parsedUserId,
+        // This endpoint is the staff "enrol a member" path; self-service joins
+        // go through /apply and are auto-enrolled.
+        source: "MANUAL",
       });
 
       return res.status(201).json({
