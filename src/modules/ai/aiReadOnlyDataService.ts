@@ -19,7 +19,9 @@ import {
   AiModuleQueryContract,
   AiReadOnlyOperationName,
   DEFAULT_RECENT_LIMIT,
+  DEFAULT_TREND_BUCKETS,
   MAX_RECENT_LIMIT,
+  MAX_TREND_BUCKETS,
   getModuleContract,
 } from "./aiReadOnlyContracts";
 
@@ -138,6 +140,57 @@ const MODULE_DOMAIN: Record<string, string[]> = {
   ai: ["AI"],
 };
 
+type ModuleAnalyticsMeta = {
+  // Prisma delegate name, accessed as (prisma as any)[delegate] for read-only
+  // count/groupBy. Verified against the schema and the bespoke handlers below.
+  delegate: string;
+  dateField: string;
+  dimensions: Record<string, string>;
+};
+
+/**
+ * Metadata that powers the generic `trend` and `aggregate` operations. Only
+ * modules with a verified date field appear here; `dimensions` maps the public
+ * dimension name the model may request to the real scalar/enum column.
+ */
+const MODULE_ANALYTICS: Partial<Record<AiModuleName, ModuleAnalyticsMeta>> = {
+  user: {
+    delegate: "user",
+    dateField: "created_at",
+    dimensions: { membership_type: "membership_type", gender: "gender", active: "is_active" },
+  },
+  event: { delegate: "event_mgt", dateField: "created_at", dimensions: { status: "event_status" } },
+  requisitions: {
+    delegate: "request",
+    dateField: "requisition_date",
+    dimensions: { status: "request_approval_status" },
+  },
+  visitor: { delegate: "visitor", dateField: "createdAt", dimensions: {} },
+  orders: { delegate: "orders", dateField: "created_at", dimensions: { payment_status: "payment_status" } },
+  appointment: { delegate: "appointment", dateField: "createdAt", dimensions: { status: "status" } },
+  product: { delegate: "products", dateField: "created_at", dimensions: { status: "status" } },
+  market: { delegate: "markets", dateField: "created_at", dimensions: {} },
+  program: { delegate: "program", dateField: "createdAt", dimensions: {} },
+  assets: { delegate: "assets", dateField: "created_at", dimensions: { status: "status" } },
+  department: { delegate: "department", dateField: "created_at", dimensions: { status: "status" } },
+  position: { delegate: "position", dateField: "created_at", dimensions: {} },
+  lifecenter: { delegate: "life_center", dateField: "createdAt", dimensions: {} },
+};
+
+type ModuleSearchMeta = { delegate: string; fields: string[]; dateField?: string };
+
+/**
+ * Generic name search for modules that have no bespoke `search` handler. The
+ * bespoke-search modules (user, assets, requisitions, program, visitor, market,
+ * product, orders, appointment) are intentionally absent and keep their own.
+ */
+const GENERIC_SEARCH: Partial<Record<AiModuleName, ModuleSearchMeta>> = {
+  department: { delegate: "department", fields: ["name"], dateField: "created_at" },
+  position: { delegate: "position", fields: ["name"], dateField: "created_at" },
+  access: { delegate: "access_level", fields: ["name"], dateField: "created_at" },
+  lifecenter: { delegate: "life_center", fields: ["name"], dateField: "createdAt" },
+};
+
 export class AiReadOnlyDataServiceError extends Error {
   status_code: number;
 
@@ -235,7 +288,9 @@ export class AiReadOnlyDataService {
       operation !== "queue" &&
       operation !== "attendance_lookup" &&
       operation !== "early_arrivals" &&
-      operation !== "attendance_timing"
+      operation !== "attendance_timing" &&
+      operation !== "trend" &&
+      operation !== "aggregate"
     ) {
       throw new AiReadOnlyDataServiceError(`Unsupported operation "${value}"`, 400);
     }
@@ -614,6 +669,19 @@ export class AiReadOnlyDataService {
     appliedFilters: Record<string, unknown>;
     result: unknown;
   }> {
+    // Generic analytics + widened search are metadata-driven and handled before
+    // the per-module switch, so each bespoke handler stays focused on its own
+    // summary/recent/search shapes.
+    if (operation === "trend") {
+      return this.queryTrend(moduleName, input);
+    }
+    if (operation === "aggregate") {
+      return this.queryAggregate(moduleName, input, limit);
+    }
+    if (operation === "search" && GENERIC_SEARCH[moduleName]) {
+      return this.queryGenericSearch(moduleName, input, limit);
+    }
+
     switch (moduleName) {
       case "user":
         return this.queryUser(operation, input, limit);
@@ -664,6 +732,241 @@ export class AiReadOnlyDataService {
       default:
         throw new AiReadOnlyDataServiceError(`Module ${moduleName} not implemented`, 500);
     }
+  }
+
+  private parseTrendInterval(raw: unknown): "day" | "week" | "month" {
+    const value = String(raw || "month").trim().toLowerCase();
+    if (value === "day" || value === "week" || value === "month") {
+      return value;
+    }
+    throw new AiReadOnlyDataServiceError(
+      'interval must be "day", "week", or "month"',
+      400,
+    );
+  }
+
+  private parseTrendBucketCount(raw: unknown): number {
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      return DEFAULT_TREND_BUCKETS;
+    }
+    return Math.max(1, Math.min(MAX_TREND_BUCKETS, Math.floor(parsed)));
+  }
+
+  private startOfBucket(date: Date, interval: "day" | "week" | "month"): Date {
+    if (interval === "month") {
+      return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
+    }
+    const day = new Date(
+      Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()),
+    );
+    if (interval === "week") {
+      const weekday = day.getUTCDay(); // 0 Sun .. 6 Sat
+      const sinceMonday = (weekday + 6) % 7;
+      day.setUTCDate(day.getUTCDate() - sinceMonday);
+    }
+    return day;
+  }
+
+  private addInterval(
+    date: Date,
+    interval: "day" | "week" | "month",
+    steps: number,
+  ): Date {
+    const next = new Date(date);
+    if (interval === "day") {
+      next.setUTCDate(next.getUTCDate() + steps);
+    } else if (interval === "week") {
+      next.setUTCDate(next.getUTCDate() + 7 * steps);
+    } else {
+      next.setUTCMonth(next.getUTCMonth() + steps);
+    }
+    return next;
+  }
+
+  private bucketLabel(start: Date, interval: "day" | "week" | "month"): string {
+    const iso = start.toISOString().slice(0, 10);
+    return interval === "month" ? iso.slice(0, 7) : iso;
+  }
+
+  private buildTrendBuckets(
+    interval: "day" | "week" | "month",
+    count: number,
+    range: DateRangeFilter | null,
+  ): Array<{ start: Date; endExclusive: Date; label: string }> {
+    const buckets: Array<{ start: Date; endExclusive: Date; label: string }> = [];
+
+    if (range) {
+      let cursor = this.startOfBucket(range.start, interval);
+      while (
+        cursor.getTime() < range.endExclusive.getTime() &&
+        buckets.length < MAX_TREND_BUCKETS
+      ) {
+        const next = this.addInterval(cursor, interval, 1);
+        buckets.push({ start: cursor, endExclusive: next, label: this.bucketLabel(cursor, interval) });
+        cursor = next;
+      }
+      return buckets;
+    }
+
+    const currentStart = this.startOfBucket(new Date(), interval);
+    for (let offset = count - 1; offset >= 0; offset -= 1) {
+      const start = this.addInterval(currentStart, interval, -offset);
+      const next = this.addInterval(start, interval, 1);
+      buckets.push({ start, endExclusive: next, label: this.bucketLabel(start, interval) });
+    }
+    return buckets;
+  }
+
+  private async queryTrend(
+    moduleName: AiModuleName,
+    input: Record<string, unknown>,
+  ) {
+    const meta = MODULE_ANALYTICS[moduleName];
+    if (!meta) {
+      throw new AiReadOnlyDataServiceError(
+        `trend is not supported for module "${moduleName}"`,
+        400,
+      );
+    }
+
+    const interval = this.parseTrendInterval(input.interval);
+    const bucketCount = this.parseTrendBucketCount(input.limit);
+    const range = this.parseDateRange(input);
+    const buckets = this.buildTrendBuckets(interval, bucketCount, range);
+    const delegate = (prisma as any)[meta.delegate];
+
+    const counts = await Promise.all(
+      buckets.map((bucket) =>
+        delegate.count({
+          where: { [meta.dateField]: { gte: bucket.start, lt: bucket.endExclusive } },
+        }),
+      ),
+    );
+
+    const series = buckets.map((bucket, index) => ({
+      bucket_start: bucket.start.toISOString().slice(0, 10),
+      label: bucket.label,
+      count: Number(counts[index] || 0),
+    }));
+    const total = series.reduce((sum, point) => sum + point.count, 0);
+
+    return {
+      dataSource: `prisma.${meta.delegate}`,
+      appliedFilters: {
+        interval,
+        buckets: series.length,
+        date_field: meta.dateField,
+        start_date: series[0]?.bucket_start ?? null,
+        end_date: range?.end_iso ?? null,
+      },
+      result: { interval, date_field: meta.dateField, total, series },
+    };
+  }
+
+  private async queryAggregate(
+    moduleName: AiModuleName,
+    input: Record<string, unknown>,
+    limit: number,
+  ) {
+    const meta = MODULE_ANALYTICS[moduleName];
+    if (!meta || Object.keys(meta.dimensions).length === 0) {
+      throw new AiReadOnlyDataServiceError(
+        `aggregate is not supported for module "${moduleName}"`,
+        400,
+      );
+    }
+
+    const requested = String(input.dimension || "").trim().toLowerCase();
+    const column = meta.dimensions[requested];
+    if (!column) {
+      throw new AiReadOnlyDataServiceError(
+        `dimension must be one of: ${Object.keys(meta.dimensions).join(", ")}`,
+        400,
+      );
+    }
+
+    const range = this.parseDateRange(input);
+    const where = this.appendDateRangeWhere({}, meta.dateField, range);
+    const delegate = (prisma as any)[meta.delegate];
+
+    const groups = (await delegate.groupBy({
+      by: [column],
+      where,
+      _count: { _all: true },
+    })) as Array<Record<string, unknown>>;
+
+    const rows = groups
+      .map((group) => ({
+        value: group[column] ?? "UNKNOWN",
+        count: Number((group._count as { _all?: number } | undefined)?._all || 0),
+      }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, limit);
+    const total = rows.reduce((sum, row) => sum + row.count, 0);
+
+    return {
+      dataSource: `prisma.${meta.delegate}`,
+      appliedFilters: {
+        dimension: requested,
+        column,
+        limit,
+        start_date: range?.start_iso ?? null,
+        end_date: range?.end_iso ?? null,
+      },
+      result: { dimension: requested, total_in_groups: total, groups: rows },
+    };
+  }
+
+  private async queryGenericSearch(
+    moduleName: AiModuleName,
+    input: Record<string, unknown>,
+    limit: number,
+  ) {
+    const meta = GENERIC_SEARCH[moduleName];
+    if (!meta) {
+      throw new AiReadOnlyDataServiceError(
+        `search is not supported for module "${moduleName}"`,
+        400,
+      );
+    }
+
+    const term = this.parseSearchTerm(input);
+    const range = this.parseDateRange(input);
+    const baseWhere: Record<string, unknown> = {
+      OR: meta.fields.map((field) => ({ [field]: { contains: term } })),
+    };
+    const where = meta.dateField
+      ? this.appendDateRangeWhere(baseWhere, meta.dateField, range)
+      : baseWhere;
+
+    const select: Record<string, boolean> = { id: true };
+    for (const field of meta.fields) {
+      select[field] = true;
+    }
+    if (meta.dateField) {
+      select[meta.dateField] = true;
+    }
+
+    const delegate = (prisma as any)[meta.delegate];
+    const rows = await delegate.findMany({
+      where,
+      orderBy: { id: "desc" },
+      take: limit,
+      select,
+    });
+
+    return {
+      dataSource: `prisma.${meta.delegate}`,
+      appliedFilters: {
+        q: term,
+        fields: meta.fields,
+        limit,
+        start_date: range?.start_iso ?? null,
+        end_date: range?.end_iso ?? null,
+      },
+      result: rows,
+    };
   }
 
   private async queryUser(
