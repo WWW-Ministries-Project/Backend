@@ -387,6 +387,7 @@ export class ProgramService {
         ...(programIds ? { id: { in: programIds } } : {}),
       },
       include: {
+        _count: { select: { modules: true } },
         topics: {
           orderBy: {
             order_number: "asc",
@@ -678,6 +679,10 @@ export class ProgramService {
           leader_required: program.leader_required,
           ministry_required: program.ministry_required,
           completed: program.completed,
+          status: program.status,
+          grading_mode: program.grading_mode,
+          pass_mark: program.pass_mark,
+          module_count: program._count?.modules ?? 0,
           createdAt: program.createdAt,
           updatedAt: program.updatedAt,
         },

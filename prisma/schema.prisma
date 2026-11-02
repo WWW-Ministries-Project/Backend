@@ -1519,6 +1519,11 @@ model program {
   eligibility_rules          role_eligibility_rules[]
   position_eligibility_rules position_eligibility_rules[]
   modules                    program_module[]
+  /// "DRAFT" (being set up) or "PUBLISHED" (visible/open). Defaulted PUBLISHED so
+  /// existing programs and the mobile catalogue keep their current visibility.
+  status                     String                       @default("PUBLISHED") @db.VarChar(20)
+  /// Opt-in: when true, new grades are withheld from learners until staff release them.
+  hold_grades                Boolean                      @default(false)
   /// "PASS_FAIL" (every graded unit passed) or "WEIGHTED" (category weights roll up to a final grade)
   grading_mode               String                       @default("PASS_FAIL") @db.VarChar(20)
   pass_mark                  Int                          @default(50)

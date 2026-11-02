@@ -30,3 +30,20 @@ Existing rows and mobile writes default to `AUTO`, so nothing breaks.
 - `GET /programs-full-details` — each `cohorts[].courses[].enrollments[]` now
   carries `enrolled_source` (Prisma `include` returns it automatically). The FE
   `SomEnrollment` type should add `enrolled_source: "AUTO" | "MANUAL"`.
+
+---
+
+## 2. Program status, grading mode, module count — shipped
+
+**Why:** the Programs table needs Status (Published/Draft), a Grading column
+(Weighted / Pass-fail) and "N modules · N units"; the workspace hero shows status.
+
+**Schema (migration `20261102130000_add_program_status_and_hold_grades`):**
+- `program.status VARCHAR(20) NOT NULL DEFAULT 'PUBLISHED'` — `"DRAFT" | "PUBLISHED"`.
+  Defaulted PUBLISHED so existing programs and the mobile catalogue keep visibility.
+- `program.hold_grades BOOLEAN NOT NULL DEFAULT false` — opt-in grade hold (see §3).
+
+**Surfaced in `GET /programs-full-details` → `program_details`:**
+`status`, `grading_mode` (`"PASS_FAIL" | "WEIGHTED"`, already existed), `pass_mark`,
+`module_count` (from `_count.modules`). These also appear top-level via `...program`.
+FE `SomProgramFull` should add `status`, `grading_mode`, `pass_mark`, `module_count`.
