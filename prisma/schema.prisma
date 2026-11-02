@@ -1532,6 +1532,14 @@ model program {
   /// { requireGrade, requireAllUnits, minAttendance: number | null }
   completion_rules           Json?
   auto_certificate           Boolean                      @default(true)
+  /// Marketing/details content for the learner program page (all optional).
+  /// string[] of "what you'll learn" outcomes.
+  learning_outcomes          Json?
+  /// Free-text "who can apply" summary, complementing the eligibility rules.
+  eligibility_summary        String?                      @db.Text
+  /// user.id of the lead instructor (plain reference; resolved from the roster).
+  lead_instructor_id         Int?
+  lead_instructor_bio        String?                      @db.Text
   instructors_roster         program_instructor[]
   lms_applications           lms_application[]
 

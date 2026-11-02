@@ -9,6 +9,21 @@ import {
   resolveBranchIdOrDefault,
 } from "../branches/branchService";
 
+// Mirrors the personName helper used across the LMS services: prefer the
+// user_info first/last name, fall back to the account name, then a generic label.
+const personName = (
+  user: {
+    name: string | null;
+    user_info?: { first_name: string | null; last_name: string | null } | null;
+  } | null,
+) =>
+  [user?.user_info?.first_name, user?.user_info?.last_name]
+    .filter(Boolean)
+    .join(" ")
+    .trim() ||
+  user?.name ||
+  "Instructor";
+
 export class ProgramService {
   private buildInstructorAssignmentActionUrl(
     programId: number,
@@ -149,6 +164,27 @@ export class ProgramService {
             prerequisite: { select: { title: true } },
           },
         },
+        // Marketing roster for the learner program-details page. The program
+        // scalars (learning_outcomes, eligibility_summary, lead_instructor_id,
+        // lead_instructor_bio) come through by default because this query uses
+        // `include`, not `select`.
+        instructors_roster: {
+          select: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                user_info: {
+                  select: {
+                    first_name: true,
+                    last_name: true,
+                    photo: true,
+                  },
+                },
+              },
+            },
+          },
+        },
         cohorts: {
           where: {
             status: { in: ["Ongoing", "Upcoming"] },
@@ -193,6 +229,23 @@ export class ProgramService {
           prerequisites: program.prerequisitePrograms.map(
             (p) => p.prerequisite.title,
           ),
+          // Program marketing fields (additive, mobile-safe).
+          outcomes: Array.isArray(program.learning_outcomes)
+            ? program.learning_outcomes
+            : [],
+          eligibilitySummary: program.eligibility_summary ?? null,
+          instructors: program.instructors_roster.map((roster) => {
+            const instructor = roster.user;
+            const isLead = instructor.id === program.lead_instructor_id;
+            return {
+              id: instructor.id,
+              name: personName(instructor),
+              photo: instructor.user_info?.photo ?? null,
+              role: null,
+              isLead,
+              bio: isLead ? (program.lead_instructor_bio ?? null) : null,
+            };
+          }),
           courses: selectedCohort.courses.map((course) => ({
             id: course.id,
             name: course.name,

@@ -170,3 +170,52 @@ untouched**.
    array, **gated exactly like the other grade fields**: `[]` while the grade is
    held (`grade_released === false`), the stored comments once released. The key is
    always present (mobile safety).
+
+## 8. Program marketing fields — shipped
+
+Three new **program-level** scalars plus a lightweight instructor roster are now
+surfaced on the member program catalogue so the learner **program-details** page can
+render outcomes, an eligibility blurb, and the people teaching the program.
+
+**Storage (all additive, nullable — existing rows and the mobile app are
+unaffected):** new on `program`:
+
+- `learning_outcomes Json?` — array of outcome strings.
+- `eligibility_summary String? @db.Text` — short who-can-apply blurb.
+- `lead_instructor_id Int?` — the roster user flagged as the lead.
+- `lead_instructor_bio String? @db.Text` — bio shown only for the lead.
+
+The teaching roster itself is the existing `program_instructor[]` relation
+(`program.instructors_roster`); each row links a `user`.
+
+**Surfaced on** `GET /get-member-programs`
+(`programService.getAllProgramForMember`). The query uses `include`, so the new
+program scalars come through by default; the `include` was extended to load
+`instructors_roster → user (id, name, user_info { first_name, last_name, photo })`.
+
+Each program object in the response gains:
+
+```jsonc
+{
+  "outcomes": ["Understand covenant theology", "…"], // string[]; [] when none
+  "eligibilitySummary": "Open to baptised members…",  // string | null
+  "instructors": [
+    {
+      "id": 42,                 // user id
+      "name": "Jane Doe",       // personName(user): user_info name → account name → "Instructor"
+      "photo": "https://…",     // user_info.photo ?? null
+      "role": null,             // no roster role column yet; always null for now
+      "isLead": true,           // user.id === program.lead_instructor_id
+      "bio": "15 years in…"     // lead_instructor_bio when isLead, else null
+    }
+  ]
+}
+```
+
+All three keys are **always present** (arrays default to `[]`, scalars to `null`),
+so the mobile client is safe. The `role` field is reserved for a future roster role
+and is `null` until that column exists.
+
+**FE `Programs` type** (`src/utils/api/ministrySchool/interfaces.ts`) adds
+`outcomes: string[]`, `eligibilitySummary: string | null`, and
+`instructors: { id: number; name: string; photo: string | null; role: string | null; isLead: boolean; bio: string | null }[]`.
