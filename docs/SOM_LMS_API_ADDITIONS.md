@@ -123,3 +123,50 @@ the FE Learners list and cohort roster read the per-enrollment objects rather th
 that has enrollments (never once per learner); each cohort's rows are keyed by
 `enrollmentId` into a map and read back when assembling learner rows. A cohort
 whose gradebook throws leaves its learners on `null`/`0` gracefully.
+
+---
+
+## 7. Inline grading comments — shipped
+
+**Why:** the essay grading overlay lets staff drop inline notes (praise / things to
+improve, optionally anchored to a quote). The learner's essay result then shows a
+Strength / To-improve breakdown. Both need to read/write the same stored comments.
+
+**Storage:** new `assignment_submission.inline_comments Json?` (additive, nullable;
+defaults to no value so existing rows and the mobile app are unaffected). Shape:
+
+```ts
+type InlineComment = {
+  id: string;                        // stable id (server mints one if omitted)
+  text: string;                      // the note (required)
+  quote?: string;                    // the span it anchors to
+  kind?: "praise" | "improve";
+};
+```
+
+**Payload field — `comments`** on `PUT /grade-with-rubric`:
+
+```jsonc
+{
+  "submissionId": 123,
+  "scores": { "<criterionId>": "<levelId>" },
+  "feedback": "…",
+  "comments": [{ "id": "c1", "text": "Strong thesis", "quote": "…", "kind": "praise" }]
+}
+```
+
+`comments` is **optional**. When present it is validated/normalized
+(`normalizeInlineComments` in `lms/lmsHttp.ts`) and stored in the **same submission
+update** that writes `score`/`feedback`/`rubric_scores`
+(`programService.gradeAssignmentSubmission`, via `assessmentService.gradeWithRubric`).
+When **omitted** (`undefined`/`null`) the stored `inline_comments` are **left
+untouched**.
+
+**Surfaced in two places:**
+1. **Staff grading fetch** `GET /submission`
+   (`assessmentService.getSubmissionForGrading`) now returns `comments` (array;
+   `[]` when none) so the overlay reloads existing notes when reopened.
+2. **Learner read** `learnerService.submission` now returns a top-level `comments`
+   array, **gated exactly like the other grade fields**: `[]` while the grade is
+   held (`grade_released === false`), the stored comments once released. The key is
+   always present (mobile safety).

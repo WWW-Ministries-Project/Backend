@@ -1,7 +1,9 @@
+import { Prisma } from "@prisma/client";
 import { max, sub } from "date-fns";
 import { prisma } from "../../Models/context";
 import { notificationService } from "../notifications/notificationService";
 import { curriculumService } from "./lms/curriculumService";
+import { type InlineComment } from "./lms/lmsHttp";
 import {
   getBranchScopedWhere,
   resolveBranchIdOrDefault,
@@ -1841,6 +1843,7 @@ export class ProgramService {
     grade: number;
     actorUserId?: number | null;
     feedback?: string | null;
+    comments?: InlineComment[];
   }) {
     const submission = await prisma.assignment_submission.findUnique({
       where: { id: args.submissionId },
@@ -1906,6 +1909,11 @@ export class ProgramService {
           status: "GRADED",
           score: grade,
           feedback: normalizedFeedback,
+          // Only overwrite inline comments when the payload carried them; an
+          // omitted `comments` leaves any existing comments untouched.
+          ...(args.comments !== undefined
+            ? { inline_comments: args.comments as unknown as Prisma.InputJsonValue }
+            : {}),
           gradedById:
             typeof args.actorUserId === "number" && args.actorUserId > 0
               ? args.actorUserId

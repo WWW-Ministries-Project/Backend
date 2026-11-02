@@ -330,6 +330,7 @@ export class LearnerService {
         gradedAt: true,
         grade_released: true,
         rubric_scores: true,
+        inline_comments: true,
         gradedBy: { select: userSelect },
       },
     });
@@ -380,6 +381,12 @@ export class LearnerService {
       }
     }
 
+    // Inline grading comments feed the learner's Strength/To-improve view. Gated
+    // exactly like the score/feedback: hidden while the grade is held, but the
+    // key stays present (mobile safety).
+    const comments =
+      !held && latest && Array.isArray(latest.inline_comments) ? latest.inline_comments : [];
+
     return {
       topicId: unit.topic.id,
       programId: unit.topic.programId,
@@ -409,6 +416,7 @@ export class LearnerService {
       quiz,
       rubric,
       rubricScore,
+      comments,
     };
   }
 }

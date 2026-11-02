@@ -1949,6 +1949,9 @@ model assignment_submission {
   gradedAt       DateTime?
   /// { [criterionId]: levelId } when graded with a rubric
   rubric_scores  Json?
+  /// Inline feedback left on the submission during grading:
+  /// [{ id, text, quote?, kind?: "praise" | "improve" }]
+  inline_comments Json?
   /// Whether the grade is visible to the learner. Defaulted true so existing
   /// grades and the mobile app keep showing scores; set false only when the
   /// program has hold_grades on, then flipped true by the release action.
