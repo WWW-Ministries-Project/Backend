@@ -1,6 +1,13 @@
 import { assessmentService } from "./assessmentService";
 import { assertCohortAbility, assertProgramAbility, programIdForSubmission, programIdForTopic } from "./lmsAccess";
-import { LmsError, lmsHandler, optionalPositiveInt, positiveInt, requestUserId } from "./lmsHttp";
+import {
+  LmsError,
+  lmsHandler,
+  normalizeInlineComments,
+  optionalPositiveInt,
+  positiveInt,
+  requestUserId,
+} from "./lmsHttp";
 
 const idList = (value: unknown, field: string) => {
   const list = Array.isArray(value) ? value : [];
@@ -68,6 +75,7 @@ export const assessmentController = {
       submissionId,
       scores: Object.fromEntries(Object.entries(scores).map(([k, v]) => [k, String(v)])),
       feedback: text(req.body.feedback),
+      comments: normalizeInlineComments(req.body.comments),
       actorUserId: requestUserId(req),
     });
   }),

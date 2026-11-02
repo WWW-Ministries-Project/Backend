@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import { Request, Response } from "express";
 import { AppError } from "../../../utils/custom-error-handlers";
 
@@ -41,6 +42,45 @@ export const optionalDate = (value: unknown, field: string): Date | null => {
 export const requestUserId = (req: Request): number | null => {
   const id = Number((req as Request & { user?: { id?: unknown } }).user?.id);
   return Number.isInteger(id) && id > 0 ? id : null;
+};
+
+/**
+ * Inline feedback left on a submission while grading. Stored on
+ * `assignment_submission.inline_comments` and surfaced to both the staff
+ * grading overlay and the learner's Strength/To-improve view.
+ */
+export type InlineComment = {
+  id: string;
+  text: string;
+  quote?: string;
+  kind?: "praise" | "improve";
+};
+
+/**
+ * Validates an optional inline-comments payload. Returns `undefined` when the
+ * field is omitted (callers leave the stored comments untouched) and a
+ * normalized array otherwise. Each comment keeps a stable id, minting one when
+ * the client did not supply it.
+ */
+export const normalizeInlineComments = (
+  value: unknown,
+  field = "comments",
+): InlineComment[] | undefined => {
+  if (value === undefined || value === null) return undefined;
+  if (!Array.isArray(value)) throw new LmsError(`${field} must be an array`);
+  return value.map((raw, i) => {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      throw new LmsError(`${field}[${i}] must be an object`);
+    }
+    const c = raw as Record<string, unknown>;
+    const text = typeof c.text === "string" ? c.text.trim() : "";
+    if (!text) throw new LmsError(`${field}[${i}].text is required`);
+    const id = typeof c.id === "string" && c.id.trim() ? c.id.trim() : randomUUID();
+    const comment: InlineComment = { id, text };
+    if (typeof c.quote === "string" && c.quote.trim()) comment.quote = c.quote.trim();
+    if (c.kind === "praise" || c.kind === "improve") comment.kind = c.kind;
+    return comment;
+  });
 };
 
 /**

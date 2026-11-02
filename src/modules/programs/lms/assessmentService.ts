@@ -15,7 +15,7 @@ import {
   type RubricCriterion,
   type RubricLevel,
 } from "./gradebookMath";
-import { LmsError } from "./lmsHttp";
+import { LmsError, type InlineComment } from "./lmsHttp";
 
 export const QUESTION_TYPES = ["MULTIPLE_CHOICE", "TRUE_FALSE", "SHORT_ANSWER", "ESSAY"] as const;
 export type QuestionType = (typeof QUESTION_TYPES)[number];
@@ -280,6 +280,7 @@ export class AssessmentService {
     submissionId: number;
     scores: Record<string, string>;
     feedback: string | null;
+    comments?: InlineComment[];
     actorUserId: number | null;
   }) {
     const submission = await prisma.assignment_submission.findUnique({
@@ -310,6 +311,7 @@ export class AssessmentService {
       submissionId: args.submissionId,
       grade,
       feedback: args.feedback,
+      comments: args.comments,
       actorUserId: args.actorUserId,
     });
     return { ...result, rubricScores: args.scores };
@@ -329,6 +331,7 @@ export class AssessmentService {
         score: true,
         feedback: true,
         rubric_scores: true,
+        inline_comments: true,
         enrollment: {
           select: {
             id: true,
@@ -353,6 +356,7 @@ export class AssessmentService {
       score: submission.score,
       feedback: submission.feedback,
       rubricScores: submission.rubric_scores,
+      comments: Array.isArray(submission.inline_comments) ? submission.inline_comments : [],
       learnerName: personName(submission.enrollment.user),
       className: submission.enrollment.course.name,
       enrollmentId: submission.enrollment.id,
@@ -420,6 +424,7 @@ export class AssessmentService {
                 id: true,
                 user_id: true,
                 completed: true,
+                enrolled_source: true,
                 user: { select: { name: true, user_info: { select: { first_name: true, last_name: true } } } },
                 progress: { select: { topicId: true, score: true, status: true, completed: true } },
                 submissions: {
@@ -499,6 +504,7 @@ export class AssessmentService {
           classId: course.id,
           className: course.name,
           classFormat: course.classFormat,
+          enrolledSource: enrollment.enrolled_source,
           attendance: att,
           cells,
           ...summary,

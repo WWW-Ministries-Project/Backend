@@ -1,7 +1,9 @@
+import { Prisma } from "@prisma/client";
 import { max, sub } from "date-fns";
 import { prisma } from "../../Models/context";
 import { notificationService } from "../notifications/notificationService";
 import { curriculumService } from "./lms/curriculumService";
+import { type InlineComment } from "./lms/lmsHttp";
 import {
   getBranchScopedWhere,
   resolveBranchIdOrDefault,
@@ -199,6 +201,11 @@ export class ProgramService {
             facilitator: course.instructor ? course.instructor.name : "TBA",
             enrolled: course.enrolled,
             capacity: course.capacity,
+            // Delivery details for the apply modal (mode pill, where, start date).
+            mode: course.classFormat,
+            location: course.location,
+            meetingLink: course.meetingLink,
+            startDate: selectedCohort.startDate,
           })),
         };
       })
@@ -387,6 +394,7 @@ export class ProgramService {
         ...(programIds ? { id: { in: programIds } } : {}),
       },
       include: {
+        _count: { select: { modules: true } },
         topics: {
           orderBy: {
             order_number: "asc",
@@ -471,11 +479,44 @@ export class ProgramService {
       },
     });
 
-    return programs.map((program) => {
+    // Lazy import avoids a module-init cycle: assessmentService imports ProgramService.
+    const { assessmentService } = await import("./lms/assessmentService.js");
+
+    return Promise.all(
+      programs.map(async (program) => {
       const totalTopics = program.topics.length;
       const instructorMap = new Map<number, any>();
       const enrolledMemberMap = new Map<number, any>();
       let totalEnrollments = 0;
+
+      // Per-learner weighted grade / attendance / missing-work, computed once per
+      // cohort (not per learner): getGradebook returns every enrollment's row for
+      // the cohort, which we key by enrollmentId and read back when building rows.
+      const gradebookByEnrollment = new Map<
+        number,
+        { finalGrade: number | null; attendance: number | null; missing: number }
+      >();
+      const cohortIdsWithEnrollments = program.cohorts
+        .filter((cohort) =>
+          cohort.courses.some((course) => course.enrollments.length > 0),
+        )
+        .map((cohort) => cohort.id);
+      await Promise.all(
+        cohortIdsWithEnrollments.map(async (cohortId) => {
+          try {
+            const gradebook = await assessmentService.getGradebook(cohortId, null);
+            for (const row of gradebook.rows) {
+              gradebookByEnrollment.set(row.enrollmentId, {
+                finalGrade: row.finalGrade,
+                attendance: row.attendance,
+                missing: row.missing,
+              });
+            }
+          } catch {
+            // A cohort that can't be graded leaves its learners on null/0 below.
+          }
+        }),
+      );
 
       const cohorts = program.cohorts.map((cohort) => {
         const courses = cohort.courses.map((course) => {
@@ -539,12 +580,17 @@ export class ProgramService {
               }
             }
 
+            const gradebookRow = gradebookByEnrollment.get(enrollment.id) ?? null;
+
             return {
               ...enrollment,
               completion_status: completion.status,
               completion_percent: completion.percent,
               completed_topics: completion.completedTopics,
               total_topics: completion.totalTopics,
+              grade_percent: gradebookRow ? gradebookRow.finalGrade : null,
+              attendance_percent: gradebookRow ? gradebookRow.attendance : null,
+              missing_count: gradebookRow ? gradebookRow.missing : 0,
             };
           });
 
@@ -632,11 +678,21 @@ export class ProgramService {
             ).values(),
           );
 
+          // Grade/attendance follow the learner's latest enrollment, which is the
+          // same one driving the cohort/class shown on the row above.
+          const gradebookRow =
+            (latestEnrollment &&
+              gradebookByEnrollment.get(latestEnrollment.enrollment_id)) ||
+            null;
+
           return {
             ...memberEntry.member,
             user_id: memberEntry.member?.id ?? null,
             full_name: fullName,
             status: overallStatus.toLowerCase(),
+            grade_percent: gradebookRow ? gradebookRow.finalGrade : null,
+            attendance_percent: gradebookRow ? gradebookRow.attendance : null,
+            missing_count: gradebookRow ? gradebookRow.missing : 0,
             cohort: latestEnrollment
               ? {
                   id: latestEnrollment.cohort_id,
@@ -678,6 +734,10 @@ export class ProgramService {
           leader_required: program.leader_required,
           ministry_required: program.ministry_required,
           completed: program.completed,
+          status: program.status,
+          grading_mode: program.grading_mode,
+          pass_mark: program.pass_mark,
+          module_count: program._count?.modules ?? 0,
           createdAt: program.createdAt,
           updatedAt: program.updatedAt,
         },
@@ -704,7 +764,8 @@ export class ProgramService {
           ).length,
         },
       };
-    });
+      }),
+    );
   }
 
   async getAllTopics() {
@@ -1442,6 +1503,14 @@ export class ProgramService {
     const totalQuestions = questions.length;
     const percentageScore = (score / questions.length) * 100;
 
+    // Opt-in hold: auto-graded quizzes stay hidden too when the program holds grades.
+    const program = await prisma.program.findUnique({
+      where: { id: programId },
+      select: { hold_grades: true },
+    });
+    const holdGrades = Boolean(program?.hold_grades);
+    const now = new Date();
+
     const submission = await prisma.assignment_submission.create({
       data: {
         enrollmentId: enrollment.id,
@@ -1450,7 +1519,9 @@ export class ProgramService {
         attempt: currentAttempt,
         status: "GRADED",
         score,
-        gradedAt: new Date(),
+        gradedAt: now,
+        grade_released: !holdGrades,
+        released_at: holdGrades ? null : now,
       },
     });
 
@@ -1772,6 +1843,7 @@ export class ProgramService {
     grade: number;
     actorUserId?: number | null;
     feedback?: string | null;
+    comments?: InlineComment[];
   }) {
     const submission = await prisma.assignment_submission.findUnique({
       where: { id: args.submissionId },
@@ -1790,6 +1862,11 @@ export class ProgramService {
                 cohort: {
                   select: {
                     programId: true,
+                    program: {
+                      select: {
+                        hold_grades: true,
+                      },
+                    },
                   },
                 },
               },
@@ -1819,6 +1896,12 @@ export class ProgramService {
     const nextStatus = grade >= passMark ? "PASS" : "FAIL";
     const normalizedFeedback = String(args.feedback || "").trim() || null;
 
+    // Opt-in hold: grades are visible immediately unless the owning program has
+    // hold_grades on, in which case the grade is withheld until staff release it.
+    const holdGrades = Boolean(
+      submission.enrollment.course.cohort.program?.hold_grades,
+    );
+
     const result = await prisma.$transaction(async (tx) => {
       const updatedSubmission = await tx.assignment_submission.update({
         where: { id: submission.id },
@@ -1826,11 +1909,18 @@ export class ProgramService {
           status: "GRADED",
           score: grade,
           feedback: normalizedFeedback,
+          // Only overwrite inline comments when the payload carried them; an
+          // omitted `comments` leaves any existing comments untouched.
+          ...(args.comments !== undefined
+            ? { inline_comments: args.comments as unknown as Prisma.InputJsonValue }
+            : {}),
           gradedById:
             typeof args.actorUserId === "number" && args.actorUserId > 0
               ? args.actorUserId
               : null,
           gradedAt: now,
+          grade_released: !holdGrades,
+          released_at: holdGrades ? null : now,
         },
       });
 
@@ -1877,14 +1967,17 @@ export class ProgramService {
       return updatedSubmission;
     });
 
-    await this.notifyStudentOfAssignmentGrade({
-      recipientUserId: submission.enrollment.user?.id,
-      actorUserId: args.actorUserId ?? null,
-      topicName: submission.learningUnit.topic.name,
-      programId: submission.enrollment.course.cohort.programId,
-      topicId: submission.learningUnit.topic.id,
-      grade,
-    });
+    // Defer the learner notification when the grade is held; it fires on release.
+    if (!holdGrades) {
+      await this.notifyStudentOfAssignmentGrade({
+        recipientUserId: submission.enrollment.user?.id,
+        actorUserId: args.actorUserId ?? null,
+        topicName: submission.learningUnit.topic.name,
+        programId: submission.enrollment.course.cohort.programId,
+        topicId: submission.learningUnit.topic.id,
+        grade,
+      });
+    }
 
     return {
       submissionId: result.id,
@@ -1926,6 +2019,70 @@ export class ProgramService {
     }
 
     return results;
+  }
+
+  /**
+   * Releases previously held grades for a cohort (optionally narrowed to a single
+   * topic/learning unit or a single course): flips `grade_released` to true, stamps
+   * `released_at`, and fires the deferred learner notification for each newly
+   * released submission. Returns the number of submissions released.
+   */
+  async releaseGrades(args: {
+    cohortId: number;
+    topicId?: number | null;
+    courseId?: number | null;
+    actorUserId?: number | null;
+  }) {
+    const submissions = await prisma.assignment_submission.findMany({
+      where: {
+        grade_released: false,
+        enrollment: {
+          course: {
+            cohortId: args.cohortId,
+            ...(args.courseId ? { id: args.courseId } : {}),
+          },
+        },
+        ...(args.topicId ? { learningUnit: { topicId: args.topicId } } : {}),
+      },
+      select: {
+        id: true,
+        score: true,
+        enrollment: {
+          select: {
+            user: { select: { id: true } },
+            course: {
+              select: { cohort: { select: { programId: true } } },
+            },
+          },
+        },
+        learningUnit: {
+          select: { topic: { select: { id: true, name: true } } },
+        },
+      },
+    });
+
+    if (submissions.length === 0) {
+      return { released: 0 };
+    }
+
+    const now = new Date();
+    await prisma.assignment_submission.updateMany({
+      where: { id: { in: submissions.map((submission) => submission.id) } },
+      data: { grade_released: true, released_at: now },
+    });
+
+    for (const submission of submissions) {
+      await this.notifyStudentOfAssignmentGrade({
+        recipientUserId: submission.enrollment.user?.id,
+        actorUserId: args.actorUserId ?? null,
+        topicName: submission.learningUnit.topic.name,
+        programId: submission.enrollment.course.cohort.programId,
+        topicId: submission.learningUnit.topic.id,
+        grade: submission.score ?? 0,
+      });
+    }
+
+    return { released: submissions.length };
   }
 
   private getAssignmentConfig(learningUnit: {

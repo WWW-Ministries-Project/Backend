@@ -192,7 +192,8 @@ export class ApplicationService {
       if (existing) throw new LmsError("The member is already enrolled in this program", 409);
 
       const enrollment = await tx.enrollment.create({
-        data: { user_id: app.userId, course_id: courseId, enrolledAt: new Date() },
+        // Approving a held application is a staff decision, so it counts as MANUAL.
+        data: { user_id: app.userId, course_id: courseId, enrolledAt: new Date(), enrolled_source: "MANUAL" },
         select: { id: true },
       });
       await tx.course.update({ where: { id: courseId }, data: { enrolled: { increment: 1 } } });
