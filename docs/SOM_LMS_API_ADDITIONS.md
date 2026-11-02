@@ -47,3 +47,22 @@ Existing rows and mobile writes default to `AUTO`, so nothing breaks.
 `status`, `grading_mode` (`"PASS_FAIL" | "WEIGHTED"`, already existed), `pass_mark`,
 `module_count` (from `_count.modules`). These also appear top-level via `...program`.
 FE `SomProgramFull` should add `status`, `grading_mode`, `pass_mark`, `module_count`.
+
+---
+
+## 3. Per-class delivery details (apply modal) — shipped
+
+**Why:** the apply "choose a class" step shows a mode pill, location and start date.
+
+**`GET /get-member-programs` → each `courses[]`** now also returns (no schema
+change — fields already on `course`/`cohort`):
+`mode` (= `course.classFormat`: `In_Person | Online | Hybrid | null`),
+`location`, `meetingLink`, `startDate` (= the selected cohort's `startDate`).
+FE `ClassOption` should add `mode`, `location`, `meetingLink`, `startDate`.
+
+## 4. Library "used in N programs" — shipped
+
+**`GET`** content-library list items already return `usedBy` (unit count); they
+now also return `usedInPrograms` = distinct count of programs the item is used in.
+(Question-bank per-question usage is NOT relational — questions are copied into a
+unit's JSON — so a "used in N" count there needs a join table; deferred.)

@@ -93,11 +93,19 @@ export class LibraryService {
         ...(filters.type && LIBRARY_TYPES.includes(filters.type as LibraryType) ? { type: filters.type } : {}),
       },
       orderBy: { updatedAt: "desc" },
-      include: { _count: { select: { units: true } } },
+      include: {
+        _count: { select: { units: true } },
+        units: { select: { topic: { select: { programId: true } } } },
+      },
     });
     return rows
       .filter((r) => !tag || (Array.isArray(r.tags) ? r.tags : []).some((t) => String(t).toLowerCase() === tag))
-      .map(({ _count, ...r }) => ({ ...r, usedBy: _count.units }));
+      .map(({ _count, units, ...r }) => ({
+        ...r,
+        usedBy: _count.units,
+        // Distinct programs this item is used in (for "Used in N programs").
+        usedInPrograms: new Set(units.map((u) => u.topic?.programId).filter((id): id is number => id != null)).size,
+      }));
   }
 
   async create(body: Record<string, unknown>, userId: number | null) {

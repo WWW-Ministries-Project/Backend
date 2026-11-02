@@ -199,6 +199,11 @@ export class ProgramService {
             facilitator: course.instructor ? course.instructor.name : "TBA",
             enrolled: course.enrolled,
             capacity: course.capacity,
+            // Delivery details for the apply modal (mode pill, where, start date).
+            mode: course.classFormat,
+            location: course.location,
+            meetingLink: course.meetingLink,
+            startDate: selectedCohort.startDate,
           })),
         };
       })
