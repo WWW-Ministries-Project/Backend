@@ -92,3 +92,34 @@ held, `score/passed/feedback/gradedAt/rubric` come back null, `status:"awaiting_
 quiz correct answers are not revealed, and `progress.score`/pass-fail are concealed —
 **all keys preserved** (mobile safety). Known v1 limitation: the `finalGrade`
 aggregate in `overview` can still reflect a held component grade.
+
+---
+
+## 6. Learner grade/attendance on rows — shipped
+
+**Why:** the admin "Learners" table wants weighted grade %, attendance % and a
+missing-work count per learner, not just completion %.
+
+**`GET /programs-full-details`** (`getAllProgramsWithEnrolledMembersAndCompletion`)
+— each `enrolled_members[]` entry now also returns three fields (additive; no
+existing key changed, so the mobile app is unaffected):
+- `grade_percent` — weighted final grade (`gradebook row.finalGrade`); `null` in
+  `PASS_FAIL` mode or when the learner has no counted grade yet.
+- `attendance_percent` — attendance % (`row.attendance`); `null` until attendance
+  is taken for a session.
+- `missing_count` — number of past-due, unsubmitted assignment units
+  (`row.missing`); `0` when none / not found.
+
+On `enrolled_members[]` these mirror the gradebook's authoritative computation
+(`assessmentService.getGradebook`) and follow the learner's **latest** enrollment
+(the same one driving the `cohort`/`class` shown on the row).
+
+The **same three fields** are also added to every per-enrollment object under
+`cohorts[].courses[].enrollments[]` (keyed by that enrollment's own id), because
+the FE Learners list and cohort roster read the per-enrollment objects rather than
+`enrolled_members[]`. Same additive/mobile-safe rules; missing lookup → `null`/`0`.
+
+**Perf:** `getGradebook(cohortId, null)` is called **once per distinct cohort**
+that has enrollments (never once per learner); each cohort's rows are keyed by
+`enrollmentId` into a map and read back when assembling learner rows. A cohort
+whose gradebook throws leaves its learners on `null`/`0` gracefully.

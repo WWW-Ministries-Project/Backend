@@ -477,11 +477,44 @@ export class ProgramService {
       },
     });
 
-    return programs.map((program) => {
+    // Lazy import avoids a module-init cycle: assessmentService imports ProgramService.
+    const { assessmentService } = await import("./lms/assessmentService.js");
+
+    return Promise.all(
+      programs.map(async (program) => {
       const totalTopics = program.topics.length;
       const instructorMap = new Map<number, any>();
       const enrolledMemberMap = new Map<number, any>();
       let totalEnrollments = 0;
+
+      // Per-learner weighted grade / attendance / missing-work, computed once per
+      // cohort (not per learner): getGradebook returns every enrollment's row for
+      // the cohort, which we key by enrollmentId and read back when building rows.
+      const gradebookByEnrollment = new Map<
+        number,
+        { finalGrade: number | null; attendance: number | null; missing: number }
+      >();
+      const cohortIdsWithEnrollments = program.cohorts
+        .filter((cohort) =>
+          cohort.courses.some((course) => course.enrollments.length > 0),
+        )
+        .map((cohort) => cohort.id);
+      await Promise.all(
+        cohortIdsWithEnrollments.map(async (cohortId) => {
+          try {
+            const gradebook = await assessmentService.getGradebook(cohortId, null);
+            for (const row of gradebook.rows) {
+              gradebookByEnrollment.set(row.enrollmentId, {
+                finalGrade: row.finalGrade,
+                attendance: row.attendance,
+                missing: row.missing,
+              });
+            }
+          } catch {
+            // A cohort that can't be graded leaves its learners on null/0 below.
+          }
+        }),
+      );
 
       const cohorts = program.cohorts.map((cohort) => {
         const courses = cohort.courses.map((course) => {
@@ -545,12 +578,17 @@ export class ProgramService {
               }
             }
 
+            const gradebookRow = gradebookByEnrollment.get(enrollment.id) ?? null;
+
             return {
               ...enrollment,
               completion_status: completion.status,
               completion_percent: completion.percent,
               completed_topics: completion.completedTopics,
               total_topics: completion.totalTopics,
+              grade_percent: gradebookRow ? gradebookRow.finalGrade : null,
+              attendance_percent: gradebookRow ? gradebookRow.attendance : null,
+              missing_count: gradebookRow ? gradebookRow.missing : 0,
             };
           });
 
@@ -638,11 +676,21 @@ export class ProgramService {
             ).values(),
           );
 
+          // Grade/attendance follow the learner's latest enrollment, which is the
+          // same one driving the cohort/class shown on the row above.
+          const gradebookRow =
+            (latestEnrollment &&
+              gradebookByEnrollment.get(latestEnrollment.enrollment_id)) ||
+            null;
+
           return {
             ...memberEntry.member,
             user_id: memberEntry.member?.id ?? null,
             full_name: fullName,
             status: overallStatus.toLowerCase(),
+            grade_percent: gradebookRow ? gradebookRow.finalGrade : null,
+            attendance_percent: gradebookRow ? gradebookRow.attendance : null,
+            missing_count: gradebookRow ? gradebookRow.missing : 0,
             cohort: latestEnrollment
               ? {
                   id: latestEnrollment.cohort_id,
@@ -714,7 +762,8 @@ export class ProgramService {
           ).length,
         },
       };
-    });
+      }),
+    );
   }
 
   async getAllTopics() {
