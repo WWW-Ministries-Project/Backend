@@ -2269,6 +2269,13 @@ export class ProgramService {
       throw new Error("Topic does not belong to the provided program");
     }
 
+    // A draft assessment (not yet published from the builder) can't be taken,
+    // even if an admin activated it for the cohort.
+    const unitData = this.deserializeLearningUnitData(learningUnit.data);
+    if ((unitData as any)?.status === "draft") {
+      throw new Error("This assessment hasn't been published yet");
+    }
+
     const enrollments = await prisma.enrollment.findMany({
       where: {
         user_id: args.userId,
@@ -2458,6 +2465,11 @@ export class ProgramService {
       throw new Error("Invalid learning unit payload");
     }
 
+    // A quiz/essay saved from the Assessments builder can start life as a draft
+    // with no questions yet ("Create & add questions"). Drafts skip the content
+    // requirement; publishing (status !== "draft") runs the full validation.
+    const isDraftAssessment = learningUnit.data?.status === "draft";
+
     switch (learningUnit.type) {
       case "video":
         if (!learningUnit.data.url) throw new Error("Video URL required");
@@ -2483,11 +2495,11 @@ export class ProgramService {
         break;
 
       case "assignment":
-        this.validateMCQAssignment(learningUnit.data);
+        if (!isDraftAssessment) this.validateMCQAssignment(learningUnit.data);
         break;
 
       case "assignment-essay":
-        if (!learningUnit.data.question)
+        if (!isDraftAssessment && !learningUnit.data.question)
           throw new Error("Essay question required");
         break;
 
