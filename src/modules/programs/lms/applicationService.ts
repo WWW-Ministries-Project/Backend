@@ -26,7 +26,7 @@ export class ApplicationService {
         cohort: {
           select: {
             programId: true,
-            program: { select: { member_required: true, leader_required: true, ministry_required: true } },
+            program: { select: { member_required: true, leader_required: true, ministry_required: true, auto_enroll: true } },
           },
         },
       },
@@ -73,6 +73,7 @@ export class ApplicationService {
     return {
       course,
       programId: course.cohort.programId,
+      autoEnroll: course.cohort.program.auto_enroll !== false,
       alreadyEnrolled: Boolean(existing),
       reasons: eligibilityReasons({
         program: course.cohort.program,
@@ -88,14 +89,16 @@ export class ApplicationService {
   }
 
   /**
-   * Member applies for a class: eligible applicants are enrolled straight away,
-   * the rest are queued for review. The existing POST /enroll is unchanged.
+   * Member applies for a class: when the program allows auto-enrolment, eligible
+   * applicants are enrolled straight away and the rest are queued for review.
+   * When auto-enrolment is off, every applicant is queued for review. The
+   * existing POST /enroll is unchanged.
    */
   async apply(userId: number, courseId: number, note: string | null) {
     const check = await this.checkEligibility(userId, courseId);
     if (check.alreadyEnrolled) throw new LmsError("You are already enrolled in this program", 409);
 
-    if (!check.reasons.length) {
+    if (check.autoEnroll && !check.reasons.length) {
       const enrollment = await this.enrollments.enrollUser({ course_id: courseId, user_id: userId });
       return { status: "ENROLLED" as const, enrollmentId: enrollment?.id ?? null, reasons: [] as string[] };
     }
