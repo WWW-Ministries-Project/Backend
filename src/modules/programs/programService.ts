@@ -1603,16 +1603,31 @@ export class ProgramService {
       throw new Error("Assignment questions are not configured");
     }
 
-    let score = 0;
+    const totalQuestions = questions.length;
 
+    const isOpenQuestion = (question: any) => {
+      const type = String(question?.type || "MULTIPLE_CHOICE").toUpperCase();
+      return type === "SHORT_ANSWER" || type === "ESSAY";
+    };
+    // A quiz that mixes in short-answer/essay questions can't be fully
+    // auto-graded; it waits for the instructor like an essay.
+    const requiresReview = questions.some(isOpenQuestion);
+
+    // Points-weighted auto-score over the choice questions. Each question
+    // defaults to 1 point, so legacy all-MCQ quizzes score exactly as before.
+    let earnedPoints = 0;
+    let autoPoints = 0;
     for (const question of questions) {
+      if (isOpenQuestion(question)) continue;
+      const points = Math.max(1, Number(question?.points) || 1);
+      autoPoints += points;
       const userAnswer = answers[question.id];
       if (userAnswer && userAnswer === question.correctOptionId) {
-        score += 1;
+        earnedPoints += points;
       }
     }
-    const totalQuestions = questions.length;
-    const percentageScore = (score / questions.length) * 100;
+    const score = earnedPoints;
+    const percentageScore = autoPoints > 0 ? (earnedPoints / autoPoints) * 100 : 0;
 
     // Opt-in hold: auto-graded quizzes stay hidden too when the program holds grades.
     const program = await prisma.program.findUnique({
@@ -1628,36 +1643,40 @@ export class ProgramService {
         learningUnitId: learningUnit.id,
         content: JSON.stringify(answers),
         attempt: currentAttempt,
-        status: "GRADED",
+        status: requiresReview ? "SUBMITTED" : "GRADED",
         score,
-        gradedAt: now,
-        grade_released: !holdGrades,
-        released_at: holdGrades ? null : now,
+        gradedAt: requiresReview ? null : now,
+        grade_released: requiresReview ? false : !holdGrades,
+        released_at: requiresReview || holdGrades ? null : now,
       },
     });
 
-    await prisma.progress.upsert({
-      where: {
-        enrollmentId_topicId: {
+    // Only fully auto-graded quizzes complete the topic immediately; a
+    // review-bound quiz stays pending until the instructor releases the grade.
+    if (!requiresReview) {
+      await prisma.progress.upsert({
+        where: {
+          enrollmentId_topicId: {
+            enrollmentId: enrollment.id,
+            topicId,
+          },
+        },
+        update: {
+          score: percentageScore,
+          status: percentageScore >= passMark ? "PASS" : "FAIL",
+          completed: true,
+          completedAt: new Date(),
+        },
+        create: {
           enrollmentId: enrollment.id,
           topicId,
+          score: percentageScore,
+          status: percentageScore >= passMark ? "PASS" : "FAIL",
+          completed: true,
+          completedAt: new Date(),
         },
-      },
-      update: {
-        score: percentageScore,
-        status: percentageScore >= passMark ? "PASS" : "FAIL",
-        completed: true,
-        completedAt: new Date(),
-      },
-      create: {
-        enrollmentId: enrollment.id,
-        topicId,
-        score: percentageScore,
-        status: percentageScore >= passMark ? "PASS" : "FAIL",
-        completed: true,
-        completedAt: new Date(),
-      },
-    });
+      });
+    }
 
     await this.notifyInstructorOfAssignmentSubmission({
       recipientUserId: enrollment.course.instructorId,
@@ -1677,6 +1696,8 @@ export class ProgramService {
       percentageScore,
       maxAttempts,
       passMark,
+      requiresReview,
+      status: submission.status,
     };
   }
 
@@ -2481,8 +2502,27 @@ export class ProgramService {
     }
 
     for (const q of data.questions) {
-      if (q.options.length < 2) {
-        throw new Error("Each question must have at least 2 options");
+      const type = String(q?.type || "MULTIPLE_CHOICE").toUpperCase();
+
+      if (q?.points !== undefined && q?.points !== null) {
+        const points = Number(q.points);
+        if (!Number.isFinite(points) || points < 1) {
+          throw new Error("Question points must be a positive number");
+        }
+      }
+
+      // Short-answer and essay questions are graded by hand, so they only need
+      // prompt text — no options or correct answer.
+      if (type === "SHORT_ANSWER" || type === "ESSAY") {
+        if (!String(q?.question ?? "").trim()) {
+          throw new Error("Each question must have prompt text");
+        }
+        continue;
+      }
+
+      // Multiple-choice and true/false carry options and an auto-graded answer.
+      if (!Array.isArray(q?.options) || q.options.length < 2) {
+        throw new Error("Each choice question must have at least 2 options");
       }
 
       const optionIds = q.options.map((o: any) => o.id);
