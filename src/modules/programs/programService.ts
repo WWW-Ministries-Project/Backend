@@ -2,7 +2,7 @@ import { Prisma } from "@prisma/client";
 import { max, sub } from "date-fns";
 import { prisma } from "../../Models/context";
 import { notificationService } from "../notifications/notificationService";
-import { curriculumService } from "./lms/curriculumService";
+import { curriculumService, GRADING_MODES } from "./lms/curriculumService";
 import { type InlineComment } from "./lms/lmsHttp";
 import {
   getBranchScopedWhere,
@@ -343,6 +343,30 @@ export class ProgramService {
         throw new Error("Program with this title already exists.");
       }
 
+      // Topics are optional at creation: the guided flow saves a draft first and
+      // builds the curriculum afterwards. Older callers that still send topics
+      // keep working.
+      const topicNames: string[] = Array.isArray(data.topics)
+        ? data.topics.filter(
+            (topic: unknown): topic is string =>
+              typeof topic === "string" && topic.trim().length > 0,
+          )
+        : [];
+
+      // Grading mode is optional; fall back to the schema default (PASS_FAIL).
+      const gradingMode =
+        typeof data.grading_mode === "string" &&
+        (GRADING_MODES as readonly string[]).includes(data.grading_mode)
+          ? data.grading_mode
+          : undefined;
+
+      // Publish status is optional; the guided create flow saves a DRAFT, older
+      // callers omit it and keep the schema default (PUBLISHED).
+      const status =
+        data.status === "DRAFT" || data.status === "PUBLISHED"
+          ? data.status
+          : undefined;
+
       // Step 2: Create the program
       const createdProgram = await prisma.program.create({
         data: {
@@ -352,8 +376,13 @@ export class ProgramService {
           leader_required: data.leader_required,
           ministry_required: data.ministry_required,
           branch_id: await resolveBranchIdOrDefault(data.branch_id),
+          ...(gradingMode ? { grading_mode: gradingMode } : {}),
+          ...(typeof data.auto_enroll === "boolean"
+            ? { auto_enroll: data.auto_enroll }
+            : {}),
+          ...(status ? { status } : {}),
           topics: {
-            create: data.topics.map((topic: string, index: number) => ({
+            create: topicNames.map((topic: string, index: number) => ({
               name: topic,
               order_number: index + 1,
             })),
@@ -789,6 +818,7 @@ export class ProgramService {
           completed: program.completed,
           status: program.status,
           grading_mode: program.grading_mode,
+          auto_enroll: program.auto_enroll,
           pass_mark: program.pass_mark,
           module_count: program._count?.modules ?? 0,
           createdAt: program.createdAt,
@@ -890,6 +920,16 @@ export class ProgramService {
 
   async updateProgram(id: number, data: any) {
     return await prisma.$transaction(async (prisma) => {
+      const gradingMode =
+        typeof data.grading_mode === "string" &&
+        (GRADING_MODES as readonly string[]).includes(data.grading_mode)
+          ? data.grading_mode
+          : undefined;
+      const status =
+        data.status === "DRAFT" || data.status === "PUBLISHED"
+          ? data.status
+          : undefined;
+
       const updatedProgram = await prisma.program.update({
         where: { id },
         data: {
@@ -903,6 +943,11 @@ export class ProgramService {
                 branch_id: await resolveBranchIdOrDefault(data.branch_id),
               }
             : {}),
+          ...(gradingMode ? { grading_mode: gradingMode } : {}),
+          ...(typeof data.auto_enroll === "boolean"
+            ? { auto_enroll: data.auto_enroll }
+            : {}),
+          ...(status ? { status } : {}),
         },
         include: { topics: true },
       });
@@ -945,6 +990,7 @@ export class ProgramService {
     name: string,
     description: string,
     learningUnit: any,
+    moduleId?: number | null,
   ) {
     const normalizedLearningUnit = this.normalizeLearningUnit(learningUnit);
     this.validateLearningUnit(normalizedLearningUnit);
@@ -958,12 +1004,24 @@ export class ProgramService {
 
       const nextOrderNumber = lastTopic ? (lastTopic.order_number ?? 0) + 1 : 1;
 
+      // Only honour moduleId when the module belongs to this program; otherwise
+      // the topic is created unassigned (preserves existing behaviour).
+      let resolvedModuleId: number | null = null;
+      if (moduleId != null) {
+        const module = await tx.program_module.findFirst({
+          where: { id: Number(moduleId), programId },
+          select: { id: true },
+        });
+        resolvedModuleId = module?.id ?? null;
+      }
+
       const topic = await tx.topic.create({
         data: {
           name,
           description,
           programId,
           order_number: nextOrderNumber,
+          ...(resolvedModuleId != null ? { moduleId: resolvedModuleId } : {}),
         },
       });
 

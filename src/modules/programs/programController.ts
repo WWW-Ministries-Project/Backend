@@ -197,12 +197,13 @@ export class ProgramController {
 
   async createTopic(req: Request, res: Response) {
     try {
-      const { programId, name, description, learningUnit } = req.body;
+      const { programId, name, description, learningUnit, moduleId } = req.body;
       const topic = await programService.createTopic(
         programId,
         name,
         description,
         learningUnit,
+        moduleId,
       );
       return res
         .status(200)

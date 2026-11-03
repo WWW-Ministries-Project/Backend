@@ -1532,6 +1532,10 @@ model program {
   /// { requireGrade, requireAllUnits, minAttendance: number | null }
   completion_rules           Json?
   auto_certificate           Boolean                      @default(true)
+  /// When true, applicants who pass every eligibility rule are enrolled
+  /// immediately; the rest go to the review queue. When false, every applicant
+  /// is queued for staff review. Defaulted true to preserve existing behaviour.
+  auto_enroll                Boolean                      @default(true)
   /// Marketing/details content for the learner program page (all optional).
   /// string[] of "what you'll learn" outcomes.
   learning_outcomes          Json?
