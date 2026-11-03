@@ -219,3 +219,48 @@ and is `null` until that column exists.
 **FE `Programs` type** (`src/utils/api/ministrySchool/interfaces.ts`) adds
 `outcomes: string[]`, `eligibilitySummary: string | null`, and
 `instructors: { id: number; name: string; photo: string | null; role: string | null; isLead: boolean; bio: string | null }[]`.
+
+---
+
+## 9. Assessment builder — drafts, publish & settings — shipped
+
+**Why:** quizzes and essays are now authored from the program's **Assessments**
+tab (and a dedicated builder), not from the curriculum unit form. The builder
+can save an assessment as a **draft** (created empty, "add questions next") and
+later **publish** it, plus per-assessment settings the prototype shows.
+
+**No schema change.** Everything rides in the existing free-form
+`LearningUnit.data` JSON (serialized by `programService`), so existing rows and
+the mobile app are unaffected. New optional `data` keys on quiz/essay units:
+
+```ts
+type AssessmentSettings = {
+  status?: "draft" | "published";  // absent / "published" ⇒ live (back-compat)
+  weight?: number;                 // "counts toward final grade" %, authoring aid
+  timeLimit?: number | null;       // minutes, null = none
+  latePolicy?: "accept" | "penalty" | "lock";  // persisted; submit still locks past-due
+  showAnswers?: "immediately" | "after_due" | "never";
+  shuffle?: boolean;
+};
+```
+
+**Validation** (`programService.validateLearningUnit`): when
+`data.status === "draft"`, a quiz may have **no questions** and an essay **no
+prompt**. Any other status runs the full content validation — so **publishing**
+(the FE sends `status: "published"` through `PUT /program/topic`) still requires
+≥1 valid question (quiz) or a prompt (essay).
+
+**Draft gating (additive, mobile-safe — default is published):**
+- **Submit** (`/submit-mcq-assignment`, `/submit-essay-assignment`): a unit with
+  `data.status === "draft"` throws *"This assessment hasn't been published yet"*,
+  even if an admin activated it for the cohort.
+- **Learner overview** (`learnerService.overview`): draft assessment units are
+  hidden — excluded from `progress.total`, `completed`, and `nextTopic`.
+
+**Create / edit / publish all reuse existing endpoints** — no new routes:
+- Create a draft: `POST /program/topic` with a quiz/essay unit whose
+  `data.status === "draft"`, then `PUT /program/unit-settings`
+  (`due_rule`, `grading_category`) for the week-based due rule and category.
+- Edit questions & settings, publish/unpublish: `PUT /program/topic` with the
+  full unit (`data.status` flipped). `latePolicy` is persisted but submission
+  behaviour is unchanged (past-due submissions are already rejected).

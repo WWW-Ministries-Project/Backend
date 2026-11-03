@@ -26,6 +26,12 @@ const parseJson = (value: unknown): any => {
 
 const asArray = <T>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : []);
 
+/** A quiz/essay still in draft (not yet published from the Assessments builder). */
+const isDraftUnit = (unit: { type: string; data?: unknown } | null | undefined): boolean => {
+  if (!unit || !unit.type.startsWith("assignment")) return false;
+  return parseJson(unit.data)?.status === "draft";
+};
+
 const myEnrollments = (userId: number) =>
   prisma.enrollment.findMany({
     where: { user_id: userId },
@@ -64,7 +70,7 @@ const myEnrollments = (userId: number) =>
                   modules: { select: { id: true, title: true, order_number: true } },
                   topics: {
                     orderBy: [{ order_number: "asc" }, { id: "asc" }],
-                    select: { id: true, name: true, moduleId: true, LearningUnit: { select: { type: true } } },
+                    select: { id: true, name: true, moduleId: true, LearningUnit: { select: { type: true, data: true } } },
                   },
                 },
               },
@@ -101,9 +107,12 @@ export class LearnerService {
       const { program } = cohort;
       const moduleTitle = new Map(program.modules.map((m) => [m.id, m.title]));
       const done = new Set(enrollment.progress.filter((p) => p.completed).map((p) => p.topicId));
-      const total = program.topics.length;
-      const completedCount = program.topics.filter((t) => done.has(t.id)).length;
-      const next = program.topics.find((t) => !done.has(t.id)) ?? null;
+      // Hide unpublished (draft) assessments from the learner — they can't be
+      // taken yet, so they shouldn't count toward progress or be the next unit.
+      const visibleTopics = program.topics.filter((t) => !isDraftUnit(t.LearningUnit));
+      const total = visibleTopics.length;
+      const completedCount = visibleTopics.filter((t) => done.has(t.id)).length;
+      const next = visibleTopics.find((t) => !done.has(t.id)) ?? null;
 
       const book = gradebooks[index];
       const row = book?.rows.find((r) => r.enrollmentId === enrollment.id) ?? null;
