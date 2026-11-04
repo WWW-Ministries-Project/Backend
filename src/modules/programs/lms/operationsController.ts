@@ -183,7 +183,12 @@ export const operationsController = {
   removeFromRoster: lmsHandler("Instructor removed", (req) =>
     instructorService.removeFromRoster(positiveInt(req.query.id, "id")),
   ),
-  instructorsOverview: lmsHandler("Instructors fetched", (req) => instructorService.overview(req.query.branch_id)),
+  instructorsOverview: lmsHandler("Instructors fetched", (req) => {
+    // Without whole-school access an instructor reads only their own row.
+    const ownOnly = (req as any).somScope?.manageAll === false;
+    const onlyUserId = ownOnly ? (requestUserId(req) ?? undefined) : undefined;
+    return instructorService.overview(req.query.branch_id, onlyUserId);
+  }),
 
   // Content library ---------------------------------------------------------------
   listLibrary: lmsHandler("Library fetched", (req) =>
