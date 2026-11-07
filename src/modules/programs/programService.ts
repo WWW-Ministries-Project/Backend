@@ -1430,7 +1430,9 @@ export class ProgramService {
               closedAt: activation.closedAt,
             }
           : {
-              isActive: false,
+              // Open by default: a facilitator only ever closes or reopens an
+              // assessment, so "no cohort assignment row" means it is open.
+              isActive: true,
               activatedAt: null,
               dueDate: ruleDueDate,
               closedAt: null,
@@ -1541,27 +1543,22 @@ export class ProgramService {
       throw new Error("Only assignment learning units can be deactivated");
     }
 
-    const existing = await prisma.cohort_assignment.findUnique({
+    // Assessments are open by default, so closing one may have no row yet —
+    // create a closed row in that case, otherwise flip the existing one closed.
+    return prisma.cohort_assignment.upsert({
       where: {
         cohortId_learningUnitId: {
           cohortId,
           learningUnitId: learningUnit.id,
         },
       },
-    });
-
-    if (!existing || !existing.isActive) {
-      throw new Error("Assignment is not currently active for this cohort");
-    }
-
-    return prisma.cohort_assignment.update({
-      where: {
-        cohortId_learningUnitId: {
-          cohortId,
-          learningUnitId: learningUnit.id,
-        },
+      update: {
+        isActive: false,
+        closedAt: new Date(),
       },
-      data: {
+      create: {
+        cohortId,
+        learningUnitId: learningUnit.id,
         isActive: false,
         closedAt: new Date(),
       },
@@ -1587,7 +1584,8 @@ export class ProgramService {
       },
     });
 
-    return !!assignment?.isActive;
+    // Open by default: only an explicit close (deactivation) makes it inactive.
+    return assignment ? assignment.isActive && assignment.closedAt === null : true;
   }
 
   async submitMCQAssignment(
@@ -1876,7 +1874,7 @@ export class ProgramService {
   async getAssignmentsForCohort(cohortId: number) {
     const cohort = await prisma.cohort.findUnique({
       where: { id: cohortId },
-      select: { id: true, programId: true },
+      select: { id: true, programId: true, startDate: true },
     });
 
     if (!cohort) {
@@ -1924,6 +1922,7 @@ export class ProgramService {
 
     return learningUnits.map((lu) => {
       const activation = lu.cohortAssignments[0] ?? null;
+      const ruleDueDate = dueDateFromRule(cohort.startDate, parseDueRule(lu.due_rule));
       const latestSubmissionByEnrollment = new Map<
         number,
         (typeof lu.submissions)[number]
@@ -1961,15 +1960,16 @@ export class ProgramService {
           ? {
               isActive: activation.isActive,
               activatedAt: activation.activatedAt,
-              dueDate: activation.dueDate,
+              dueDate: activation.dueDate ?? ruleDueDate,
               closedAt: activation.closedAt,
               submissions: submissionsCount,
               pending: pendingCount,
             }
           : {
-              isActive: false,
+              // Open by default; a facilitator only closes or reopens.
+              isActive: true,
               activatedAt: null,
-              dueDate: null,
+              dueDate: ruleDueDate,
               closedAt: null,
               submissions: submissionsCount,
               pending: pendingCount,
@@ -2325,10 +2325,6 @@ export class ProgramService {
       orderBy: [{ activatedAt: "desc" }, { id: "desc" }],
     });
 
-    if (cohortAssignments.length === 0) {
-      throw new Error("Assignment has not been activated for your cohort");
-    }
-
     const now = new Date();
 
     // A per-learner extension replaces the cohort due date for that learner.
@@ -2339,29 +2335,43 @@ export class ProgramService {
       },
       select: { cohortId: true, dueDate: true },
     });
-    const effectiveDue = (assignment: { cohortId: number; dueDate: Date | null }) =>
-      extensions.find((x) => x.cohortId === assignment.cohortId)?.dueDate ??
-      assignment.dueDate;
 
-    const activeAssignment = cohortAssignments.find((assignment) => {
-      const due = effectiveDue(assignment);
-      return assignment.isActive && assignment.closedAt === null && (!due || due >= now);
+    // Assessments are open to learners by default — a facilitator only ever
+    // closes (or reopens) one — so a cohort with no assignment row is open.
+    // The due date falls back to the assessment's week-based rule resolved
+    // against the cohort start date, matching the member program view.
+    const rule = parseDueRule(learningUnit.due_rule);
+    const cohortStart = new Map(
+      enrollments.map((item) => [item.course.cohortId, item.course.cohort.startDate]),
+    );
+    const recordFor = (cohortId: number) =>
+      cohortAssignments.find((assignment) => assignment.cohortId === cohortId) ?? null;
+    const isClosed = (record: { isActive: boolean; closedAt: Date | null } | null) =>
+      Boolean(record && (!record.isActive || record.closedAt !== null));
+    const dueFor = (
+      cohortId: number,
+      record: { dueDate: Date | null } | null,
+    ): Date | null =>
+      extensions.find((x) => x.cohortId === cohortId)?.dueDate ??
+      record?.dueDate ??
+      dueDateFromRule(cohortStart.get(cohortId), rule);
+
+    const openEnrollment = enrollments.find((item) => {
+      const record = recordFor(item.course.cohortId);
+      if (isClosed(record)) return false;
+      const due = dueFor(item.course.cohortId, record);
+      return !due || due >= now;
     });
 
-    if (!activeAssignment) {
-      const expiredAssignment = cohortAssignments.find((assignment) => {
-        const due = effectiveDue(assignment);
-        return (
-          assignment.isActive && assignment.closedAt === null && due !== null && due < now
-        );
+    if (!openEnrollment) {
+      const expiredEnrollment = enrollments.find((item) => {
+        const record = recordFor(item.course.cohortId);
+        if (isClosed(record)) return false;
+        const due = dueFor(item.course.cohortId, record);
+        return due !== null && due < now;
       });
 
-      if (expiredAssignment) {
-        const expiredEnrollment =
-          enrollments.find(
-            (item) => item.course.cohortId === expiredAssignment.cohortId,
-          ) ?? enrollments[0];
-
+      if (expiredEnrollment) {
         await this.markUnsubmittedAssignmentAsExpired(
           expiredEnrollment.id,
           learningUnit.id,
@@ -2373,10 +2383,7 @@ export class ProgramService {
       throw new Error("Assignment is not active for your cohort");
     }
 
-    const enrollment =
-      enrollments.find(
-        (item) => item.course.cohortId === activeAssignment.cohortId,
-      ) ?? enrollments[0];
+    const enrollment = openEnrollment;
 
     const previousSubmissions = await prisma.assignment_submission.findMany({
       where: {
