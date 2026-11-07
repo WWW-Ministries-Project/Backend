@@ -3,6 +3,7 @@ import { max, sub } from "date-fns";
 import { prisma } from "../../Models/context";
 import { notificationService } from "../notifications/notificationService";
 import { curriculumService, GRADING_MODES } from "./lms/curriculumService";
+import { dueDateFromRule, parseDueRule } from "./lms/dueRules";
 import { type InlineComment } from "./lms/lmsHttp";
 import {
   getBranchScopedWhere,
@@ -1370,6 +1371,13 @@ export class ProgramService {
         topic.LearningUnit?.cohortAssignments.find(
           (assignment) => assignment.cohortId === cohortId,
         ) ?? null;
+      // Effective due date for this learner: an explicit per-learner extension or
+      // per-cohort date wins; otherwise fall back to the assessment's week-based
+      // due rule resolved against this cohort's start date (what the admin set).
+      const ruleDueDate = dueDateFromRule(
+        enrollment.course.cohort.startDate,
+        parseDueRule(topic.LearningUnit?.due_rule ?? null),
+      );
       const progress = enrollment.progress.find((p) => p.topicId === topic.id);
       const latestSubmission = topic.LearningUnit
         ? enrollment.submissions.find(
@@ -1418,13 +1426,13 @@ export class ProgramService {
               dueDate:
                 enrollment.extensions.find(
                   (x) => x.learningUnitId === topic.LearningUnit?.id,
-                )?.dueDate ?? activation.dueDate,
+                )?.dueDate ?? activation.dueDate ?? ruleDueDate,
               closedAt: activation.closedAt,
             }
           : {
               isActive: false,
               activatedAt: null,
-              dueDate: null,
+              dueDate: ruleDueDate,
               closedAt: null,
             },
       };
