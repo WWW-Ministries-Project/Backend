@@ -2473,6 +2473,20 @@ export const ListUsers = async (req: Request, res: Response) => {
     if (membership_type) {
       whereConditions.push({ membership_type });
     }
+    // `child=true` lists children only: members aged 18 or under, by the same
+    // year-based rule the membership stats use (born in the current year minus
+    // 18, or later). Members without a date of birth are treated as adults and
+    // excluded.
+    if (req.query?.child === "true") {
+      const childMinYear = new Date().getFullYear() - 18;
+      whereConditions.push({
+        user_info: {
+          is: {
+            date_of_birth: { gte: new Date(`${childMinYear}-01-01T00:00:00.000Z`) },
+          },
+        },
+      });
+    }
     if (searchTerm) {
       const contactMatches: any[] = [
         { email: { contains: searchTerm } },
