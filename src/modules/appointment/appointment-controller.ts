@@ -192,16 +192,25 @@ export class AppointmentController {
         typeof req.query.date === "string" ? req.query.date : undefined;
       const category =
         typeof req.query.category === "string" ? req.query.category : undefined;
-      const data =
-        await AppointmentService.getAvailabilityWithSessionStatus(
+      const [data, settings] = await Promise.all([
+        AppointmentService.getAvailabilityWithSessionStatus(
           { mode: "all" },
           req.query?.branch_id,
           { date, category },
-        );
+        ),
+        AppointmentSettingsService.get(),
+      ]);
 
       res.status(200).json({
         message: "Booking options fetched successfully",
         data,
+        // Booking policy so the member booking UI can honour how far ahead
+        // members may book and the minimum notice, without a separate
+        // (permission-gated) settings call.
+        policy: {
+          bookAheadDays: settings.bookAheadDays,
+          minNoticeHours: settings.minNoticeHours,
+        },
       });
     } catch (error: any) {
       const statusCode = error?.message?.includes("date") ? 400 : 500;
