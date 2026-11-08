@@ -107,8 +107,13 @@ export class InstructorService {
     return { id };
   }
 
-  /** Every instructor (class instructors and roster members) with workload and grading speed. */
-  async overview(branchId?: unknown) {
+  /**
+   * Every instructor (class instructors and roster members) with workload and
+   * grading speed. `onlyUserId` narrows the result to a single instructor —
+   * used so an instructor limited to their own classes reads only their own
+   * row (My teaching) without seeing the rest of the faculty.
+   */
+  async overview(branchId?: unknown, onlyUserId?: number) {
     const since = new Date(Date.now() - GRADING_WINDOW_DAYS * 86_400_000);
     const branchWhere = getBranchScopedWhere(branchId);
     const [courses, roster, pending, graded] = await Promise.all([
@@ -134,7 +139,18 @@ export class InstructorService {
             course: { instructorId: { not: null }, ...(branchWhere ? { cohort: { program: branchWhere } } : {}) },
           },
         },
-        select: { enrollment: { select: { course: { select: { instructorId: true } } } } },
+        select: {
+          enrollment: {
+            select: {
+              course: {
+                select: {
+                  instructorId: true,
+                  cohort: { select: { id: true, name: true, program: { select: { title: true } } } },
+                },
+              },
+            },
+          },
+        },
       }),
       prisma.assignment_submission.findMany({
         where: {
@@ -151,13 +167,28 @@ export class InstructorService {
 
     const ids = Array.from(
       new Set([...courses.map((c) => c.instructorId as number), ...roster.map((r) => r.userId)]),
-    );
+    ).filter((id) => onlyUserId === undefined || id === onlyUserId);
     const users = ids.length ? await prisma.user.findMany({ where: { id: { in: ids } }, select: userSelect }) : [];
 
     return users
       .map((u) => {
         const mine = courses.filter((c) => c.instructorId === u.id);
         const live = mine.filter((c) => c.cohort.status !== "Completed");
+        const myPending = pending.filter((p) => p.enrollment.course.instructorId === u.id);
+        // The grading backlog grouped by cohort, so My teaching can list where
+        // the waiting work is, not just a single total.
+        const queue = new Map<
+          number,
+          { cohortId: number; cohortName: string; programTitle: string; pending: number }
+        >();
+        myPending.forEach((p) => {
+          const cohort = p.enrollment.course.cohort;
+          const row =
+            queue.get(cohort.id) ??
+            { cohortId: cohort.id, cohortName: cohort.name, programTitle: cohort.program.title, pending: 0 };
+          row.pending += 1;
+          queue.set(cohort.id, row);
+        });
         const turnaround = graded
           .filter((g) => g.gradedById === u.id && g.gradedAt)
           .map((g) => (g.gradedAt!.getTime() - g.submittedAt.getTime()) / 3_600_000);
@@ -180,7 +211,8 @@ export class InstructorService {
           })),
           liveClasses: live.length,
           learners: live.reduce((s, c) => s + c.enrolled, 0),
-          toGrade: pending.filter((p) => p.enrollment.course.instructorId === u.id).length,
+          toGrade: myPending.length,
+          gradingQueue: Array.from(queue.values()).sort((a, b) => b.pending - a.pending),
           avgGradingHours: turnaround.length
             ? Math.round((turnaround.reduce((a, b) => a + b, 0) / turnaround.length) * 10) / 10
             : null,

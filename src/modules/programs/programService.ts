@@ -2,12 +2,28 @@ import { Prisma } from "@prisma/client";
 import { max, sub } from "date-fns";
 import { prisma } from "../../Models/context";
 import { notificationService } from "../notifications/notificationService";
-import { curriculumService } from "./lms/curriculumService";
+import { curriculumService, GRADING_MODES } from "./lms/curriculumService";
+import { dueDateFromRule, parseDueRule } from "./lms/dueRules";
 import { type InlineComment } from "./lms/lmsHttp";
 import {
   getBranchScopedWhere,
   resolveBranchIdOrDefault,
 } from "../branches/branchService";
+
+// Mirrors the personName helper used across the LMS services: prefer the
+// user_info first/last name, fall back to the account name, then a generic label.
+const personName = (
+  user: {
+    name: string | null;
+    user_info?: { first_name: string | null; last_name: string | null } | null;
+  } | null,
+) =>
+  [user?.user_info?.first_name, user?.user_info?.last_name]
+    .filter(Boolean)
+    .join(" ")
+    .trim() ||
+  user?.name ||
+  "Instructor";
 
 export class ProgramService {
   private buildInstructorAssignmentActionUrl(
@@ -149,6 +165,27 @@ export class ProgramService {
             prerequisite: { select: { title: true } },
           },
         },
+        // Marketing roster for the learner program-details page. The program
+        // scalars (learning_outcomes, eligibility_summary, lead_instructor_id,
+        // lead_instructor_bio) come through by default because this query uses
+        // `include`, not `select`.
+        instructors_roster: {
+          select: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                user_info: {
+                  select: {
+                    first_name: true,
+                    last_name: true,
+                    photo: true,
+                  },
+                },
+              },
+            },
+          },
+        },
         cohorts: {
           where: {
             status: { in: ["Ongoing", "Upcoming"] },
@@ -193,6 +230,23 @@ export class ProgramService {
           prerequisites: program.prerequisitePrograms.map(
             (p) => p.prerequisite.title,
           ),
+          // Program marketing fields (additive, mobile-safe).
+          outcomes: Array.isArray(program.learning_outcomes)
+            ? program.learning_outcomes
+            : [],
+          eligibilitySummary: program.eligibility_summary ?? null,
+          instructors: program.instructors_roster.map((roster) => {
+            const instructor = roster.user;
+            const isLead = instructor.id === program.lead_instructor_id;
+            return {
+              id: instructor.id,
+              name: personName(instructor),
+              photo: instructor.user_info?.photo ?? null,
+              role: null,
+              isLead,
+              bio: isLead ? (program.lead_instructor_bio ?? null) : null,
+            };
+          }),
           courses: selectedCohort.courses.map((course) => ({
             id: course.id,
             name: course.name,
@@ -290,6 +344,30 @@ export class ProgramService {
         throw new Error("Program with this title already exists.");
       }
 
+      // Topics are optional at creation: the guided flow saves a draft first and
+      // builds the curriculum afterwards. Older callers that still send topics
+      // keep working.
+      const topicNames: string[] = Array.isArray(data.topics)
+        ? data.topics.filter(
+            (topic: unknown): topic is string =>
+              typeof topic === "string" && topic.trim().length > 0,
+          )
+        : [];
+
+      // Grading mode is optional; fall back to the schema default (PASS_FAIL).
+      const gradingMode =
+        typeof data.grading_mode === "string" &&
+        (GRADING_MODES as readonly string[]).includes(data.grading_mode)
+          ? data.grading_mode
+          : undefined;
+
+      // Publish status is optional; the guided create flow saves a DRAFT, older
+      // callers omit it and keep the schema default (PUBLISHED).
+      const status =
+        data.status === "DRAFT" || data.status === "PUBLISHED"
+          ? data.status
+          : undefined;
+
       // Step 2: Create the program
       const createdProgram = await prisma.program.create({
         data: {
@@ -299,8 +377,13 @@ export class ProgramService {
           leader_required: data.leader_required,
           ministry_required: data.ministry_required,
           branch_id: await resolveBranchIdOrDefault(data.branch_id),
+          ...(gradingMode ? { grading_mode: gradingMode } : {}),
+          ...(typeof data.auto_enroll === "boolean"
+            ? { auto_enroll: data.auto_enroll }
+            : {}),
+          ...(status ? { status } : {}),
           topics: {
-            create: data.topics.map((topic: string, index: number) => ({
+            create: topicNames.map((topic: string, index: number) => ({
               name: topic,
               order_number: index + 1,
             })),
@@ -736,6 +819,7 @@ export class ProgramService {
           completed: program.completed,
           status: program.status,
           grading_mode: program.grading_mode,
+          auto_enroll: program.auto_enroll,
           pass_mark: program.pass_mark,
           module_count: program._count?.modules ?? 0,
           createdAt: program.createdAt,
@@ -837,6 +921,16 @@ export class ProgramService {
 
   async updateProgram(id: number, data: any) {
     return await prisma.$transaction(async (prisma) => {
+      const gradingMode =
+        typeof data.grading_mode === "string" &&
+        (GRADING_MODES as readonly string[]).includes(data.grading_mode)
+          ? data.grading_mode
+          : undefined;
+      const status =
+        data.status === "DRAFT" || data.status === "PUBLISHED"
+          ? data.status
+          : undefined;
+
       const updatedProgram = await prisma.program.update({
         where: { id },
         data: {
@@ -850,6 +944,11 @@ export class ProgramService {
                 branch_id: await resolveBranchIdOrDefault(data.branch_id),
               }
             : {}),
+          ...(gradingMode ? { grading_mode: gradingMode } : {}),
+          ...(typeof data.auto_enroll === "boolean"
+            ? { auto_enroll: data.auto_enroll }
+            : {}),
+          ...(status ? { status } : {}),
         },
         include: { topics: true },
       });
@@ -892,6 +991,7 @@ export class ProgramService {
     name: string,
     description: string,
     learningUnit: any,
+    moduleId?: number | null,
   ) {
     const normalizedLearningUnit = this.normalizeLearningUnit(learningUnit);
     this.validateLearningUnit(normalizedLearningUnit);
@@ -905,12 +1005,24 @@ export class ProgramService {
 
       const nextOrderNumber = lastTopic ? (lastTopic.order_number ?? 0) + 1 : 1;
 
+      // Only honour moduleId when the module belongs to this program; otherwise
+      // the topic is created unassigned (preserves existing behaviour).
+      let resolvedModuleId: number | null = null;
+      if (moduleId != null) {
+        const module = await tx.program_module.findFirst({
+          where: { id: Number(moduleId), programId },
+          select: { id: true },
+        });
+        resolvedModuleId = module?.id ?? null;
+      }
+
       const topic = await tx.topic.create({
         data: {
           name,
           description,
           programId,
           order_number: nextOrderNumber,
+          ...(resolvedModuleId != null ? { moduleId: resolvedModuleId } : {}),
         },
       });
 
@@ -1259,6 +1371,13 @@ export class ProgramService {
         topic.LearningUnit?.cohortAssignments.find(
           (assignment) => assignment.cohortId === cohortId,
         ) ?? null;
+      // Effective due date for this learner: an explicit per-learner extension or
+      // per-cohort date wins; otherwise fall back to the assessment's week-based
+      // due rule resolved against this cohort's start date (what the admin set).
+      const ruleDueDate = dueDateFromRule(
+        enrollment.course.cohort.startDate,
+        parseDueRule(topic.LearningUnit?.due_rule ?? null),
+      );
       const progress = enrollment.progress.find((p) => p.topicId === topic.id);
       const latestSubmission = topic.LearningUnit
         ? enrollment.submissions.find(
@@ -1307,13 +1426,15 @@ export class ProgramService {
               dueDate:
                 enrollment.extensions.find(
                   (x) => x.learningUnitId === topic.LearningUnit?.id,
-                )?.dueDate ?? activation.dueDate,
+                )?.dueDate ?? activation.dueDate ?? ruleDueDate,
               closedAt: activation.closedAt,
             }
           : {
-              isActive: false,
+              // Open by default: a facilitator only ever closes or reopens an
+              // assessment, so "no cohort assignment row" means it is open.
+              isActive: true,
               activatedAt: null,
-              dueDate: null,
+              dueDate: ruleDueDate,
               closedAt: null,
             },
       };
@@ -1422,27 +1543,22 @@ export class ProgramService {
       throw new Error("Only assignment learning units can be deactivated");
     }
 
-    const existing = await prisma.cohort_assignment.findUnique({
+    // Assessments are open by default, so closing one may have no row yet —
+    // create a closed row in that case, otherwise flip the existing one closed.
+    return prisma.cohort_assignment.upsert({
       where: {
         cohortId_learningUnitId: {
           cohortId,
           learningUnitId: learningUnit.id,
         },
       },
-    });
-
-    if (!existing || !existing.isActive) {
-      throw new Error("Assignment is not currently active for this cohort");
-    }
-
-    return prisma.cohort_assignment.update({
-      where: {
-        cohortId_learningUnitId: {
-          cohortId,
-          learningUnitId: learningUnit.id,
-        },
+      update: {
+        isActive: false,
+        closedAt: new Date(),
       },
-      data: {
+      create: {
+        cohortId,
+        learningUnitId: learningUnit.id,
         isActive: false,
         closedAt: new Date(),
       },
@@ -1468,7 +1584,8 @@ export class ProgramService {
       },
     });
 
-    return !!assignment?.isActive;
+    // Open by default: only an explicit close (deactivation) makes it inactive.
+    return assignment ? assignment.isActive && assignment.closedAt === null : true;
   }
 
   async submitMCQAssignment(
@@ -1492,16 +1609,31 @@ export class ProgramService {
       throw new Error("Assignment questions are not configured");
     }
 
-    let score = 0;
+    const totalQuestions = questions.length;
 
+    const isOpenQuestion = (question: any) => {
+      const type = String(question?.type || "MULTIPLE_CHOICE").toUpperCase();
+      return type === "SHORT_ANSWER" || type === "ESSAY";
+    };
+    // A quiz that mixes in short-answer/essay questions can't be fully
+    // auto-graded; it waits for the instructor like an essay.
+    const requiresReview = questions.some(isOpenQuestion);
+
+    // Points-weighted auto-score over the choice questions. Each question
+    // defaults to 1 point, so legacy all-MCQ quizzes score exactly as before.
+    let earnedPoints = 0;
+    let autoPoints = 0;
     for (const question of questions) {
+      if (isOpenQuestion(question)) continue;
+      const points = Math.max(1, Number(question?.points) || 1);
+      autoPoints += points;
       const userAnswer = answers[question.id];
       if (userAnswer && userAnswer === question.correctOptionId) {
-        score += 1;
+        earnedPoints += points;
       }
     }
-    const totalQuestions = questions.length;
-    const percentageScore = (score / questions.length) * 100;
+    const score = earnedPoints;
+    const percentageScore = autoPoints > 0 ? (earnedPoints / autoPoints) * 100 : 0;
 
     // Opt-in hold: auto-graded quizzes stay hidden too when the program holds grades.
     const program = await prisma.program.findUnique({
@@ -1517,36 +1649,40 @@ export class ProgramService {
         learningUnitId: learningUnit.id,
         content: JSON.stringify(answers),
         attempt: currentAttempt,
-        status: "GRADED",
+        status: requiresReview ? "SUBMITTED" : "GRADED",
         score,
-        gradedAt: now,
-        grade_released: !holdGrades,
-        released_at: holdGrades ? null : now,
+        gradedAt: requiresReview ? null : now,
+        grade_released: requiresReview ? false : !holdGrades,
+        released_at: requiresReview || holdGrades ? null : now,
       },
     });
 
-    await prisma.progress.upsert({
-      where: {
-        enrollmentId_topicId: {
+    // Only fully auto-graded quizzes complete the topic immediately; a
+    // review-bound quiz stays pending until the instructor releases the grade.
+    if (!requiresReview) {
+      await prisma.progress.upsert({
+        where: {
+          enrollmentId_topicId: {
+            enrollmentId: enrollment.id,
+            topicId,
+          },
+        },
+        update: {
+          score: percentageScore,
+          status: percentageScore >= passMark ? "PASS" : "FAIL",
+          completed: true,
+          completedAt: new Date(),
+        },
+        create: {
           enrollmentId: enrollment.id,
           topicId,
+          score: percentageScore,
+          status: percentageScore >= passMark ? "PASS" : "FAIL",
+          completed: true,
+          completedAt: new Date(),
         },
-      },
-      update: {
-        score: percentageScore,
-        status: percentageScore >= passMark ? "PASS" : "FAIL",
-        completed: true,
-        completedAt: new Date(),
-      },
-      create: {
-        enrollmentId: enrollment.id,
-        topicId,
-        score: percentageScore,
-        status: percentageScore >= passMark ? "PASS" : "FAIL",
-        completed: true,
-        completedAt: new Date(),
-      },
-    });
+      });
+    }
 
     await this.notifyInstructorOfAssignmentSubmission({
       recipientUserId: enrollment.course.instructorId,
@@ -1566,6 +1702,8 @@ export class ProgramService {
       percentageScore,
       maxAttempts,
       passMark,
+      requiresReview,
+      status: submission.status,
     };
   }
 
@@ -1736,7 +1874,7 @@ export class ProgramService {
   async getAssignmentsForCohort(cohortId: number) {
     const cohort = await prisma.cohort.findUnique({
       where: { id: cohortId },
-      select: { id: true, programId: true },
+      select: { id: true, programId: true, startDate: true },
     });
 
     if (!cohort) {
@@ -1784,6 +1922,7 @@ export class ProgramService {
 
     return learningUnits.map((lu) => {
       const activation = lu.cohortAssignments[0] ?? null;
+      const ruleDueDate = dueDateFromRule(cohort.startDate, parseDueRule(lu.due_rule));
       const latestSubmissionByEnrollment = new Map<
         number,
         (typeof lu.submissions)[number]
@@ -1821,15 +1960,16 @@ export class ProgramService {
           ? {
               isActive: activation.isActive,
               activatedAt: activation.activatedAt,
-              dueDate: activation.dueDate,
+              dueDate: activation.dueDate ?? ruleDueDate,
               closedAt: activation.closedAt,
               submissions: submissionsCount,
               pending: pendingCount,
             }
           : {
-              isActive: false,
+              // Open by default; a facilitator only closes or reopens.
+              isActive: true,
               activatedAt: null,
-              dueDate: null,
+              dueDate: ruleDueDate,
               closedAt: null,
               submissions: submissionsCount,
               pending: pendingCount,
@@ -2137,6 +2277,13 @@ export class ProgramService {
       throw new Error("Topic does not belong to the provided program");
     }
 
+    // A draft assessment (not yet published from the builder) can't be taken,
+    // even if an admin activated it for the cohort.
+    const unitData = this.deserializeLearningUnitData(learningUnit.data);
+    if ((unitData as any)?.status === "draft") {
+      throw new Error("This assessment hasn't been published yet");
+    }
+
     const enrollments = await prisma.enrollment.findMany({
       where: {
         user_id: args.userId,
@@ -2178,10 +2325,6 @@ export class ProgramService {
       orderBy: [{ activatedAt: "desc" }, { id: "desc" }],
     });
 
-    if (cohortAssignments.length === 0) {
-      throw new Error("Assignment has not been activated for your cohort");
-    }
-
     const now = new Date();
 
     // A per-learner extension replaces the cohort due date for that learner.
@@ -2192,29 +2335,43 @@ export class ProgramService {
       },
       select: { cohortId: true, dueDate: true },
     });
-    const effectiveDue = (assignment: { cohortId: number; dueDate: Date | null }) =>
-      extensions.find((x) => x.cohortId === assignment.cohortId)?.dueDate ??
-      assignment.dueDate;
 
-    const activeAssignment = cohortAssignments.find((assignment) => {
-      const due = effectiveDue(assignment);
-      return assignment.isActive && assignment.closedAt === null && (!due || due >= now);
+    // Assessments are open to learners by default — a facilitator only ever
+    // closes (or reopens) one — so a cohort with no assignment row is open.
+    // The due date falls back to the assessment's week-based rule resolved
+    // against the cohort start date, matching the member program view.
+    const rule = parseDueRule(learningUnit.due_rule);
+    const cohortStart = new Map(
+      enrollments.map((item) => [item.course.cohortId, item.course.cohort.startDate]),
+    );
+    const recordFor = (cohortId: number) =>
+      cohortAssignments.find((assignment) => assignment.cohortId === cohortId) ?? null;
+    const isClosed = (record: { isActive: boolean; closedAt: Date | null } | null) =>
+      Boolean(record && (!record.isActive || record.closedAt !== null));
+    const dueFor = (
+      cohortId: number,
+      record: { dueDate: Date | null } | null,
+    ): Date | null =>
+      extensions.find((x) => x.cohortId === cohortId)?.dueDate ??
+      record?.dueDate ??
+      dueDateFromRule(cohortStart.get(cohortId), rule);
+
+    const openEnrollment = enrollments.find((item) => {
+      const record = recordFor(item.course.cohortId);
+      if (isClosed(record)) return false;
+      const due = dueFor(item.course.cohortId, record);
+      return !due || due >= now;
     });
 
-    if (!activeAssignment) {
-      const expiredAssignment = cohortAssignments.find((assignment) => {
-        const due = effectiveDue(assignment);
-        return (
-          assignment.isActive && assignment.closedAt === null && due !== null && due < now
-        );
+    if (!openEnrollment) {
+      const expiredEnrollment = enrollments.find((item) => {
+        const record = recordFor(item.course.cohortId);
+        if (isClosed(record)) return false;
+        const due = dueFor(item.course.cohortId, record);
+        return due !== null && due < now;
       });
 
-      if (expiredAssignment) {
-        const expiredEnrollment =
-          enrollments.find(
-            (item) => item.course.cohortId === expiredAssignment.cohortId,
-          ) ?? enrollments[0];
-
+      if (expiredEnrollment) {
         await this.markUnsubmittedAssignmentAsExpired(
           expiredEnrollment.id,
           learningUnit.id,
@@ -2226,10 +2383,7 @@ export class ProgramService {
       throw new Error("Assignment is not active for your cohort");
     }
 
-    const enrollment =
-      enrollments.find(
-        (item) => item.course.cohortId === activeAssignment.cohortId,
-      ) ?? enrollments[0];
+    const enrollment = openEnrollment;
 
     const previousSubmissions = await prisma.assignment_submission.findMany({
       where: {
@@ -2326,6 +2480,11 @@ export class ProgramService {
       throw new Error("Invalid learning unit payload");
     }
 
+    // A quiz/essay saved from the Assessments builder can start life as a draft
+    // with no questions yet ("Create & add questions"). Drafts skip the content
+    // requirement; publishing (status !== "draft") runs the full validation.
+    const isDraftAssessment = learningUnit.data?.status === "draft";
+
     switch (learningUnit.type) {
       case "video":
         if (!learningUnit.data.url) throw new Error("Video URL required");
@@ -2351,11 +2510,11 @@ export class ProgramService {
         break;
 
       case "assignment":
-        this.validateMCQAssignment(learningUnit.data);
+        if (!isDraftAssessment) this.validateMCQAssignment(learningUnit.data);
         break;
 
       case "assignment-essay":
-        if (!learningUnit.data.question)
+        if (!isDraftAssessment && !learningUnit.data.question)
           throw new Error("Essay question required");
         break;
 
@@ -2370,8 +2529,27 @@ export class ProgramService {
     }
 
     for (const q of data.questions) {
-      if (q.options.length < 2) {
-        throw new Error("Each question must have at least 2 options");
+      const type = String(q?.type || "MULTIPLE_CHOICE").toUpperCase();
+
+      if (q?.points !== undefined && q?.points !== null) {
+        const points = Number(q.points);
+        if (!Number.isFinite(points) || points < 1) {
+          throw new Error("Question points must be a positive number");
+        }
+      }
+
+      // Short-answer and essay questions are graded by hand, so they only need
+      // prompt text — no options or correct answer.
+      if (type === "SHORT_ANSWER" || type === "ESSAY") {
+        if (!String(q?.question ?? "").trim()) {
+          throw new Error("Each question must have prompt text");
+        }
+        continue;
+      }
+
+      // Multiple-choice and true/false carry options and an auto-graded answer.
+      if (!Array.isArray(q?.options) || q.options.length < 2) {
+        throw new Error("Each choice question must have at least 2 options");
       }
 
       const optionIds = q.options.map((o: any) => o.id);

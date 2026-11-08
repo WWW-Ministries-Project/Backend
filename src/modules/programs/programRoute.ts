@@ -413,7 +413,11 @@ programRouter.delete(
   som("manage_instructors", { legacyLevel: "manage", target: rosterFrom("query", "id") }),
   operationsController.removeFromRoster,
 );
-programRouter.get("/instructors-overview", som("view"), operationsController.instructorsOverview);
+programRouter.get(
+  "/instructors-overview",
+  som("view", { assigned: "list" }),
+  operationsController.instructorsOverview,
+);
 programRouter.get("/library", som("view", { ...fallback, assigned: "list" }), operationsController.listLibrary);
 programRouter.post("/library-item", designAll, operationsController.createLibraryItem);
 programRouter.put("/library-item", designAll, operationsController.updateLibraryItem);
