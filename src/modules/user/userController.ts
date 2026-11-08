@@ -3337,50 +3337,67 @@ export const statsUsers = async (req: Request, res: Response) => {
     const activeWhere = req.query?.active_only === "true" ? { is_active: true } : {};
     // A role limited to its departments or life centers counts those people.
     const scopeWhere = memberScopeWhere(req);
-    const scopeFilter = scopeWhere ? { AND: [scopeWhere] } : {};
-    const [onlineUsers, inhouseUsers] = await Promise.all([
-      prisma.user_info.findMany({
-        where: {
-          user: {
-            membership_type: "ONLINE",
-            ...(branchWhere || {}),
-            ...activeWhere,
-            ...scopeFilter,
-          },
-        },
-      }),
-      prisma.user_info.findMany({
-        where: {
-          user: {
-            membership_type: "IN_HOUSE",
-            ...(branchWhere || {}),
-            ...activeWhere,
-            ...scopeFilter,
-          },
-        },
-      }),
-    ]);
 
-    const onlineStats = calculateStats(onlineUsers);
-    const inhouseStats = calculateStats(inhouseUsers);
+    // Count the SAME universe as the member directory (ListUsers): every
+    // non-guest member, keyed off `user` (not `user_info`), so the totals
+    // reconcile with the list exactly. Members whose membership_type is neither
+    // ONLINE nor IN_HOUSE — and members without a user_info row — used to vanish
+    // from these counts; they now land in `unspecified`, so
+    // online + inhouse + unspecified always equals the directory total.
+    const where = {
+      AND: [
+        // Guests have accounts but are not members (see ListUsers).
+        { OR: [{ is_guest: false }, { is_guest: null }] },
+        ...(branchWhere ? [branchWhere] : []),
+        ...(scopeWhere ? [scopeWhere] : []),
+        activeWhere,
+      ],
+    };
+
+    const members = await prisma.user.findMany({
+      where,
+      select: {
+        membership_type: true,
+        user_info: { select: { gender: true, date_of_birth: true } },
+      },
+    });
+
+    const online: { gender?: string | null; date_of_birth?: Date | null }[] = [];
+    const inhouse: typeof online = [];
+    const unspecified: typeof online = [];
+    for (const member of members) {
+      const row = {
+        gender: member.user_info?.gender,
+        date_of_birth: member.user_info?.date_of_birth,
+      };
+      if (member.membership_type === "ONLINE") online.push(row);
+      else if (member.membership_type === "IN_HOUSE") inhouse.push(row);
+      else unspecified.push(row);
+    }
+
+    const onlineStats = calculateStats(online);
+    const inhouseStats = calculateStats(inhouse);
+    const unspecifiedStats = calculateStats(unspecified);
+
+    const group = (s: ReturnType<typeof calculateStats>) => ({
+      total_members: s.totals.Total,
+      total_males: s.totals.Male,
+      total_females: s.totals.Female,
+      total_others: s.totals.Other,
+      stats: s.categories,
+    });
 
     return res.status(200).json({
       message: "Operation Successful",
       data: {
-        online: {
-          total_members: onlineStats.totals.Total,
-          total_males: onlineStats.totals.Male,
-          total_females: onlineStats.totals.Female,
-          total_others: onlineStats.totals.Other,
-          stats: onlineStats.categories,
-        },
-        inhouse: {
-          total_members: inhouseStats.totals.Total,
-          total_males: inhouseStats.totals.Male,
-          total_females: inhouseStats.totals.Female,
-          total_others: inhouseStats.totals.Other,
-          stats: inhouseStats.categories,
-        },
+        // Authoritative directory total: equals the list's member count.
+        total_members:
+          onlineStats.totals.Total +
+          inhouseStats.totals.Total +
+          unspecifiedStats.totals.Total,
+        online: group(onlineStats),
+        inhouse: group(inhouseStats),
+        unspecified: group(unspecifiedStats),
       },
     });
   } catch (error) {
