@@ -14,7 +14,10 @@
     "prod": "npx tsc && npm run copy:libs && node -r newrelic dist/index.js",
     "jack": "npm run build && node dist/src/utils/rm_user.js",
     "copy:libs": "cpx \"src/libs/**/*\" dist/src/libs",
-    "test": "node --test --require ts-node/register/transpile-only $(find src -name '*.test.ts' -not -name '* *')"
+    "test": "node --test --require ts-node/register/transpile-only $(find src -name '*.test.ts' -not -name '* *')",
+    "dedupe:children": "npx ts-node --transpile-only scripts/dedupeChildren.ts",
+    "detect:family-dupes": "npx ts-node --transpile-only scripts/detectFamilyDupes.ts",
+    "merge:child-pair": "npx ts-node --transpile-only scripts/mergeChildPair.ts"
   },
   "keywords": [],
   "author": "",

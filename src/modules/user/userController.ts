@@ -37,6 +37,7 @@ import { userActivatedTemplate } from "../../utils/mail_templates/userActivatedT
 import { activateUserTemplate } from "../../utils/mail_templates/activateUserTemplate";
 import {
   FAMILY_RELATION,
+  findExistingChildUserId,
   getDirectChildIds,
   getReciprocalFamilyRelation,
   getSiblingIds,
@@ -1236,6 +1237,22 @@ async function updateFamilyMembers(family: any[], primaryUser: any) {
           })
         : null;
 
+      // Not in THIS family yet — but the same child may already exist from
+      // another parent's registration. Reuse that record (and just add this
+      // parent's link below) instead of creating a duplicate user row.
+      if (!familyUser) {
+        const existingChildId = await findExistingChildUserId({
+          first_name: member.first_name,
+          last_name: member.last_name,
+          date_of_birth: new Date(member.date_of_birth),
+        });
+        if (existingChildId) {
+          familyUser = await prisma.user.findUnique({
+            where: { id: existingChildId },
+          });
+        }
+      }
+
       // The parent↔child link is written below via
       // upsertBidirectionalFamilyRelation; no scalar parent_id is stored.
       if (!familyUser) {
@@ -2342,6 +2359,28 @@ const flattenListedUsers = (data: any[]) => {
   });
 };
 
+// A child is a member with a date of birth in the current year minus 18, or
+// later. Kept as a single source so the directory list and the stats endpoint
+// agree on who is a child.
+const childMinDate = () =>
+  new Date(`${new Date().getFullYear() - 18}-01-01T00:00:00.000Z`);
+
+// Prisma filter for "is a child": has a user_info row with a qualifying DOB.
+const buildChildWhere = () => ({
+  user_info: { is: { date_of_birth: { gte: childMinDate() } } },
+});
+
+// Prisma filter for "is NOT a child": the exact complement — an adult DOB, a
+// null DOB, or no user_info row at all. Spelled out as an OR because
+// `NOT { user_info: { is: {...} } }` drops rows that have no user_info row.
+const buildNonChildWhere = () => ({
+  OR: [
+    { user_info: { is: { date_of_birth: { lt: childMinDate() } } } },
+    { user_info: { is: { date_of_birth: null } } },
+    { user_info: { is: null } },
+  ],
+});
+
 export const ListUsers = async (req: Request, res: Response) => {
   const {
     is_user,
@@ -2472,6 +2511,21 @@ export const ListUsers = async (req: Request, res: Response) => {
     }
     if (membership_type) {
       whereConditions.push({ membership_type });
+    }
+    // `child=true` lists children only: members aged 18 or under, by the same
+    // year-based rule the membership stats use (born in the current year minus
+    // 18, or later). Members without a date of birth are treated as adults and
+    // excluded.
+    if (req.query?.child === "true") {
+      whereConditions.push(buildChildWhere());
+    }
+    // `exclude_children=true` is the Church Directory's complement of the above:
+    // everyone who is NOT a child — adults, members with no date of birth, and
+    // members with no user_info row at all (unknown age is treated as adult).
+    // A `NOT { user_info: { is: {...} } }` wrongly drops rows with no user_info,
+    // so the complement is spelled out explicitly instead.
+    if (req.query?.exclude_children === "true") {
+      whereConditions.push(buildNonChildWhere());
     }
     if (searchTerm) {
       const contactMatches: any[] = [
@@ -3338,6 +3392,12 @@ export const statsUsers = async (req: Request, res: Response) => {
     // A role limited to its departments or life centers counts those people.
     const scopeWhere = memberScopeWhere(req);
 
+    // `exclude_children=true` mirrors ListUsers: drop members aged 18 or under
+    // (keeping those with no date of birth), so the Church Directory strip
+    // reconciles with the directory list now that children have their own section.
+    const excludeChildrenWhere =
+      req.query?.exclude_children === "true" ? [buildNonChildWhere()] : [];
+
     // Count the SAME universe as the member directory (ListUsers): every
     // non-guest member, keyed off `user` (not `user_info`), so the totals
     // reconcile with the list exactly. Members whose membership_type is neither
@@ -3350,6 +3410,7 @@ export const statsUsers = async (req: Request, res: Response) => {
         { OR: [{ is_guest: false }, { is_guest: null }] },
         ...(branchWhere ? [branchWhere] : []),
         ...(scopeWhere ? [scopeWhere] : []),
+        ...excludeChildrenWhere,
         activeWhere,
       ],
     };

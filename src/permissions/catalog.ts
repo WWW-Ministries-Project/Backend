@@ -372,4 +372,14 @@ export const PERMISSION_CATALOG: Record<string, DomainCatalog> = {
       ["manage_credentials", 3, true],
     ],
   },
+  // Finds and merges duplicate member records (e.g. a child entered by both
+  // parents). View lists the candidates; Manage performs the merge/delete.
+  // Mirrors the Frontend's src/utils/permissionCatalog.ts.
+  Data_Quality: {
+    scopes: ["branch"],
+    actions: [
+      ["view_duplicates", 1],
+      ["merge_duplicates", 2],
+    ],
+  },
 };
