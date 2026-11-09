@@ -2359,6 +2359,28 @@ const flattenListedUsers = (data: any[]) => {
   });
 };
 
+// A child is a member with a date of birth in the current year minus 18, or
+// later. Kept as a single source so the directory list and the stats endpoint
+// agree on who is a child.
+const childMinDate = () =>
+  new Date(`${new Date().getFullYear() - 18}-01-01T00:00:00.000Z`);
+
+// Prisma filter for "is a child": has a user_info row with a qualifying DOB.
+const buildChildWhere = () => ({
+  user_info: { is: { date_of_birth: { gte: childMinDate() } } },
+});
+
+// Prisma filter for "is NOT a child": the exact complement — an adult DOB, a
+// null DOB, or no user_info row at all. Spelled out as an OR because
+// `NOT { user_info: { is: {...} } }` drops rows that have no user_info row.
+const buildNonChildWhere = () => ({
+  OR: [
+    { user_info: { is: { date_of_birth: { lt: childMinDate() } } } },
+    { user_info: { is: { date_of_birth: null } } },
+    { user_info: { is: null } },
+  ],
+});
+
 export const ListUsers = async (req: Request, res: Response) => {
   const {
     is_user,
@@ -2495,31 +2517,15 @@ export const ListUsers = async (req: Request, res: Response) => {
     // 18, or later). Members without a date of birth are treated as adults and
     // excluded.
     if (req.query?.child === "true") {
-      const childMinYear = new Date().getFullYear() - 18;
-      whereConditions.push({
-        user_info: {
-          is: {
-            date_of_birth: { gte: new Date(`${childMinYear}-01-01T00:00:00.000Z`) },
-          },
-        },
-      });
+      whereConditions.push(buildChildWhere());
     }
     // `exclude_children=true` is the Church Directory's complement of the above:
-    // everyone who is NOT a child — adults, plus members with no date of birth
-    // (unknown age is treated as adult). Children now have their own section.
+    // everyone who is NOT a child — adults, members with no date of birth, and
+    // members with no user_info row at all (unknown age is treated as adult).
+    // A `NOT { user_info: { is: {...} } }` wrongly drops rows with no user_info,
+    // so the complement is spelled out explicitly instead.
     if (req.query?.exclude_children === "true") {
-      const childMinYear = new Date().getFullYear() - 18;
-      whereConditions.push({
-        NOT: {
-          user_info: {
-            is: {
-              date_of_birth: {
-                gte: new Date(`${childMinYear}-01-01T00:00:00.000Z`),
-              },
-            },
-          },
-        },
-      });
+      whereConditions.push(buildNonChildWhere());
     }
     if (searchTerm) {
       const contactMatches: any[] = [
@@ -3390,23 +3396,7 @@ export const statsUsers = async (req: Request, res: Response) => {
     // (keeping those with no date of birth), so the Church Directory strip
     // reconciles with the directory list now that children have their own section.
     const excludeChildrenWhere =
-      req.query?.exclude_children === "true"
-        ? [
-            {
-              NOT: {
-                user_info: {
-                  is: {
-                    date_of_birth: {
-                      gte: new Date(
-                        `${new Date().getFullYear() - 18}-01-01T00:00:00.000Z`,
-                      ),
-                    },
-                  },
-                },
-              },
-            },
-          ]
-        : [];
+      req.query?.exclude_children === "true" ? [buildNonChildWhere()] : [];
 
     // Count the SAME universe as the member directory (ListUsers): every
     // non-guest member, keyed off `user` (not `user_info`), so the totals
