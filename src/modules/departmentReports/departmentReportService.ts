@@ -189,7 +189,9 @@ const churchTarget = (def: ReportDefinition, owner: ReportOwner | null): Target 
   key: def.key,
   area: def.area,
   name: def.name,
-  hod_role: def.hod_role,
+  // Label the preparer by the department actually responsible (Settings ›
+  // Reports). No static role fallback — if no department is configured, say so.
+  hod_role: owner ? `${owner.department_name} head` : "No department set",
   cadence: def.cadence,
   build: def.build,
   church: def,
@@ -489,8 +491,11 @@ const serializeWorkflow = (
 ) => {
   const status: DepartmentReportStatus = row?.status ?? "DRAFT";
   const due = dueFor(def, sel.range);
-  // The responsible head prepares it until someone writes the commentary.
-  const preparedId = row?.submitted_by_user_id ?? row?.prepared_by_user_id ?? def.head?.id ?? null;
+  // "Prepared by" is always the head of the responsible department (Settings ›
+  // Reports), regardless of who actually wrote the commentary or submitted it —
+  // the real actor stays in the activity trail below. Falls back to the
+  // submitter/editor only when the responsible department has no head assigned.
+  const preparedId = def.head?.id ?? row?.submitted_by_user_id ?? row?.prepared_by_user_id ?? null;
   const names = def.head && !rawNames.has(def.head.id) ? new Map(rawNames).set(def.head.id, def.head.name) : rawNames;
   const trail: { action: string; who: string; when: string | null; note: string | null; done: boolean }[] = [];
   if (periodEnded(sel.range)) {
