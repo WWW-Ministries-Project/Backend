@@ -3,6 +3,12 @@ import {
   findDuplicateChildCandidates,
   mergeChildRecords,
 } from "./dataQualityService";
+import {
+  startBulkMergeJob,
+  getBulkMergeJob,
+  type BulkMergePair,
+} from "./dataQualityJobs";
+import { getRequestAccess } from "../../middleWare/authorization";
 
 // GET /user/data-quality/duplicate-children
 // Lists candidate duplicate child records (exact + fuzzy) with evidence. The
@@ -60,4 +66,56 @@ export const mergeDuplicateChildren = async (req: Request, res: Response) => {
       data: null,
     });
   }
+};
+
+// POST /user/data-quality/merge-children/bulk  { pairs: [{ keep_id, remove_id }] }
+// Starts a background job that merges every selected pair sequentially, so the
+// user can keep working while it runs. Returns a job id to poll. Each pair is
+// its own transaction — one failure does not undo earlier successes. Guarded by
+// Data_Quality manage.
+export const bulkMergeDuplicateChildren = (req: Request, res: Response) => {
+  const rawPairs = Array.isArray(req.body?.pairs) ? req.body.pairs : null;
+  if (!rawPairs || rawPairs.length === 0) {
+    return res.status(400).json({
+      message: "pairs is required and must be a non-empty array.",
+      data: null,
+    });
+  }
+
+  const seen = new Set<string>();
+  const pairs: BulkMergePair[] = [];
+  for (const p of rawPairs) {
+    const keepId = Number(p?.keep_id);
+    const removeId = Number(p?.remove_id);
+    if (
+      !Number.isInteger(keepId) ||
+      !Number.isInteger(removeId) ||
+      keepId === removeId
+    ) {
+      return res.status(400).json({
+        message: "Each pair needs distinct integer keep_id and remove_id.",
+        data: null,
+      });
+    }
+    // De-dupe identical pairs so the same merge is not attempted twice.
+    const key = [keepId, removeId].sort((a, b) => a - b).join("-");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    pairs.push({ keep_id: keepId, remove_id: removeId });
+  }
+
+  const createdBy = getRequestAccess(req)?.userId ?? null;
+  const job = startBulkMergeJob(pairs, createdBy);
+  return res.status(202).json({ message: "Bulk merge started", data: job });
+};
+
+// GET /user/data-quality/merge-children/jobs/:jobId
+// Returns the current state of a bulk-merge job (status, counts, per-pair
+// results). Guarded by Data_Quality view.
+export const getBulkMergeJobStatus = (req: Request, res: Response) => {
+  const job = getBulkMergeJob(req.params.jobId);
+  if (!job) {
+    return res.status(404).json({ message: "Job not found", data: null });
+  }
+  return res.status(200).json({ message: "Operation Successful", data: job });
 };
