@@ -2487,6 +2487,23 @@ export const ListUsers = async (req: Request, res: Response) => {
         },
       });
     }
+    // `exclude_children=true` is the Church Directory's complement of the above:
+    // everyone who is NOT a child — adults, plus members with no date of birth
+    // (unknown age is treated as adult). Children now have their own section.
+    if (req.query?.exclude_children === "true") {
+      const childMinYear = new Date().getFullYear() - 18;
+      whereConditions.push({
+        NOT: {
+          user_info: {
+            is: {
+              date_of_birth: {
+                gte: new Date(`${childMinYear}-01-01T00:00:00.000Z`),
+              },
+            },
+          },
+        },
+      });
+    }
     if (searchTerm) {
       const contactMatches: any[] = [
         { email: { contains: searchTerm } },
@@ -3352,6 +3369,28 @@ export const statsUsers = async (req: Request, res: Response) => {
     // A role limited to its departments or life centers counts those people.
     const scopeWhere = memberScopeWhere(req);
 
+    // `exclude_children=true` mirrors ListUsers: drop members aged 18 or under
+    // (keeping those with no date of birth), so the Church Directory strip
+    // reconciles with the directory list now that children have their own section.
+    const excludeChildrenWhere =
+      req.query?.exclude_children === "true"
+        ? [
+            {
+              NOT: {
+                user_info: {
+                  is: {
+                    date_of_birth: {
+                      gte: new Date(
+                        `${new Date().getFullYear() - 18}-01-01T00:00:00.000Z`,
+                      ),
+                    },
+                  },
+                },
+              },
+            },
+          ]
+        : [];
+
     // Count the SAME universe as the member directory (ListUsers): every
     // non-guest member, keyed off `user` (not `user_info`), so the totals
     // reconcile with the list exactly. Members whose membership_type is neither
@@ -3364,6 +3403,7 @@ export const statsUsers = async (req: Request, res: Response) => {
         { OR: [{ is_guest: false }, { is_guest: null }] },
         ...(branchWhere ? [branchWhere] : []),
         ...(scopeWhere ? [scopeWhere] : []),
+        ...excludeChildrenWhere,
         activeWhere,
       ],
     };
