@@ -6,6 +6,7 @@
 
 export type ReportKey =
   | "membership"
+  | "children"
   | "visitors"
   | "events"
   | "attendance"
@@ -15,6 +16,7 @@ export type ReportKey =
 
 export const REPORT_KEYS: ReportKey[] = [
   "membership",
+  "children",
   "visitors",
   "events",
   "attendance",

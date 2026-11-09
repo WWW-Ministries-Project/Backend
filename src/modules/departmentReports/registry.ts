@@ -1,5 +1,6 @@
 import { buildAssets } from "./aggregators/assets";
 import { buildAttendance } from "./aggregators/attendance";
+import { buildChildren } from "./aggregators/children";
 import { buildEvents } from "./aggregators/events";
 import { buildFinance } from "./aggregators/finance";
 import { buildLifeCenters } from "./aggregators/lifecenters";
@@ -22,6 +23,7 @@ export interface ReportDefinition {
 
 export const REPORTS: ReportDefinition[] = [
   { key: "membership", area: "Membership", name: "Membership report", cadence: "Monthly", domain: "Membership_Management", build: buildMembership },
+  { key: "children", area: "Children", name: "Children report", cadence: "Monthly", domain: "Membership_Management", build: buildChildren },
   { key: "visitors", area: "Visitors & follow-up", name: "Visitors and follow-up report", cadence: "Weekly, with a monthly roll-up", domain: "Visitors", build: buildVisitors },
   { key: "events", area: "Events", name: "Events report", cadence: "Monthly", domain: "Events", build: buildEvents },
   { key: "attendance", area: "Church attendance", name: "Church attendance report", cadence: "Weekly, with a monthly roll-up", domain: "Church_Attendance", build: buildAttendance },
