@@ -189,7 +189,10 @@ const churchTarget = (def: ReportDefinition, owner: ReportOwner | null): Target 
   key: def.key,
   area: def.area,
   name: def.name,
-  hod_role: def.hod_role,
+  // Label the preparer by the department actually responsible (Settings ›
+  // Reports), not a hardcoded role. Only fall back to the static role when no
+  // department is configured for this report.
+  hod_role: owner ? `${owner.department_name} head` : def.hod_role,
   cadence: def.cadence,
   build: def.build,
   church: def,
