@@ -80,6 +80,17 @@ const PERMISSION_KEY_ALIASES: Record<string, string[]> = {
     "Membership Management",
     "Members",
   ],
+  // Data Quality: the admin tool that finds and merges duplicate member records.
+  // Falls back to Settings so existing administrators keep access without a data
+  // migration (same precedent as Reports). Mirrors DOMAIN_FALLBACKS in the
+  // Frontend's src/utils/accessControl.ts — the two tables must agree.
+  Data_Quality: [
+    "Data_Quality",
+    "Data Quality",
+    "Settings",
+    "Access_rights",
+    "Access rights",
+  ],
 };
 
 const parsePermissionsObject = (permissions: any): Record<string, any> => {
