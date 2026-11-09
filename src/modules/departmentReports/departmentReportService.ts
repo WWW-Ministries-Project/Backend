@@ -190,9 +190,8 @@ const churchTarget = (def: ReportDefinition, owner: ReportOwner | null): Target 
   area: def.area,
   name: def.name,
   // Label the preparer by the department actually responsible (Settings ›
-  // Reports), not a hardcoded role. Only fall back to the static role when no
-  // department is configured for this report.
-  hod_role: owner ? `${owner.department_name} head` : def.hod_role,
+  // Reports). No static role fallback — if no department is configured, say so.
+  hod_role: owner ? `${owner.department_name} head` : "No department set",
   cadence: def.cadence,
   build: def.build,
   church: def,
