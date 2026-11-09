@@ -44,6 +44,10 @@ import {
   selfRegister,
   updateMyProfile,
 } from "./selfServiceController";
+import {
+  listDuplicateChildren,
+  mergeDuplicateChildren,
+} from "./dataQualityController";
 import { NextFunction, Request, Response } from "express";
 import { getRequestAccess, hasActionPermission, Permissions } from "../../middleWare/authorization";
 import { actionAllowed, isLegacyRole } from "../../permissions/access";
@@ -65,6 +69,28 @@ const sendEmailsGuard = (req: Request, res: Response, next: NextFunction) => {
 dotenv.config();
 
 export const userRouter = Router();
+
+// Data Quality — find and merge duplicate member records (admin tooling).
+const canViewDataQuality = permissions.checkPermission(
+  "Data_Quality",
+  "view",
+  "Not authorized to view data quality",
+);
+const canManageDataQuality = permissions.checkPermission(
+  "Data_Quality",
+  "manage",
+  "Not authorized to resolve data quality issues",
+);
+userRouter.get(
+  "/data-quality/duplicate-children",
+  [protect, canViewDataQuality],
+  listDuplicateChildren,
+);
+userRouter.post(
+  "/data-quality/merge-children",
+  [protect, canManageDataQuality],
+  mergeDuplicateChildren,
+);
 
 userRouter.get("/get-user", [protect, permissions.can_view_member_details], getUser);
 
