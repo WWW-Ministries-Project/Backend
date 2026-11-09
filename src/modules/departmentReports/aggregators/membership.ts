@@ -30,6 +30,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../../../Models/context";
 import { getBranchScopedWhere } from "../../branches/branchService";
 import { addDays, monthLabel, shortDate } from "../period";
+import { ageAt, isChildBirthYear } from "./age";
 import {
   AM,
   BZ,
@@ -151,16 +152,9 @@ const isProfileComplete = (m: Member) => {
   );
 };
 
-const ageAt = (dob: Date, at: Date) => {
-  let age = at.getUTCFullYear() - dob.getUTCFullYear();
-  const beforeBirthday =
-    at.getUTCMonth() < dob.getUTCMonth() ||
-    (at.getUTCMonth() === dob.getUTCMonth() && at.getUTCDate() < dob.getUTCDate());
-  return beforeBirthday ? age - 1 : age;
-};
-
+// Children (under 18) are reported separately — see aggregators/children.ts —
+// so the membership age groups start at youth.
 const AGE_GROUPS: { label: string; max: number; color: string }[] = [
-  { label: "Children", max: 12, color: NV },
   { label: "Youth", max: 17, color: BZ },
   { label: "Young adults", max: 35, color: SF },
   { label: "Adults", max: 59, color: MG },
@@ -227,7 +221,7 @@ export const buildMembership: ReportBuilder = async (ctx) => {
   // Stock figures are "as of" the period end, never later than today.
   const asOf = ctx.to < ctx.now ? ctx.to : ctx.now;
 
-  const [members, visitorsInPeriod, enrollments] = await Promise.all([
+  const [allMembers, visitorsInPeriod, enrollments] = await Promise.all([
     prisma.user.findMany({ where: memberWhere, select: memberSelect }),
     prisma.visitor.count({
       where: { ...(branchWhere || {}), visitDate: { gte: ctx.from, lt: ctx.to } },
@@ -237,6 +231,10 @@ export const buildMembership: ReportBuilder = async (ctx) => {
       select: { user_id: true, completed: true },
     }),
   ]);
+
+  // Children (under 18) belong to the Children report, not here. Exclude them
+  // from every membership figure so the two reports never double-count.
+  const members = allMembers.filter((m) => !isChildBirthYear(m.user_info?.date_of_birth, asOf));
 
   const newMembers = newIn(members, range);
   const joinRequests = newMembers.length
