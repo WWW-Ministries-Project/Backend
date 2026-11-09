@@ -212,6 +212,54 @@ export const getDirectChildIds = async (
 };
 
 /**
+ * Find an existing child placeholder that matches a member being added as a
+ * child, GLOBALLY — not just within one family. Children are created once but
+ * can be entered by more than one parent in separate registrations; the
+ * per-family lookup in saveFamily only sees the current family's children, so
+ * without this the same child becomes a second `user` row (see the children
+ * directory duplicates). Scope: users who are already someone's child (an
+ * incoming CHILD edge) and are not login accounts. Date of birth is exact and
+ * selective, so we filter on it in SQL and compare names case-insensitively in
+ * JS to avoid collation surprises. Returns the lowest matching id, or null.
+ */
+export const findExistingChildUserId = async (member: {
+  first_name?: string | null;
+  last_name?: string | null;
+  date_of_birth: Date;
+}): Promise<number | null> => {
+  const first = (member.first_name || "").trim().toLowerCase();
+  const last = (member.last_name || "").trim().toLowerCase();
+  if (!first || !last) return null;
+
+  const childEdges = await prisma.family_relation.findMany({
+    where: { relation: FAMILY_RELATION.CHILD },
+    select: { family_id: true },
+  });
+  const childIds = Array.from(new Set(childEdges.map((e) => e.family_id)));
+  if (!childIds.length) return null;
+
+  const candidates = await prisma.user.findMany({
+    where: {
+      id: { in: childIds },
+      is_user: false,
+      user_info: { is: { date_of_birth: member.date_of_birth } },
+    },
+    select: {
+      id: true,
+      user_info: { select: { first_name: true, last_name: true } },
+    },
+    orderBy: { id: "asc" },
+  });
+
+  const hit = candidates.find(
+    (c) =>
+      (c.user_info?.first_name || "").trim().toLowerCase() === first &&
+      (c.user_info?.last_name || "").trim().toLowerCase() === last,
+  );
+  return hit?.id ?? null;
+};
+
+/**
  * Sibling ids for a member: everyone who shares at least one parent, minus the
  * member themselves. Parents come from forward PARENT links or reverse CHILD
  * links; siblings are the other direct children of those parents.

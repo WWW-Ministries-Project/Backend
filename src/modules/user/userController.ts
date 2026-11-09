@@ -37,6 +37,7 @@ import { userActivatedTemplate } from "../../utils/mail_templates/userActivatedT
 import { activateUserTemplate } from "../../utils/mail_templates/activateUserTemplate";
 import {
   FAMILY_RELATION,
+  findExistingChildUserId,
   getDirectChildIds,
   getReciprocalFamilyRelation,
   getSiblingIds,
@@ -1235,6 +1236,22 @@ async function updateFamilyMembers(family: any[], primaryUser: any) {
             },
           })
         : null;
+
+      // Not in THIS family yet — but the same child may already exist from
+      // another parent's registration. Reuse that record (and just add this
+      // parent's link below) instead of creating a duplicate user row.
+      if (!familyUser) {
+        const existingChildId = await findExistingChildUserId({
+          first_name: member.first_name,
+          last_name: member.last_name,
+          date_of_birth: new Date(member.date_of_birth),
+        });
+        if (existingChildId) {
+          familyUser = await prisma.user.findUnique({
+            where: { id: existingChildId },
+          });
+        }
+      }
 
       // The parent↔child link is written below via
       // upsertBidirectionalFamilyRelation; no scalar parent_id is stored.
