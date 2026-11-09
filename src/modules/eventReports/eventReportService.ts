@@ -42,6 +42,7 @@ import {
   classifyAttendanceTiming,
   loadAttendanceTimingResolver,
 } from "../settings/attendanceTimingSettingsService";
+import { loadReportConfig } from "../settings/reportConfigService";
 import { getEventReportExcludedUserIds } from "../settings/eventReportExclusionService";
 import {
   escapeHtml,
@@ -2324,6 +2325,20 @@ const buildEventReportWorkflow = async (
   const nameOf = (id: number | null | undefined) =>
     id ? names.get(id) ?? null : null;
 
+  // "Prepared by" is the head of the department responsible for event reports,
+  // as set in Settings › Reports — not whoever generated the report (that stays
+  // as generated_by_name and in the activity trail).
+  const reportConfig = await loadReportConfig();
+  const eventsOwnerDeptId = reportConfig.owners.events ?? null;
+  let preparedByName: string | null = null;
+  if (eventsOwnerDeptId) {
+    const ownerDept = await prisma.department.findUnique({
+      where: { id: eventsOwnerDeptId },
+      select: { department_head_info: { select: { name: true } } },
+    });
+    preparedByName = ownerDept?.department_head_info?.name ?? null;
+  }
+
   const trail = activity.map((row) => ({
     action: row.action,
     who: nameOf(row.actor_user_id),
@@ -2348,6 +2363,7 @@ const buildEventReportWorkflow = async (
       status_label: getEventReportStatusLabel(report.status),
       generated_at: report.created_at.toISOString(),
       generated_by_name: nameOf(report.created_by),
+      prepared_by_name: preparedByName,
       acted_at: report.final_acted_at ? report.final_acted_at.toISOString() : null,
       acted_by_name: nameOf(report.final_acted_by_user_id),
     },
