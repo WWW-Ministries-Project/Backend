@@ -47,6 +47,8 @@ import {
 import {
   listDuplicateChildren,
   mergeDuplicateChildren,
+  bulkMergeDuplicateChildren,
+  getBulkMergeJobStatus,
 } from "./dataQualityController";
 import { NextFunction, Request, Response } from "express";
 import { getRequestAccess, hasActionPermission, Permissions } from "../../middleWare/authorization";
@@ -90,6 +92,18 @@ userRouter.post(
   "/data-quality/merge-children",
   [protect, canManageDataQuality],
   mergeDuplicateChildren,
+);
+// Bulk merge runs as a background job so the user can keep working; poll the
+// job endpoint for progress.
+userRouter.post(
+  "/data-quality/merge-children/bulk",
+  [protect, canManageDataQuality],
+  bulkMergeDuplicateChildren,
+);
+userRouter.get(
+  "/data-quality/merge-children/jobs/:jobId",
+  [protect, canViewDataQuality],
+  getBulkMergeJobStatus,
 );
 
 userRouter.get("/get-user", [protect, permissions.can_view_member_details], getUser);
